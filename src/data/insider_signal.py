@@ -55,6 +55,7 @@ call site in this module's own tests) falls back to
 `InsiderSignalThresholds()`, whose field defaults equal the values this
 module used before 2026-08-28 — so unconfigured behaviour is unchanged.
 """
+
 from __future__ import annotations
 
 import statistics
@@ -122,7 +123,8 @@ class InsiderHistory:
             if not normalized[0] or not normalized[1]:
                 continue
             self._trades[normalized] = sorted(
-                values, key=lambda item: item.transaction_date,
+                values,
+                key=lambda item: item.transaction_date,
             )
 
     def __bool__(self) -> bool:
@@ -142,7 +144,8 @@ class InsiderHistory:
     ) -> list[InsiderPriorTrade]:
         key = (str(actor_cik or "").strip(), str(symbol or "").strip().upper())
         return [
-            trade for trade in self._trades.get(key, ())
+            trade
+            for trade in self._trades.get(key, ())
             if trade.direction == direction and trade.transaction_date < before
         ]
 
@@ -199,6 +202,7 @@ BAND_MID = "10_to_50pct"
 BAND_OVER_HIGH = "over_50pct"
 BAND_NO_PRIOR_HOLDING = "no_prior_holding"
 BAND_UNKNOWN = ""
+
 
 def _sell_fraction(shares: float | None, post_shares: float | None) -> float | None:
     """Fraction of the insider's pre-transaction holding that was disposed."""
@@ -304,11 +308,7 @@ def _cadence_gap_stats(
     dates = sorted({trade.transaction_date for trade in prior} | {transaction_date})
     if len(dates) < thresholds.min_cadence_trades + 1:
         return None
-    gaps = [
-        float((later - earlier).days)
-        for earlier, later in zip(dates, dates[1:])
-        if (later - earlier).days > 0
-    ]
+    gaps = [float((later - earlier).days) for earlier, later in zip(dates, dates[1:]) if (later - earlier).days > 0]
     if len(gaps) < thresholds.min_cadence_trades:
         return None
     mean_gap = statistics.fmean(gaps)
@@ -335,7 +335,8 @@ def classify_transaction(
     thresholds = thresholds or _DEFAULT_THRESHOLDS
     if str(getattr(observation, "stream", "") or "") != "insider":
         return InsiderSignalClass.of(
-            INDETERMINATE, "not_form4",
+            INDETERMINATE,
+            "not_form4",
             "Not an SEC Form 4 row; the routine test does not apply.",
         )
 
@@ -343,7 +344,8 @@ def classify_transaction(
     direction = str(getattr(observation, "direction", "") or "")
     if code not in {"P", "S"}:
         return InsiderSignalClass.of(
-            ROUTINE, "non_open_market_code",
+            ROUTINE,
+            "non_open_market_code",
             f"Transaction code {code or 'missing'!r} is not an open-market "
             "purchase or sale (grants, option exercises, tax withholding and "
             "gifts carry no directional signal).",
@@ -354,15 +356,15 @@ def classify_transaction(
     value = getattr(observation, "transaction_value_usd", None)
     if value is None or shares is None:
         return InsiderSignalClass.of(
-            INDETERMINATE, "incomplete_amounts",
-            "Filing omits share count or transaction value; routine status "
-            "cannot be established.",
+            INDETERMINATE,
+            "incomplete_amounts",
+            "Filing omits share count or transaction value; routine status cannot be established.",
         )
     if price is not None and price <= 0:
         return InsiderSignalClass.of(
-            ROUTINE, "zero_price_transaction",
-            "Reported at a zero price, so no capital was risked or realised "
-            "at market.",
+            ROUTINE,
+            "zero_price_transaction",
+            "Reported at a zero price, so no capital was risked or realised at market.",
         )
 
     transaction_date = getattr(observation, "transaction_date", None)
@@ -371,14 +373,18 @@ def classify_transaction(
     prior: list[InsiderPriorTrade] = []
     if history and isinstance(transaction_date, date) and actor_cik and symbol:
         prior = history.prior_trades(
-            actor_cik, symbol, direction=direction, before=transaction_date,
+            actor_cik,
+            symbol,
+            direction=direction,
+            before=transaction_date,
         )
 
     if prior and isinstance(transaction_date, date):
         streak = _calendar_routine_years(prior, transaction_date, thresholds)
         if streak >= thresholds.calendar_routine_years:
             return InsiderSignalClass.of(
-                ROUTINE, "calendar_routine",
+                ROUTINE,
+                "calendar_routine",
                 f"Same insider traded {symbol} in {transaction_date:%B} in each "
                 f"of the {streak} preceding years — a routine trader under "
                 "Cohen/Malloy/Pomorski, which carries no predictive power.",
@@ -387,13 +393,12 @@ def classify_transaction(
         if stats is not None:
             mean_gap, dispersion = stats
             if (
-                thresholds.cadence_min_mean_gap_days
-                <= mean_gap
-                <= thresholds.cadence_max_mean_gap_days
+                thresholds.cadence_min_mean_gap_days <= mean_gap <= thresholds.cadence_max_mean_gap_days
                 and dispersion <= thresholds.cadence_max_gap_dispersion
             ):
                 return InsiderSignalClass.of(
-                    ROUTINE, "recurring_cadence",
+                    ROUTINE,
+                    "recurring_cadence",
                     f"{len(prior) + 1} {direction} transactions spaced every "
                     f"~{mean_gap:.0f} days with {dispersion:.0%} variation — a "
                     "scheduled programme, not a discretionary decision.",
@@ -404,28 +409,30 @@ def classify_transaction(
         fraction = _sell_fraction(shares, getattr(observation, "post_transaction_shares", None))
         if fraction is None:
             return InsiderSignalClass.of(
-                INDETERMINATE, "unknown_holding",
-                "Post-transaction holding is missing, so the sale cannot be "
-                "sized against the insider's position.",
+                INDETERMINATE,
+                "unknown_holding",
+                "Post-transaction holding is missing, so the sale cannot be sized against the insider's position.",
             )
         planned = (
             " The 10b5-1 flag is set but is deliberately not treated as a "
             "noise marker: planned and discretionary high-value sales show "
             "similar opportunism."
-            if is_10b5_1 else ""
+            if is_10b5_1
+            else ""
         )
         # No cutoff. The sale survived both Cohen/Malloy/Pomorski routine
         # tests, so it is discretionary in the only sense this taxonomy
         # defines. The raw per-row holding ratio is descriptive context; it
         # carries no Scott/Xu return inference because the units differ.
         return InsiderSignalClass.of(
-            OPPORTUNISTIC, "discretionary_sale",
-            f"Discretionary sale of {fraction:.1%} of the insider's holding, "
-            f"matching no routine pattern.{planned}",
+            OPPORTUNISTIC,
+            "discretionary_sale",
+            f"Discretionary sale of {fraction:.1%} of the insider's holding, matching no routine pattern.{planned}",
         )
 
     role_note = (
-        "" if _has_inside_role(getattr(observation, "actor_roles", None))
+        ""
+        if _has_inside_role(getattr(observation, "actor_roles", None))
         else " Reporting owner holds no officer, director or 10% role, so the "
         "signal is weaker than a named-officer purchase."
     )
@@ -433,19 +440,13 @@ def classify_transaction(
     # row, not a transfer of an aggregate study's return finding.
     buy_fraction, buy_band = holdings_fraction(observation)
     if buy_fraction is not None:
-        size_note = (
-            f" Adds {buy_fraction:.1%} to the insider's existing holding."
-        )
+        size_note = f" Adds {buy_fraction:.1%} to the insider's existing holding."
     elif buy_band == BAND_NO_PRIOR_HOLDING:
-        size_note = (
-            " The insider held none of this stock beforehand, so there is no "
-            "size-relative-to-holdings ratio."
-        )
+        size_note = " The insider held none of this stock beforehand, so there is no size-relative-to-holdings ratio."
     else:
         size_note = ""
     return InsiderSignalClass.of(
-        OPPORTUNISTIC, "opportunistic_purchase",
-        f"Discretionary open-market purchase of ${value:,.0f} matching no "
-        f"routine pattern.{size_note}{role_note}",
+        OPPORTUNISTIC,
+        "opportunistic_purchase",
+        f"Discretionary open-market purchase of ${value:,.0f} matching no routine pattern.{size_note}{role_note}",
     )
-

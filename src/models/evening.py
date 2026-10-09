@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from src.models.base import LLMOutputModel, _normalize_enum_case_fields, _normalize_symbol
 
+
 class EveningReasoningChain(LLMOutputModel):
     """Seven-step chain evening analyst must fill before emitting the report.
 
@@ -19,6 +20,7 @@ class EveningReasoningChain(LLMOutputModel):
     review` is that missing step, and it sits between the retrospective
     (what happened) and the decision-quality review (how did we react).
     """
+
     performance_attribution: str = Field(min_length=1)
     """What drove today's P&L? Which positions contributed + / −, which macro /
     news factors explain the moves. Concrete, not vague."""
@@ -66,11 +68,11 @@ class EveningReasoningChain(LLMOutputModel):
 # with the thesis broken (momentum, not value). Grade must weigh BOTH
 # price AND thesis; this enum carries the latter.
 ThesisTrajectory = Literal[
-    "strengthening",   # new data since entry reinforces the thesis
-    "intact",          # no new negative information, reasons still valid
-    "weakening",       # some contrary data but thesis isn't yet broken
-    "broken",          # thesis invalidated by hard data (earnings miss,
-                       # guidance cut, regulatory action, etc.)
+    "strengthening",  # new data since entry reinforces the thesis
+    "intact",  # no new negative information, reasons still valid
+    "weakening",  # some contrary data but thesis isn't yet broken
+    "broken",  # thesis invalidated by hard data (earnings miss,
+    # guidance cut, regulatory action, etc.)
 ]
 
 
@@ -86,8 +88,9 @@ class SellGrade(LLMOutputModel):
     subsequently bounced — we kept discipline. A `wrong` SELL is one
     where we exited an intact/strengthening thesis AND price ran.
     """
+
     symbol: str
-    sell_date: str   # "YYYY-MM-DD"
+    sell_date: str  # "YYYY-MM-DD"
     sell_price: float
     current_price: float
     pct_move_since_sell: float
@@ -107,7 +110,8 @@ class SellGrade(LLMOutputModel):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(
-            values, lower_fields=("grade", "thesis_trajectory_at_sell"),
+            values,
+            lower_fields=("grade", "thesis_trajectory_at_sell"),
         )
 
 
@@ -119,15 +123,15 @@ class SellGrade(LLMOutputModel):
 # systemic / unavoidable ones last (don't let the LLM default to the easy
 # "tail_event" out).
 BuyLossRootCause = Literal[
-    "greed_top_chasing",      # entered near top, momentum chased, no margin of safety
+    "greed_top_chasing",  # entered near top, momentum chased, no margin of safety
     "macro_warning_ignored",  # macro/news signals warned, we ignored (must cite evidence)
-    "herd_buying",            # bought because news was loud, no independent thesis
-    "averaged_down",          # added to loser past stop discipline
-    "thesis_broken_held",     # thesis invalidated by data but we didn't sell
-    "concentration_blow",     # single sector/theme overweight turned
-    "timing_mistake",         # thesis correct, timing off — least-blameworthy class
-    "systemic_drawdown",      # broad market fell; we fell with it (not alpha destruction)
-    "tail_event",             # real black-swan; rare; LLM should resist defaulting here
+    "herd_buying",  # bought because news was loud, no independent thesis
+    "averaged_down",  # added to loser past stop discipline
+    "thesis_broken_held",  # thesis invalidated by data but we didn't sell
+    "concentration_blow",  # single sector/theme overweight turned
+    "timing_mistake",  # thesis correct, timing off — least-blameworthy class
+    "systemic_drawdown",  # broad market fell; we fell with it (not alpha destruction)
+    "tail_event",  # real black-swan; rare; LLM should resist defaulting here
 ]
 
 
@@ -141,6 +145,7 @@ class BuyGrade(LLMOutputModel):
     strengthening — that's NOT wrong, that's value entry being tested
     by noise. A buy can be up 10% with thesis broken — that's NOT
     correct, that's momentum masking a real failure."""
+
     symbol: str
     buy_date: str
     buy_price: float
@@ -200,8 +205,7 @@ class BuyGrade(LLMOutputModel):
                 "position_reviewer can distinguish a value re-entry candidate "
                 "(intact thesis) from a stay-out signal (broken thesis)"
             )
-        if (self.loss_root_cause == "macro_warning_ignored"
-                and not (self.missed_warning_ref or "").strip()):
+        if self.loss_root_cause == "macro_warning_ignored" and not (self.missed_warning_ref or "").strip():
             raise ValueError(
                 "loss_root_cause='macro_warning_ignored' requires missed_warning_ref "
                 "citing the specific signal that was ignored (agent + date + headline)"
@@ -226,6 +230,7 @@ class MissedOpportunitySnapshot(BaseModel):
     volume squeeze we should ignore". A medium-long-term investor
     doesn't chase thin moves.
     """
+
     symbol: str
     move_pct: float
     window_days: int
@@ -235,9 +240,9 @@ class MissedOpportunitySnapshot(BaseModel):
     had_earnings_signal: bool
     source: Literal["universe", "top_mover", "both"]
     # Optional evidence the LLM should cite in its `lesson`.
-    last_ta_rating: str | None = None          # e.g. "hold" / "buy"
-    last_ta_date: str | None = None            # ISO YYYY-MM-DD
-    last_news_headline: str | None = None      # trimmed ≤ 140 chars upstream
+    last_ta_rating: str | None = None  # e.g. "hold" / "buy"
+    last_ta_date: str | None = None  # ISO YYYY-MM-DD
+    last_news_headline: str | None = None  # trimmed ≤ 140 chars upstream
     # Theme fingerprint the LLM can adopt in MissedOpportunity.theme_if_any.
     # Populated from recent news state_changes / earnings IIC tags.
     theme_tags: list[str] = []
@@ -310,16 +315,17 @@ class MissedOpportunity(LLMOutputModel):
     one-day-gap moves should not expand it. "add" only when volume,
     sustain, theme, and fundamentals all point in the right direction.
     """
+
     symbol: str
     move_pct: float
     miss_category: Literal[
-        "trend_timing_miss",        # trend visible, entry late or absent
-        "theme_blindspot",          # entire theme/sector uncovered by our agents
+        "trend_timing_miss",  # trend visible, entry late or absent
+        "theme_blindspot",  # entire theme/sector uncovered by our agents
         "fundamentals_mispricing",  # hard earnings numbers, price not yet reacting
-        "value_entry_missed",       # stock DOWN >=8% with thesis intact, we
-                                    # didn't add — classic value dip missed
-        "noise_rally",              # no signal, legitimate HOLD — not a real miss
-        "risk_disciplined",         # RM / hard-rule blocked, accepted — not a real miss
+        "value_entry_missed",  # stock DOWN >=8% with thesis intact, we
+        # didn't add — classic value dip missed
+        "noise_rally",  # no signal, legitimate HOLD — not a real miss
+        "risk_disciplined",  # RM / hard-rule blocked, accepted — not a real miss
     ]
     # Free-form theme label the LLM picks (e.g. "AI-capex", "nuclear/power",
     # "rare-earth", "reshoring"). Required for trend / theme / mispricing /
@@ -331,13 +337,13 @@ class MissedOpportunity(LLMOutputModel):
     # cycle from a decade-long secular trend. Required when theme_if_any
     # is set; optional otherwise.
     theme_durability: Literal[
-        "multi_year_secular",   # decade+ structural trend (AI capex, energy
-                                # transition, aging demographics)
-        "1_3_year_cycle",       # cyclical opportunity (rate cuts, capex
-                                # cycle, inventory correction)
-        "months_fad",           # short-lived hype (meme, single-event pop,
-                                # narrative rotation)
-        "unknown",              # not enough information to classify
+        "multi_year_secular",  # decade+ structural trend (AI capex, energy
+        # transition, aging demographics)
+        "1_3_year_cycle",  # cyclical opportunity (rate cuts, capex
+        # cycle, inventory correction)
+        "months_fad",  # short-lived hype (meme, single-event pop,
+        # narrative rotation)
+        "unknown",  # not enough information to classify
     ] = "unknown"
     lesson: str = Field(min_length=1, max_length=400)
     # Watchlist-addition recommendation (only meaningful for top-mover sources;
@@ -360,8 +366,10 @@ class MissedOpportunity(LLMOutputModel):
     @model_validator(mode="after")
     def _theme_required_for_real_misses(self) -> "MissedOpportunity":
         real_miss_categories = {
-            "trend_timing_miss", "theme_blindspot",
-            "fundamentals_mispricing", "value_entry_missed",
+            "trend_timing_miss",
+            "theme_blindspot",
+            "fundamentals_mispricing",
+            "value_entry_missed",
         }
         if self.miss_category in real_miss_categories:
             if not (self.theme_if_any or "").strip():
@@ -418,7 +426,9 @@ class EveningReport(LLMOutputModel):
         return _normalize_enum_case_fields(
             values,
             lower_fields=(
-                "risk_rating", "tomorrow_bias", "tomorrow_conviction",
+                "risk_rating",
+                "tomorrow_bias",
+                "tomorrow_conviction",
             ),
         )
 
@@ -485,5 +495,3 @@ class AgentLog(BaseModel):
     full_response: str
     model: str
     tokens_used: int
-
-

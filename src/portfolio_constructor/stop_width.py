@@ -6,6 +6,7 @@ building a constructor. No new number: with no setup and no regime it
 returns the declared base `src.config.RiskConfig.min_stop_atr_multiple`
 (recorded in `config/number_ledger.yaml`).
 """
+
 from __future__ import annotations
 
 

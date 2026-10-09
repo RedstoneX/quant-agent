@@ -47,27 +47,31 @@ def _sym_data(symbol: str, bars, indicators):
 
 def _valid_response_for(symbol: str) -> str:
     """JSON response covering the full v2 schema (reasoning_chain + conviction + reference_target)."""
-    return json.dumps([{
-        "symbol": symbol,
-        "rating": "buy",
-        "conviction": "high",
-        "entry_price": 507.0,
-        "reference_target": 530.0,
-        "stop_loss": 494.0,
-        "support_levels": [494.0],
-        "resistance_levels": [530.0],
-        "setup_type": "range",
-        "expected_horizon_sessions": 10,
-        "thesis_invalid_if": "Price closes below MA50 on above-average volume",
-        "reasoning_chain": {
-            "trend": "Above MA20/50/200 stacked bullish.",
-            "momentum": "RSI 58 neutral-bullish, MACD hist positive.",
-            "volatility": "Mid-band, ATR steady.",
-            "volume": "+15% confirms uptrend.",
-            "support_resistance": "Support MA50 498, resistance upper band 520.",
-        },
-        "reasoning": "Clean bullish alignment.",
-    }])
+    return json.dumps(
+        [
+            {
+                "symbol": symbol,
+                "rating": "buy",
+                "conviction": "high",
+                "entry_price": 507.0,
+                "reference_target": 530.0,
+                "stop_loss": 494.0,
+                "support_levels": [494.0],
+                "resistance_levels": [530.0],
+                "setup_type": "range",
+                "expected_horizon_sessions": 10,
+                "thesis_invalid_if": "Price closes below MA50 on above-average volume",
+                "reasoning_chain": {
+                    "trend": "Above MA20/50/200 stacked bullish.",
+                    "momentum": "RSI 58 neutral-bullish, MACD hist positive.",
+                    "volatility": "Mid-band, ATR steady.",
+                    "volume": "+15% confirms uptrend.",
+                    "support_resistance": "Support MA50 498, resistance upper band 520.",
+                },
+                "reasoning": "Clean bullish alignment.",
+            }
+        ]
+    )
 
 
 @patch("anthropic.Anthropic")
@@ -126,8 +130,8 @@ def test_build_user_message_includes_indicators_and_current_close(sample_indicat
         # and asserting the spelling rather than the value is what made this
         # test fail on a change that lost no information (2026-08-31).
         assert "MA20=505" in msg and "MA20=505.0" not in msg
-        assert "RSI=58" in msg     # rsi_14
-        assert "ATR=8.5" in msg    # ATR is surfaced for ATR-based stops
+        assert "RSI=58" in msg  # rsi_14
+        assert "ATR=8.5" in msg  # ATR is surfaced for ATR-based stops
         # Renamed from "Current close" (2026-08-19): with intraday context
         # now possible, calling the last completed daily close "current"
         # was the exact ambiguity that let a stale price read as live.
@@ -197,7 +201,6 @@ def test_build_user_message_omits_prior_for_new_symbol(sample_indicators, sample
         assert "Prior rating" not in msg
 
 
-
 @pytest.fixture
 def fixed_chunks(monkeypatch):
     """Pin the batch split to the classic fixed 25 symbols per request.
@@ -214,10 +217,7 @@ def fixed_chunks(monkeypatch):
     from src.agents.tech_analyst import TechAnalystAgent, _CHUNK_SIZE
 
     def _fixed(self, symbols_data, *args, **kwargs):
-        return [
-            symbols_data[i : i + _CHUNK_SIZE]
-            for i in range(0, len(symbols_data), _CHUNK_SIZE)
-        ]
+        return [symbols_data[i : i + _CHUNK_SIZE] for i in range(0, len(symbols_data), _CHUNK_SIZE)]
 
     monkeypatch.setattr(TechAnalystAgent, "_split_to_budget", _fixed)
 
@@ -241,9 +241,11 @@ def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sampl
     # Build 50 symbols.
     syms = [f"SYM{i:02d}" for i in range(50)]
     data = [
-        {"symbol": s,
-         "bars": sample_bars,
-         "indicators": TechnicalIndicators(**{**sample_indicators.model_dump(), "symbol": s})}
+        {
+            "symbol": s,
+            "bars": sample_bars,
+            "indicators": TechnicalIndicators(**{**sample_indicators.model_dump(), "symbol": s}),
+        }
         for s in syms
     ]
 
@@ -295,7 +297,11 @@ def test_tech_analyst_auto_chunks_large_batch(mock_cls, sample_indicators, sampl
 
 @patch("anthropic.Anthropic")
 def test_tech_analyst_chunked_merged_cost_sums_when_model_priced(
-    mock_cls, fixed_chunks, sample_indicators, sample_bars, monkeypatch,
+    mock_cls,
+    fixed_chunks,
+    sample_indicators,
+    sample_bars,
+    monkeypatch,
 ):
     """Pin the happy path: when the configured model IS in cost_table.PRICING
     (e.g. claude-opus-4-7), the merged AgentResult.cost_usd is the sum
@@ -309,27 +315,32 @@ def test_tech_analyst_chunked_merged_cost_sums_when_model_priced(
     """
     # Pin pricing for this test; monkeypatch auto-reverts at test exit.
     from src import cost_table
+
     monkeypatch.setitem(
-        cost_table.PRICING, "claude-opus-4-7",
+        cost_table.PRICING,
+        "claude-opus-4-7",
         {"input": 10.0, "output": 50.0},
     )
 
     syms = [f"SYM{i:02d}" for i in range(50)]
     data = [
-        {"symbol": s,
-         "bars": sample_bars,
-         "indicators": TechnicalIndicators(**{**sample_indicators.model_dump(), "symbol": s})}
+        {
+            "symbol": s,
+            "bars": sample_bars,
+            "indicators": TechnicalIndicators(**{**sample_indicators.model_dump(), "symbol": s}),
+        }
         for s in syms
     ]
 
     call_counter = {"n": 0}
+
     def _chunk_response(**kw):
         call_counter["n"] += 1
         chunk_syms = syms[:25] if call_counter["n"] == 1 else syms[25:]
         arr = [json.loads(_valid_response_for(s))[0] for s in chunk_syms]
         resp = MagicMock()
         resp.content = [MagicMock(text=json.dumps(arr))]
-        resp.usage.input_tokens = 80_000   # realistic tech_analyst chunk
+        resp.usage.input_tokens = 80_000  # realistic tech_analyst chunk
         resp.usage.output_tokens = 12_000
         return resp
 
@@ -363,17 +374,19 @@ def test_tech_analyst_chunked_merged_cost_sums_when_model_priced(
 # or None (visibly failed after a bounded retry). Never absent.
 # ---------------------------------------------------------------------------
 
+
 def _multi_sym_data(symbols, bars, indicators):
     return [
-        {"symbol": s, "bars": bars,
-         "indicators": TechnicalIndicators(**{**indicators.model_dump(), "symbol": s})}
+        {"symbol": s, "bars": bars, "indicators": TechnicalIndicators(**{**indicators.model_dump(), "symbol": s})}
         for s in symbols
     ]
 
 
 @patch("anthropic.Anthropic")
 def test_short_response_retries_and_recovers_the_missing_symbols(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """The exact incident shape: the first response covers only 1 of 10
     submitted symbols. The bounded retry re-asks for exactly the 9 missing
@@ -389,9 +402,7 @@ def test_short_response_retries_and_recovers_the_missing_symbols(
             arr = [json.loads(_valid_response_for("SYM00"))[0]]
         else:
             # Record what the retry actually asked about.
-            calls["retry_symbols"] = [
-                s for s in syms if f"### {s}" in kw.get("messages", [{}])[0].get("content", "")
-            ]
+            calls["retry_symbols"] = [s for s in syms if f"### {s}" in kw.get("messages", [{}])[0].get("content", "")]
             arr = [json.loads(_valid_response_for(s))[0] for s in syms[1:]]
         resp = MagicMock()
         resp.content = [MagicMock(text=json.dumps(arr))]
@@ -404,9 +415,7 @@ def test_short_response_retries_and_recovers_the_missing_symbols(
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    results, merged = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, merged = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert set(results.keys()) == set(syms), "every submitted symbol must be a key"
     assert all(v is not None for v in results.values()), "retry must recover all 9"
@@ -419,7 +428,9 @@ def test_short_response_retries_and_recovers_the_missing_symbols(
 
 @patch("anthropic.Anthropic")
 def test_symbols_unresolved_after_retry_are_explicit_none_not_absent(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """When the retry ALSO comes back short, the still-missing symbols are
     returned as explicit None keys — a visible terminal failure — rather
@@ -440,9 +451,7 @@ def test_symbols_unresolved_after_retry_are_explicit_none_not_absent(
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    results, _ = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, _ = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert set(results.keys()) == set(syms)
     assert results["AAA"] is not None
@@ -452,19 +461,30 @@ def test_symbols_unresolved_after_retry_are_explicit_none_not_absent(
 
 @patch("anthropic.Anthropic")
 def test_explicitly_neutral_rating_is_a_terminal_outcome_not_a_loss(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """A considered-and-passed symbol (neutral/sell) is a successful
     terminal outcome — it must come back as a real result and must NOT
     trigger the retry path."""
-    resp_json = json.dumps([{
-        "symbol": "SPY", "rating": "neutral", "conviction": "low",
-        "reasoning_chain": {
-            "trend": "Flat.", "momentum": "RSI mid.", "volatility": "Quiet.",
-            "volume": "Average.", "support_resistance": "Range-bound.",
-        },
-        "reasoning": "No edge here.",
-    }])
+    resp_json = json.dumps(
+        [
+            {
+                "symbol": "SPY",
+                "rating": "neutral",
+                "conviction": "low",
+                "reasoning_chain": {
+                    "trend": "Flat.",
+                    "momentum": "RSI mid.",
+                    "volatility": "Quiet.",
+                    "volume": "Average.",
+                    "support_resistance": "Range-bound.",
+                },
+                "reasoning": "No edge here.",
+            }
+        ]
+    )
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text=resp_json)]
@@ -483,20 +503,31 @@ def test_explicitly_neutral_rating_is_a_terminal_outcome_not_a_loss(
 
 @patch("anthropic.Anthropic")
 def test_schema_invalid_row_is_retried_then_marked_failed(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """A row that fails TechAnalysisResult validation counts as missing
     (it produced no usable analysis), gets retried, and — if still bad —
     ends as an explicit None rather than a silent omission."""
-    bad_row = json.dumps([{
-        "symbol": "SPY", "rating": "buy", "conviction": "high",
-        # entry_price omitted -> model validator rejects a `buy` without it
-        "reasoning_chain": {
-            "trend": "x", "momentum": "x", "volatility": "x",
-            "volume": "x", "support_resistance": "x",
-        },
-        "reasoning": "Broken row.",
-    }])
+    bad_row = json.dumps(
+        [
+            {
+                "symbol": "SPY",
+                "rating": "buy",
+                "conviction": "high",
+                # entry_price omitted -> model validator rejects a `buy` without it
+                "reasoning_chain": {
+                    "trend": "x",
+                    "momentum": "x",
+                    "volatility": "x",
+                    "volume": "x",
+                    "support_resistance": "x",
+                },
+                "reasoning": "Broken row.",
+            }
+        ]
+    )
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text=bad_row)]
@@ -514,7 +545,9 @@ def test_schema_invalid_row_is_retried_then_marked_failed(
 
 @patch("anthropic.Anthropic")
 def test_actionable_row_missing_falsifier_is_retried_then_filled(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """A buy that omits thesis_invalid_if is invalid. One paid retry that
     states a real falsifier recovers the symbol. Nothing is invented."""
@@ -546,7 +579,9 @@ def test_actionable_row_missing_falsifier_is_retried_then_filled(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_never_loses_a_symbol_across_chunks(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """Chunk-level guarantee composes to the batch level: with 50 symbols
     (2 chunks) where the second chunk's response is entirely unusable,
@@ -574,9 +609,7 @@ def test_chunked_batch_never_loses_a_symbol_across_chunks(
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    results, _ = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, _ = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert set(results.keys()) == set(syms), "no symbol may vanish between chunks"
     assert all(results[s] is not None for s in syms[:25])
@@ -585,7 +618,10 @@ def test_chunked_batch_never_loses_a_symbol_across_chunks(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_shares_one_missing_symbol_retry_budget(
-    mock_cls, fixed_chunks, sample_indicators, sample_bars,
+    mock_cls,
+    fixed_chunks,
+    sample_indicators,
+    sample_bars,
 ):
     """Large batches must not spend one logical repair per chunk.
 
@@ -606,9 +642,7 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
         # never succeed. These tests pin the split at 25 (see fixed_chunks).
         returned = asked[1:] if len(asked) == _CHUNK_SIZE else asked
         resp = MagicMock()
-        resp.content = [MagicMock(text=json.dumps([
-            json.loads(_valid_response_for(symbol))[0] for symbol in returned
-        ]))]
+        resp.content = [MagicMock(text=json.dumps([json.loads(_valid_response_for(symbol))[0] for symbol in returned]))]
         resp.usage.input_tokens = 500
         resp.usage.output_tokens = 200
         return resp
@@ -618,9 +652,7 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    results, _ = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, _ = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert set(results) == set(syms)
     assert all(result is not None for result in results.values())
@@ -634,7 +666,10 @@ def test_chunked_batch_shares_one_missing_symbol_retry_budget(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
-    mock_cls, fixed_chunks, sample_indicators, sample_bars,
+    mock_cls,
+    fixed_chunks,
+    sample_indicators,
+    sample_bars,
 ):
     """A severely incomplete batch still makes only one bounded repair."""
     syms = [f"SYM{i:02d}" for i in range(75)]
@@ -648,9 +683,7 @@ def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
         # recovery call resolves only its deterministic first 25.
         returned = asked if len(asked_per_call) == 4 else []
         resp = MagicMock()
-        resp.content = [MagicMock(text=json.dumps([
-            json.loads(_valid_response_for(symbol))[0] for symbol in returned
-        ]))]
+        resp.content = [MagicMock(text=json.dumps([json.loads(_valid_response_for(symbol))[0] for symbol in returned]))]
         resp.usage.input_tokens = 500
         resp.usage.output_tokens = 200
         return resp
@@ -660,9 +693,7 @@ def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    results, _ = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, _ = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert [len(asked) for asked in asked_per_call] == [25, 25, 25, 25]
     assert asked_per_call[-1] == syms[:25]
@@ -672,7 +703,11 @@ def test_chunked_batch_bounds_shared_recovery_to_one_chunk(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_composes_with_session_retry_circuit(
-    mock_cls, fixed_chunks, sample_indicators, sample_bars, tmp_path,
+    mock_cls,
+    fixed_chunks,
+    sample_indicators,
+    sample_bars,
+    tmp_path,
 ):
     """Production-scale Tech uses one of the session's two retry slots."""
     syms = [f"SYM{i:02d}" for i in range(75)]
@@ -685,9 +720,7 @@ def test_chunked_batch_composes_with_session_retry_circuit(
         # never succeed. These tests pin the split at 25 (see fixed_chunks).
         returned = asked[1:] if len(asked) == _CHUNK_SIZE else asked
         resp = MagicMock()
-        resp.content = [MagicMock(text=json.dumps([
-            json.loads(_valid_response_for(symbol))[0] for symbol in returned
-        ]))]
+        resp.content = [MagicMock(text=json.dumps([json.loads(_valid_response_for(symbol))[0] for symbol in returned]))]
         resp.usage.input_tokens = 500
         resp.usage.output_tokens = 200
         return resp
@@ -722,15 +755,12 @@ def test_chunked_batch_composes_with_session_retry_circuit(
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     agent.set_cost_circuit(circuit)
-    results, _ = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, _ = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert all(result is not None for result in results.values())
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            "SELECT logical_calls, provider_attempts, retry_attempts, status "
-            "FROM llm_budget_sessions WHERE run_id = ?",
+            "SELECT logical_calls, provider_attempts, retry_attempts, status FROM llm_budget_sessions WHERE run_id = ?",
             ("run-tech-shared-retry",),
         ).fetchone()
     assert row == (4, 4, 1, "active")
@@ -738,7 +768,11 @@ def test_chunked_batch_composes_with_session_retry_circuit(
 
 @patch("anthropic.Anthropic")
 def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
-    mock_cls, fixed_chunks, sample_indicators, sample_bars, tmp_path,
+    mock_cls,
+    fixed_chunks,
+    sample_indicators,
+    sample_bars,
+    tmp_path,
 ):
     syms = [f"SYM{i:02d}" for i in range(75)]
 
@@ -746,9 +780,9 @@ def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
         content = kw.get("messages", [{}])[0].get("content", "")
         asked = [symbol for symbol in syms if f"### {symbol}" in content]
         resp = MagicMock()
-        resp.content = [MagicMock(text=json.dumps([
-            json.loads(_valid_response_for(symbol))[0] for symbol in asked[1:]
-        ]))]
+        resp.content = [
+            MagicMock(text=json.dumps([json.loads(_valid_response_for(symbol))[0] for symbol in asked[1:]]))
+        ]
         resp.usage.input_tokens = 500
         resp.usage.output_tokens = 200
         return resp
@@ -781,20 +815,19 @@ def test_chunked_batch_retains_primaries_when_retry_budget_already_spent(
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     agent.set_cost_circuit(circuit)
-    results, merged = agent.analyze_batch(
-        _multi_sym_data(syms, sample_bars, sample_indicators)
-    )
+    results, merged = agent.analyze_batch(_multi_sym_data(syms, sample_bars, sample_indicators))
 
     assert mock_client.messages.create.call_count == 3
     assert sum(result is not None for result in results.values()) == 72
     assert [symbol for symbol in syms if results[symbol] is None] == [
-        "SYM00", "SYM25", "SYM50",
+        "SYM00",
+        "SYM25",
+        "SYM50",
     ]
     assert merged is not None
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            "SELECT logical_calls, provider_attempts, retry_attempts, status "
-            "FROM llm_budget_sessions WHERE run_id=?",
+            "SELECT logical_calls, provider_attempts, retry_attempts, status FROM llm_budget_sessions WHERE run_id=?",
             ("run-tech-spent-retries",),
         ).fetchone()
     # No recovery call was ever admitted -- the 3 primaries alone exhaust
@@ -827,8 +860,7 @@ def _structured_bars() -> list[OHLCV]:
         path += [110.0 - 20.0 * i / 6 for i in range(6)]
     start = date(2024, 1, 1)
     return [
-        OHLCV(date=start + timedelta(days=i), open=c, high=c + 0.4,
-              low=c - 0.4, close=c, volume=1_000_000)
+        OHLCV(date=start + timedelta(days=i), open=c, high=c + 0.4, low=c - 0.4, close=c, volume=1_000_000)
         for i, c in enumerate(path)
     ]
 
@@ -849,7 +881,8 @@ def test_the_prompt_never_shows_the_model_the_computed_levels_field():
 
 @patch("anthropic.Anthropic")
 def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
-    mock_cls, sample_indicators,
+    mock_cls,
+    sample_indicators,
 ):
     """The other half, and the one that matters: a MISbehaving model emits
     the field anyway, and code overwrites it unconditionally with what
@@ -859,9 +892,11 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
     bars = _structured_bars()
     mock_client = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(
-        text=_response_asserting_levels("SPY", [999.0, 1000.0]),
-    )]
+    mock_response.content = [
+        MagicMock(
+            text=_response_asserting_levels("SPY", [999.0, 1000.0]),
+        )
+    ]
     mock_response.usage.input_tokens = 500
     mock_response.usage.output_tokens = 200
     mock_client.messages.create.return_value = mock_response
@@ -882,9 +917,7 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
     # PYTHON-set, never-model-writable data, carrying each level's touch
     # count so `_level_backing_stop` can enforce
     # `min_level_touches_for_stop_honor` (docs/RESEARCH_FINDINGS.md §7).
-    assert spy.computed_level_touches == {
-        lv.price: lv.touches for lv in (*supports, *resistances)
-    }
+    assert spy.computed_level_touches == {lv.price: lv.touches for lv in (*supports, *resistances)}
     # 2026-09-12: enough clean bars for the scan to run — "measured".
     assert spy.levels_coverage == "measured"
     # 2026-09-12, docs/WORK.md item 54 — the signal bar's edges and the
@@ -898,7 +931,9 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
 
 @patch("anthropic.Anthropic")
 def test_asserted_levels_are_wiped_even_when_the_chart_yields_none(
-    mock_cls, sample_indicators, sample_bars,
+    mock_cls,
+    sample_indicators,
+    sample_bars,
 ):
     """Fails closed. One bar is not enough history for any level, and
     `find_structural_levels` says so by returning nothing. The model's
@@ -907,9 +942,11 @@ def test_asserted_levels_are_wiped_even_when_the_chart_yields_none(
     than granting it on the model's say-so."""
     mock_client = MagicMock()
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(
-        text=_response_asserting_levels("SPY", [494.0, 530.0]),
-    )]
+    mock_response.content = [
+        MagicMock(
+            text=_response_asserting_levels("SPY", [494.0, 530.0]),
+        )
+    ]
     mock_response.usage.input_tokens = 500
     mock_response.usage.output_tokens = 200
     mock_client.messages.create.return_value = mock_response

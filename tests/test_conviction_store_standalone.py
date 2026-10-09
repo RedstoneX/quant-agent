@@ -12,7 +12,9 @@ import sys
 import threading
 
 from src.storage.conviction_ledger_store import (
-    CONVICTION_CREDIT_KIND, ConvictionLedgerStore, build_conviction_ledger_store,
+    CONVICTION_CREDIT_KIND,
+    ConvictionLedgerStore,
+    build_conviction_ledger_store,
 )
 from src.storage.seat_stances import SEAT_STANCE_KIND, read_seat_stances
 
@@ -47,22 +49,50 @@ def _conn():
 def _seed_round_trip(conn, *, position_id="p1", exit_price=110.0):
     conn.executescript("")
     rows = [
-        (position_id, "AAPL", "BUY", 10, 100.0, 10, 100.0, "filled", 90.0,
-         "dec-1", "run-1", "2026-09-01T14:00:00"),
-        (position_id, "AAPL", "SELL", 10, exit_price, 10, exit_price, "filled",
-         0.0, "dec-1", "run-1", "2026-09-05T14:00:00"),
+        (position_id, "AAPL", "BUY", 10, 100.0, 10, 100.0, "filled", 90.0, "dec-1", "run-1", "2026-09-01T14:00:00"),
+        (
+            position_id,
+            "AAPL",
+            "SELL",
+            10,
+            exit_price,
+            10,
+            exit_price,
+            "filled",
+            0.0,
+            "dec-1",
+            "run-1",
+            "2026-09-05T14:00:00",
+        ),
     ]
     conn.executemany(
         "INSERT INTO trades (position_id, symbol, action, qty, price, fill_qty,"
         " fill_price, fill_status, stop_loss, decision_id, run_id, timestamp)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
     conn.execute(
         "INSERT INTO specialist_evidence (run_id, decision_id, agent_name, kind,"
         " scope, symbol, evidence_json) VALUES (?,?,?,?,?,?,?)",
-        ("run-1", "dec-1", "macro", SEAT_STANCE_KIND, "symbol", "AAPL",
-         json.dumps({"seat": "macro", "symbol": "AAPL", "stance": "buy",
-                     "conviction": "high", "nominated": True,
-                     "observation": "o"})))
+        (
+            "run-1",
+            "dec-1",
+            "macro",
+            SEAT_STANCE_KIND,
+            "symbol",
+            "AAPL",
+            json.dumps(
+                {
+                    "seat": "macro",
+                    "symbol": "AAPL",
+                    "stance": "buy",
+                    "conviction": "high",
+                    "nominated": True,
+                    "observation": "o",
+                }
+            ),
+        ),
+    )
     conn.commit()
 
 
@@ -76,8 +106,7 @@ def test_the_builder_hands_back_the_collaborators_given():
 
 def test_the_store_does_not_import_the_database_module():
     """The boundary is real: neither module pulls `src.storage.db` in."""
-    for name in ("src.storage.conviction_ledger_store", "src.storage.seat_stances",
-                 "src.storage.locked_write"):
+    for name in ("src.storage.conviction_ledger_store", "src.storage.seat_stances", "src.storage.locked_write"):
         src = open(sys.modules[name].__file__).read()
         for line in src.splitlines():
             stripped = line.strip()
@@ -109,9 +138,7 @@ def test_a_closed_position_scores_one_credit_row_per_seat():
     # +10 on a 10-wide stop is +1R, credited positively to a supporter.
     assert credits[0].r_multiple == 1.0
     assert credits[0].credit == 1.0
-    stored = conn.execute(
-        "SELECT kind FROM specialist_evidence WHERE kind = ?",
-        (CONVICTION_CREDIT_KIND,)).fetchall()
+    stored = conn.execute("SELECT kind FROM specialist_evidence WHERE kind = ?", (CONVICTION_CREDIT_KIND,)).fetchall()
     assert len(stored) == 1
 
 
@@ -130,8 +157,7 @@ def test_scoring_is_idempotent_by_position_id():
 def test_a_chain_with_no_seat_stances_is_counted_never_fabricated():
     conn = _conn()
     _seed_round_trip(conn)
-    conn.execute("DELETE FROM specialist_evidence WHERE kind = ?",
-                 (SEAT_STANCE_KIND,))
+    conn.execute("DELETE FROM specialist_evidence WHERE kind = ?", (SEAT_STANCE_KIND,))
     conn.commit()
     store = build_conviction_ledger_store(conn=conn, lock=threading.Lock())
     counters = store.resolve_conviction_ledger()

@@ -2,6 +2,7 @@
 NO protective stop, made visible. Only the genuinely un-amendable paths still
 open one; each is timed, given a reason, and written as a durable row.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,8 +35,7 @@ def fallback_reason(stop_specs: list[dict], position_qty: float | None) -> str:
 class UnprotectedWindow:
     """Times one cancel+resubmit and appends its facts to `sink` on close."""
 
-    def __init__(self, symbol: str, reason: str, sink: list,
-                 path: str = "replace_stop_loss", **facts):
+    def __init__(self, symbol: str, reason: str, sink: list, path: str = "replace_stop_loss", **facts):
         self.symbol, self.reason, self.sink = symbol, reason, sink
         self.path, self.facts = path, facts  # e.g. exposed_qty, leg_kind
         self.cancelled_ids: list[str] = []
@@ -48,14 +48,26 @@ class UnprotectedWindow:
         if not self.cancelled_ids:
             return
         seconds = round(time.monotonic() - self._start, 3)
-        self.sink.append({"symbol": self.symbol, "reason": self.reason,
-                          "cancelled_ids": list(self.cancelled_ids), "outcome": outcome,
-                          "window_seconds": seconds, "path": self.path, **self.facts})
+        self.sink.append(
+            {
+                "symbol": self.symbol,
+                "reason": self.reason,
+                "cancelled_ids": list(self.cancelled_ids),
+                "outcome": outcome,
+                "window_seconds": seconds,
+                "path": self.path,
+                **self.facts,
+            }
+        )
         logger.warning(
-            "%s: %s was WITHOUT a protective stop for %.3fs "
-            "(reason=%s, outcome=%s, cancelled=%s)",
-            self.path, self.symbol, seconds, self.reason, outcome,
-            self.cancelled_ids)
+            "%s: %s was WITHOUT a protective stop for %.3fs (reason=%s, outcome=%s, cancelled=%s)",
+            self.path,
+            self.symbol,
+            seconds,
+            self.reason,
+            outcome,
+            self.cancelled_ids,
+        )
 
 
 #: Payload field saying WHERE the row's run id came from. A window recorded
@@ -72,9 +84,9 @@ RUN_ID_FROM_SESSION = "session"
 RUN_ID_UNATTRIBUTED = "unattributed"
 
 
-def record_unprotected_windows(broker: Any, db: Any, symbol: str, *,
-                               run_id: str | None = None,
-                               caller: str = "unknown") -> None:
+def record_unprotected_windows(
+    broker: Any, db: Any, symbol: str, *, run_id: str | None = None, caller: str = "unknown"
+) -> None:
     """Persist every window the broker reports, whatever the replace's outcome.
 
     A failed replace is exactly where the window mattered most. A record is
@@ -90,12 +102,21 @@ def record_unprotected_windows(broker: Any, db: Any, symbol: str, *,
     windows, log[:] = list(log), []
     try:
         from src.execution.exit_path_records import _insert
+
         session = str(run_id or "").strip()
         source = RUN_ID_FROM_SESSION if session else RUN_ID_UNATTRIBUTED
         for w in windows:
-            _insert(db, run_id=session or None, kind=STOP_UNPROTECTED_WINDOW_KIND,
-                    symbol=symbol,
-                    payload={"code": f"stop_window_{w['outcome']}", **w,
-                             RUN_ID_SOURCE_FIELD: source, "caller": str(caller)})
+            _insert(
+                db,
+                run_id=session or None,
+                kind=STOP_UNPROTECTED_WINDOW_KIND,
+                symbol=symbol,
+                payload={
+                    "code": f"stop_window_{w['outcome']}",
+                    **w,
+                    RUN_ID_SOURCE_FIELD: source,
+                    "caller": str(caller),
+                },
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not record unprotected stop window for %s: %s", symbol, exc)

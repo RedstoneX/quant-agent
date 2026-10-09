@@ -391,7 +391,8 @@ class NewsDataProvider:
         self.per_symbol_request_interval_s = 1.0 / per_symbol_rps
 
     def fetch_news(
-        self, lookback_hours_override: int | None = None,
+        self,
+        lookback_hours_override: int | None = None,
         symbols: list[str] | None = None,
     ) -> tuple[list[NewsItem], NewsCoverage]:
         """Fetch recent news from all RSS feeds, plus an optional per-symbol
@@ -444,9 +445,9 @@ class NewsDataProvider:
             if today.weekday() == 0:  # Monday
                 effective_lookback = max(self.lookback_hours, 72)
                 logger.info(
-                    "fetch_news: Monday detected — extending lookback "
-                    "from %dh to %dh to cover weekend news",
-                    self.lookback_hours, effective_lookback,
+                    "fetch_news: Monday detected — extending lookback from %dh to %dh to cover weekend news",
+                    self.lookback_hours,
+                    effective_lookback,
                 )
             else:
                 effective_lookback = self.lookback_hours
@@ -470,9 +471,12 @@ class NewsDataProvider:
                 # instead of dying here as a log line only.
                 logger.warning("Failed to fetch %s: %s", source_name, e)
                 reason = str(e) or type(e).__name__
-                failures.append(FeedFailure(
-                    name=source_name, reason=reason[:_FAILURE_REASON_MAX_LEN],
-                ))
+                failures.append(
+                    FeedFailure(
+                        name=source_name,
+                        reason=reason[:_FAILURE_REASON_MAX_LEN],
+                    )
+                )
 
         # Per-symbol pass (2026-08-30). `capped_symbols` is the hard safety
         # net described in the docstring: even if `symbols` somehow arrived
@@ -483,9 +487,9 @@ class NewsDataProvider:
         # selection).
         per_symbol_configured = 0
         if self.per_symbol_enabled and symbols:
-            capped_symbols = list(dict.fromkeys(
-                str(s).strip().upper() for s in symbols if str(s).strip()
-            ))[: self.per_symbol_max_symbols]
+            capped_symbols = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))[
+                : self.per_symbol_max_symbols
+            ]
             for symbol in capped_symbols:
                 source_name = f"Yahoo Finance ({symbol})"
                 url = self.per_symbol_feed_template.format(symbol=symbol)
@@ -505,16 +509,22 @@ class NewsDataProvider:
                     # degraded" banner reads (see data_status["news"] in
                     # pipeline_stages.py).
                     logger.warning(
-                        "Failed to fetch per-symbol feed %s: %s", source_name, e,
+                        "Failed to fetch per-symbol feed %s: %s",
+                        source_name,
+                        e,
                     )
                     reason = str(e) or type(e).__name__
-                    failures.append(FeedFailure(
-                        name=source_name, reason=reason[:_FAILURE_REASON_MAX_LEN],
-                    ))
+                    failures.append(
+                        FeedFailure(
+                            name=source_name,
+                            reason=reason[:_FAILURE_REASON_MAX_LEN],
+                        )
+                    )
 
         coverage = NewsCoverage(
             configured=len(self.feeds) + per_symbol_configured,
-            succeeded=succeeded, failed=failures,
+            succeeded=succeeded,
+            failed=failures,
         )
 
         # Deduplicate by title similarity and sort by time (newest first).
@@ -527,10 +537,13 @@ class NewsDataProvider:
         deduped = self._cap_per_symbol_items(deduped, self.per_symbol_max_prompt_items)
 
         logger.info(
-            "Fetched %d news items from %d/%d sources (%d per-symbol; after "
-            "dedup from %d); coverage=%s%s",
-            len(deduped), succeeded, len(self.feeds) + per_symbol_configured,
-            per_symbol_configured, len(all_items), coverage.status,
+            "Fetched %d news items from %d/%d sources (%d per-symbol; after dedup from %d); coverage=%s%s",
+            len(deduped),
+            succeeded,
+            len(self.feeds) + per_symbol_configured,
+            per_symbol_configured,
+            len(all_items),
+            coverage.status,
             f" failed={sorted(f.name for f in failures)}" if failures else "",
         )
         return deduped, coverage
@@ -545,9 +558,7 @@ class NewsDataProvider:
         process, not just calls on the same instance."""
         global _PER_SYMBOL_LAST_REQUEST_AT
         with _PER_SYMBOL_RATE_LOCK:
-            wait = self.per_symbol_request_interval_s - (
-                time.monotonic() - _PER_SYMBOL_LAST_REQUEST_AT
-            )
+            wait = self.per_symbol_request_interval_s - (time.monotonic() - _PER_SYMBOL_LAST_REQUEST_AT)
             if wait > 0:
                 time.sleep(wait)
             _PER_SYMBOL_LAST_REQUEST_AT = time.monotonic()
@@ -619,13 +630,15 @@ class NewsDataProvider:
             if len(summary) > 300:
                 summary = summary[:297] + "..."
 
-            items.append(NewsItem(
-                title=title,
-                summary=summary,
-                source=source_name,
-                published=published,
-                link=entry.get("link", ""),
-            ))
+            items.append(
+                NewsItem(
+                    title=title,
+                    summary=summary,
+                    source=source_name,
+                    published=published,
+                    link=entry.get("link", ""),
+                )
+            )
 
         return items
 
@@ -635,6 +648,7 @@ class NewsDataProvider:
         if parsed:
             try:
                 from calendar import timegm
+
                 ts = timegm(parsed)
                 return datetime.fromtimestamp(ts, tz=timezone.utc)
             except (ValueError, OverflowError):
@@ -685,20 +699,22 @@ class NewsDataProvider:
         collapsed = len(items) - len(representatives)
         if collapsed:
             logger.info(
-                "news dedup: %d article(s) collapsed into %d event(s) "
-                "(from %d raw)",
-                collapsed, len(representatives), len(items),
+                "news dedup: %d article(s) collapsed into %d event(s) (from %d raw)",
+                collapsed,
+                len(representatives),
+                len(items),
             )
         return representatives
 
     def tag_symbol_mentions(self, items: list[NewsItem], universe: list[str]) -> dict[str, list[NewsItem]]:
         """Tag which news items mention symbols from the universe. Uses word-boundary matching."""
         import re
+
         # Short symbols (1-3 chars) are prone to false positives; require word boundaries
         patterns: dict[str, re.Pattern] = {}
         for s in universe:
             sym = s.upper()
-            patterns[sym] = re.compile(r'\b' + re.escape(sym) + r'\b')
+            patterns[sym] = re.compile(r"\b" + re.escape(sym) + r"\b")
         result: dict[str, list[NewsItem]] = {}
         for item in items:
             text = f"{item.title} {item.summary}".upper()

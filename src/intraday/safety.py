@@ -24,7 +24,8 @@ class IntradaySafety:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         is_trading_day=None,
         kill_switch_halt_result=None,
@@ -127,26 +128,19 @@ class IntradaySafety:
         preamble_deferred = ""
         with self._intraday_scan_process_lock() as preamble_lock:
             if not preamble_lock:
-                preamble_deferred = (
-                    "another desk process holds the broker-write lock"
-                )
+                preamble_deferred = "another desk process holds the broker-write lock"
             else:
                 blocking = self._blocking_owner_session()
                 if blocking == "unreadable":
-                    preamble_deferred = (
-                        "the active-session owner file could not be read "
-                        "(fail closed)"
-                    )
+                    preamble_deferred = "the active-session owner file could not be read (fail closed)"
                 elif blocking is not None:
-                    preamble_deferred = (
-                        f"a live {blocking} session owns the desk and runs "
-                        "this same reconcile itself"
-                    )
+                    preamble_deferred = f"a live {blocking} session owns the desk and runs this same reconcile itself"
             if preamble_deferred:
                 logger.warning(
                     "Intra check: broker-writing preamble DEFERRED this tick — "
                     "%s. No drain, repair, release or reconcile ran; the next "
-                    "tick re-reads the broker.", preamble_deferred,
+                    "tick re-reads the broker.",
+                    preamble_deferred,
                 )
             else:
                 # Drain orphaned protection-restore intents — intra runs every

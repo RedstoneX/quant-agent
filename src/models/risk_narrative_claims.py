@@ -35,10 +35,7 @@ def _explicit_risk_pct_claim_texts(text: str) -> list[str]:
     a gap is a real disagreement or the same number said differently (see
     `risk_pct_half_ulp`). Parsing to `float` first throws that away.
     """
-    return [
-        next(g for g in m.groups() if g is not None)
-        for m in _RISK_PCT_CLAIM_PATTERN.finditer(text or "")
-    ]
+    return [next(g for g in m.groups() if g is not None) for m in _RISK_PCT_CLAIM_PATTERN.finditer(text or "")]
 
 
 def _explicit_risk_pct_claims(text: str) -> list[float]:

@@ -12,6 +12,7 @@ original forever. The getter also owns the type gate (a MagicMock or None
 sweeper must read as "no sweeper"), because the type to gate against lives
 behind the broker seam this module may not import.
 """
+
 from __future__ import annotations
 
 import logging

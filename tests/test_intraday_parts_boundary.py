@@ -6,6 +6,7 @@ built from stubs alone (clause 5 of tests/boundary_harness.py). Follows
 tests/test_prompt_facts_parts_boundary.py. This file never imports the pipeline class:
 the scan body is imported from its module by name only.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -60,9 +61,13 @@ def test_every_intraday_module_passes_the_boundary_check(module):
 def test_scan_body_reads_only_what_it_is_handed():
     """The one body left in the shim module is still a part: every `self.` read is a constructor argument."""
     import ast
+
     tree = ast.parse(inspect.getsource(IntradayScanBody))
-    reads = {n.attr for n in ast.walk(tree)
-             if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self"}
+    reads = {
+        n.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self"
+    }
     handed = set(vars(_build(IntradayScanBody)))
     own = {n for n in dir(IntradayScanBody) if not n.startswith("__")}
     foreign = reads - handed - own
@@ -108,8 +113,12 @@ def test_session_is_handed_the_safety_preamble_not_owning_it():
 
 def test_candidates_part_is_handed_the_scan_body_and_the_gates():
     """The scan wrapper, the body and the gates are three parts; the wrapper owns none of the other two."""
-    for name in ("_intraday_opportunity_scan_body", "_intraday_scan_process_lock",
-                 "_recently_intraday_evaluated", "_blocking_owner_session"):
+    for name in (
+        "_intraday_opportunity_scan_body",
+        "_intraday_scan_process_lock",
+        "_recently_intraday_evaluated",
+        "_blocking_owner_session",
+    ):
         assert not hasattr(IntradayCandidates, name), name
     part = _build(IntradayCandidates, intraday_opportunity_scan_body=lambda ctx: {"status": "HANDED IN"})
     assert part._intraday_opportunity_scan_body(None) == {"status": "HANDED IN"}

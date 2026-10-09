@@ -3,10 +3,18 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_settlement.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import logging
 from src.cost_circuit.classification import _all_attempts_provably_free
-from src.cost_circuit.refusal import CallReservation, OUT_OF_CREDIT_DETAIL, out_of_credit_detail, OUT_OF_CREDIT_TRIGGER_CODE, PaidAnalysisSuspended, any_payment_refusal
+from src.cost_circuit.refusal import (
+    CallReservation,
+    OUT_OF_CREDIT_DETAIL,
+    out_of_credit_detail,
+    OUT_OF_CREDIT_TRIGGER_CODE,
+    PaidAnalysisSuspended,
+    any_payment_refusal,
+)
 from src.cost_circuit.clock import _et_day_and_utc_bounds
 
 logger = logging.getLogger(__name__)
@@ -14,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 class Settlement:
     def __init__(
-        self, *,
+        self,
+        *,
         config,
         enabled,
         connect,
@@ -78,21 +87,19 @@ class Settlement:
             self._seed_today(conn)
             self._reconcile_quota_holds_locked(conn, current_day=day)
             state = self._effective_state_locked(
-                conn, day=day, run_id=reservation.run_id, mode=reservation.mode,
+                conn,
+                day=day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
             )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
                 raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
-            session = conn.execute(
-                "SELECT * FROM llm_budget_sessions WHERE run_id=?", (reservation.run_id,)
-            ).fetchone()
+            session = conn.execute("SELECT * FROM llm_budget_sessions WHERE run_id=?", (reservation.run_id,)).fetchone()
             if session is None:
-                raise RuntimeError(
-                    "cost-circuit session accounting row is missing for run "
-                    f"{reservation.run_id}"
-                )
+                raise RuntimeError(f"cost-circuit session accounting row is missing for run {reservation.run_id}")
             session_attempts = int(session["provider_attempts"] or 0)
             daily, session_cost = self._totals(conn, day, reservation.run_id)
 
@@ -100,34 +107,49 @@ class Settlement:
             # I/O -- an earlier call in this same session/day can have
             # settled its real cost while this one waited.
             self._enforce_settled_limits_locked(
-                conn, day=day, run_id=reservation.run_id,
-                mode=reservation.mode, agent_name=reservation.agent_name,
-                attempts=session_attempts, attempts_exact=True,
-                daily=daily, session=session_cost,
+                conn,
+                day=day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
+                agent_name=reservation.agent_name,
+                attempts=session_attempts,
+                attempts_exact=True,
+                daily=daily,
+                session=session_cost,
             )
             state = self._effective_state_locked(
-                conn, day=day, run_id=reservation.run_id, mode=reservation.mode,
+                conn,
+                day=day,
+                run_id=reservation.run_id,
+                mode=reservation.mode,
             )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
-                raise PaidAnalysisSuspended(
-                    str(state.get("trigger_detail") or "circuit open"), state
-                )
+                raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
             max_per_call = int(self.config.max_provider_attempts_per_call)
             if next_attempt > max_per_call:
                 self._trip_locked(
-                    conn, code="provider_attempt_limit",
-                    detail=(f"{reservation.agent_name} provider attempt {next_attempt} "
-                            f"exceeds per-call safe limit {max_per_call}"),
-                    run_id=reservation.run_id, mode=reservation.mode,
-                    agent_name=reservation.agent_name, attempts=session_attempts,
-                    session_cost=session_cost, daily_cost=daily,
+                    conn,
+                    code="provider_attempt_limit",
+                    detail=(
+                        f"{reservation.agent_name} provider attempt {next_attempt} "
+                        f"exceeds per-call safe limit {max_per_call}"
+                    ),
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
+                    agent_name=reservation.agent_name,
+                    attempts=session_attempts,
+                    session_cost=session_cost,
+                    daily_cost=daily,
                     costs_exact=True,
                 )
                 state = self._effective_state_locked(
-                    conn, day=day, run_id=reservation.run_id, mode=reservation.mode,
+                    conn,
+                    day=day,
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
                 )
                 conn.commit()
                 self._notify_if_needed()
@@ -139,9 +161,7 @@ class Settlement:
                 (reservation.run_id,),
             )
             if updated_session.rowcount != 1:
-                raise RuntimeError(
-                    f"cost-circuit session {reservation.run_id} disappeared at authorization"
-                )
+                raise RuntimeError(f"cost-circuit session {reservation.run_id} disappeared at authorization")
             conn.commit()
         reservation.attempt_count = next_attempt
         return next_attempt
@@ -203,9 +223,10 @@ class Settlement:
         # ambiguous attempt) — not for a winner with a number.
         if failed_attempt_errors and not unknown:
             logger.info(
-                "cost-circuit: %s completed at $%.6f after %d prior attempt(s); "
-                "booking the winner as exact",
-                reservation.agent_name, accounted, len(failed_attempt_errors),
+                "cost-circuit: %s completed at $%.6f after %d prior attempt(s); booking the winner as exact",
+                reservation.agent_name,
+                accounted,
+                len(failed_attempt_errors),
             )
         exact = not unknown
         with self._connect() as conn:
@@ -217,9 +238,7 @@ class Settlement:
                 (accounted, int(exact), reservation.run_id),
             )
             if updated_session.rowcount != 1:
-                raise RuntimeError(
-                    f"cost-circuit session {reservation.run_id} is missing at completion"
-                )
+                raise RuntimeError(f"cost-circuit session {reservation.run_id} is missing at completion")
             updated_day = conn.execute(
                 "UPDATE llm_budget_days SET incremental_cost_usd=incremental_cost_usd+?, "
                 "unknown_cost_rows=unknown_cost_rows+?, "
@@ -228,13 +247,12 @@ class Settlement:
                 (
                     accounted,
                     int(unknown),
-                    int(exact), day,
+                    int(exact),
+                    day,
                 ),
             )
             if updated_day.rowcount != 1:
-                raise RuntimeError(
-                    f"cost-circuit day {day} is missing at completion"
-                )
+                raise RuntimeError(f"cost-circuit day {day} is missing at completion")
             daily, session_cost = self._totals(conn, day, reservation.run_id)
             session_row = conn.execute(
                 "SELECT provider_attempts FROM llm_budget_sessions WHERE run_id=?",
@@ -243,12 +261,18 @@ class Settlement:
             attempts = int(session_row["provider_attempts"] or 0)
             if unknown:
                 self._trip_locked(
-                    conn, code="unknown_actual_cost",
-                    detail=(f"{reservation.agent_name} returned no usable token/cost telemetry; "
-                            "continuing cannot be budgeted safely"),
-                    run_id=reservation.run_id, mode=reservation.mode,
-                    agent_name=reservation.agent_name, attempts=attempts,
-                    session_cost=session_cost, daily_cost=daily,
+                    conn,
+                    code="unknown_actual_cost",
+                    detail=(
+                        f"{reservation.agent_name} returned no usable token/cost telemetry; "
+                        "continuing cannot be budgeted safely"
+                    ),
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
+                    agent_name=reservation.agent_name,
+                    attempts=attempts,
+                    session_cost=session_cost,
+                    daily_cost=daily,
                     costs_exact=False,
                 )
             else:
@@ -258,9 +282,15 @@ class Settlement:
                 # hard-latch here: the winner's cost is booked; remaining
                 # caps still bind on the known minimum.
                 self._enforce_settled_limits_locked(
-                    conn, day=day, run_id=reservation.run_id, mode=reservation.mode,
-                    agent_name=reservation.agent_name, attempts=attempts,
-                    attempts_exact=True, daily=daily, session=session_cost,
+                    conn,
+                    day=day,
+                    run_id=reservation.run_id,
+                    mode=reservation.mode,
+                    agent_name=reservation.agent_name,
+                    attempts=attempts,
+                    attempts_exact=True,
+                    daily=daily,
+                    session=session_cost,
                 )
             self._refresh_latched_snapshot_locked(conn)
             conn.commit()
@@ -319,14 +349,11 @@ class Settlement:
                 )
             else:
                 updated_session = conn.execute(
-                    "UPDATE llm_budget_sessions SET updated_at=datetime('now') "
-                    "WHERE run_id=?",
+                    "UPDATE llm_budget_sessions SET updated_at=datetime('now') WHERE run_id=?",
                     (reservation.run_id,),
                 )
             if updated_session.rowcount != 1:
-                raise RuntimeError(
-                    f"cost-circuit session {reservation.run_id} is missing at failure"
-                )
+                raise RuntimeError(f"cost-circuit session {reservation.run_id} is missing at failure")
             if ambiguous:
                 updated_day = conn.execute(
                     "UPDATE llm_budget_days SET "
@@ -342,9 +369,7 @@ class Settlement:
                     (day,),
                 )
                 if updated_day.rowcount != 1:
-                    raise RuntimeError(
-                        f"cost-circuit day {day} is missing at failure"
-                    )
+                    raise RuntimeError(f"cost-circuit day {day} is missing at failure")
             daily, session_cost = self._totals(conn, day, reservation.run_id)
             session = conn.execute(
                 "SELECT provider_attempts FROM llm_budget_sessions WHERE run_id=?",
@@ -357,8 +382,13 @@ class Settlement:
                 "session_cost_usd, daily_cost_usd) VALUES "
                 "('call_failed', ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    type(error).__name__, reservation.run_id, reservation.mode,
-                    reservation.agent_name, attempts, session_cost, daily,
+                    type(error).__name__,
+                    reservation.run_id,
+                    reservation.mode,
+                    reservation.agent_name,
+                    attempts,
+                    session_cost,
+                    daily,
                 ),
             )
             if ambiguous:
@@ -371,10 +401,7 @@ class Settlement:
                 out_of_credit = any_payment_refusal(error, attempt_errors)
                 if out_of_credit:
                     trip_code = OUT_OF_CREDIT_TRIGGER_CODE
-                    trip_detail = (
-                        f"paid analysis is off for {reservation.agent_name} because "
-                        f"{out_of_credit_detail()}"
-                    )
+                    trip_detail = f"paid analysis is off for {reservation.agent_name} because {out_of_credit_detail()}"
                 else:
                     trip_code = "failed_call_unknown_cost"
                     trip_detail = (

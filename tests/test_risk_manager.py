@@ -11,9 +11,13 @@ def _pm_rc() -> ReasoningChain:
     fields populated with non-empty values per `Field(min_length=1)`.
     """
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -35,8 +39,12 @@ def sample_portfolio_decision():
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10.0,
-                entry_price=507.0, stop_loss=490.0, take_profit=530.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10.0,
+                entry_price=507.0,
+                stop_loss=490.0,
+                take_profit=530.0,
                 reasoning="Strong uptrend",
             ),
         ],
@@ -46,12 +54,14 @@ def sample_portfolio_decision():
 
 @pytest.fixture
 def mock_risk_response():
-    return json.dumps({
-        "approved": True,
-        "reasoning_chain": _risk_rc_payload(),
-        "modifications": [],
-        "reasoning": "Plan looks sound. Risk-reward acceptable.",
-    })
+    return json.dumps(
+        {
+            "approved": True,
+            "reasoning_chain": _risk_rc_payload(),
+            "modifications": [],
+            "reasoning": "Plan looks sound. Risk-reward acceptable.",
+        }
+    )
 
 
 @patch("anthropic.Anthropic")
@@ -78,12 +88,14 @@ def test_risk_manager_approve(mock_cls, sample_portfolio_decision, mock_risk_res
 
 @patch("anthropic.Anthropic")
 def test_risk_manager_with_violations(mock_cls, sample_portfolio_decision):
-    rejection = json.dumps({
-        "approved": False,
-        "reasoning_chain": _risk_rc_payload(),
-        "modifications": [],
-        "reasoning": "Single-name position limit exceeded. No new trades.",
-    })
+    rejection = json.dumps(
+        {
+            "approved": False,
+            "reasoning_chain": _risk_rc_payload(),
+            "modifications": [],
+            "reasoning": "Single-name position limit exceeded. No new trades.",
+        }
+    )
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text=rejection)]
@@ -111,6 +123,7 @@ def test_risk_manager_with_violations(mock_cls, sample_portfolio_decision):
 # ---------------------------------------------------------------------------
 # Per-entry isolation for modifications (mirrors PR #73/#74 pattern)
 # ---------------------------------------------------------------------------
+
 
 def _valid_risk_verdict_json() -> dict:
     return {
@@ -234,6 +247,7 @@ def test_prompt_describes_correct_pipeline_order():
     execution run after RM. Pin the corrected order so this can't
     silently drift back."""
     from src.agents.risk_manager import PROMPT_PATH
+
     text = PROMPT_PATH.read_text()
     assert "already ran, before you" in text
     assert "After you, `PortfolioConstructor` submits orders" not in text
@@ -243,17 +257,26 @@ def test_prompt_describes_correct_pipeline_order():
 def test_dropped_news_symbols_are_stated_as_unknown_not_silence(mock_cls, sample_portfolio_decision):
     """Incomplete news must reach Risk as UNKNOWN, matching the PM block."""
     from src.models import MacroNarrative, NewsIntelligenceReport
+
     news_intel = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-15", era_themes=["test"],
+            last_updated="2026-09-15",
+            era_themes=["test"],
             current_regime="risk-on",
         ),
-        stock_news={"NVDA": [{
-            "headline": "chip news", "sentiment": "bullish",
-            "conviction": "medium", "impact_summary": "positive",
-        }]},
+        stock_news={
+            "NVDA": [
+                {
+                    "headline": "chip news",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "positive",
+                }
+            ]
+        },
         pm_briefing="NVDA bullish.",
-        market_sentiment="bullish", confidence="medium",
+        market_sentiment="bullish",
+        confidence="medium",
     )
     news_intel.dropped_news_symbols = ["MSFT"]
     news_intel.stock_news["MSFT"] = []
@@ -278,13 +301,12 @@ def test_dropped_news_symbols_are_stated_as_unknown_not_silence(mock_cls, sample
 # render with one prefix, `VIOLATION`, and 3 of 17 stored verdicts then
 # vetoed a whole plan citing an advisory as "the hard risk rule".
 
+
 def _findings(*rules):
     from src.agents.risk_manager import _format_engine_findings
     from src.risk.rules import RiskViolation
-    return _format_engine_findings([
-        RiskViolation(rule=r, message=f"{r} fired", value=1.0, limit=2.0)
-        for r in rules
-    ])
+
+    return _format_engine_findings([RiskViolation(rule=r, message=f"{r} fired", value=1.0, limit=2.0) for r in rules])
 
 
 def test_an_advisory_does_not_render_as_a_violation():
@@ -304,6 +326,7 @@ def test_the_class_is_read_from_the_rule_set_never_from_the_rule_name():
     """`max_sector_pct` and `max_sector_hard_pct` differ by one word and sit
     on opposite sides of the line. A name-based split gets this wrong."""
     from src.risk.rules import HARD_BLOCK_RULES
+
     assert "max_sector_pct" not in HARD_BLOCK_RULES
     assert "max_sector_hard_pct" in HARD_BLOCK_RULES
     soft = _findings("max_sector_pct")
@@ -314,8 +337,11 @@ def test_the_class_is_read_from_the_rule_set_never_from_the_rule_name():
 
 def test_a_hard_limit_can_never_rank_below_an_advisory():
     text = _findings(
-        "max_sector_pct", "correlation_cluster", "data_degraded",
-        "max_position_pct", "deployment_gap",
+        "max_sector_pct",
+        "correlation_cluster",
+        "data_degraded",
+        "max_position_pct",
+        "deployment_gap",
     )
     assert text.index("HARD LIMIT BREACHED") < text.index("ADVISORY (nothing blocked)")
 
@@ -336,10 +362,16 @@ def test_every_advisory_the_pipeline_can_raise_renders_as_an_advisory():
     """Whatever new non-blocking rule a future change adds, it classifies
     correctly for free — membership of HARD_BLOCK_RULES is the only test."""
     for rule in (
-        "max_sector_pct", "correlation_cluster", "deployment_gap",
-        "data_degraded", "analysis_parse_loss", "analysis_field_nulled",
-        "correlation_coverage_gap", "pm_audit_step_missing",
-        "sector_unresolved_no_sector", "sector_unresolved_lookup_failed",
+        "max_sector_pct",
+        "correlation_cluster",
+        "deployment_gap",
+        "data_degraded",
+        "analysis_parse_loss",
+        "analysis_field_nulled",
+        "correlation_coverage_gap",
+        "pm_audit_step_missing",
+        "sector_unresolved_no_sector",
+        "sector_unresolved_lookup_failed",
         "sector_unresolved",
     ):
         text = _findings(rule)
@@ -349,6 +381,7 @@ def test_every_advisory_the_pipeline_can_raise_renders_as_an_advisory():
 
 def test_every_hard_rule_renders_as_a_hard_limit():
     from src.risk.rules import HARD_BLOCK_RULES
+
     for rule in sorted(HARD_BLOCK_RULES):
         text = _findings(rule)
         assert f"HARD LIMIT BREACHED [{rule}]" in text, rule

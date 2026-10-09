@@ -4,6 +4,7 @@ Both are functions of their arguments alone: no broker, no client, no
 database. They can be exercised with a bare exception or a bare float, which
 is the boundary test for a split.
 """
+
 from __future__ import annotations
 
 import math

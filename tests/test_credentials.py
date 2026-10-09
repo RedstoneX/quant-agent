@@ -41,6 +41,7 @@ def _write_credentials(directory: Path, **values: str) -> Path:
 # The reader
 # ---------------------------------------------------------------------------
 
+
 def test_credentials_directory_present_and_readable(tmp_path, monkeypatch):
     """The happy path: systemd delivered both credentials as files."""
     directory = _write_credentials(
@@ -222,9 +223,7 @@ def test_systemd_credentials_do_not_disturb_other_interpolations(tmp_path, monke
     monkeypatch.setenv("FRED_API_KEY", "dummy-fred-untouched")
     monkeypatch.setenv("ALPACA_API_KEY", "placeholder-alpaca-key-xxx")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "placeholder-alpaca-secret-x")
-    directory = _write_credentials(
-        tmp_path / "creds", alpaca_api_key=DUMMY_KEY_FROM_SYSTEMD
-    )
+    directory = _write_credentials(tmp_path / "creds", alpaca_api_key=DUMMY_KEY_FROM_SYSTEMD)
     monkeypatch.setenv(CREDENTIALS_DIRECTORY_ENV, str(directory))
 
     api_keys = _load(tmp_path / "cfg").api_keys
@@ -249,6 +248,7 @@ def test_substitute_env_vars_unchanged_without_overrides(monkeypatch):
 # ---------------------------------------------------------------------------
 # The placeholder detector
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "value",
@@ -314,6 +314,7 @@ def test_detector_uses_no_length_or_prefix_rule():
 # Startup reporting
 # ---------------------------------------------------------------------------
 
+
 class _ApiKeys:
     def __init__(self, alpaca_key, alpaca_secret):
         self.alpaca_key = alpaca_key
@@ -344,7 +345,9 @@ def test_report_startup_credentials_shouts_about_a_placeholder(monkeypatch, capl
 
     with caplog.at_level(logging.INFO, logger="credential-test"):
         problems = report_startup_credentials(
-            api_keys, logger=logger, state_path=tmp_path / "marker.json",
+            api_keys,
+            logger=logger,
+            state_path=tmp_path / "marker.json",
         )
 
     assert len(problems) == 1
@@ -363,7 +366,9 @@ def test_report_startup_credentials_is_quiet_when_both_look_real(monkeypatch, ca
 
     with caplog.at_level(logging.INFO, logger="credential-test-quiet"):
         problems = report_startup_credentials(
-            api_keys, logger=logger, state_path=tmp_path / "marker.json",
+            api_keys,
+            logger=logger,
+            state_path=tmp_path / "marker.json",
         )
 
     assert problems == []
@@ -392,6 +397,7 @@ def test_alert_failure_never_blocks_startup(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # alert volume — the reason this is rationed at all
 # ---------------------------------------------------------------------------
+
 
 def test_both_placeholders_produce_one_message_not_two(monkeypatch, tmp_path):
     """Two placeholder credentials must not mean two Telegram messages.
@@ -479,12 +485,13 @@ def test_a_failed_push_is_not_recorded_as_sent(monkeypatch, tmp_path):
 # the word list is matched on word boundaries, not as raw substrings
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "value",
     [
-        "AKFZ8XTODOI3XQ",     # contains "todo" by chance
-        "PKINSERT9QZ2X4LM",   # contains "insert" by chance
-        "AKXXXXQ7ZM2V9LD4",   # contains "xxxx" by chance
+        "AKFZ8XTODOI3XQ",  # contains "todo" by chance
+        "PKINSERT9QZ2X4LM",  # contains "insert" by chance
+        "AKXXXXQ7ZM2V9LD4",  # contains "xxxx" by chance
         "PK7ZQ3M2V9LD4WX1",
     ],
 )
@@ -535,20 +542,22 @@ _SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 # Units that read or write the broker account and therefore run the startup
 # credential check. Enumerated, not inferred: a new unit must be classified
 # deliberately, and `test_every_unit_is_classified` fails until it is.
-_UNITS_NEEDING_BROKER_CREDENTIALS = frozenset({
-    "quant-agent-api.service",
-    "quant-agent-close.service",
-    "quant-agent-daily.service",
-    "quant-agent-earnings_preprocess.service",
-    "quant-agent-evening.service",
-    "quant-agent-intra_check.service",
-    # Board item 177: the free safety preamble on its own schedule. It
-    # cancels and re-places protective stops and reconciles fills, so it
-    # writes to the broker exactly as intra_check does.
-    "quant-agent-intra_safety.service",
-    "quant-agent-midday.service",
-    "quant-agent-morning.service",
-})
+_UNITS_NEEDING_BROKER_CREDENTIALS = frozenset(
+    {
+        "quant-agent-api.service",
+        "quant-agent-close.service",
+        "quant-agent-daily.service",
+        "quant-agent-earnings_preprocess.service",
+        "quant-agent-evening.service",
+        "quant-agent-intra_check.service",
+        # Board item 177: the free safety preamble on its own schedule. It
+        # cancels and re-places protective stops and reconciles fills, so it
+        # writes to the broker exactly as intra_check does.
+        "quant-agent-intra_safety.service",
+        "quant-agent-midday.service",
+        "quant-agent-morning.service",
+    }
+)
 
 
 def _unit_files() -> list[Path]:
@@ -560,7 +569,7 @@ def _exec_start_runner(unit_text: str) -> Path | None:
     for line in unit_text.splitlines():
         if not line.startswith("ExecStart="):
             continue
-        for token in line[len("ExecStart="):].split():
+        for token in line[len("ExecStart=") :].split():
             if token.endswith(".sh"):
                 return _SCRIPT_DIR / Path(token).name
     return None
@@ -580,7 +589,7 @@ def test_broker_units_declare_load_credential() -> None:
         expected = unit.name in _UNITS_NEEDING_BROKER_CREDENTIALS
         text = unit.read_text()
         declared = {
-            line.split(":", 1)[0][len("LoadCredential="):]
+            line.split(":", 1)[0][len("LoadCredential=") :]
             for line in text.splitlines()
             if line.startswith("LoadCredential=")
         }

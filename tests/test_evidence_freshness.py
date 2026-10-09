@@ -5,6 +5,7 @@ reader is built from plain dictionaries of status words, and every
 classification it makes is checked against the tables it was handed. If
 this file ever needs the gate module back, the boundary was not real.
 """
+
 import pytest
 
 from src.evidence_freshness import (
@@ -36,14 +37,14 @@ def test_the_reader_is_built_from_plain_values_and_keeps_each_one():
     assert built._status_freshness == TABLE
     assert built._expired_statuses == frozenset({"stale"})
     assert (built._fresh_label, built._carried_label, built._absent_label) == (
-        "F", "C", "A",
+        "F",
+        "C",
+        "A",
     )
 
 
 def test_it_classifies_only_by_the_table_it_was_handed():
-    record = _reader().read(
-        {"a": "looked", "b": "remembered", "c": "lost", "d": "stale"}
-    )
+    record = _reader().read({"a": "looked", "b": "remembered", "c": "lost", "d": "stale"})
     assert record.fresh == ["a"]
     assert record.carried == ["b", "d"]
     assert record.absent == ["c"]

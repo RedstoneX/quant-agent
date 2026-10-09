@@ -97,27 +97,27 @@ PAPER_ACCOUNT_PREFIX = "PA"
 # Rows here are the contaminated record: they were produced by, or describe,
 # decisions made under the reward:risk geometry defect. All of them go.
 CLEAR_TABLES = (
-    "trades",                        # the trade ledger itself
-    "positions",                     # local mirror of the book
-    "daily_pnl",                     # the equity curve
-    "insights",                      # evening lessons grading those trades
-    "intraday_evaluations",          # per-symbol evaluation ledger + cooldowns
-    "pending_protection_restores",   # write-ahead queue -> dead order ids
-    "pending_repegs",                # write-ahead queue -> dead order ids
+    "trades",  # the trade ledger itself
+    "positions",  # local mirror of the book
+    "daily_pnl",  # the equity curve
+    "insights",  # evening lessons grading those trades
+    "intraday_evaluations",  # per-symbol evaluation ledger + cooldowns
+    "pending_protection_restores",  # write-ahead queue -> dead order ids
+    "pending_repegs",  # write-ahead queue -> dead order ids
 )
 
 # Rows here are NOT trading decisions. Keeping them costs nothing and
 # deleting them would destroy spend accounting or alerting health.
 KEEP_TABLES = (
-    "agent_logs",                    # LLM cost + token ledger (token_budget fits from this)
-    "alert_channel_checks",          # alerting health history
+    "agent_logs",  # LLM cost + token ledger (token_budget fits from this)
+    "alert_channel_checks",  # alerting health history
     "llm_budget_days",
     "llm_budget_sessions",
     "llm_budget_reservations",
     "llm_circuit_state",
     "llm_circuit_events",
     "llm_quota_holds",
-    "sqlite_sequence",               # sqlite-managed; handled surgically below
+    "sqlite_sequence",  # sqlite-managed; handled surgically below
 )
 
 EVIDENCE_TABLE = "specialist_evidence"
@@ -127,13 +127,15 @@ EVIDENCE_TABLE = "specialist_evidence"
 # invented, so only what is CLEARLY worth keeping survives: paid specialist
 # market observation. Everything else — decision rows, seat stances,
 # pipeline telemetry — is dropped.
-EVIDENCE_KEEP_KINDS = frozenset({
-    "analysis",        # tech / earnings / macro / news specialist output
-    "finding",         # smart-money findings
-    "admission",       # smart-money watchlist admissions
-    "scan_summary",    # smart-money scan coverage
-    "coverage",        # macro/news provider coverage records
-})
+EVIDENCE_KEEP_KINDS = frozenset(
+    {
+        "analysis",  # tech / earnings / macro / news specialist output
+        "finding",  # smart-money findings
+        "admission",  # smart-money watchlist admissions
+        "scan_summary",  # smart-money scan coverage
+        "coverage",  # macro/news provider coverage records
+    }
+)
 
 # Named only so the dry-run can explain WHY each is going, instead of
 # lumping them into "everything else".
@@ -158,10 +160,16 @@ TABLE_POLICY[EVIDENCE_TABLE] = "partial"
 
 # AUTOINCREMENT tables whose sqlite_sequence counter is reset when the table
 # is fully emptied, so a fresh desk starts at id 1.
-_AUTOINCREMENT_TABLES = frozenset({
-    "trades", "agent_logs", "specialist_evidence",
-    "pending_protection_restores", "pending_repegs", "intraday_evaluations",
-})
+_AUTOINCREMENT_TABLES = frozenset(
+    {
+        "trades",
+        "agent_logs",
+        "specialist_evidence",
+        "pending_protection_restores",
+        "pending_repegs",
+        "intraday_evaluations",
+    }
+)
 
 
 class ResetRefused(RuntimeError):
@@ -171,6 +179,7 @@ class ResetRefused(RuntimeError):
 # --------------------------------------------------------------------------
 # bootstrap (same shape as scripts/export_alpaca_trades.py)
 # --------------------------------------------------------------------------
+
 
 def _load_env_file() -> None:
     """Best-effort .env loader. Existing environment wins."""
@@ -183,7 +192,7 @@ def _load_env_file() -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             if line.startswith("export "):
-                line = line[len("export "):].lstrip()
+                line = line[len("export ") :].lstrip()
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip().strip('"').strip("'")
@@ -200,6 +209,7 @@ def _utc_stamp() -> str:
 # --------------------------------------------------------------------------
 # guardrail 1 — paper account (the one that matters)
 # --------------------------------------------------------------------------
+
 
 def resolve_endpoint(client) -> str:
     """The base URL the SDK client will actually hit, as a plain string.
@@ -228,6 +238,7 @@ def probe_live_endpoint(api_key: str, secret_key: str, timeout: float = 10.0) ->
     """
     try:
         import requests
+
         resp = requests.get(
             LIVE_PROBE_URL,
             headers={
@@ -276,8 +287,7 @@ def assert_paper_account(
 
     if config_paper is not True:
         failures.append(
-            f"settings.yaml alpaca.paper is {config_paper!r}, not True — "
-            "this configuration is not a paper account"
+            f"settings.yaml alpaca.paper is {config_paper!r}, not True — this configuration is not a paper account"
         )
     else:
         passed.append("config alpaca.paper is True")
@@ -286,14 +296,9 @@ def assert_paper_account(
     if not host_cfg:
         failures.append("settings.yaml alpaca.base_url is empty — cannot confirm the venue")
     elif LIVE_HOST in host_cfg and PAPER_HOST not in host_cfg:
-        failures.append(
-            f"settings.yaml alpaca.base_url points at the LIVE host: {config_base_url!r}"
-        )
+        failures.append(f"settings.yaml alpaca.base_url points at the LIVE host: {config_base_url!r}")
     elif PAPER_HOST not in host_cfg:
-        failures.append(
-            f"settings.yaml alpaca.base_url is not the paper host {PAPER_HOST}: "
-            f"{config_base_url!r}"
-        )
+        failures.append(f"settings.yaml alpaca.base_url is not the paper host {PAPER_HOST}: {config_base_url!r}")
     else:
         passed.append(f"config alpaca.base_url is {PAPER_HOST}")
 
@@ -304,10 +309,7 @@ def assert_paper_account(
             "to guess which venue it would trade against"
         )
     elif PAPER_HOST not in host_live:
-        failures.append(
-            f"the broker client resolves to {endpoint!r}, which is NOT "
-            f"{PAPER_HOST} — refusing"
-        )
+        failures.append(f"the broker client resolves to {endpoint!r}, which is NOT {PAPER_HOST} — refusing")
     else:
         passed.append(f"broker client resolves to {endpoint}")
 
@@ -336,8 +338,7 @@ def assert_paper_account(
             )
         elif live_probe.get("error"):
             passed.append(
-                f"live-host probe inconclusive (network: {live_probe['error'][:80]}) "
-                "— relying on the checks above"
+                f"live-host probe inconclusive (network: {live_probe['error'][:80]}) — relying on the checks above"
             )
         else:
             passed.append(
@@ -347,8 +348,7 @@ def assert_paper_account(
 
     if failures:
         raise ResetRefused(
-            "REFUSING TO RESET — this does not look like a paper account.\n"
-            + "\n".join(f"  - {f}" for f in failures)
+            "REFUSING TO RESET — this does not look like a paper account.\n" + "\n".join(f"  - {f}" for f in failures)
         )
     return passed
 
@@ -356,6 +356,7 @@ def assert_paper_account(
 # --------------------------------------------------------------------------
 # guardrail 2 — market hours / desk session windows
 # --------------------------------------------------------------------------
+
 
 def check_trading_window(
     *,
@@ -373,10 +374,7 @@ def check_trading_window(
     from src import trading_calendar as tc
 
     when = now if now is not None else tc.et_now()
-    active = [
-        mode for mode in tc.SESSION_WINDOWS
-        if tc.in_session_window(mode, when)
-    ]
+    active = [mode for mode in tc.SESSION_WINDOWS if tc.in_session_window(mode, when)]
 
     refusals: list[str] = []
     warnings: list[str] = []
@@ -388,9 +386,7 @@ def check_trading_window(
             "only after stopping the desk timers."
         )
     elif market_open is None:
-        warnings.append(
-            "could not read the broker clock — market-open state unknown"
-        )
+        warnings.append("could not read the broker clock — market-open state unknown")
 
     if active and not allow_session_window:
         refusals.append(
@@ -421,6 +417,7 @@ def check_trading_window(
 # database inspection + backup
 # --------------------------------------------------------------------------
 
+
 def _connect(db_path: Path, *, read_only: bool) -> sqlite3.Connection:
     if read_only:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10.0)
@@ -435,9 +432,7 @@ def _connect(db_path: Path, *, read_only: bool) -> sqlite3.Connection:
 
 
 def list_tables(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
     return [r[0] for r in rows]
 
 
@@ -480,19 +475,13 @@ def plan_database(conn: sqlite3.Connection, *, evidence_mode: str) -> dict:
         "keep": keep,
         "unknown": unknown,
         "evidence": evidence,
-        "missing_expected": [
-            t for t in TABLE_POLICY
-            if t not in present and t != "sqlite_sequence"
-        ],
+        "missing_expected": [t for t in TABLE_POLICY if t not in present and t != "sqlite_sequence"],
     }
 
 
 def plan_evidence(conn: sqlite3.Connection, *, evidence_mode: str) -> dict:
     """Per-kind breakdown of specialist_evidence and what happens to it."""
-    rows = conn.execute(
-        f'SELECT kind, COUNT(*) AS n FROM "{EVIDENCE_TABLE}" '
-        "GROUP BY kind ORDER BY n DESC"
-    ).fetchall()
+    rows = conn.execute(f'SELECT kind, COUNT(*) AS n FROM "{EVIDENCE_TABLE}" GROUP BY kind ORDER BY n DESC').fetchall()
     kept, dropped = [], []
     for r in rows:
         kind, n = r["kind"], int(r["n"])
@@ -501,15 +490,18 @@ def plan_evidence(conn: sqlite3.Connection, *, evidence_mode: str) -> dict:
         elif evidence_mode == "none":
             dropped.append({"kind": kind, "rows": n, "reason": "--evidence=none"})
         elif kind in EVIDENCE_KEEP_KINDS:
-            kept.append({"kind": kind, "rows": n,
-                         "reason": "paid specialist market observation"})
+            kept.append({"kind": kind, "rows": n, "reason": "paid specialist market observation"})
         else:
-            dropped.append({
-                "kind": kind, "rows": n,
-                "reason": EVIDENCE_DROP_REASONS.get(
-                    kind, "UNRECOGNISED kind — dropped by the keep-list policy",
-                ),
-            })
+            dropped.append(
+                {
+                    "kind": kind,
+                    "rows": n,
+                    "reason": EVIDENCE_DROP_REASONS.get(
+                        kind,
+                        "UNRECOGNISED kind — dropped by the keep-list policy",
+                    ),
+                }
+            )
     return {
         "mode": evidence_mode,
         "total": sum(int(r["n"]) for r in rows),
@@ -587,13 +579,10 @@ def clear_database(conn: sqlite3.Connection, plan: dict, *, evidence_mode: str) 
                 keep_kinds = sorted(EVIDENCE_KEEP_KINDS)
                 placeholders = ",".join("?" for _ in keep_kinds)
                 cur = conn.execute(
-                    f'DELETE FROM "{EVIDENCE_TABLE}" '
-                    f"WHERE kind NOT IN ({placeholders})",
+                    f'DELETE FROM "{EVIDENCE_TABLE}" WHERE kind NOT IN ({placeholders})',
                     keep_kinds,
                 )
-            deleted[EVIDENCE_TABLE] = (
-                cur.rowcount if cur.rowcount is not None else ev["drop_rows"]
-            )
+            deleted[EVIDENCE_TABLE] = cur.rowcount if cur.rowcount is not None else ev["drop_rows"]
 
         # Restart AUTOINCREMENT ids only for tables we fully emptied — a
         # partially-cleared table must keep its counter or new ids collide
@@ -616,10 +605,12 @@ def clear_database(conn: sqlite3.Connection, plan: dict, *, evidence_mode: str) 
 # broker side
 # --------------------------------------------------------------------------
 
+
 def _order_summary(order) -> dict:
     def g(name, default=None):
         v = getattr(order, name, default)
         return str(getattr(v, "value", v)) if v is not None else None
+
     return {
         "id": g("id"),
         "symbol": g("symbol"),
@@ -643,24 +634,34 @@ def read_book(client) -> dict:
     acct = {
         k: str(getattr(account, k, "") or "")
         for k in (
-            "account_number", "id", "status", "cash", "equity",
-            "portfolio_value", "long_market_value", "short_market_value",
-            "buying_power", "non_marginable_buying_power", "multiplier",
+            "account_number",
+            "id",
+            "status",
+            "cash",
+            "equity",
+            "portfolio_value",
+            "long_market_value",
+            "short_market_value",
+            "buying_power",
+            "non_marginable_buying_power",
+            "multiplier",
             "pattern_day_trader",
         )
     }
 
     positions = []
     for p in client.get_all_positions():
-        positions.append({
-            "symbol": str(p.symbol),
-            "qty": str(p.qty),
-            "side": str(getattr(getattr(p, "side", None), "value", getattr(p, "side", ""))),
-            "avg_entry_price": str(p.avg_entry_price),
-            "current_price": str(getattr(p, "current_price", "")),
-            "market_value": str(p.market_value),
-            "unrealized_pl": str(getattr(p, "unrealized_pl", "")),
-        })
+        positions.append(
+            {
+                "symbol": str(p.symbol),
+                "qty": str(p.qty),
+                "side": str(getattr(getattr(p, "side", None), "value", getattr(p, "side", ""))),
+                "avg_entry_price": str(p.avg_entry_price),
+                "current_price": str(getattr(p, "current_price", "")),
+                "market_value": str(p.market_value),
+                "unrealized_pl": str(getattr(p, "unrealized_pl", "")),
+            }
+        )
 
     # Alpaca's default page size for GET /v2/orders is 50. The report and the
     # backup snapshot should not silently truncate at 50 open orders, so ask
@@ -705,13 +706,17 @@ def flatten_book(client, *, settle_seconds: float, poll_seconds: float = 2.0) ->
             # ClosePositionResponse carries order_id directly; `body` is the
             # full Order and is the fallback for older SDK shapes.
             oid = getattr(r, "order_id", None) or getattr(
-                getattr(r, "body", None), "id", "",
+                getattr(r, "body", None),
+                "id",
+                "",
             )
-            result["close_all"].append({
-                "symbol": str(getattr(r, "symbol", "")),
-                "status": str(getattr(r, "status", "")),
-                "order_id": str(oid or ""),
-            })
+            result["close_all"].append(
+                {
+                    "symbol": str(getattr(r, "symbol", "")),
+                    "status": str(getattr(r, "status", "")),
+                    "order_id": str(oid or ""),
+                }
+            )
     except Exception as exc:  # noqa: BLE001
         result["errors"].append(f"close_all_positions: {exc}")
 
@@ -737,12 +742,12 @@ def flatten_book(client, *, settle_seconds: float, poll_seconds: float = 2.0) ->
 # rendering
 # --------------------------------------------------------------------------
 
+
 def _rule(title: str = "") -> str:
     return f"\n{'=' * 78}\n{title}\n{'=' * 78}" if title else "=" * 78
 
 
-def render_plan(book: dict, plan: dict, window: dict, paths: dict,
-                *, execute: bool, checks: list[str]) -> str:
+def render_plan(book: dict, plan: dict, window: dict, paths: dict, *, execute: bool, checks: list[str]) -> str:
     out: list[str] = []
     mode = "EXECUTE" if execute else "DRY RUN — nothing will be changed"
     out.append(_rule(f"DESK RESET — {mode}"))
@@ -754,10 +759,7 @@ def render_plan(book: dict, plan: dict, window: dict, paths: dict,
     out.append("\nTIMING")
     out.append(f"  ET now                : {window['et_now']}")
     out.append(f"  Market open           : {window['market_open']}")
-    out.append(
-        "  Active desk windows   : "
-        + (", ".join(window["active_session_windows"]) or "none")
-    )
+    out.append("  Active desk windows   : " + (", ".join(window["active_session_windows"]) or "none"))
     for w in window["warnings"]:
         out.append(f"  NOTE  {w}")
 
@@ -818,14 +820,10 @@ def render_plan(book: dict, plan: dict, window: dict, paths: dict,
         out.append(f"  KEEP   {e['table']:<32} {e['rows']:>8} rows")
     for e in plan["unknown"]:
         out.append(
-            f"  KEEP?  {e['table']:<32} {e['rows']:>8} rows  "
-            "<- UNKNOWN to this tool; kept. Add it to TABLE_POLICY."
+            f"  KEEP?  {e['table']:<32} {e['rows']:>8} rows  <- UNKNOWN to this tool; kept. Add it to TABLE_POLICY."
         )
     if plan["missing_expected"]:
-        out.append(
-            "  NOTE   expected tables absent from this DB: "
-            + ", ".join(plan["missing_expected"])
-        )
+        out.append("  NOTE   expected tables absent from this DB: " + ", ".join(plan["missing_expected"]))
 
     out.append("\nNOT TOUCHED AT ALL (this tool never deletes files)")
     out.append("  data/pricing_cache.json          price history cache")
@@ -847,8 +845,7 @@ def render_plan(book: dict, plan: dict, window: dict, paths: dict,
     return "\n".join(out)
 
 
-def render_summary(before: dict, after: dict, deleted: dict,
-                   flatten: dict, paths: dict) -> str:
+def render_summary(before: dict, after: dict, deleted: dict, flatten: dict, paths: dict) -> str:
     out = [_rule("AFTER")]
     a0, a1 = before["account"], after["account"]
     out.append(f"  Equity        : {a0.get('equity')}  ->  {a1.get('equity')}")
@@ -856,14 +853,8 @@ def render_summary(before: dict, after: dict, deleted: dict,
     out.append(f"  Positions     : {len(before['positions'])}  ->  {len(after['positions'])}")
     out.append(f"  Open orders   : {len(before['orders'])}  ->  {len(after['orders'])}")
     if after["positions"]:
-        out.append(
-            "  NOT FLAT — remaining: "
-            + ", ".join(f"{p['symbol']}x{p['qty']}" for p in after["positions"])
-        )
-        out.append(
-            "  If the market was closed this is EXPECTED: the liquidating "
-            "orders are queued for the next open."
-        )
+        out.append("  NOT FLAT — remaining: " + ", ".join(f"{p['symbol']}x{p['qty']}" for p in after["positions"]))
+        out.append("  If the market was closed this is EXPECTED: the liquidating orders are queued for the next open.")
     if flatten.get("errors"):
         for e in flatten["errors"]:
             out.append(f"  BROKER ERROR  {e}")
@@ -878,37 +869,34 @@ def render_summary(before: dict, after: dict, deleted: dict,
 # main
 # --------------------------------------------------------------------------
 
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="desk_reset.py",
-        description="Flatten the paper book and clear contaminated history. "
-                    "Dry-run by default.",
+        description="Flatten the paper book and clear contaminated history. Dry-run by default.",
     )
     p.add_argument("--config", default=str(PROJECT_ROOT / "config" / "settings.yaml"))
-    p.add_argument("--db", default=None,
-                   help="Override the SQLite path (default: storage.db_path)")
-    p.add_argument("--backup-root", default=None,
-                   help="Where timestamped backups go (default: <db dir>/resets)")
-    p.add_argument("--execute", action="store_true",
-                   help="Actually do it. Without this the tool only prints a plan.")
-    p.add_argument("--yes", action="store_true",
-                   help="Skip the interactive confirmation (for scripted use).")
-    p.add_argument("--allow-market-open", action="store_true",
-                   help="Proceed even though the market is open.")
-    p.add_argument("--allow-session-window", action="store_true",
-                   help="Proceed even though a desk session window is active.")
-    p.add_argument("--evidence", choices=("analysis-only", "none", "all"),
-                   default="analysis-only",
-                   help="specialist_evidence policy (default: analysis-only — "
-                        "keep paid specialist observation, drop decision rows)")
-    p.add_argument("--skip-broker", action="store_true",
-                   help="Database-only reset; do not touch the broker.")
-    p.add_argument("--skip-db", action="store_true",
-                   help="Broker-only flatten; leave the database alone.")
-    p.add_argument("--no-live-probe", action="store_true",
-                   help="Skip the read-only live-host credential probe.")
-    p.add_argument("--settle-seconds", type=float, default=20.0,
-                   help="How long to wait for liquidations to fill (default 20).")
+    p.add_argument("--db", default=None, help="Override the SQLite path (default: storage.db_path)")
+    p.add_argument("--backup-root", default=None, help="Where timestamped backups go (default: <db dir>/resets)")
+    p.add_argument("--execute", action="store_true", help="Actually do it. Without this the tool only prints a plan.")
+    p.add_argument("--yes", action="store_true", help="Skip the interactive confirmation (for scripted use).")
+    p.add_argument("--allow-market-open", action="store_true", help="Proceed even though the market is open.")
+    p.add_argument(
+        "--allow-session-window", action="store_true", help="Proceed even though a desk session window is active."
+    )
+    p.add_argument(
+        "--evidence",
+        choices=("analysis-only", "none", "all"),
+        default="analysis-only",
+        help="specialist_evidence policy (default: analysis-only — "
+        "keep paid specialist observation, drop decision rows)",
+    )
+    p.add_argument("--skip-broker", action="store_true", help="Database-only reset; do not touch the broker.")
+    p.add_argument("--skip-db", action="store_true", help="Broker-only flatten; leave the database alone.")
+    p.add_argument("--no-live-probe", action="store_true", help="Skip the read-only live-host credential probe.")
+    p.add_argument(
+        "--settle-seconds", type=float, default=20.0, help="How long to wait for liquidations to fill (default 20)."
+    )
     return p
 
 
@@ -929,6 +917,7 @@ def run(argv: list[str] | None = None) -> int:
     cfg = None
     if args.db is None or not args.skip_broker:
         from src.config import load_config
+
         cfg = load_config(Path(args.config))
 
     db_path = _resolve_db_path(args, cfg)
@@ -957,6 +946,7 @@ def run(argv: list[str] | None = None) -> int:
             return 2
 
         from alpaca.trading.client import TradingClient
+
         client = TradingClient(api_key, secret_key, paper=bool(cfg.alpaca.paper))
 
         book = read_book(client)
@@ -984,8 +974,7 @@ def run(argv: list[str] | None = None) -> int:
     window["warnings"].extend(check_live_checkpoints(db_path.parent))
 
     # ---- database plan ----
-    plan = {"tables_present": [], "clear": [], "keep": [], "unknown": [],
-            "evidence": None, "missing_expected": []}
+    plan = {"tables_present": [], "clear": [], "keep": [], "unknown": [], "evidence": None, "missing_expected": []}
     if not args.skip_db:
         conn = _connect(db_path, read_only=True)
         try:
@@ -993,15 +982,14 @@ def run(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
 
-    print(render_plan(book, plan, window, paths,
-                      execute=args.execute, checks=checks))
+    print(render_plan(book, plan, window, paths, execute=args.execute, checks=checks))
 
     if window["refusals"]:
         # A dry run is harmless, so it always completes and simply reports
         # that the same invocation with --execute would be refused. Only the
         # real thing is blocked.
         label = "REFUSING TO RUN" if args.execute else "WOULD REFUSE (dry run)"
-        sys.stdout.flush()   # keep the plan above the refusal when redirected
+        sys.stdout.flush()  # keep the plan above the refusal when redirected
         print(f"\n{label}:", file=sys.stderr)
         for r in window["refusals"]:
             print(f"  - {r}", file=sys.stderr)
@@ -1033,8 +1021,7 @@ def run(argv: list[str] | None = None) -> int:
     if not args.skip_db:
         manifest["db_backup"] = backup_database(db_path, backup_dir / db_path.name)
         manifest["plan"] = plan
-        print(f"\nBacked up database -> {manifest['db_backup']['path']} "
-              f"({manifest['db_backup']['bytes']} bytes)")
+        print(f"\nBacked up database -> {manifest['db_backup']['path']} ({manifest['db_backup']['bytes']} bytes)")
 
     # ---- flatten ----
     flatten: dict = {"close_all": [], "errors": [], "cancelled_after": None}
@@ -1053,10 +1040,7 @@ def run(argv: list[str] | None = None) -> int:
     if not args.skip_broker:
         residual = client.get_all_positions()
         if flatten["errors"]:
-            abort_reason = (
-                "the broker reported errors during the flatten: "
-                + "; ".join(flatten["errors"])
-            )
+            abort_reason = "the broker reported errors during the flatten: " + "; ".join(flatten["errors"])
         elif residual and book["market_open"] is True:
             abort_reason = (
                 f"{len(residual)} position(s) still open after "

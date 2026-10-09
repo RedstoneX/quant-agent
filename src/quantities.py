@@ -164,11 +164,11 @@ def cash_above_reserve(cash: Any, reserve_usd: Any) -> float:
 # API's display labeling (`inverse_etf_symbols()`). Nothing hand-maintains
 # a second copy of this table.
 ETF_LEVERAGE: dict[str, float] = {
-    "SH": -1.0,    # -1x S&P 500
-    "SDS": -2.0,   # -2x S&P 500
-    "PSQ": -1.0,   # -1x Nasdaq 100
+    "SH": -1.0,  # -1x S&P 500
+    "SDS": -2.0,  # -2x S&P 500
+    "PSQ": -1.0,  # -1x Nasdaq 100
     "SQQQ": -3.0,  # -3x Nasdaq 100
-    "DRAM": 1.0,   # 1x (normal ETF, no adjustment)
+    "DRAM": 1.0,  # 1x (normal ETF, no adjustment)
     "SMH": 1.0,
 }
 
@@ -353,9 +353,7 @@ def collapse_stances(values: Iterable[Any]) -> str | None:
     "neutral") returns "mixed" — an unresolved split, not invented agreement.
     """
     cleaned = {
-        str(value).strip().lower().replace(" ", "_")
-        for value in values
-        if value is not None and str(value).strip()
+        str(value).strip().lower().replace(" ", "_") for value in values if value is not None and str(value).strip()
     }
     cleaned -= {"none", "n/a", "na", "unknown", "unavailable", "not_available"}
     if not cleaned:

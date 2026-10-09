@@ -11,6 +11,7 @@ RECORDING ONLY. These tests assert the row's shape, its unit and its NULL
 discipline. Nothing here derives, tunes or proposes a ceiling, and nothing in
 the product reads these rows back into a sizing, ordering or refusal decision.
 """
+
 import json
 
 import pytest
@@ -41,8 +42,7 @@ def _allocation():
     """A real allocator run, not a stub: the recording must describe the
     object that actually rations orders in production."""
     return allocate_risk_budget(
-        [RiskRequest("AAA", 5.0), RiskRequest("BBB", 5.0),
-         RiskRequest("CCC", 5.0)],
+        [RiskRequest("AAA", 5.0), RiskRequest("BBB", 5.0), RiskRequest("CCC", 5.0)],
         clusters=[["AAA", "BBB"]],
         ceiling_pct=25.0,
         cluster_share_pct=40.0,
@@ -52,13 +52,16 @@ def _allocation():
 
 def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     alloc = _allocation()
-    assert record_realised_risk_budget(
-        db,
-        allocation=alloc,
-        equity=100_000.0,
-        cluster_share_pct=40.0,
-        run_id="run-1",
-    ) is True
+    assert (
+        record_realised_risk_budget(
+            db,
+            allocation=alloc,
+            equity=100_000.0,
+            cluster_share_pct=40.0,
+            run_id="run-1",
+        )
+        is True
+    )
     rows = _rows(db)
     assert len(rows) == 1
     row = rows[0]
@@ -69,9 +72,7 @@ def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     # At-risk carried by held names no request touched, read off the
     # allocator's own "held + granted" arithmetic — not a second estimate.
     granted = sum(g.granted_pct for g in alloc.grants.values())
-    assert row["held_only_pct"] == pytest.approx(
-        alloc.committed_pct - granted
-    )
+    assert row["held_only_pct"] == pytest.approx(alloc.committed_pct - granted)
     assert row["committed_pct"] == pytest.approx(alloc.committed_pct)
     clusters = json.loads(row["cluster_shares_json"])
     assert clusters, "a run with a cluster must record that cluster"
@@ -79,7 +80,9 @@ def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     # row has to carry that quantity and not only the raw at-risk percent.
     for entry in clusters:
         assert set(entry) == {
-            "members", "at_risk_pct", "share_of_committed_pct",
+            "members",
+            "at_risk_pct",
+            "share_of_committed_pct",
         }
         assert entry["members"] == sorted(entry["members"])
     aaa_bbb = [c for c in clusters if c["members"] == ["AAA", "BBB"]]
@@ -89,9 +92,7 @@ def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     )
     grants = json.loads(row["grants_json"])
     assert {g["symbol"] for g in grants} == {"AAA", "BBB", "CCC"}
-    assert row["rationed_names"] == sum(
-        1 for g in grants if g["limited_by"]
-    )
+    assert row["rationed_names"] == sum(1 for g in grants if g["limited_by"])
 
 
 def test_an_unknown_book_records_unknown_and_not_zero(db):
@@ -100,11 +101,16 @@ def test_an_unknown_book_records_unknown_and_not_zero(db):
     That is the state the ceilings go UNENFORCED in, so it must be visible as
     unknown — a row of zeros would read as a book with no concentration.
     """
-    assert record_realised_risk_budget(
-        db,
-        allocation=None, equity=100_000.0,
-        cluster_share_pct=40.0, run_id="run-2",
-    ) is True
+    assert (
+        record_realised_risk_budget(
+            db,
+            allocation=None,
+            equity=100_000.0,
+            cluster_share_pct=40.0,
+            run_id="run-2",
+        )
+        is True
+    )
     row = _rows(db)[0]
     assert row["allocator_ran"] == 0
     assert row["committed_pct"] is None
@@ -118,8 +124,10 @@ def test_the_recording_is_idempotent_per_run(db):
     for _ in range(2):
         record_realised_risk_budget(
             db,
-            allocation=_allocation(), equity=1.0,
-            cluster_share_pct=40.0, run_id="run-3",
+            allocation=_allocation(),
+            equity=1.0,
+            cluster_share_pct=40.0,
+            run_id="run-3",
         )
     assert len(_rows(db)) == 1
 
@@ -129,8 +137,10 @@ def test_a_fully_granted_book_carries_no_untouched_held_risk(db):
     figure must be 0.0 and not silently absent."""
     record_realised_risk_budget(
         db,
-        allocation=_allocation(), equity=1.0,
-        cluster_share_pct=40.0, run_id="run-4",
+        allocation=_allocation(),
+        equity=1.0,
+        cluster_share_pct=40.0,
+        run_id="run-4",
     )
     assert _rows(db)[0]["held_only_pct"] == pytest.approx(0.0)
 
@@ -145,6 +155,7 @@ def test_the_decision_stage_calls_the_recorder():
     import inspect
 
     from src import pipeline_risk_budget_recording, stage_decision
+
     src = inspect.getsource(stage_decision)
     both = inspect.getsource(pipeline_risk_budget_recording)
     assert "_record_realised_sector_weights(" in both

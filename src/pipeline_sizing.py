@@ -24,6 +24,7 @@ import math
 #: byte-identical.
 from src.pipeline_gross_ceiling import _session_gross_ceiling
 from src.sentinel.guarded import record_guarded_pass
+
 logger = logging.getLogger("src.pipeline_stages")
 
 
@@ -55,16 +56,16 @@ def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool
         info = pipeline.broker.get_fractionability(symbol)
         record_guarded_pass(pipeline, "sizing.fractional_allowed")
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(pipeline, "sizing.fractional_allowed", exc, log=logger,
-                       context={"effect": "whole shares (fail closed)"})
+        record_guarded_pass(
+            pipeline, "sizing.fractional_allowed", exc, log=logger, context={"effect": "whole shares (fail closed)"}
+        )
         return False
     if not isinstance(info, dict) or not info.get("fractionable"):
-        reason = (
-            info.get("reason", "unknown") if isinstance(info, dict) else "unknown"
-        )
+        reason = info.get("reason", "unknown") if isinstance(info, dict) else "unknown"
         logger.info(
             "fractional sizing NOT available for %s (%s) — whole shares",
-            symbol, reason,
+            symbol,
+            reason,
         )
         return False
     return True
@@ -92,14 +93,17 @@ def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
     if not fractional:
         return float(int(value))
     try:
-        decimals = int(getattr(
-            getattr(pipeline.config, "execution", None),
-            "fractional_share_decimals", 4,
-        ))
+        decimals = int(
+            getattr(
+                getattr(pipeline.config, "execution", None),
+                "fractional_share_decimals",
+                4,
+            )
+        )
     except (TypeError, ValueError):
         decimals = 4
     decimals = min(max(decimals, 1), 9)
-    scale = 10 ** decimals
+    scale = 10**decimals
     return math.floor(value * scale) / scale
 
 
@@ -132,16 +136,18 @@ def _risk_budget_pct(pipeline) -> float:
     than trusted from a bare `getattr`.
     """
     raw = getattr(
-        getattr(pipeline.config, "risk", None), "max_position_risk_pct", None,
+        getattr(pipeline.config, "risk", None),
+        "max_position_risk_pct",
+        None,
     )
     if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
         return _DEFAULT_RISK_BUDGET_PCT
     return float(raw)
 
 
-def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
-                        stop_price: float, is_short: bool,
-                        fractional: bool) -> float | None:
+def _qty_by_risk_budget(
+    pipeline, *, total_value: float, sizing_price: float, stop_price: float, is_short: bool, fractional: bool
+) -> float | None:
     """Shares the §11.1 risk budget allows, or None when geometry is unusable.
 
     ONE definition, two callers — the BUY-submit loop (which sizes the real
@@ -171,10 +177,7 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     # D4: geometry validity is direction-aware — a long's stop must sit
     # below its entry, a short's strictly above.
-    valid_geometry = (
-        (not is_short and sizing_price > stop_price)
-        or (is_short and stop_price > sizing_price)
-    )
+    valid_geometry = (not is_short and sizing_price > stop_price) or (is_short and stop_price > sizing_price)
     if not valid_geometry:
         return None
     # D4: unsigned everywhere.
@@ -186,7 +189,9 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     risk_dollars = total_value * _risk_budget_pct(pipeline) / 100
     return _size_shares(
-        pipeline, risk_dollars / risk_per_share, fractional=fractional,
+        pipeline,
+        risk_dollars / risk_per_share,
+        fractional=fractional,
     )
 
 
@@ -206,7 +211,8 @@ def _min_order_usd(pipeline) -> float:
     """
     raw = getattr(
         getattr(getattr(pipeline, "config", None), "cash_sweep", None),
-        "min_order_usd", None,
+        "min_order_usd",
+        None,
     )
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return 500.0
@@ -287,23 +293,28 @@ def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
             "§11.2: the gross-exposure ceiling could not be resolved for the "
             "submit loop — falling back to the pre-margin raw-cash clamp "
             "($%.2f). Entries are bounded by settled cash this session, not "
-            "by the ladder.", float(cash) if isinstance(cash, (int, float)) else 0.0,
+            "by the ladder.",
+            float(cash) if isinstance(cash, (int, float)) else 0.0,
         )
         usable_cash = (
             float(cash)
-            if isinstance(cash, (int, float)) and not isinstance(cash, bool)
-            and math.isfinite(float(cash))
+            if isinstance(cash, (int, float)) and not isinstance(cash, bool) and math.isfinite(float(cash))
             else 0.0
         )
         return max(0.0, usable_cash), False, "raw settled cash (ladder unreadable)"
 
-    if (isinstance(equity, bool) or not isinstance(equity, (int, float))
-            or not math.isfinite(float(equity)) or float(equity) <= 0):
+    if (
+        isinstance(equity, bool)
+        or not isinstance(equity, (int, float))
+        or not math.isfinite(float(equity))
+        or float(equity) <= 0
+    ):
         logger.warning(
             "§11.2: equity read is unusable (%r) — refusing every new entry "
             "this session rather than sizing a budget against it. The ladder "
             "is already at its floor rung (%.1fx) for the same reason.",
-            equity, ceiling.ceiling_x,
+            equity,
+            ceiling.ceiling_x,
         )
         return 0.0, True, "no usable equity read — no new entry permitted"
 
@@ -315,8 +326,7 @@ def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
     try:
         park = pipeline._sweep_symbol()
     except Exception as e:  # noqa: BLE001
-        logger.warning("§11.2: cash-park symbol unreadable (%s) — counting "
-                       "parked cash as gross for the budget", e)
+        logger.warning("§11.2: cash-park symbol unreadable (%s) — counting parked cash as gross for the budget", e)
         park = None
     if not isinstance(park, str):
         park = None
@@ -343,15 +353,18 @@ def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
     # budget it was never meant to have. Only a real `True` unbinds cash.
     # RiskConfig.allow_margin is pydantic-typed `bool`, so production is
     # unaffected by the stricter read.
-    allow_margin = getattr(
-        getattr(getattr(pipeline, "config", None), "risk", None),
-        "allow_margin", False,
-    ) is True
+    allow_margin = (
+        getattr(
+            getattr(getattr(pipeline, "config", None), "risk", None),
+            "allow_margin",
+            False,
+        )
+        is True
+    )
     if not allow_margin:
         usable_cash = (
             float(cash)
-            if isinstance(cash, (int, float)) and not isinstance(cash, bool)
-            and math.isfinite(float(cash))
+            if isinstance(cash, (int, float)) and not isinstance(cash, bool) and math.isfinite(float(cash))
             else 0.0
         )
         usable_cash = max(0.0, usable_cash)
@@ -380,12 +393,17 @@ def _single_name_execution_cap(pipeline, equity: float) -> float:
     the setting is unreadable, and to zero on an unusable equity figure —
     the same fail-closed direction as the budget.
     """
-    if (isinstance(equity, bool) or not isinstance(equity, (int, float))
-            or not math.isfinite(float(equity)) or float(equity) <= 0):
+    if (
+        isinstance(equity, bool)
+        or not isinstance(equity, (int, float))
+        or not math.isfinite(float(equity))
+        or float(equity) <= 0
+    ):
         return 0.0
     raw = getattr(
         getattr(getattr(pipeline, "config", None), "risk", None),
-        "max_position_pct", None,
+        "max_position_pct",
+        None,
     )
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         pct = 20.0

@@ -9,6 +9,7 @@ construct this per call.
 Migration steps are NEVER reordered, renumbered or altered here: production
 databases have already applied them.
 """
+
 from __future__ import annotations
 
 import logging
@@ -390,6 +391,7 @@ class DatabaseSchema:
         # additive schema here makes read-only API health available after any
         # normal DB initialization and keeps migrations explicit.
         from src.cost_circuit import ensure_cost_circuit_schema
+
         try:
             ensure_cost_circuit_schema(self.conn)
             self.conn.commit()
@@ -416,6 +418,7 @@ class DatabaseSchema:
         guard would permanently skip take_profit if it wasn't added together.
         """
         import logging as _logging
+
         _log = _logging.getLogger(__name__)
 
         def _ensure_column(table: str, column: str, ddl: str) -> None:
@@ -493,8 +496,8 @@ class DatabaseSchema:
             self.conn.commit()
         except Exception as e:  # noqa: BLE001
             _log.error(
-                "Schema migration backfill for trades.initial_take_profit "
-                "failed: %s", e,
+                "Schema migration backfill for trades.initial_take_profit failed: %s",
+                e,
             )
         # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
         # `pace` used to be measured against `avg_hold_days` from the system's
@@ -505,7 +508,9 @@ class DatabaseSchema:
         # be recomputed. NULL on legacy rows — those positions get no pace
         # figure at all rather than a fabricated one.
         _ensure_column(
-            "trades", "expected_horizon_sessions", "expected_horizon_sessions INTEGER",
+            "trades",
+            "expected_horizon_sessions",
+            "expected_horizon_sessions INTEGER",
         )
         _ensure_column("trades", "setup_type", "setup_type TEXT")
         # Item 82 (2026-09-25): the MEASURED half of construction's own
@@ -594,7 +599,8 @@ class DatabaseSchema:
             "ON alignment_exit_readings (symbol, session_date)"
         )
         _ensure_column(
-            "alignment_exit_readings", "not_evaluated_reason",
+            "alignment_exit_readings",
+            "not_evaluated_reason",
             "not_evaluated_reason TEXT",
         )
         # Item 78 evidence, RECORDING ONLY: nothing may read these rows
@@ -685,10 +691,10 @@ class DatabaseSchema:
             """
         )
         self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
-            "ON realised_sector_weights (session_date)"
+            "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date ON realised_sector_weights (session_date)"
         )
         from src.storage.schema.realised_sector_weights_migration import ensure_not_null
+
         ensure_not_null(self.conn)
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
@@ -855,7 +861,9 @@ class DatabaseSchema:
         # the ratified floor only, never a value to optimise a multiplier
         # against. NULL on every legacy row and every non-entry row.
         _ensure_column(
-            "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
+            "trades",
+            "max_favourable_excursion",
+            "max_favourable_excursion REAL",
         )
         # `max_adverse_overnight_gap` — SHORT-SIDE GAP EVIDENCE, the worst
         # ADVERSE overnight gap (session open minus the prior session's
@@ -883,16 +891,22 @@ class DatabaseSchema:
         # contributes nothing, so the stored figure is a FLOOR on the worst
         # adverse gap, never an overstatement.
         _ensure_column(
-            "trades", "max_adverse_overnight_gap", "max_adverse_overnight_gap REAL",
+            "trades",
+            "max_adverse_overnight_gap",
+            "max_adverse_overnight_gap REAL",
         )
         _ensure_column(
-            "trades", "overnight_gap_sessions", "overnight_gap_sessions INTEGER",
+            "trades",
+            "overnight_gap_sessions",
+            "overnight_gap_sessions INTEGER",
         )
         # `last_overnight_gap_date` — the session date of the most recently
         # recorded gap, so a second sync in the same session cannot count
         # the same gap twice. Idempotence by date, not by call count.
         _ensure_column(
-            "trades", "last_overnight_gap_date", "last_overnight_gap_date TEXT",
+            "trades",
+            "last_overnight_gap_date",
+            "last_overnight_gap_date TEXT",
         )
         # --- Item 55 evidence: WHAT the stop was based on, and what the
         # market then did with that level. RECORDING ONLY (2026-10-01).
@@ -941,7 +955,9 @@ class DatabaseSchema:
         # reading that says the level WAS exceeded is trustworthy while one
         # that says it was not is only "not observed".
         _ensure_column(
-            "trades", "level_max_penetration", "level_max_penetration REAL",
+            "trades",
+            "level_max_penetration",
+            "level_max_penetration REAL",
         )
         # `level_closest_approach` — the SMALLEST distance ever seen between
         # price and the NEAR edge of the zone, monotonic downwards, signed:
@@ -950,7 +966,9 @@ class DatabaseSchema:
         # separates "never came near it", "entered the zone", and "went
         # clean through it" without anyone having to name a tolerance.
         _ensure_column(
-            "trades", "level_closest_approach", "level_closest_approach REAL",
+            "trades",
+            "level_closest_approach",
+            "level_closest_approach REAL",
         )
         _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
@@ -988,7 +1006,8 @@ class DatabaseSchema:
         _ensure_column("insights", "selection_rules_json", "selection_rules_json TEXT DEFAULT '[]'")
         _ensure_column("insights", "discipline_notes_json", "discipline_notes_json TEXT DEFAULT '[]'")
         _ensure_column(
-            "insights", "previous_outlook_assessment",
+            "insights",
+            "previous_outlook_assessment",
             "previous_outlook_assessment TEXT DEFAULT ''",
         )
         # codex r7 P1 #3: pending_protection_restores table for older DBs

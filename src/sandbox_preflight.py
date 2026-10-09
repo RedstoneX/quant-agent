@@ -222,8 +222,7 @@ def check_account_key_is_the_pinned_sandbox_one(environment: SandboxEnvironment)
         )
     if not key:
         raise SandboxRefusal(
-            "Refusing to start: no ALPACA_API_KEY is present, so there is "
-            "nothing to check the sandbox pin against."
+            "Refusing to start: no ALPACA_API_KEY is present, so there is nothing to check the sandbox pin against."
         )
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     if digest == pin:
@@ -241,15 +240,11 @@ def check_paper_lock_still_holds(paper: bool, base_url: str) -> None:
     """Re-assert the existing paper-only lock; never relax it."""
     if paper is not True:
         raise SandboxRefusal(
-            "Refusing to start: the configuration is not paper-only. The "
-            "sandbox never reaches live trading."
+            "Refusing to start: the configuration is not paper-only. The sandbox never reaches live trading."
         )
     if "paper-api.alpaca.markets" in base_url:
         return
-    raise SandboxRefusal(
-        "Refusing to start: the broker base URL is not Alpaca's paper host. "
-        f"(Got: {base_url}.)"
-    )
+    raise SandboxRefusal(f"Refusing to start: the broker base URL is not Alpaca's paper host. (Got: {base_url}.)")
 
 
 def run_preflight(checkout: Path, env: dict[str, str] | None = None) -> None:

@@ -78,18 +78,12 @@ def full_book_reason(
     deployed = _f(deployed_pct)
     invested_cap = _f(max_total_position_pct)
     if deployed is not None and invested_cap is not None and deployed >= invested_cap:
-        return (
-            f"invested {deployed:.1f}% of the account against its own "
-            f"{invested_cap:.1f}% ceiling"
-        )
+        return f"invested {deployed:.1f}% of the account against its own {invested_cap:.1f}% ceiling"
 
     gross = _f(gross_pct)
     gross_x = _f(max_gross_exposure_x)
     if gross is not None and gross_x is not None and gross >= gross_x * 100:
-        return (
-            f"gross exposure {gross / 100:.2f}x against its own "
-            f"{gross_x:.2f}x ceiling"
-        )
+        return f"gross exposure {gross / 100:.2f}x against its own {gross_x:.2f}x ceiling"
 
     return None
 
@@ -192,8 +186,7 @@ def _plain(value, depth: int = 0):
     if isinstance(value, (list, tuple)):
         return [_plain(v, depth + 1) for v in value]
     if isinstance(value, dict):
-        return {str(k): _plain(v, depth + 1) for k, v in sorted(
-            value.items(), key=lambda kv: str(kv[0]))}
+        return {str(k): _plain(v, depth + 1) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
     for attr in ("isoformat",):
         fn = getattr(value, attr, None)
         if callable(fn):
@@ -213,8 +206,12 @@ def _plain(value, depth: int = 0):
 #: stored beside it) is NOT an input: hashing it would make the fingerprint
 #: depend on itself, so it could never match a stored one.
 _PRIOR_FIELDS_THE_PROMPT_READS = (
-    "rating", "conviction", "first_seen_date",
-    "entry_price", "stop_loss", "reference_target",
+    "rating",
+    "conviction",
+    "first_seen_date",
+    "entry_price",
+    "stop_loss",
+    "reference_target",
 )
 
 
@@ -265,14 +262,16 @@ def tech_input_fingerprint(
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     except (_Unfingerprintable, TypeError, ValueError, RecursionError) as exc:
         logger.info(
-            "tech re-read cache: %s has no usable input fingerprint (%s) — "
-            "asking the seat", symbol, exc,
+            "tech re-read cache: %s has no usable input fingerprint (%s) — asking the seat",
+            symbol,
+            exc,
         )
         return None
     except Exception as exc:  # pragma: no cover - fail open on anything
         logger.warning(
-            "tech re-read cache: unexpected fingerprint failure for %s (%s) — "
-            "asking the seat", symbol, exc,
+            "tech re-read cache: unexpected fingerprint failure for %s (%s) — asking the seat",
+            symbol,
+            exc,
         )
         return None
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

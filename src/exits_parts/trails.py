@@ -4,6 +4,7 @@ The body is unchanged apart from `self` -> `owner` (the pipeline instance is
 now the first argument); `ExitEngineMixin._apply_deterministic_trails` is a one-line shim with the
 same signature. Sell-side code: behaviour is identical.
 """
+
 import logging
 
 from src.sentinel.guarded_exit import record_exit_guard
@@ -31,10 +32,12 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
     here reads the record back to decide anything but whether to write.
     """
     from src.execution.stop_records import (
-        recorded_initial_stop, replace_stop_and_record,
+        recorded_initial_stop,
+        replace_stop_and_record,
     )
     from src.execution.exit_path_records import (
-        last_trail_states, record_trail_code_census,
+        last_trail_states,
+        record_trail_code_census,
         record_trail_state_if_changed,
     )
     from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
@@ -44,25 +47,37 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
     # it cannot answer how OFTEN an outcome occurs. This counts every
     # evaluation this run, written once at the end of the pass.
     from collections import Counter as _Counter
+
     code_census: _Counter = _Counter()
     last_codes = last_trail_states(
-        owner.db, [getattr(p, "symbol", "") for p in positions],
+        owner.db,
+        [getattr(p, "symbol", "") for p in positions],
     )
 
     def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
         code_census[str(code)] += 1
         record_trail_state_if_changed(
-            owner.db, last_codes, run_id=run_id, symbol=symbol,
-            code=code, detail=detail, **facts,
+            owner.db,
+            last_codes,
+            run_id=run_id,
+            symbol=symbol,
+            code=code,
+            detail=detail,
+            **facts,
         )
 
     try:
         from src.execution.scale_in import pending_protection_symbols
+
         pending_syms = pending_protection_symbols(owner.db)
         record_exit_guard(owner, "trail.pending_protection_symbols")
     except Exception as exc:  # noqa: BLE001
         record_exit_guard(
-            owner, "trail.pending_protection_symbols", exc, logger, effect="treated as no in-flight restore rows",
+            owner,
+            "trail.pending_protection_symbols",
+            exc,
+            logger,
+            effect="treated as no in-flight restore rows",
         )
         pending_syms = set()
     for position in positions:
@@ -81,7 +96,12 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
             record_exit_guard(owner, "trail.last_buy_lookup")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                owner, "trail.last_buy_lookup", e, logger, symbol=symbol, effect="symbol skipped this pass",
+                owner,
+                "trail.last_buy_lookup",
+                e,
+                logger,
+                symbol=symbol,
+                effect="symbol skipped this pass",
             )
             _note(symbol, "opening_row_lookup_failed", str(e))
             continue
@@ -109,11 +129,22 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
             record_exit_guard(owner, "trail.position_open_row")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                owner, "trail.position_open_row", e, logger, symbol=symbol, effect="falls back to last opening row",
+                owner,
+                "trail.position_open_row",
+                e,
+                logger,
+                symbol=symbol,
+                effect="falls back to last opening row",
             )
         from src.execution.stop_read import read_stop, repair_for
-        _stop_read = read_stop(owner.broker, symbol, db=owner.db,
-                               context="deterministic trail", establish=repair_for(owner._repair_stop_coverage, position))
+
+        _stop_read = read_stop(
+            owner.broker,
+            symbol,
+            db=owner.db,
+            context="deterministic trail",
+            establish=repair_for(owner._repair_stop_coverage, position),
+        )
         if _stop_read.unreadable:
             _note(symbol, "live_stop_lookup_failed", _stop_read.reason)
             continue
@@ -179,14 +210,16 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
                 opened_ts = None
             entry_ts = opened_ts or (buy or {}).get("timestamp") or ""
             entry_day = entry_ts[:10]
-            bars = [
-                b for b in all_bars
-                if not entry_day or str(getattr(b, "date", ""))[:10] >= entry_day
-            ]
+            bars = [b for b in all_bars if not entry_day or str(getattr(b, "date", ""))[:10] >= entry_day]
             record_exit_guard(owner, "trail.bar_fetch")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                owner, "trail.bar_fetch", e, logger, symbol=symbol, effect="trail evaluated without bars",
+                owner,
+                "trail.bar_fetch",
+                e,
+                logger,
+                symbol=symbol,
+                effect="trail evaluated without bars",
             )
 
         # Item 82: the MEASURED half of the breakout verdict, pinned at
@@ -237,10 +270,7 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
             # number. Whether any such row exists is UNVERIFIED. The
             # null fallback below is safe either way — it only applies
             # to rows the migration left empty.
-            reference_target=(
-                (buy or {}).get("initial_take_profit")
-                or (buy or {}).get("take_profit")
-            ),
+            reference_target=((buy or {}).get("initial_take_profit") or (buy or {}).get("take_profit")),
             bars=bars,
             atr=owner._atr_for_symbol(symbol),
             # Shorts-safe (Stage 2): `qty` supplies only the side so a
@@ -259,7 +289,8 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
         proposal = evaluation.proposal
         if proposal is None:
             _note(
-                symbol, evaluation.code,
+                symbol,
+                evaluation.code,
                 # Item 212 follow-up: on a range name the R-ratchet leg
                 # supplies the code, so the STRUCTURAL leg's own refusal
                 # reason would otherwise never be recorded again. It is
@@ -275,17 +306,31 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
         logger.info("Deterministic trail: %s", proposal.reason)
         try:
             from src.execution.stop_records import accepted_stop_order
+
             order = replace_stop_and_record(
-                owner.broker, owner.db, symbol, proposal.new_stop, run_id=run_id, caller="deterministic_trail",
+                owner.broker,
+                owner.db,
+                symbol,
+                proposal.new_stop,
+                run_id=run_id,
+                caller="deterministic_trail",
             )
             record_exit_guard(owner, "trail.replace_stop")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                owner, "trail.replace_stop", e, logger, symbol=symbol, effect="old stop remains in force",
+                owner,
+                "trail.replace_stop",
+                e,
+                logger,
+                symbol=symbol,
+                effect="old stop remains in force",
             )
             _note(
-                symbol, "replace_raised", str(e),
-                proposed_stop=proposal.new_stop, current_stop=current_stop,
+                symbol,
+                "replace_raised",
+                str(e),
+                proposed_stop=proposal.new_stop,
+                current_stop=current_stop,
             )
             continue
         if isinstance(order, dict) and order.get("legs"):
@@ -296,17 +341,23 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
             # never produce it (0 of 80 production trades between
             # 2026-09-02 and 2026-09-30 were ex-dividend shifts).
             from src.execution.exit_path_records import record_stop_shift_legs
+
             _legs = order.get("legs") or []
             _ok = [l for l in _legs if l.get("outcome") == "amended"]
             # `amend_status` is the AMEND's own verdict. The broker status
             # on a live replacement is "new"/"accepted"/..., so reading
             # that would call an ordinary success a failure.
-            _astatus = str(order.get("amend_status") or (
-                "accepted" if len(_ok) == len(_legs) else "partial"))
+            _astatus = str(order.get("amend_status") or ("accepted" if len(_ok) == len(_legs) else "partial"))
             record_stop_shift_legs(
-                owner.db, symbol=symbol, amount=0.0, mode="trail_amend",
-                status=_astatus, shifted=len(_ok), total=len(_legs),
-                legs=_legs, run_id=run_id,
+                owner.db,
+                symbol=symbol,
+                amount=0.0,
+                mode="trail_amend",
+                status=_astatus,
+                shifted=len(_ok),
+                total=len(_legs),
+                legs=_legs,
+                run_id=run_id,
             )
             if _astatus in ("partial", "refused", "unknown", "naked", "market_closed"):
                 # Telegram is muted, so this row and this alert are the
@@ -316,9 +367,9 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
                     from src.execution.exit_path_records import (
                         stop_shift_incomplete_text,
                     )
+
                     send_owner_alert(
-                        stop_shift_incomplete_text(
-                            symbol, _astatus, len(_ok), len(_legs)),
+                        stop_shift_incomplete_text(symbol, _astatus, len(_ok), len(_legs)),
                         symbols=[symbol],
                     )
                     record_exit_guard(owner, "trail.owner_alert")
@@ -331,9 +382,7 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
                         symbol=symbol,
                         effect="owner not told of incomplete stop shift",
                     )
-        if not order or (
-            isinstance(order, dict) and not accepted_stop_order(order)
-        ):
+        if not order or (isinstance(order, dict) and not accepted_stop_order(order)):
             _detail = str((order or {}).get("status") or "") if isinstance(order, dict) else ""
             if isinstance(order, dict) and order.get("legs"):
                 # `record_trail_state_if_changed` writes nothing when the
@@ -351,36 +400,51 @@ def _apply_deterministic_trails(owner, positions, *, run_id: str) -> list[dict]:
                     ]
                 )
             _note(
-                symbol, "replace_not_accepted", _detail,
-                proposed_stop=proposal.new_stop, current_stop=current_stop,
+                symbol,
+                "replace_not_accepted",
+                _detail,
+                proposed_stop=proposal.new_stop,
+                current_stop=current_stop,
             )
             continue
         _note(
-            symbol, TRAIL_CODE_TRAILED, proposal.reason,
+            symbol,
+            TRAIL_CODE_TRAILED,
+            proposal.reason,
             # Carried on the SUCCESS branch too: the case this field
             # exists for is the R-ratchet leg winning, which is a
             # trailed row, not a refusal row.
             structural_code=evaluation.structural_code,
-            proposed_stop=proposal.new_stop, current_stop=current_stop,
+            proposed_stop=proposal.new_stop,
+            current_stop=current_stop,
         )
         if isinstance(order, dict):
             order.setdefault("action", "TRAIL_STOP")
         orders.append(order)
         try:
             owner.db.insert_trade(
-                symbol=symbol, action="TRAIL_STOP", qty=position.qty,
-                price=proposal.new_stop, reasoning=proposal.reason,
+                symbol=symbol,
+                action="TRAIL_STOP",
+                qty=position.qty,
+                price=proposal.new_stop,
+                reasoning=proposal.reason,
                 run_id=run_id,
                 stop_loss=proposal.new_stop,
             )
             record_exit_guard(owner, "trail.trade_row_write")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                owner, "trail.trade_row_write", e, logger, symbol=symbol, effect="trail not recorded in trade rows",
+                owner,
+                "trail.trade_row_write",
+                e,
+                logger,
+                symbol=symbol,
+                effect="trail not recorded in trade rows",
             )
 
     record_trail_code_census(
-        owner.db, run_id=run_id, counts=dict(code_census),
+        owner.db,
+        run_id=run_id,
+        counts=dict(code_census),
     )
     return orders
-

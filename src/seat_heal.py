@@ -143,9 +143,7 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
     _sym = _sym.strip().upper() if isinstance(_sym, str) and _sym.strip() else None
     _before = out.get("thesis_invalid_if")
     _blank_found = (
-        _before is None
-        or _before == ""
-        or (isinstance(_before, str) and _before.strip().lower() in ("", "unknown"))
+        _before is None or _before == "" or (isinstance(_before, str) and _before.strip().lower() in ("", "unknown"))
     )
     for field_name in ("thesis_invalid_if", "catalyst"):
         raw_val = raw.get(field_name)
@@ -154,14 +152,7 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
         if raw_val.strip().lower() == "unknown":
             continue
         current = out.get(field_name)
-        if (
-            current is None
-            or current == ""
-            or (
-                isinstance(current, str)
-                and current.strip().lower() == "unknown"
-            )
-        ):
+        if current is None or current == "" or (isinstance(current, str) and current.strip().lower() == "unknown"):
             out[field_name] = raw_val
             restored.append(field_name)
     _note_restore_observation(
@@ -172,9 +163,7 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
             # The ONLY source this path can ever have: the sentence the
             # model itself already wrote on the raw payload. Never a
             # substituted or invented value.
-            "source": (
-                "raw_model_output" if "thesis_invalid_if" in restored else None
-            ),
+            "source": ("raw_model_output" if "thesis_invalid_if" in restored else None),
         }
     )
     return out, restored
@@ -204,10 +193,7 @@ def merge_retry_falsifiers(original_targets: list, retry_targets: list) -> tuple
             out.append(target)
             continue
         retry_item = retry_by_symbol.get(symbol) if symbol else None
-        retry_val = (
-            _target_field(retry_item, "thesis_invalid_if")
-            if retry_item is not None else None
-        )
+        retry_val = _target_field(retry_item, "thesis_invalid_if") if retry_item is not None else None
         stated = stated_soft_exit(retry_val)
         if not stated:
             out.append(target)
@@ -268,11 +254,13 @@ def coerce_sector_guidance(raw) -> list[dict]:
     if isinstance(raw, dict):
         items = []
         for sector, direction in raw.items():
-            items.append({
-                "sector": sector,
-                "stance": _DIRECTION_TO_STANCE.get(str(direction or "").strip().lower(), direction),
-                "reason": "",
-            })
+            items.append(
+                {
+                    "sector": sector,
+                    "stance": _DIRECTION_TO_STANCE.get(str(direction or "").strip().lower(), direction),
+                    "reason": "",
+                }
+            )
         raw = items
     if not isinstance(raw, list):
         return cleaned
@@ -287,24 +275,35 @@ def coerce_sector_guidance(raw) -> list[dict]:
             continue
         stance = item.get("stance")
         mapped = normalize_sector_stance(stance)
-        if mapped is None and isinstance(stance, str) and stance.strip().lower() in (
-            "overweight", "neutral", "underweight",
+        if (
+            mapped is None
+            and isinstance(stance, str)
+            and stance.strip().lower()
+            in (
+                "overweight",
+                "neutral",
+                "underweight",
+            )
         ):
             mapped_stance = stance.strip().lower()
         elif mapped in SECTOR_DIRECTIONS:
             mapped_stance = _DIRECTION_TO_STANCE.get(mapped, "neutral")
         elif isinstance(stance, str) and stance.strip().lower() in (
-            "overweight", "neutral", "underweight",
+            "overweight",
+            "neutral",
+            "underweight",
         ):
             mapped_stance = stance.strip().lower()
         else:
             continue
         reason = item.get("reason")
-        cleaned.append({
-            "sector": canon,
-            "stance": mapped_stance,
-            "reason": reason if isinstance(reason, str) else "",
-        })
+        cleaned.append(
+            {
+                "sector": canon,
+                "stance": mapped_stance,
+                "reason": reason if isinstance(reason, str) else "",
+            }
+        )
     return cleaned
 
 
@@ -481,10 +480,7 @@ def heal_failure_alert_text(result: HealResult, *, cap_blocked: bool = False) ->
         # itself.
         was_expired = bool(result.details.get("was_expired"))
         if was_expired:
-            subject = (
-                "buy a fresher answer for a seat whose research it already "
-                "holds"
-            )
+            subject = "buy a fresher answer for a seat whose research it already holds"
             # "not treated as green-empty" is lost-seat wording and means
             # nothing for a seat that was never empty.
             reassurance = ""

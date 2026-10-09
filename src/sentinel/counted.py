@@ -40,6 +40,7 @@ RECORD, never re-raise, and never return anything a caller branches on.
 Never pass a credential, token or account id in ``context``: the row is
 durable and the repository is public.
 """
+
 from __future__ import annotations
 
 import logging
@@ -79,8 +80,7 @@ def _open() -> sqlite3.Connection | None:
     return conn
 
 
-def _record(where: str, exc: BaseException | None, log, run_id: str | None,
-            context: dict) -> None:
+def _record(where: str, exc: BaseException | None, log, run_id: str | None, context: dict) -> None:
     conn = None
     emitter = log or logger
     try:
@@ -88,11 +88,12 @@ def _record(where: str, exc: BaseException | None, log, run_id: str | None,
         if conn is None:
             emitter.error(
                 "no desk database at %s: the fault at %s is LOUD but UNCOUNTED",
-                db_path(), where, exc_info=exc,
+                db_path(),
+                where,
+                exc_info=exc,
             )
         else:
-            record_guarded_outcome(db=_Handle(conn), where=where, exc=exc,
-                                   run_id=run_id, log=log, context=context)
+            record_guarded_outcome(db=_Handle(conn), where=where, exc=exc, run_id=run_id, log=log, context=context)
     except Exception:  # noqa: BLE001 - an observer must never break the money path
         emitter.error("could not count the swallowed fault at %s", where, exc_info=True)
     finally:
@@ -100,25 +101,21 @@ def _record(where: str, exc: BaseException | None, log, run_id: str | None,
             try:
                 conn.close()
             except Exception:  # noqa: BLE001
-                emitter.error("could not close the ledger after counting %s", where,
-                              exc_info=True)
+                emitter.error("could not close the ledger after counting %s", where, exc_info=True)
 
 
-def record_swallowed(where: str, exc: BaseException, *, log=None,
-                     run_id: str | None = None, **context) -> None:
+def record_swallowed(where: str, exc: BaseException, *, log=None, run_id: str | None = None, **context) -> None:
     """One ``disagreed`` row for a handler that caught ``exc`` and carried on."""
     _record(where, exc, log, run_id, context)
 
 
-def record_swallowed_here(where: str, *, log=None, run_id: str | None = None,
-                          **context) -> None:
+def record_swallowed_here(where: str, *, log=None, run_id: str | None = None, **context) -> None:
     """For a handler that binds no name: reads the exception currently being handled."""
     exc = sys.exc_info()[1]
     if exc is not None:
         _record(where, exc, log, run_id, context)
 
 
-def record_clean_pass(where: str, *, log=None, run_id: str | None = None,
-                      **context) -> None:
+def record_clean_pass(where: str, *, log=None, run_id: str | None = None, **context) -> None:
     """One ``agreed`` row: this site ran and swallowed nothing."""
     _record(where, None, log, run_id, context)

@@ -11,6 +11,7 @@ is read from the real `tests/test_status_board.py` in this repository —
 deliberately never re-typed — so a change to that cap is picked up
 automatically and this file never needs to be told the number.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,8 +41,7 @@ def _write_fixture_repo(repo: Path) -> None:
     (repo / "docs" / "board_notes" / "item-1.md").write_text("note\n")
     (repo / "tests").mkdir()
     (repo / "tests" / "test_status_board.py").write_text(
-        "def test_work_md_stays_under_a_hundred_thousand_bytes():\n"
-        "    assert size <= 100_000, 'over cap'\n"
+        "def test_work_md_stays_under_a_hundred_thousand_bytes():\n    assert size <= 100_000, 'over cap'\n"
     )
 
 
@@ -50,18 +50,14 @@ def test_healthy_board_produces_no_finding(tmp_path, monkeypatch):
     — a daily "board is fine" message is exactly the noise the owner has
     said to never send."""
     _write_fixture_repo(tmp_path)
-    monkeypatch.setattr(
-        check_board_hygiene, "_finished_item_check_override", lambda path: []
-    )
+    monkeypatch.setattr(check_board_hygiene, "_finished_item_check_override", lambda path: [])
 
     report = build_report(str(tmp_path))
     assert report.has_finding is False
     assert format_message(report) == ""
 
 
-def test_report_fires_when_items_look_finished_but_are_still_parked(
-    tmp_path, monkeypatch
-):
+def test_report_fires_when_items_look_finished_but_are_still_parked(tmp_path, monkeypatch):
     _write_fixture_repo(tmp_path)
     monkeypatch.setattr(
         check_board_hygiene,
@@ -81,7 +77,9 @@ def test_report_fires_when_items_look_finished_but_are_still_parked(
 
 def test_report_fires_when_the_board_is_near_its_cap():
     report = BoardHygieneReport(
-        work_md_path="irrelevant", cap_bytes=100_000, size_bytes=96_000,
+        work_md_path="irrelevant",
+        cap_bytes=100_000,
+        size_bytes=96_000,
     )
     assert report.near_cap is True
     assert report.has_finding is True
@@ -91,7 +89,9 @@ def test_report_fires_when_the_board_is_near_its_cap():
 
 def test_report_stays_quiet_comfortably_under_the_near_cap_share():
     report = BoardHygieneReport(
-        work_md_path="irrelevant", cap_bytes=100_000, size_bytes=50_000,
+        work_md_path="irrelevant",
+        cap_bytes=100_000,
+        size_bytes=50_000,
     )
     assert report.near_cap is False
     assert report.has_finding is False

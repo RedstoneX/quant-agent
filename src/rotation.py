@@ -306,25 +306,45 @@ from __future__ import annotations
 from src.verdicts import RankedCandidate, score_verdict, seat_weight
 from src.rotation_unrecorded import empty_pass_lines
 from src.rotation_parts.constraints import (
-    funding_view_measured, holdings_below_entry_bar, rotation_binding_constraints,
+    funding_view_measured,
+    holdings_below_entry_bar,
+    rotation_binding_constraints,
 )
 from src.rotation_parts.types import (
-    CONVICTION_BAR_REASON_PREFIX, REQUIRED_BUY_LEG_GATES, ROTATION_MARGIN_PCT,
-    ROTATION_REASON_MAX_CHARS, ROTATION_REFUSAL_POINTS, RotationClearance,
-    RotationOpportunity, RotationOutcome, RotationPrecheck, RotationRefusal,
+    CONVICTION_BAR_REASON_PREFIX,
+    REQUIRED_BUY_LEG_GATES,
+    ROTATION_MARGIN_PCT,
+    ROTATION_REASON_MAX_CHARS,
+    ROTATION_REFUSAL_POINTS,
+    RotationClearance,
+    RotationOpportunity,
+    RotationOutcome,
+    RotationPrecheck,
+    RotationRefusal,
 )
 from src.rotation_parts.wording import (
-    _ranked_margin_sell_reason, rotation_constraint_clause,
-    rotation_proposal_reason, rotation_sell_reason,
+    _ranked_margin_sell_reason,
+    rotation_constraint_clause,
+    rotation_proposal_reason,
+    rotation_sell_reason,
 )
 from src.rotation_parts.reporting import (
-    ROTATION_FULL_NOTHING_BETTER, ROTATION_FULL_OPPORTUNITY,
-    ROTATION_HOLDING_BELOW_BAR, ROTATION_ROOM_AVAILABLE,
-    ROTATION_TELEMETRY_UNAVAILABLE, _opt_float, _pct,
-    _precheck_binding, precheck_outcome, precheck_record,
+    ROTATION_FULL_NOTHING_BETTER,
+    ROTATION_FULL_OPPORTUNITY,
+    ROTATION_HOLDING_BELOW_BAR,
+    ROTATION_ROOM_AVAILABLE,
+    ROTATION_TELEMETRY_UNAVAILABLE,
+    _opt_float,
+    _pct,
+    _precheck_binding,
+    precheck_outcome,
+    precheck_record,
 )
 from src.rotation_parts.reporting_lines import (
-    _full_book_cause, _tier_two_line, owner_precheck_lines, pruning_pass_lines,
+    _full_book_cause,
+    _tier_two_line,
+    owner_precheck_lines,
+    pruning_pass_lines,
 )
 
 __all__ = [
@@ -348,7 +368,6 @@ __all__ = [
 ]
 
 
-
 def evaluate_rotation_opportunity(
     *,
     ranked: list[RankedCandidate],
@@ -368,9 +387,14 @@ def evaluate_rotation_opportunity(
     `evaluate_rotation` and records the refusal.
     """
     return evaluate_rotation(
-        ranked=ranked, blocked=blocked, held_symbols=held_symbols,
-        headroom_pct=headroom_pct, floor_pct=floor_pct, margin_pct=margin_pct,
-        entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+        ranked=ranked,
+        blocked=blocked,
+        held_symbols=held_symbols,
+        headroom_pct=headroom_pct,
+        floor_pct=floor_pct,
+        margin_pct=margin_pct,
+        entry_budget_usd=entry_budget_usd,
+        min_order_usd=min_order_usd,
     ).opportunity
 
 
@@ -410,8 +434,10 @@ def evaluate_rotation(
     """
     held = {s.upper() for s in held_symbols}
     binding = rotation_binding_constraints(
-        headroom_pct=headroom_pct, floor_pct=floor_pct,
-        entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+        headroom_pct=headroom_pct,
+        floor_pct=floor_pct,
+        entry_budget_usd=entry_budget_usd,
+        min_order_usd=min_order_usd,
     )
 
     new_candidates = [c for c in ranked if c.symbol not in held]
@@ -429,10 +455,16 @@ def evaluate_rotation(
         actually throws off, and the sessions where the book had room are
         not a different population — they are most of the population.
         """
-        return RotationOutcome(refusal=_describe_refusal(
-            point=point, detail=detail, best_new=best_new,
-            weakest_held=weakest_held, margin_pct=margin_pct, binding=binding,
-        ))
+        return RotationOutcome(
+            refusal=_describe_refusal(
+                point=point,
+                detail=detail,
+                best_new=best_new,
+                weakest_held=weakest_held,
+                margin_pct=margin_pct,
+                binding=binding,
+            )
+        )
 
     # Tier 1 — categorical. OWNER RULING 2026-10-01 ("every position needs
     # to justify its reason to be there"): this tier is evaluated BEFORE the
@@ -448,10 +480,7 @@ def evaluate_rotation(
     # the MOST blocking reasons first (worse, more clearly stale), then
     # alphabetically, so the choice is reproducible when more than one held
     # name is ineligible.
-    ineligible_held = {
-        sym: tuple(reasons) for sym, reasons in blocked.items()
-        if sym in held and reasons
-    }
+    ineligible_held = {sym: tuple(reasons) for sym, reasons in blocked.items() if sym in held and reasons}
     if ineligible_held:
         # Worst-first: MOST blocking reasons (more clearly stale), then
         # alphabetically, so the order is reproducible. The whole set is
@@ -462,22 +491,22 @@ def evaluate_rotation(
         # stay the worst name so every existing reader and the audit row are
         # byte-for-byte unchanged when nothing displaces it.
         ordered = sorted(
-            ineligible_held, key=lambda s: (-len(ineligible_held[s]), s),
+            ineligible_held,
+            key=lambda s: (-len(ineligible_held[s]), s),
         )
         held_symbol = ordered[0]
-        return RotationOutcome(opportunity=RotationOpportunity(
-            new_symbol=best_new.symbol if best_new else None,
-            new_score=best_new.score if best_new else None,
-            held_symbol=held_symbol,
-            held_score=None,
-            tier="ineligible_hold",
-            reasons=ineligible_held[held_symbol],
-            margin_pct=margin_pct,
-            ineligible_candidates=tuple(
-                (sym, ineligible_held[sym]) for sym in ordered
-            ),
-        ))
-
+        return RotationOutcome(
+            opportunity=RotationOpportunity(
+                new_symbol=best_new.symbol if best_new else None,
+                new_score=best_new.score if best_new else None,
+                held_symbol=held_symbol,
+                held_score=None,
+                tier="ineligible_hold",
+                reasons=ineligible_held[held_symbol],
+                margin_pct=margin_pct,
+                ineligible_candidates=tuple((sym, ineligible_held[sym]) for sym in ordered),
+            )
+        )
 
     if not binding:
         measured = funding_view_measured(entry_budget_usd, min_order_usd)
@@ -489,17 +518,15 @@ def evaluate_rotation(
                 f"${entry_budget_usd:,.2f} deployable is at or above "
                 "the smallest order the desk will place — real room on every "
                 "constraint"
-                if measured else
-                "the funding view was NOT MEASURED this session, so no "
-                "funding constraint could be tested"
+                if measured
+                else "the funding view was NOT MEASURED this session, so no funding constraint could be tested"
             ),
         )
 
     if best_new is None:
         return _refuse(
             "no_new_candidates",
-            f"every one of the {len(ranked)} ranked names is already held, "
-            f"so there is no candidate to rotate INTO",
+            f"every one of the {len(ranked)} ranked names is already held, so there is no candidate to rotate INTO",
         )
 
     # Tier 2 — ranked margin. Both sides eligible; the weakest held name is
@@ -570,17 +597,19 @@ def evaluate_rotation(
             f"it cleared on the full composite",
         )
 
-    return RotationOutcome(opportunity=RotationOpportunity(
-        new_symbol=best_new.symbol,
-        new_score=best_new.score,
-        held_symbol=weakest_held.symbol,
-        held_score=weakest_held.score,
-        tier="ranked_margin",
-        margin_pct=margin_pct,
-        shared_seats=shared_seats,
-        held_shared_score=round(held_shared, 4),
-        new_shared_score=round(new_shared, 4),
-    ))
+    return RotationOutcome(
+        opportunity=RotationOpportunity(
+            new_symbol=best_new.symbol,
+            new_score=best_new.score,
+            held_symbol=weakest_held.symbol,
+            held_score=weakest_held.score,
+            tier="ranked_margin",
+            margin_pct=margin_pct,
+            shared_seats=shared_seats,
+            held_shared_score=round(held_shared, 4),
+            new_shared_score=round(new_shared, 4),
+        )
+    )
 
 
 def _describe_refusal(
@@ -625,9 +654,7 @@ def _describe_refusal(
     ratio: float | None = None
     if held_shared is not None and new_shared is not None and held_shared > 0:
         ratio = round(new_shared / held_shared, 4)
-    elif (
-        held_score is not None and new_score is not None and held_score > 0
-    ):
+    elif held_score is not None and new_score is not None and held_score > 0:
         ratio = round(new_score / held_score, 4)
     return RotationRefusal(
         point=point,
@@ -646,7 +673,9 @@ def _describe_refusal(
 
 
 def _shared_seat_comparison(
-    *, held: RankedCandidate, new: RankedCandidate,
+    *,
+    held: RankedCandidate,
+    new: RankedCandidate,
 ) -> tuple[tuple[str, ...], float, float] | None:
     """Each name's weighted score over ONLY the seats that scored both.
 
@@ -671,10 +700,6 @@ def _shared_seat_comparison(
     shared = sorted(set(held_by_seat) & set(new_by_seat))
     if not shared:
         return None
-    held_total = sum(
-        seat_weight(seat) * score_verdict(held_by_seat[seat]) for seat in shared
-    )
-    new_total = sum(
-        seat_weight(seat) * score_verdict(new_by_seat[seat]) for seat in shared
-    )
+    held_total = sum(seat_weight(seat) * score_verdict(held_by_seat[seat]) for seat in shared)
+    new_total = sum(seat_weight(seat) * score_verdict(new_by_seat[seat]) for seat in shared)
     return tuple(shared), held_total, new_total

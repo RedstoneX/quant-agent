@@ -26,6 +26,7 @@ desk's own record says it cost; the worst recorded full day is the yardstick.
 The warning fires when the balance is below TWO of those: the balance seen
 now must pay for the day in progress AND leave one more full session.
 """
+
 from __future__ import annotations
 
 import json
@@ -40,10 +41,7 @@ from src.openrouter_balance import OPENROUTER_BALANCE_PATH as SNAPSHOT_PATH
 def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
     return {
         r[0]: float(r[1])
-        for r in conn.execute(
-            "SELECT day, baseline_cost_usd + incremental_cost_usd "
-            "FROM llm_budget_days"
-        )
+        for r in conn.execute("SELECT day, baseline_cost_usd + incremental_cost_usd FROM llm_budget_days")
     }
 
 
@@ -57,23 +55,25 @@ def compute_state(
     """Pure: spend record + balance source in, plain-English state out."""
     spend_days = {d: c for d, c in day_costs.items() if c > 0}
     if not spend_days:
-        return {"status": "unknown", "message": "No paid-model spend recorded yet, so the remaining credit cannot be timed."}
+        return {
+            "status": "unknown",
+            "message": "No paid-model spend recorded yet, so the remaining credit cannot be timed.",
+        }
     worst = max(spend_days.values())
     mean = sum(spend_days.values()) / len(spend_days)
 
     if snapshot and snapshot.get("remaining_usd") is not None:
         source = "provider"
         since = str(snapshot["as_of_day"])
-        remaining = float(snapshot["remaining_usd"]) - sum(
-            c for d, c in day_costs.items() if d > since
-        )
+        remaining = float(snapshot["remaining_usd"]) - sum(c for d, c in day_costs.items() if d > since)
     elif topup_usd is not None and topup_date:
         source = "derived"
-        remaining = float(topup_usd) - sum(
-            c for d, c in day_costs.items() if d >= topup_date
-        )
+        remaining = float(topup_usd) - sum(c for d, c in day_costs.items() if d >= topup_date)
     else:
-        return {"status": "unknown", "message": "The remaining paid-model credit is not known: the provider gave no balance and no top-up is recorded."}
+        return {
+            "status": "unknown",
+            "message": "The remaining paid-model credit is not known: the provider gave no balance and no top-up is recorded.",
+        }
 
     remaining = max(remaining, 0.0)
     trigger = 2 * worst
@@ -94,9 +94,12 @@ def compute_state(
             f"roughly {days_left:.0f} trading days at the usual pace."
         )
     return {
-        "status": status, "source": source, "message": message,
+        "status": status,
+        "source": source,
+        "message": message,
         "remaining_usd": round(remaining, 2),
-        "worst_day_usd": round(worst, 3), "mean_day_usd": round(mean, 3),
+        "worst_day_usd": round(worst, 3),
+        "mean_day_usd": round(mean, 3),
         "warn_below_usd": round(trigger, 2),
         "days_left": round(days_left, 1) if days_left is not None else None,
     }

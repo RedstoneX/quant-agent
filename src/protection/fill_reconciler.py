@@ -24,13 +24,7 @@ from src.protection.fill_reconciler_helpers import _finite_float_or_none, _recon
 class FillReconciler:
     """Broker-fill reconciliation: entry fills, orphaned pending submits, stop-out fills and the surfacing of what the reconciler found."""
 
-    def __init__(self, *,
-                 broker,
-                 db,
-                 config,
-                 flag_stop_out_anomaly,
-                 format_qty,
-                 parse_broker_fill_timestamp) -> None:
+    def __init__(self, *, broker, db, config, flag_stop_out_anomaly, format_qty, parse_broker_fill_timestamp) -> None:
         self.broker = broker
         self.db = db
         self.config = config
@@ -50,14 +44,18 @@ class FillReconciler:
         if not order or not order.get("id"):
             logger.error(
                 "%s %s: broker returned no order id (payload=%s) — skipping audit",
-                side.upper(), symbol, order,
+                side.upper(),
+                symbol,
+                order,
             )
             return False
         status = (order.get("status") or "").lower()
         if status in ("rejected", "canceled", "cancelled", "expired", "error"):
             logger.error(
                 "%s %s: broker rejected order (status=%s) — skipping audit",
-                side.upper(), symbol, status,
+                side.upper(),
+                symbol,
+                status,
             )
             return False
         return True
@@ -99,6 +97,7 @@ class FillReconciler:
 
         def _record_broker_event(row: dict, status: str, fill_qty, fill_price) -> None:
             import json
+
             try:
                 requested = float(row.get("qty") or 0)
                 actual = float(fill_qty or 0)
@@ -111,28 +110,44 @@ class FillReconciler:
                 else:
                     outcome = status
                 payload = {
-                    "stage": "order", "outcome": outcome,
-                    "reason": "broker_reconciliation", "broker_status": status,
+                    "stage": "order",
+                    "outcome": outcome,
+                    "reason": "broker_reconciliation",
+                    "broker_status": status,
                     "broker_order_id": row.get("broker_order_id"),
-                    "fill_qty": actual or None, "fill_price": fill_price,
+                    "fill_qty": actual or None,
+                    "fill_price": fill_price,
                 }
                 self.db.insert_specialist_evidence(
                     run_id=event_run_id,
-                    agent_name="pipeline", kind="pipeline_event", scope="symbol",
-                    symbol=row.get("symbol"), decision_id=row.get("decision_id"),
+                    agent_name="pipeline",
+                    kind="pipeline_event",
+                    scope="symbol",
+                    symbol=row.get("symbol"),
+                    decision_id=row.get("decision_id"),
                     evidence_json=json.dumps(payload, sort_keys=True),
                 )
                 if actual > 0 and action not in {"BUY", "SWEEP_BUY", "HOLD"}:
                     self.db.insert_specialist_evidence(
                         run_id=event_run_id,
-                        agent_name="pipeline", kind="pipeline_event", scope="symbol",
-                        symbol=row.get("symbol"), decision_id=row.get("decision_id"),
-                        evidence_json=_json.dumps({
-                            "stage": "position_management",
-                            "outcome": "exited" if requested <= 0 or actual + 1e-9 >= requested else "partially_exited",
-                            "reason": action.lower(), "broker_status": status,
-                            "fill_qty": actual, "fill_price": fill_price,
-                        }, sort_keys=True),
+                        agent_name="pipeline",
+                        kind="pipeline_event",
+                        scope="symbol",
+                        symbol=row.get("symbol"),
+                        decision_id=row.get("decision_id"),
+                        evidence_json=_json.dumps(
+                            {
+                                "stage": "position_management",
+                                "outcome": "exited"
+                                if requested <= 0 or actual + 1e-9 >= requested
+                                else "partially_exited",
+                                "reason": action.lower(),
+                                "broker_status": status,
+                                "fill_qty": actual,
+                                "fill_price": fill_price,
+                            },
+                            sort_keys=True,
+                        ),
                     )
                 record_fill_pass(self.db, "fills.lifecycle_evidence")
             except Exception as e:  # evidence is never trading authority
@@ -155,27 +170,33 @@ class FillReconciler:
             fill_price = info.get("filled_avg_price") or None
             if status in terminal_ok:
                 self.db.update_trade_fill(
-                    broker_order_id=order_id, fill_status="filled",
+                    broker_order_id=order_id,
+                    fill_status="filled",
                     fill_qty=fill_qty,
                     fill_price=fill_price,
                 )
                 _record_broker_event(row, status, fill_qty, fill_price)
                 logger.info(
                     "Reconciled %s: filled (qty=%s, avg=$%s)",
-                    order_id, fill_qty, fill_price,
+                    order_id,
+                    fill_qty,
+                    fill_price,
                 )
             elif status in terminal_fail:
                 self.db.update_trade_fill(
-                    broker_order_id=order_id, fill_status=status,
+                    broker_order_id=order_id,
+                    fill_status=status,
                     fill_qty=fill_qty,
                     fill_price=fill_price,
                 )
                 _record_broker_event(row, status, fill_qty, fill_price)
                 if fill_qty and float(fill_qty) > 0:
                     logger.warning(
-                        "Reconciled %s: terminal status=%s with partial fill "
-                        "(qty=%s, avg=$%s)",
-                        order_id, status, fill_qty, fill_price,
+                        "Reconciled %s: terminal status=%s with partial fill (qty=%s, avg=$%s)",
+                        order_id,
+                        status,
+                        fill_qty,
+                        fill_price,
                     )
                 else:
                     logger.warning("Reconciled %s: did NOT fill (status=%s)", order_id, status)
@@ -206,7 +227,8 @@ class FillReconciler:
                 if partial is not None and partial > 0:
                     prev = _finite_float_or_none(row.get("fill_qty")) or 0.0
                     self.db.update_trade_fill(
-                        broker_order_id=order_id, fill_status="submitted",
+                        broker_order_id=order_id,
+                        fill_status="submitted",
                         fill_qty=partial,
                         fill_price=price,
                     )
@@ -219,7 +241,10 @@ class FillReconciler:
                             "Reconciled %s: partial fill recorded "
                             "(status=%s, qty=%s, avg=%s); order stays open "
                             "for the remainder",
-                            order_id, status, partial, price,
+                            order_id,
+                            status,
+                            partial,
+                            price,
                         )
 
     def _reconcile_orphan_pending_submits(self) -> int:
@@ -283,14 +308,11 @@ class FillReconciler:
                     "orphan-sweep: broker order query unavailable for %s "
                     "row %d — leaving pending_submit for next session "
                     "(NOT marking submit_failed on a transient failure)",
-                    symbol, row_id,
+                    symbol,
+                    row_id,
                 )
                 continue
-            matches = [
-                c for c in candidates
-                if c.get("id")
-                and abs(float(c.get("qty") or 0) - want_qty) < 1e-6
-            ]
+            matches = [c for c in candidates if c.get("id") and abs(float(c.get("qty") or 0) - want_qty) < 1e-6]
             if len(matches) == 1:
                 bid = matches[0]["id"]
                 try:
@@ -299,7 +321,10 @@ class FillReconciler:
                     logger.warning(
                         "orphan-sweep: adopted broker order %s for %s row %d "
                         "(BUY write-ahead survived a crash) — _reconcile_fills "
-                        "will resolve its fill", bid, symbol, row_id,
+                        "will resolve its fill",
+                        bid,
+                        symbol,
+                        row_id,
                     )
                     record_fill_pass(self.db, "orphan.adopt", context={"symbol": symbol, "row": row_id})
                 except Exception as exc:
@@ -311,7 +336,10 @@ class FillReconciler:
                     logger.warning(
                         "orphan-sweep: no broker order matches %s row %d "
                         "(qty=%.4f) — submit never landed; marked "
-                        "submit_failed", symbol, row_id, want_qty,
+                        "submit_failed",
+                        symbol,
+                        row_id,
+                        want_qty,
                     )
                     record_fill_pass(self.db, "orphan.mark_failed", context={"symbol": symbol, "row": row_id})
                 except Exception as exc:
@@ -321,7 +349,10 @@ class FillReconciler:
                     "orphan-sweep: %d ambiguous broker orders for %s row %d "
                     "(qty=%.4f) — NOT guessing (mis-adoption mis-tracks "
                     "money); leaving pending_submit for manual review",
-                    len(matches), symbol, row_id, want_qty,
+                    len(matches),
+                    symbol,
+                    row_id,
+                    want_qty,
                 )
         if resolved:
             logger.info("orphan-sweep: resolved %d pending_submit row(s)", resolved)
@@ -350,13 +381,19 @@ class FillReconciler:
             return None
         try:
             from datetime import datetime as _dt
+
             dt = _dt.fromisoformat(filled_at)
         except (TypeError, ValueError):
             return None
         return Database._sqlite_utc_timestamp(dt)
 
     def _flag_stop_out_anomaly(
-        self, *, run_id: str | None, symbol: str, outcome: str, detail: str,
+        self,
+        *,
+        run_id: str | None,
+        symbol: str,
+        outcome: str,
+        detail: str,
         **extra,
     ) -> None:
         """Write a `specialist_evidence` flag for a stop-out reconciliation
@@ -367,17 +404,24 @@ class FillReconciler:
         the evidence table (2026-08-28 ONDS/CCJ sat silent for a full
         trading day before anyone noticed realized_pnl was NULL)."""
         import json
+
         logger.error("stop-out reconcile: %s %s — %s", symbol, outcome, detail)
         if not run_id:
             return
         try:
             payload = {
-                "stage": "reconciliation", "outcome": outcome,
-                "reason": "stop_out_reconciler", "detail": detail, **extra,
+                "stage": "reconciliation",
+                "outcome": outcome,
+                "reason": "stop_out_reconciler",
+                "detail": detail,
+                **extra,
             }
             self.db.insert_specialist_evidence(
-                run_id=run_id, agent_name="pipeline", kind="pipeline_event",
-                scope="symbol", symbol=symbol,
+                run_id=run_id,
+                agent_name="pipeline",
+                kind="pipeline_event",
+                scope="symbol",
+                symbol=symbol,
                 evidence_json=json.dumps(payload, sort_keys=True, default=str),
             )
             record_fill_pass(self.db, "flag_anomaly", context={"symbol": symbol})
@@ -495,6 +539,7 @@ class FillReconciler:
                 continue
 
         from datetime import datetime, timedelta, timezone
+
         after = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
         results: list[dict] = []
@@ -532,14 +577,18 @@ class FillReconciler:
                 logger.warning(
                     "stop-out reconcile: broker order query unavailable for "
                     "%s (ledger=%.4f, broker=%.4f) — leaving the gap for "
-                    "the next pass", symbol, ledger_open, held,
+                    "the next pass",
+                    symbol,
+                    ledger_open,
+                    held,
                 )
                 continue
 
             new_fills = [f for f in fills if f.get("id") and f["id"] not in known_ids]
             if not new_fills:
                 self._flag_stop_out_anomaly(
-                    run_id=run_id, symbol=symbol,
+                    run_id=run_id,
+                    symbol=symbol,
                     outcome="stop_out_gap_unexplained",
                     detail=(
                         f"ledger believes {ledger_open:.4f} sh open, broker "
@@ -547,7 +596,8 @@ class FillReconciler:
                         f"order was found in the last {lookback_days} "
                         f"day(s) — recording nothing rather than guessing"
                     ),
-                    ledger_qty=ledger_open, broker_qty=held,
+                    ledger_qty=ledger_open,
+                    broker_qty=held,
                     lookback_days=lookback_days,
                 )
                 # PAGE the owner. Until 2026-09-17 this wrote an ERROR line
@@ -559,17 +609,25 @@ class FillReconciler:
                 # is the owner's P&L that is wrong because of it.
                 try:
                     from src.notifier import alert_records_disagree_with_broker
+
                     alert_records_disagree_with_broker(
-                        symbol, desk_qty=ledger_open, broker_qty=held,
+                        symbol,
+                        desk_qty=ledger_open,
+                        broker_qty=held,
                         lookback_days=lookback_days,
                     )
                     record_fill_pass(self.db, "stop_out.disagree_alert", context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001
                     record_fill_pass(self.db, "stop_out.disagree_alert", exc, context={"symbol": symbol})
-                results.append({
-                    "symbol": symbol, "ledger_qty": ledger_open,
-                    "broker_qty": held, "matched": False, "recorded": 0,
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "ledger_qty": ledger_open,
+                        "broker_qty": held,
+                        "matched": False,
+                        "recorded": 0,
+                    }
+                )
                 continue
 
             recorded = 0
@@ -582,16 +640,21 @@ class FillReconciler:
                 action = _reconciled_exit_action(fill.get("order_type"))
                 try:
                     row_id, created = self.db.insert_stop_out_trade(
-                        symbol=symbol, qty=fill["qty"], price=fill["price"],
+                        symbol=symbol,
+                        qty=fill["qty"],
+                        price=fill["price"],
                         broker_order_id=fill["id"],
                         filled_at=self._parse_broker_fill_timestamp(fill.get("filled_at")),
-                        run_id=run_id, action=action,
+                        run_id=run_id,
+                        action=action,
                     )
                     record_fill_pass(
-                        self.db, "stop_out.record_fill", context={"symbol": symbol, "order": fill.get("id")})
+                        self.db, "stop_out.record_fill", context={"symbol": symbol, "order": fill.get("id")}
+                    )
                 except Exception as exc:  # noqa: BLE001
                     record_fill_pass(
-                        self.db, "stop_out.record_fill", exc, context={"symbol": symbol, "order": fill.get("id")})
+                        self.db, "stop_out.record_fill", exc, context={"symbol": symbol, "order": fill.get("id")}
+                    )
                     continue
                 if not created:
                     # Another session's pass already recorded this exact
@@ -609,13 +672,18 @@ class FillReconciler:
                     "EXIT RECORDED (%s): %s %s sh @ $%.4f (order %s, "
                     "type=%s, realized_pnl=%s) — broker-initiated exit "
                     "written back to the ledger by the reconciler",
-                    action, symbol, self._format_qty(fill["qty"]),
-                    fill["price"], fill["id"], fill.get("order_type") or "unknown",
+                    action,
+                    symbol,
+                    self._format_qty(fill["qty"]),
+                    fill["price"],
+                    fill["id"],
+                    fill.get("order_type") or "unknown",
                     "unknown" if realized is None else f"${realized:.2f}",
                 )
                 if realized is None:
                     self._flag_stop_out_anomaly(
-                        run_id=run_id, symbol=symbol,
+                        run_id=run_id,
+                        symbol=symbol,
                         outcome="stop_out_pnl_unmatched",
                         detail=(
                             f"order {fill['id']} recorded ({fill['qty']} sh "
@@ -624,13 +692,19 @@ class FillReconciler:
                             f"doesn't cover this exit quantity; needs manual "
                             f"review, not a guessed number"
                         ),
-                        broker_order_id=fill["id"], qty=fill["qty"],
+                        broker_order_id=fill["id"],
+                        qty=fill["qty"],
                         price=fill["price"],
                     )
-            results.append({
-                "symbol": symbol, "ledger_qty": ledger_open,
-                "broker_qty": held, "matched": True, "recorded": recorded,
-            })
+            results.append(
+                {
+                    "symbol": symbol,
+                    "ledger_qty": ledger_open,
+                    "broker_qty": held,
+                    "matched": True,
+                    "recorded": recorded,
+                }
+            )
         return record_reconciliation(db=self.db, kind="stop_out_fills", result=results, run_id=run_id)
 
     def _surface_reconcile_outcomes(

@@ -48,8 +48,9 @@ def _decision(targets: list[str], dropped: list[str]) -> SimpleNamespace:
     namespace keeps the fixture honest about that."""
     return SimpleNamespace(
         targets=[
-            TargetPosition(symbol=s, target_weight_pct=5.0, conviction="high",
-                           thesis="t", thesis_invalid_if="closes below support")
+            TargetPosition(
+                symbol=s, target_weight_pct=5.0, conviction="high", thesis="t", thesis_invalid_if="closes below support"
+            )
             for s in targets
         ],
         constructor_dropped=list(dropped),
@@ -74,7 +75,10 @@ def test_a_faulted_target_is_filed_as_data_fault_never_constructor_dropped():
     counting a broken feed as a judged trade again."""
     pipeline = _pipeline_with_constructor()
     pipeline.portfolio_constructor._note_data_fault(
-        "NVDA", "long", FAULT_NO_VOLATILITY, "DATA FAULT: no ATR",
+        "NVDA",
+        "long",
+        FAULT_NO_VOLATILITY,
+        "DATA FAULT: no ATR",
     )
     # A genuine refusal on another symbol, captured the usual way.
     pipeline.portfolio_constructor.last_drop_reasons = {
@@ -83,7 +87,9 @@ def test_a_faulted_target_is_filed_as_data_fault_never_constructor_dropped():
     }
 
     faults = _record_constructor_drops(
-        pipeline, _ctx(), _decision(["NVDA", "AMD"], ["NVDA", "AMD"]),
+        pipeline,
+        _ctx(),
+        _decision(["NVDA", "AMD"], ["NVDA", "AMD"]),
     )
 
     by_symbol = {e["_symbol"]: e for e in _events(pipeline)}
@@ -105,7 +111,10 @@ def test_a_fault_on_a_symbol_the_pm_never_targeted_still_leaves_a_row():
     dropped it. Before this it left nothing at all."""
     pipeline = _pipeline_with_constructor()
     pipeline.portfolio_constructor._note_data_fault(
-        "XYZ", "long", FAULT_NO_STRUCTURE, "DATA FAULT: coverage=no_bars",
+        "XYZ",
+        "long",
+        FAULT_NO_STRUCTURE,
+        "DATA FAULT: coverage=no_bars",
     )
 
     faults = _record_constructor_drops(pipeline, _ctx(), _decision([], []))
@@ -151,7 +160,7 @@ def test_no_fault_means_no_page():
 def test_an_alert_failure_cannot_break_the_decision_path():
     faults = {"NVDA": {"fault": FAULT_NO_VOLATILITY, "detail": "d", "direction": "long"}}
     with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("down")):
-        _alert_unmeasurable_symbols(faults)      # must not raise
+        _alert_unmeasurable_symbols(faults)  # must not raise
 
 
 def test_a_faulted_symbol_is_still_not_traded_end_to_end():
@@ -161,21 +170,30 @@ def test_a_faulted_symbol_is_still_not_traded_end_to_end():
 
     pipeline = _pipeline_with_constructor()
     analysis = _analysis(
-        symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-        model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+        symbol="NVDA",
+        rating="buy",
+        entry=100.0,
+        stop=95.0,
+        model_target=130.0,
+        levels=[95.0, 130.0],
+        atr=1.4,
+        horizon=30,
     )
     analysis.atr_14 = None
     decisions = pipeline.portfolio_constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
-                                conviction="high", thesis="t")],
-        positions=[], analyses=[analysis], total_value=100_000,
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0, conviction="high", thesis="t")],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000,
         price_map={"NVDA": 100.0},
     )
     assert decisions == []
 
     with patch("src.notifier.send_owner_alert") as alert:
         faults = _record_constructor_drops(
-            pipeline, _ctx(), _decision(["NVDA"], ["NVDA"]),
+            pipeline,
+            _ctx(),
+            _decision(["NVDA"], ["NVDA"]),
         )
         _alert_unmeasurable_symbols(faults)
 

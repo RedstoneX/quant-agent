@@ -4,6 +4,7 @@ No LLM call: everything here is the frozen run-64290730 fixture run through
 the desk's own stated rules. If a rule, a config number or the fixture
 changes, these fail and the write-up gets re-derived rather than believed.
 """
+
 import re
 from pathlib import Path
 
@@ -27,9 +28,7 @@ from ops.model_policy.deterministic_selection import (
 # stays pinned to the day its write-up describes.
 _LEVEL_LESS = S.load_frozen_selection(S.LEVEL_LESS_SELECTION_FIXTURE)
 
-_SETTINGS = yaml.safe_load(
-    (Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
-)
+_SETTINGS = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text())
 
 
 @pytest.fixture(scope="module")
@@ -61,14 +60,10 @@ def test_conviction_bands_match_the_live_prompt():
     second copy of the numbers is the only version of this that cannot rot:
     if the wording moves so these lines stop matching, this fails closed.
     """
-    prompt = (
-        Path(__file__).resolve().parent.parent
-        / "config" / "prompts" / "portfolio_manager.md"
-    ).read_text()
+    prompt = (Path(__file__).resolve().parent.parent / "config" / "prompts" / "portfolio_manager.md").read_text()
     pattern = r"^-\s+(High|Moderate|Low) conviction[^:]*:\s*([\d.]+)-([\d.]+)%"
     found = {
-        {"High": "high", "Moderate": "medium", "Low": "low"}[m.group(1)]:
-            (float(m.group(2)), float(m.group(3)))
+        {"High": "high", "Moderate": "medium", "Low": "low"}[m.group(1)]: (float(m.group(2)), float(m.group(3)))
         for m in re.finditer(pattern, prompt, re.M)
     }
     assert found == {"high": (2.0, 4.0), "medium": (1.0, 2.5), "low": (0.5, 1.0)}
@@ -96,9 +91,29 @@ def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
     assert summary["analysed"] == 59
     assert summary["eligible"] == 25
     assert summary["clears_rr_floor_alone"] == [
-        "AAPL", "CHPX", "CMCSA", "COP", "CRM", "CVX", "DE", "DIS", "FLNC",
-        "JNJ", "JPM", "KO", "MU", "NKE", "NUE", "NVDA", "PATH", "PFE",
-        "RSG", "SLB", "V", "VLO", "XLE",
+        "AAPL",
+        "CHPX",
+        "CMCSA",
+        "COP",
+        "CRM",
+        "CVX",
+        "DE",
+        "DIS",
+        "FLNC",
+        "JNJ",
+        "JPM",
+        "KO",
+        "MU",
+        "NKE",
+        "NUE",
+        "NVDA",
+        "PATH",
+        "PFE",
+        "RSG",
+        "SLB",
+        "V",
+        "VLO",
+        "XLE",
     ]
     # The catalyst door has all but closed: only the two names whose payoff
     # is UNMEASURABLE still need it. That is the redundancy item 1(d)
@@ -212,14 +227,58 @@ def test_equal_weight_ranking_order_is_pinned(rows):
     ranked = rank_eligible(rows)
     assert len(ranked) == 25
     assert [r["symbol"] for r in ranked] == [
-        "VLO", "XLE", "NUE", "NVDA", "AAPL", "JPM", "COP", "JNJ", "CHPX",
-        "RSG", "KO", "V", "PATH", "DIS", "SLB", "CMCSA", "DE", "NKE",
-        "MSFT", "TSM", "MU", "FLNC", "CVX", "PFE", "CRM",
+        "VLO",
+        "XLE",
+        "NUE",
+        "NVDA",
+        "AAPL",
+        "JPM",
+        "COP",
+        "JNJ",
+        "CHPX",
+        "RSG",
+        "KO",
+        "V",
+        "PATH",
+        "DIS",
+        "SLB",
+        "CMCSA",
+        "DE",
+        "NKE",
+        "MSFT",
+        "TSM",
+        "MU",
+        "FLNC",
+        "CVX",
+        "PFE",
+        "CRM",
     ]
     assert [r["composite_score"] for r in ranked] == [
-        2.3674, 1.9848, 1.8977, 1.7424, 1.7386, 1.6477, 1.6402, 1.5795, 1.5,
-        1.3902, 1.3788, 1.3674, 1.3523, 1.3371, 1.3371, 1.3068, 1.2614,
-        1.2159, 1.1742, 1.1667, 1.1477, 1.0492, 1.0, 0.9205, 0.5341,
+        2.3674,
+        1.9848,
+        1.8977,
+        1.7424,
+        1.7386,
+        1.6477,
+        1.6402,
+        1.5795,
+        1.5,
+        1.3902,
+        1.3788,
+        1.3674,
+        1.3523,
+        1.3371,
+        1.3371,
+        1.3068,
+        1.2614,
+        1.2159,
+        1.1742,
+        1.1667,
+        1.1477,
+        1.0492,
+        1.0,
+        0.9205,
+        0.5341,
     ]
 
 
@@ -228,8 +287,7 @@ def test_ranking_components_are_normalised_and_sum_to_the_score(rows):
     for row in ranked:
         for name in RANKING_SIGNALS:
             assert 0.0 <= row["score_components"][name] <= 1.0
-        assert row["composite_score"] == pytest.approx(
-            sum(row["score_components"].values()), abs=1e-4)
+        assert row["composite_score"] == pytest.approx(sum(row["score_components"].values()), abs=1e-4)
     # Each signal spans the full 0..1 range: none is constant across the set,
     # so all three actually contribute spread.
     for name in RANKING_SIGNALS:

@@ -96,9 +96,9 @@ def build_correlation_matrix(
             excluded.append(sym)
     if excluded:
         logger.warning(
-            "correlation: %d symbol(s) excluded from matrix (insufficient bars, "
-            "<10 returns): %s",
-            len(excluded), ", ".join(sorted(excluded)),
+            "correlation: %d symbol(s) excluded from matrix (insufficient bars, <10 returns): %s",
+            len(excluded),
+            ", ".join(sorted(excluded)),
         )
     if len(returns) < 2:
         return {}
@@ -131,7 +131,8 @@ def _correlation_distance(corr: float) -> float:
 
 
 def _minimum_spanning_edges(
-    universe: list[str], matrix: dict[str, dict[str, float]],
+    universe: list[str],
+    matrix: dict[str, dict[str, float]],
 ) -> list[tuple[float, str, str]]:
     """Kruskal MST (forest, if the correlation graph is disconnected).
 
@@ -142,7 +143,7 @@ def _minimum_spanning_edges(
     edges: list[tuple[float, str, str]] = []
     for i, sym1 in enumerate(universe):
         row = matrix.get(sym1) or {}
-        for sym2 in universe[i + 1:]:
+        for sym2 in universe[i + 1 :]:
             val = row.get(sym2)
             if val is None:
                 val = (matrix.get(sym2) or {}).get(sym1)
@@ -303,5 +304,4 @@ def highly_correlated_peers(
     question with an X of their own.
     """
     row = matrix.get(symbol, {})
-    return [peer for peer in candidates
-            if peer != symbol and abs(row.get(peer, 0.0)) >= threshold]
+    return [peer for peer in candidates if peer != symbol and abs(row.get(peer, 0.0)) >= threshold]

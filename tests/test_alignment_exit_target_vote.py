@@ -5,6 +5,7 @@ completed close has reached the current target since it took effect, the
 give-back is measured from the FIRST lost mark instead of the last. No
 lost mark: hold. One lost mark: unchanged. Two: the vote can tip a close.
 """
+
 import sqlite3
 import threading
 import types
@@ -32,15 +33,22 @@ SHORT = [100.0] * 30 + [80.0] * 19 + [95.0]
 
 def _long(**kw):
     return check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=LONG, atr=ATR,
-        bar_dates=_dates(len(LONG)), **kw,
+        thesis_invalid_if="close below the MA20",
+        closes=LONG,
+        atr=ATR,
+        bar_dates=_dates(len(LONG)),
+        **kw,
     )
 
 
 def _short(**kw):
     return check_alignment_exit(
-        thesis_invalid_if="close above the MA20", closes=SHORT, atr=ATR,
-        is_short=True, bar_dates=_dates(len(SHORT)), **kw,
+        thesis_invalid_if="close above the MA20",
+        closes=SHORT,
+        atr=ATR,
+        is_short=True,
+        bar_dates=_dates(len(SHORT)),
+        **kw,
     )
 
 
@@ -54,18 +62,20 @@ def test_today_holds_inside_the_band_from_the_last_lost_mark() -> None:
 
 
 def test_target_not_reached_is_todays_behaviour() -> None:
-    for v in (_long(target=125.0, target_effective_date=date(2026, 1, 1)),
-              _short(target=75.0, target_effective_date=date(2026, 1, 1))):
+    for v in (
+        _long(target=125.0, target_effective_date=date(2026, 1, 1)),
+        _short(target=75.0, target_effective_date=date(2026, 1, 1)),
+    ):
         assert v.status == "HOLD" and "SMA50" in v.last_mark.source
         assert v.target_vote_applied is False
         assert "not applied" in v.target_vote and "not reached" in v.target_vote
 
 
 def test_reached_with_two_lost_marks_tips_the_close() -> None:
-    for v in (_long(target=118.0, target_effective_date=date(2026, 1, 1),
-                    target_version="entry record"),
-              _short(target=82.0, target_effective_date=date(2026, 1, 1),
-                     target_version="entry record")):
+    for v in (
+        _long(target=118.0, target_effective_date=date(2026, 1, 1), target_version="entry record"),
+        _short(target=82.0, target_effective_date=date(2026, 1, 1), target_version="entry record"),
+    ):
         assert v.status == "EXIT" and v.code == CODE_EXIT
         assert v.last_mark and "MA20" in v.last_mark.source
         assert v.target_vote_applied is True
@@ -77,11 +87,14 @@ def test_reached_with_two_lost_marks_tips_the_close() -> None:
 
 def test_reached_with_one_lost_mark_is_unchanged() -> None:
     """A single mark is both first and last, so the vote moves nothing."""
-    base = dict(thesis_invalid_if=None, closes=[100.0] * 5 + [98.0], atr=ATR,
-                broken_structural_level=99.0, bar_dates=_dates(6))
+    base = dict(
+        thesis_invalid_if=None, closes=[100.0] * 5 + [98.0], atr=ATR, broken_structural_level=99.0, bar_dates=_dates(6)
+    )
     today = check_alignment_exit(**base)
     voted = check_alignment_exit(
-        **base, target=100.0, target_effective_date=date(2026, 1, 1),
+        **base,
+        target=100.0,
+        target_effective_date=date(2026, 1, 1),
     )
     assert today.status == voted.status == "HOLD"
     assert voted.target_vote_applied is True
@@ -91,16 +104,24 @@ def test_reached_with_one_lost_mark_is_unchanged() -> None:
 def test_reached_with_no_lost_mark_never_sells_alone() -> None:
     closes = [100.0] * 30 + [120.0] * 20
     v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=closes, atr=ATR,
-        bar_dates=_dates(50), target=110.0, target_effective_date=date(2026, 1, 1),
+        thesis_invalid_if="close below the MA20",
+        closes=closes,
+        atr=ATR,
+        bar_dates=_dates(50),
+        target=110.0,
+        target_effective_date=date(2026, 1, 1),
     )
     assert v.status == "HOLD" and v.code == CODE_HOLD
     assert v.target_vote_applied is True  # reached — and still a hold
     assert "APPLIED" in v.target_vote
     short = check_alignment_exit(
-        thesis_invalid_if="close above the MA20", is_short=True, atr=ATR,
-        closes=[100.0] * 30 + [80.0] * 20, bar_dates=_dates(50),
-        target=90.0, target_effective_date=date(2026, 1, 1),
+        thesis_invalid_if="close above the MA20",
+        is_short=True,
+        atr=ATR,
+        closes=[100.0] * 30 + [80.0] * 20,
+        bar_dates=_dates(50),
+        target=90.0,
+        target_effective_date=date(2026, 1, 1),
     )
     assert short.status == "HOLD" and short.target_vote_applied is True
 
@@ -109,7 +130,9 @@ def test_missing_target_is_loud_and_otherwise_today() -> None:
     today = _long()
     missing = _long(target=None, target_version="no target on the opening row")
     assert (today.status, today.last_mark, today.breach_atrs) == (
-        missing.status, missing.last_mark, missing.breach_atrs,
+        missing.status,
+        missing.last_mark,
+        missing.breach_atrs,
     )
     assert "NOT APPLIED, no target to read (no target on the opening row)" in missing.reason
     undated = _long(target=118.0, target_effective_date=None)
@@ -121,8 +144,7 @@ def test_revision_after_the_reach_resets_reached() -> None:
     took effect, so the vote does not apply even though earlier closes
     stood beyond it."""
     last_day = _dates(len(LONG))[-1]
-    v = _long(target=118.0, target_effective_date=last_day,
-              target_version="applied revision")
+    v = _long(target=118.0, target_effective_date=last_day, target_version="applied revision")
     assert v.status == "HOLD" and v.target_vote_applied is False
     assert "not reached" in v.target_vote
     s = _short(target=82.0, target_effective_date=last_day)
@@ -145,10 +167,14 @@ def test_target_reached_is_close_only_on_or_after_the_effective_date() -> None:
 
 # --- the caller: which target, and since when ---------------------------
 
+
 def _exit(db) -> AlignmentExit:
     return AlignmentExit(
-        alignment_exit_cached=None, structural_protection_for_holding=None,
-        config=None, db=db, market=None,
+        alignment_exit_cached=None,
+        structural_protection_for_holding=None,
+        config=None,
+        db=db,
+        market=None,
     )
 
 
@@ -166,13 +192,20 @@ def test_caller_dates_the_target_from_entry_or_the_latest_applied_revision() -> 
     assert (t, eff) == (118.0, "2026-01-05") and "entry record" in ver
     # the position's OWN open (a scale-in does not move it) wins over the last buy
     t, eff, _ = _exit(_db(row, open_ts="2026-01-02T10:00:00"))._target_for_holding(
-        symbol="AAA", is_short=False,
+        symbol="AAA",
+        is_short=False,
     )
     assert eff == "2026-01-02"
     revs = [
         {"timestamp": "2026-01-09 16:00:00", "applied": False, "new_price": 130.0},
-        {"timestamp": "2026-01-08 16:00:00", "applied": True, "new_price": 118.0,
-         "run_id": "r8", "code": "TRIGGER_X", "prior_price": 110.0},
+        {
+            "timestamp": "2026-01-08 16:00:00",
+            "applied": True,
+            "new_price": 118.0,
+            "run_id": "r8",
+            "code": "TRIGGER_X",
+            "prior_price": 110.0,
+        },
         {"timestamp": "2026-01-01 16:00:00", "applied": True, "new_price": 90.0},
     ]
     t, eff, ver = _exit(_db(row, revs))._target_for_holding(symbol="AAA", is_short=False)
@@ -185,7 +218,8 @@ def test_caller_dates_the_target_from_entry_or_the_latest_applied_revision() -> 
 
 def test_caller_reports_a_missing_or_unreadable_target_loudly() -> None:
     assert _exit(_db({"timestamp": "2026-01-05"}))._target_for_holding(
-        symbol="AAA", is_short=False,
+        symbol="AAA",
+        is_short=False,
     ) == (None, None, "no target on the opening row")
     boom = types.SimpleNamespace(
         get_symbol_last_buy=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db")),
@@ -205,10 +239,8 @@ def test_revision_limit_is_per_symbol() -> None:
     )
     revs = build_target_revision_records(conn=conn, lock=threading.Lock())
     for i in range(3):
-        revs.record_target_revision(run_id=f"a{i}", symbol="AAA", code=f"A{i}",
-                                    seat="risk", evidence="e")
-    revs.record_target_revision(run_id="b", symbol="BBB", code="B0", seat="risk",
-                                evidence="e")
+        revs.record_target_revision(run_id=f"a{i}", symbol="AAA", code=f"A{i}", seat="risk", evidence="e")
+    revs.record_target_revision(run_id="b", symbol="BBB", code="B0", seat="risk", evidence="e")
     out = revs.get_target_revisions(["AAA", "BBB", "aaa"], limit=2)
     assert len(out["AAA"]) == 2 and out["AAA"][0]["code"] == "A2"
     assert [r["code"] for r in out["BBB"]] == ["B0"]  # not crowded out

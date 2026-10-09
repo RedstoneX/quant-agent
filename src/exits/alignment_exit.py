@@ -18,12 +18,7 @@ logger = logging.getLogger("src.pipeline")
 class AlignmentExit:
     """The alignment exit: the per-holding verdict, the scan over the book and the reading record (the per-run memo stays with the pipeline that owns it)."""
 
-    def __init__(self, *,
-                 alignment_exit_cached,
-                 structural_protection_for_holding,
-                 config,
-                 db,
-                 market) -> None:
+    def __init__(self, *, alignment_exit_cached, structural_protection_for_holding, config, db, market) -> None:
         self._alignment_exit_cached = alignment_exit_cached
         self._structural_protection_for_holding = structural_protection_for_holding
         self.config = config
@@ -31,8 +26,13 @@ class AlignmentExit:
         self.market = market
 
     def _alignment_exit_scan(
-        self, positions, best_by_symbol: dict, *, run_id: str,
-        position_facts: dict | None, priority: dict,
+        self,
+        positions,
+        best_by_symbol: dict,
+        *,
+        run_id: str,
+        position_facts: dict | None,
+        priority: dict,
         displaced: dict | None = None,
     ) -> None:
         """Read EVERY held position's own chart and raise a sale on the ones
@@ -104,7 +104,7 @@ class AlignmentExit:
         """
         from src.risk.exit_trigger import ExitTrigger
 
-        for position in (positions or []):
+        for position in positions or []:
             try:
                 symbol = (getattr(position, "symbol", "") or "").strip().upper()
                 if not symbol:
@@ -131,10 +131,13 @@ class AlignmentExit:
                 # fill it. A later reader needs the skipped rows to know its
                 # own denominator; it must not mistake them for health.
                 if existing is not None and priority.get(
-                    existing.get("action"), 99,
+                    existing.get("action"),
+                    99,
                 ) <= priority.get(act, 99):
                     self._record_alignment_reading(
-                        symbol=symbol, verdict=None, run_id=run_id,
+                        symbol=symbol,
+                        verdict=None,
+                        run_id=run_id,
                         is_short=is_short,
                         not_evaluated_reason=(
                             "the review already proposed a "
@@ -147,12 +150,10 @@ class AlignmentExit:
                 facts = (position_facts or {}).get(symbol, {}) or {}
                 verdict = self._alignment_exit_cached(
                     symbol=symbol,
-                    thesis_invalid_if=getattr(position, "thesis_invalid_if", None)
-                    or facts.get("thesis_invalid_if"),
+                    thesis_invalid_if=getattr(position, "thesis_invalid_if", None) or facts.get("thesis_invalid_if"),
                     is_short=is_short,
                     entry_price=getattr(position, "avg_entry", None),
-                    stop_loss=getattr(position, "stop_loss", None)
-                    or facts.get("stop_loss"),
+                    stop_loss=getattr(position, "stop_loss", None) or facts.get("stop_loss"),
                     run_id=run_id,
                 )
                 # The reading the scan itself acts on, memoised, written
@@ -160,15 +161,17 @@ class AlignmentExit:
                 # the whole point. Nothing reads these rows back into any
                 # decision; see `db.record_alignment_exit_reading`.
                 self._record_alignment_reading(
-                    symbol=symbol, verdict=verdict, run_id=run_id,
+                    symbol=symbol,
+                    verdict=verdict,
+                    run_id=run_id,
                     is_short=is_short,
                 )
                 if not verdict.exit_cleared:
                     continue
                 if self._position_opened_today(symbol):
                     logger.info(
-                        "Alignment scan: %s was opened in today's session — "
-                        "no same-session close is raised for it", symbol,
+                        "Alignment scan: %s was opened in today's session — no same-session close is raised for it",
+                        symbol,
                     )
                     continue
                 if existing is not None and isinstance(displaced, dict):
@@ -183,8 +186,7 @@ class AlignmentExit:
                     "symbol": symbol,
                     "action": act,
                     "reason": (
-                        "Trend alignment over — raised by the desk's own scan "
-                        "of this position's chart, not by a model."
+                        "Trend alignment over — raised by the desk's own scan of this position's chart, not by a model."
                     ),
                     "exit_trigger": ExitTrigger.TREND_ALIGNMENT_OVER.value,
                     "trigger_evidence": (verdict.reason or "")[:2000],
@@ -194,13 +196,15 @@ class AlignmentExit:
                 }
                 logger.info(
                     "Alignment scan: raising %s %s — %s",
-                    act, symbol, verdict.reason,
+                    act,
+                    symbol,
+                    verdict.reason,
                 )
             except Exception as e:  # noqa: BLE001 — a failure here HOLDS
                 logger.exception(
-                    "Alignment scan: %s could not be evaluated (%s) — no sale "
-                    "is raised for it",
-                    getattr(position, "symbol", "?"), e,
+                    "Alignment scan: %s could not be evaluated (%s) — no sale is raised for it",
+                    getattr(position, "symbol", "?"),
+                    e,
                 )
                 # LOUD, IN THE DATA. A swallowed failure here used to leave
                 # the session indistinguishable from one where the scan
@@ -210,16 +214,16 @@ class AlignmentExit:
                 # "the scan broke on this name" and "the scan never ran"
                 # stop looking identical. The row is the same shape the
                 # skip branch already writes — no chart read is bought.
-                _failed_symbol = (
-                    getattr(position, "symbol", "") or ""
-                ).strip().upper()
+                _failed_symbol = (getattr(position, "symbol", "") or "").strip().upper()
                 if _failed_symbol:
                     try:
                         _failed_qty = float(getattr(position, "qty", 0) or 0)
                     except (TypeError, ValueError):
                         _failed_qty = 0.0
                     self._record_alignment_reading(
-                        symbol=_failed_symbol, verdict=None, run_id=run_id,
+                        symbol=_failed_symbol,
+                        verdict=None,
+                        run_id=run_id,
                         is_short=_failed_qty < 0,
                         not_evaluated_reason=(
                             "the scan raised an error for this position, so "
@@ -228,15 +232,23 @@ class AlignmentExit:
                     )
 
     def _record_alignment_reading(
-        self, *, symbol: str, verdict, run_id: str, is_short: bool,
+        self,
+        *,
+        symbol: str,
+        verdict,
+        run_id: str,
+        is_short: bool,
         not_evaluated_reason: str | None = None,
     ) -> None:
         """Item 75 recording. Never raises, never blocks a sale, never
         buys a chart read to fill itself."""
         try:
             self.db.record_alignment_exit_reading(
-                symbol=symbol, verdict=verdict, run_id=run_id,
-                is_short=is_short, not_evaluated_reason=not_evaluated_reason,
+                symbol=symbol,
+                verdict=verdict,
+                run_id=run_id,
+                is_short=is_short,
+                not_evaluated_reason=not_evaluated_reason,
             )
         except Exception as e:  # noqa: BLE001 — a recording never blocks
             # `exception`, not `warning`: this is the OTHER place an empty
@@ -246,11 +258,16 @@ class AlignmentExit:
             logger.exception(
                 "alignment-exit reading for %s was NOT recorded (%s: %s) — "
                 "the readings table will under-report this session",
-                symbol, type(e).__name__, e,
+                symbol,
+                type(e).__name__,
+                e,
             )
 
     def _target_for_holding(
-        self, *, symbol: str, is_short: bool,
+        self,
+        *,
+        symbol: str,
+        is_short: bool,
     ) -> tuple[float | None, str | None, str]:
         """The CURRENT target, the date it took effect and which record set it.
 
@@ -268,15 +285,14 @@ class AlignmentExit:
             target = row.get("take_profit")
             if target is None or not float(target) > 0:
                 return None, None, "no target on the opening row"
-            opened = (
-                self.db.get_position_open_timestamp(row) or row.get("timestamp") or ""
-            )
+            opened = self.db.get_position_open_timestamp(row) or row.get("timestamp") or ""
             opened = str(opened).replace("T", " ")[:19]
             if not opened:
                 return None, None, "opening row carries no timestamp"
             effective, version = opened[:10], f"entry record of {opened}"
             revisions = (self.db.get_target_revisions([symbol]) or {}).get(
-                symbol.upper(), [],
+                symbol.upper(),
+                [],
             )
             for rev in revisions:  # newest first
                 stamp = str(rev.get("timestamp") or "").replace("T", " ")[:19]
@@ -295,8 +311,10 @@ class AlignmentExit:
             return float(target), effective, version
         except Exception as e:  # noqa: BLE001 — unreadable target is today's rule
             logger.warning(
-                "alignment exit: could not read %s's target (%s: %s) — the "
-                "target vote is not applied this session", symbol, type(e).__name__, e,
+                "alignment exit: could not read %s's target (%s: %s) — the target vote is not applied this session",
+                symbol,
+                type(e).__name__,
+                e,
             )
             return None, None, f"target read failed: {type(e).__name__}: {e}"
 
@@ -314,7 +332,9 @@ class AlignmentExit:
         except Exception as e:  # noqa: BLE001 — unknown age HOLDS
             logger.warning(
                 "alignment scan: could not read %s's entry date (%s) — it is "
-                "treated as opened today, so no sale is raised", symbol, e,
+                "treated as opened today, so no sale is raised",
+                symbol,
+                e,
             )
             return True
         ts = ((row or {}).get("timestamp") or "")[:10]
@@ -323,8 +343,14 @@ class AlignmentExit:
         return ts == str(et_today())
 
     def _alignment_exit_for_holding(
-        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
-        entry_price: float | None, stop_loss: float | None, run_id: str,
+        self,
+        *,
+        symbol: str,
+        thesis_invalid_if: str | None,
+        is_short: bool,
+        entry_price: float | None,
+        stop_loss: float | None,
+        run_id: str,
     ):
         """Read this holding's own chart and return the alignment verdict.
 
@@ -346,8 +372,11 @@ class AlignmentExit:
         failure degrades to UNPARSEABLE, which callers treat as HOLD.
         """
         from src.risk.alignment_exit import (
-            CODE_NO_CLOSES, AlignmentExitCheck, check_alignment_exit,
+            CODE_NO_CLOSES,
+            AlignmentExitCheck,
+            check_alignment_exit,
         )
+
         try:
             bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
             sorted_bars = sorted(bars, key=lambda b: b.date)
@@ -361,14 +390,20 @@ class AlignmentExit:
             target, effective, version = None, None, "no completed closes to date a target"
             if sorted_bars:
                 from src.data.technical import compute_indicators
+
                 target, effective, version = self._target_for_holding(
-                    symbol=symbol, is_short=is_short,
+                    symbol=symbol,
+                    is_short=is_short,
                 )
                 atr = compute_indicators(symbol, bars).atr_14
                 protection = self._structural_protection_for_holding(
-                    symbol=symbol, thesis_invalid_if=thesis_invalid_if,
-                    entry_price=entry_price, stop_loss=stop_loss,
-                    is_short=is_short, run_id=run_id, persist=False,
+                    symbol=symbol,
+                    thesis_invalid_if=thesis_invalid_if,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    is_short=is_short,
+                    run_id=run_id,
+                    persist=False,
                 )
                 if getattr(protection, "basis", "") == "structural_level_broken":
                     # THE LEVEL THAT ACTUALLY BROKE, as named by the check
@@ -382,18 +417,29 @@ class AlignmentExit:
                     # structural mark.
                     broken_level = getattr(protection, "broken_level", None)
             return check_alignment_exit(
-                thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
-                broken_structural_level=broken_level, is_short=is_short,
-                target=target, target_effective_date=effective,
+                thesis_invalid_if=thesis_invalid_if,
+                closes=closes,
+                atr=atr,
+                broken_structural_level=broken_level,
+                is_short=is_short,
+                target=target,
+                target_effective_date=effective,
                 target_version=version,
                 bar_dates=[getattr(b, "date", None) for b in sorted_bars],
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "alignment exit: chart read failed for %s (%s) — the verdict "
-                "is UNPARSEABLE, which callers treat as HOLD", symbol, e,
+                "is UNPARSEABLE, which callers treat as HOLD",
+                symbol,
+                e,
             )
             return AlignmentExitCheck(
-                "UNPARSEABLE", CODE_NO_CLOSES, (), None, None, None,
+                "UNPARSEABLE",
+                CODE_NO_CLOSES,
+                (),
+                None,
+                None,
+                None,
                 f"chart read failed: {e}",
             )

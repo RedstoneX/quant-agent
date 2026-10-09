@@ -127,7 +127,8 @@ TRANSPORTS = {
 
 @pytest.mark.parametrize("module_name", sorted(TRANSPORTS))
 def test_every_http_transport_this_repo_can_reach_for_is_journalled(
-    module_name, monkeypatch,
+    module_name,
+    monkeypatch,
 ):
     exercise = TRANSPORTS[module_name]
     if module_name == "requests":
@@ -172,9 +173,7 @@ def test_the_runner_enforces_hermeticity_rather_than_only_reporting_it():
         "run_rehearsal no longer asserts hermeticity; a replay that reached a "
         "live provider would return a verdict again (board item 202)"
     )
-    assert "raise hermetic_breach" in source, (
-        "run_rehearsal collected the breach but no longer raises it"
-    )
+    assert "raise hermetic_breach" in source, "run_rehearsal collected the breach but no longer raises it"
 
 
 def test_the_cli_turns_a_breach_into_a_void_run_not_a_pass(monkeypatch, tmp_path):
@@ -191,8 +190,12 @@ def test_the_cli_turns_a_breach_into_a_void_run_not_a_pass(monkeypatch, tmp_path
     monkeypatch.setattr("ops.rehearsal.isolation.Sandbox", _Sandbox)
     monkeypatch.setattr("ops.rehearsal.runner.run_rehearsal", _boom)
 
-    code = run_module.main([
-        "--source-db", str(tmp_path / "nonexistent.db"),
-        "--sandbox", str(tmp_path / "sbx"),
-    ])
+    code = run_module.main(
+        [
+            "--source-db",
+            str(tmp_path / "nonexistent.db"),
+            "--sandbox",
+            str(tmp_path / "sbx"),
+        ]
+    )
     assert code == 2, "a non-hermetic replay must not exit 0"

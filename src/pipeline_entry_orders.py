@@ -43,6 +43,7 @@ from src.entry_orders_observed import (  # noqa: F401  moved out, re-exported
     _trade_updates_already_started,
 )
 
+
 def _entry_slippage_bps(pipeline) -> float:
     """Configured entry-limit bound in basis points, or the 40bp default.
 
@@ -52,15 +53,13 @@ def _entry_slippage_bps(pipeline) -> float:
     """
     raw = getattr(
         getattr(pipeline.config, "execution", None),
-        "max_entry_slippage_bps", None,
+        "max_entry_slippage_bps",
+        None,
     )
-    if (
-        isinstance(raw, (int, float))
-        and not isinstance(raw, bool)
-        and raw > 0
-    ):
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
         return float(raw)
     return MAX_ENTRY_SLIPPAGE_BPS
+
 
 def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     """Programmed waits still ahead of submit. Not a fitted clock.
@@ -97,14 +96,17 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
                 record_clean_pass(pipeline, "stream.lease_contended")
         if not lease_held_elsewhere:
             from src.execution.broker import _ALPACA_STREAM_AUTH_DEADLINE_S
+
             budget += float(_ALPACA_STREAM_AUTH_DEADLINE_S)
     if will_fund:
         from src.execution.cash_sweep import (
             _FUND_CASH_SETTLE_TIMEOUT_S,
             _FUND_TERMINAL_TIMEOUT_S,
         )
+
         budget += float(_FUND_TERMINAL_TIMEOUT_S) + float(_FUND_CASH_SETTLE_TIMEOUT_S)
     return budget
+
 
 def _encode_entry_submit_window(pipeline, ctx, *, will_fund: bool) -> None:
     """Pin the submit deadline from known step durations, not an invented timer."""
@@ -114,12 +116,14 @@ def _encode_entry_submit_window(pipeline, ctx, *, will_fund: bool) -> None:
     ctx.entry_submit_started_mono = started
     ctx.entry_submit_deadline_mono = started + budget if budget > 0 else None
 
+
 def _submit_window_overrun(ctx) -> bool:
     """True when submitting now would fire a ticket after the encoded window."""
     deadline = getattr(ctx, "entry_submit_deadline_mono", None)
     if not isinstance(deadline, (int, float)):
         return False
     return time.monotonic() > float(deadline)
+
 
 def _start_trade_updates_early(pipeline, ctx) -> None:
     """Start trade_updates without waiting — overlap handshake with Risk review."""
@@ -138,10 +142,9 @@ def _start_trade_updates_early(pipeline, ctx) -> None:
     except Exception:  # noqa: BLE001
         record_swallowed_here(pipeline, "stream.warmup_type_import")
         return
-    if isinstance(warmup, TradeStreamWarmup) and (
-        warmup.handshake_failed or warmup.retried
-    ):
+    if isinstance(warmup, TradeStreamWarmup) and (warmup.handshake_failed or warmup.retried):
         ctx.desk_latency_stall = True
+
 
 def _stop_trade_updates(pipeline) -> None:
     stop = getattr(getattr(pipeline, "broker", None), "stop_trade_updates", None)
@@ -154,6 +157,7 @@ def _stop_trade_updates(pipeline) -> None:
         logger.warning("trade_updates stop failed: %s", exc)
     else:
         record_clean_pass(pipeline, "stream.stop")
+
 
 def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
     """Freeze the already-approved slippage cap before a desk stall can move it.
@@ -184,6 +188,7 @@ def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
             pinned[symbol] = ref * (1 + slippage_bps / 10_000.0)
     ctx.approved_entry_ceiling = pinned
 
+
 def _adopt_stream_stall(pipeline, ctx) -> None:
     """If the fill wait REST-fell-back because auth never completed, name it."""
     warmup = getattr(getattr(pipeline, "broker", None), "_last_stream_warmup", None)
@@ -192,10 +197,9 @@ def _adopt_stream_stall(pipeline, ctx) -> None:
     except Exception:  # noqa: BLE001
         record_swallowed_here(pipeline, "stream.warmup_type_import")
         return
-    if isinstance(warmup, TradeStreamWarmup) and (
-        warmup.handshake_failed or warmup.retried
-    ):
+    if isinstance(warmup, TradeStreamWarmup) and (warmup.handshake_failed or warmup.retried):
         ctx.desk_latency_stall = True
+
 
 def _warm_trade_updates(pipeline, ctx) -> None:
     """Start the kept trade_updates socket if Risk did not. Does not wait for auth."""
@@ -214,10 +218,9 @@ def _warm_trade_updates(pipeline, ctx) -> None:
     except Exception:  # noqa: BLE001
         record_swallowed_here(pipeline, "stream.warmup_type_import")
         return
-    if isinstance(warmup, TradeStreamWarmup) and (
-        warmup.handshake_failed or warmup.retried
-    ):
+    if isinstance(warmup, TradeStreamWarmup) and (warmup.handshake_failed or warmup.retried):
         ctx.desk_latency_stall = True
+
 
 def _today_order_price(pipeline, symbol) -> float | None:
     """A price from TODAY that an order may be placed against, or None.
@@ -253,9 +256,10 @@ def _today_order_price(pipeline, symbol) -> float | None:
             return None
         if not stamped.is_today:
             logger.warning(
-                "%s live price $%.2f is not stamped today (source %s) — not "
-                "pricing an order against it",
-                symbol, stamped.price, stamped.source,
+                "%s live price $%.2f is not stamped today (source %s) — not pricing an order against it",
+                symbol,
+                stamped.price,
+                stamped.source,
             )
             return None
         return float(stamped.price)
@@ -271,9 +275,11 @@ def _today_order_price(pipeline, symbol) -> float | None:
         return float(live)
     return None
 
+
 def _live_fill_price(pipeline, symbol) -> float | None:
     """Back-compat alias for `_today_order_price`."""
     return _today_order_price(pipeline, symbol)
+
 
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
     """(poll_seconds, slippage_bps), or None when re-peg is off.
@@ -291,11 +297,11 @@ def _repeg_settings(pipeline) -> tuple[float, float] | None:
     raw_poll = getattr(execution_cfg, "repeg_poll_seconds", None)
     poll = (
         float(raw_poll)
-        if isinstance(raw_poll, (int, float)) and not isinstance(raw_poll, bool)
-        and 0 < raw_poll <= 30
+        if isinstance(raw_poll, (int, float)) and not isinstance(raw_poll, bool) and 0 < raw_poll <= 30
         else 5.0
     )
     return poll, _entry_slippage_bps(pipeline)
+
 
 def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     """ONE decisive reprice of a working entry limit — not a ladder.
@@ -401,17 +407,19 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         ceiling = reference * (1 + slippage_bps / 10_000.0)
     ceiling = round(ceiling, 2 if ceiling >= 1 else 4)
     spec["ceiling"] = ceiling
-    no_room = (limit_price <= ceiling + 1e-9) if is_short \
-        else (limit_price >= ceiling - 1e-9)
+    no_room = (limit_price <= ceiling + 1e-9) if is_short else (limit_price >= ceiling - 1e-9)
     if no_room:
         # Expected for most entries: since PR #111 the submitted limit IS the
         # ceiling, so there is nothing to reprice toward. Room exists only
         # when the limit was set inside the ceiling — e.g. the quote was
         # unavailable at submission and the analyst's entry price was used.
         logger.debug(
-            "re-peg %s: limit $%.4f is already at the %.0fbp %s $%.4f — "
-            "nothing to chase", symbol, limit_price, slippage_bps,
-            "floor" if is_short else "ceiling", ceiling,
+            "re-peg %s: limit $%.4f is already at the %.0fbp %s $%.4f — nothing to chase",
+            symbol,
+            limit_price,
+            slippage_bps,
+            "floor" if is_short else "ceiling",
+            ceiling,
         )
         spec["repeg_outcome"] = "no_room"
         return order_id, 0.0
@@ -420,13 +428,13 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     #    cheapest reprice is the one never sent.
     try:
         status = pipeline.broker.wait_for_order_terminal(
-            order_id, timeout_seconds=poll_seconds,
+            order_id,
+            timeout_seconds=poll_seconds,
             poll_interval=min(1.0, poll_seconds),
         )
     except Exception as exc:  # noqa: BLE001
         record_swallowed(pipeline, "repeg.wait_terminal", exc, symbol=symbol)
-        logger.warning("re-peg %s: wait failed (%s) — leaving the order "
-                       "as-is", symbol, exc)
+        logger.warning("re-peg %s: wait failed (%s) — leaving the order as-is", symbol, exc)
         spec["repeg_outcome"] = "wait_failed"
         return order_id, 0.0
     status = str(status or "").lower()
@@ -437,35 +445,42 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     # 2. Has the EXCHANGE got it yet? A replace before that is rejected.
     #    Only pay this second window when the first one ended with the order
     #    still in a pre-exchange status.
-    if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and \
-            status != "partially_filled":
+    if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and status != "partially_filled":
         try:
             status = pipeline.broker.wait_for_order_at_exchange(
-                order_id, timeout_seconds=poll_seconds,
+                order_id,
+                timeout_seconds=poll_seconds,
                 poll_interval=min(1.0, poll_seconds),
             )
         except Exception as exc:  # noqa: BLE001
             record_swallowed(pipeline, "repeg.wait_exchange", exc, symbol=symbol)
-            logger.warning("re-peg %s: exchange-ack wait failed (%s) — "
-                           "leaving the order as-is", symbol, exc)
+            logger.warning("re-peg %s: exchange-ack wait failed (%s) — leaving the order as-is", symbol, exc)
             spec["repeg_outcome"] = "wait_failed"
             return order_id, 0.0
         status = str(status or "").lower()
         if status in pipeline.broker._TERMINAL_ORDER_STATES:
             spec["repeg_outcome"] = "terminal_before_reprice"
             return order_id, 0.0
-        if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and \
-                status != "partially_filled":
+        if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and status != "partially_filled":
             logger.info(
                 "re-peg %s: order %s still %r after %.1fs — the exchange has "
                 "not acknowledged it, so a replace would be rejected; NOT "
                 "repricing. It is handed to end-of-session handling as-is.",
-                symbol, order_id, status or "unknown", poll_seconds,
+                symbol,
+                order_id,
+                status or "unknown",
+                poll_seconds,
             )
             _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "not_at_exchange",
-                "repeg_not_at_exchange", broker_order_id=order_id,
-                status=status or "unknown", window_seconds=poll_seconds,
+                pipeline,
+                ctx,
+                symbol,
+                "repeg",
+                "not_at_exchange",
+                "repeg_not_at_exchange",
+                broker_order_id=order_id,
+                status=status or "unknown",
+                window_seconds=poll_seconds,
             )
             spec["repeg_outcome"] = "not_at_exchange"
             return order_id, 0.0
@@ -475,8 +490,7 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         info = pipeline.broker.get_order_fill_info(order_id) or {}
     except Exception as exc:  # noqa: BLE001
         record_swallowed(pipeline, "repeg.fill_read", exc, symbol=symbol)
-        logger.warning("re-peg %s: fill read failed (%s) — leaving the "
-                       "order as-is", symbol, exc)
+        logger.warning("re-peg %s: fill read failed (%s) — leaving the order as-is", symbol, exc)
         spec["repeg_outcome"] = "wait_failed"
         return order_id, 0.0
     else:
@@ -496,11 +510,18 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
             "re-peg %s: %.4f share(s) already filled on %s — not "
             "replacing a partially filled order; the working remainder "
             "is handed to entry protection unchanged",
-            symbol, filled_so_far, order_id,
+            symbol,
+            filled_so_far,
+            order_id,
         )
         _record_pipeline_event(
-            pipeline, ctx, symbol, "repeg", "abandoned_partial_fill",
-            "repeg_partial_fill", broker_order_id=order_id,
+            pipeline,
+            ctx,
+            symbol,
+            "repeg",
+            "abandoned_partial_fill",
+            "repeg_partial_fill",
+            broker_order_id=order_id,
             fill_qty=filled_so_far,
         )
         spec["repeg_outcome"] = "partial_fill"
@@ -517,24 +538,31 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
     # A buy fills against the ask; a short sale fills against the bid.
-    ask = quote.get("bid_price" if is_short else "ask_price") \
-        if isinstance(quote, dict) else None
+    ask = quote.get("bid_price" if is_short else "ask_price") if isinstance(quote, dict) else None
     if not isinstance(ask, (int, float)) or ask <= 0:
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
-    marketable = (float(ask) >= limit_price - 1e-9) if is_short \
-        else (float(ask) <= limit_price + 1e-9)
+    marketable = (float(ask) >= limit_price - 1e-9) if is_short else (float(ask) <= limit_price + 1e-9)
     if marketable:
         # The market is at or inside our limit: the order is marketable as
         # it stands and a replace would only re-queue it. Leave it working.
         logger.info(
-            "re-peg %s: ask $%.4f is at/below limit $%.4f — order is "
-            "marketable as-is, no reprice", symbol, ask, limit_price,
+            "re-peg %s: ask $%.4f is at/below limit $%.4f — order is marketable as-is, no reprice",
+            symbol,
+            ask,
+            limit_price,
         )
         _record_pipeline_event(
-            pipeline, ctx, symbol, "repeg", "market_within_limit",
-            "repeg_no_reprice_needed", broker_order_id=order_id,
-            ask=float(ask), limit_price=limit_price, ceiling=ceiling,
+            pipeline,
+            ctx,
+            symbol,
+            "repeg",
+            "market_within_limit",
+            "repeg_no_reprice_needed",
+            broker_order_id=order_id,
+            ask=float(ask),
+            limit_price=limit_price,
+            ceiling=ceiling,
         )
         spec["repeg_outcome"] = "market_within_limit"
         return order_id, 0.0
@@ -546,23 +574,32 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     target = ceiling
     target = round(target, 2 if target >= 1 else 4)
     assert target >= ceiling - 1e-9 if is_short else target <= ceiling + 1e-9
-    crosses = (float(ask) >= target - 1e-9) if is_short \
-        else (float(ask) <= target + 1e-9)
+    crosses = (float(ask) >= target - 1e-9) if is_short else (float(ask) <= target + 1e-9)
     if not crosses:
         logger.info(
             "re-peg %s: ask $%.4f is ABOVE the ceiling $%.4f — the single "
             "reprice cannot cross the market; sending it at the ceiling "
-            "anyway as the best legal price", symbol, ask, ceiling,
+            "anyway as the best legal price",
+            symbol,
+            ask,
+            ceiling,
         )
     spec["attempted_prices"].append(target)
     new_id, carried_fill, outcome = _apply_repeg(
-        pipeline, ctx, symbol=symbol, order_id=order_id,
-        trade_row_id=trade_row_id, target=target,
-        requested_qty=requested_qty, ceiling=ceiling,
-        ask=float(ask), crosses_market=crosses,
+        pipeline,
+        ctx,
+        symbol=symbol,
+        order_id=order_id,
+        trade_row_id=trade_row_id,
+        target=target,
+        requested_qty=requested_qty,
+        ceiling=ceiling,
+        ask=float(ask),
+        crosses_market=crosses,
     )
     spec["repeg_outcome"] = outcome
     return new_id, carried_fill
+
 
 def _session_candidate_ranking(pipeline) -> list[str] | None:
     """This session's candidate symbols, BEST FIRST, or None if there is no
@@ -580,7 +617,9 @@ def _session_candidate_ranking(pipeline) -> list[str] | None:
     would be indistinguishable from "every candidate ranked last".
     """
     ranked = getattr(
-        getattr(pipeline, "portfolio_manager", None), "last_candidate_ranking", None,
+        getattr(pipeline, "portfolio_manager", None),
+        "last_candidate_ranking",
+        None,
     )
     if not ranked:
         return None
@@ -590,6 +629,7 @@ def _session_candidate_ranking(pipeline) -> list[str] | None:
         if symbol:
             symbols.append(symbol)
     return symbols or None
+
 
 def _dropped_since_proposal(portfolio_decision) -> list[str]:
     """Symbols the PM proposed that are no longer in the order list.
@@ -621,17 +661,15 @@ def _dropped_since_proposal(portfolio_decision) -> list[str]:
     as kept: the symbol survived, it just is not being traded today.
     """
     kept = {d.symbol.upper() for d in portfolio_decision.decisions}
-    dropped = [
-        t.symbol.upper() for t in portfolio_decision.targets
-        if t.symbol.upper() not in kept
-    ]
+    dropped = [t.symbol.upper() for t in portfolio_decision.targets if t.symbol.upper() not in kept]
     seen = set(dropped)
-    for symbol in (getattr(portfolio_decision, "constructor_dropped", None) or []):
+    for symbol in getattr(portfolio_decision, "constructor_dropped", None) or []:
         upper = str(symbol).upper()
         if upper and upper not in kept and upper not in seen:
             dropped.append(upper)
             seen.add(upper)
     return dropped
+
 
 def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, dict]:
     """Persist WHY each PM target the constructor dropped was dropped — and
@@ -677,31 +715,40 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
         drain_refusals = getattr(constructor, "drain_refusals", None)
         refusals = dict(drain_refusals() if callable(drain_refusals) else {})
         existing_risk_pct, _ = _book_risk_inputs(
-            ctx, getattr(ctx, "total_value", 0.0) or 0.0,
+            ctx,
+            getattr(ctx, "total_value", 0.0) or 0.0,
         )
         for sym in dropped:
             fault = faults.get(sym)
             if fault:
                 _record_pipeline_event(
-                    pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
-                    "data_fault", fault=fault.get("fault", ""),
-                    detail=fault.get("detail", ""), targeted=True,
+                    pipeline,
+                    ctx,
+                    sym,
+                    "deterministic_gate",
+                    "unmeasurable",
+                    "data_fault",
+                    fault=fault.get("fault", ""),
+                    detail=fault.get("detail", ""),
+                    targeted=True,
                 )
                 continue
             refusal = refusals.get(sym)
             if refusal:
                 _record_pipeline_event(
-                    pipeline, ctx, sym, "deterministic_gate", "blocked",
+                    pipeline,
+                    ctx,
+                    sym,
+                    "deterministic_gate",
+                    "blocked",
                     CONSTRUCTOR_REFUSED_EVENT_REASON,
                     refusal=refusal.get("refusal", ""),
-                    detail=refusal.get("detail", ""), targeted=True,
+                    detail=refusal.get("detail", ""),
+                    targeted=True,
                 )
                 continue
             target = next(
-                (
-                    t for t in list(getattr(portfolio_decision, "targets", None) or [])
-                    if str(t.symbol).upper() == sym
-                ),
+                (t for t in list(getattr(portfolio_decision, "targets", None) or []) if str(t.symbol).upper() == sym),
                 None,
             )
             if target is not None and _target_increase_missing_falsifier(
@@ -720,7 +767,11 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
             # a new drop path the capture's log-message pattern doesn't
             # match — never nothing, even then.
             _record_pipeline_event(
-                pipeline, ctx, sym, "deterministic_gate", "blocked",
+                pipeline,
+                ctx,
+                sym,
+                "deterministic_gate",
+                "blocked",
                 "constructor_dropped",
                 detail=drop_reasons.get(sym, "no matching constructor log line captured"),
             )
@@ -731,18 +782,29 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
             if sym in dropped:
                 continue
             _record_pipeline_event(
-                pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
-                "data_fault", fault=fault.get("fault", ""),
-                detail=fault.get("detail", ""), targeted=False,
+                pipeline,
+                ctx,
+                sym,
+                "deterministic_gate",
+                "unmeasurable",
+                "data_fault",
+                fault=fault.get("fault", ""),
+                detail=fault.get("detail", ""),
+                targeted=False,
             )
         for sym, refusal in refusals.items():
             if sym in dropped or sym in faults:
                 continue
             _record_pipeline_event(
-                pipeline, ctx, sym, "deterministic_gate", "blocked",
+                pipeline,
+                ctx,
+                sym,
+                "deterministic_gate",
+                "blocked",
                 CONSTRUCTOR_REFUSED_EVENT_REASON,
                 refusal=refusal.get("refusal", ""),
-                detail=refusal.get("detail", ""), targeted=False,
+                detail=refusal.get("detail", ""),
+                targeted=False,
             )
     except Exception as exc:  # noqa: BLE001
         record_swallowed(pipeline, "constructor.drop_recording", exc)
@@ -750,6 +812,7 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
     else:
         record_clean_pass(pipeline, "constructor.drop_recording")
     return faults
+
 
 def _record_constructor_side_flips(pipeline, ctx) -> None:
     """One durable per-symbol row for every target the constructor collapsed
@@ -770,9 +833,15 @@ def _record_constructor_side_flips(pipeline, ctx) -> None:
             held = flip.get("held_weight_pct")
             asked = flip.get("requested_weight_pct")
             _record_pipeline_event(
-                pipeline, ctx, sym, "deterministic_gate", "modified",
-                "side_flip_refused", gate="side_flip_refused",
-                held_weight_pct=held, requested_weight_pct=asked,
+                pipeline,
+                ctx,
+                sym,
+                "deterministic_gate",
+                "modified",
+                "side_flip_refused",
+                gate="side_flip_refused",
+                held_weight_pct=held,
+                requested_weight_pct=asked,
                 emitted_weight_pct=flip.get("emitted_weight_pct"),
                 detail=(
                     f"{sym}: target asked to flip the position from "
@@ -789,9 +858,18 @@ def _record_constructor_side_flips(pipeline, ctx) -> None:
     else:
         record_clean_pass(pipeline, "constructor.side_flips")
 
+
 def _apply_repeg(
-    pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
-    requested_qty, ceiling: float, ask: float | None = None,
+    pipeline,
+    ctx,
+    *,
+    symbol,
+    order_id: str,
+    trade_row_id,
+    target: float,
+    requested_qty,
+    ceiling: float,
+    ask: float | None = None,
     crosses_market: bool = True,
 ) -> tuple[str, float, str]:
     """The one write-ahead-logged replacement.
@@ -816,7 +894,9 @@ def _apply_repeg(
     """
     try:
         wal_row_id = pipeline.db.insert_pending_repeg(
-            trade_row_id=trade_row_id, symbol=symbol, old_order_id=order_id,
+            trade_row_id=trade_row_id,
+            symbol=symbol,
+            old_order_id=order_id,
             new_order_id=_WAL_REPEG_SENTINEL,
             run_id=pinned_evidence(ctx, "run_id"),
         )
@@ -826,14 +906,17 @@ def _apply_repeg(
         logger.error(
             "re-peg %s: could not write the WAL row (%s) — NOT replacing "
             "order %s. An unlogged replacement is an untrackable order.",
-            symbol, exc, order_id,
+            symbol,
+            exc,
+            order_id,
         )
         return order_id, 0.0, "wal_refused"
 
     else:
         record_clean_pass(pipeline, "repeg.wal_insert", symbol=symbol)
     result = pipeline.broker.replace_entry_limit(
-        order_id, target,
+        order_id,
+        target,
         qty=requested_qty if isinstance(requested_qty, (int, float)) else None,
     )
     new_id = (result or {}).get("id")
@@ -849,29 +932,38 @@ def _apply_repeg(
             logger.error(
                 "re-peg %s: replacement of %s failed AND the order could not "
                 "be re-read — leaving WAL row %s for the session-start drain",
-                symbol, order_id, wal_row_id,
+                symbol,
+                order_id,
+                wal_row_id,
             )
             return order_id, 0.0, "replace_unknown"
         if resolved == order_id:
             # Nothing was minted; the original order is still the only one.
             _delete_repeg_wal(pipeline, wal_row_id)
             logger.info(
-                "re-peg %s: broker refused the replacement of %s (%s) — the "
-                "original order remains authoritative",
-                symbol, order_id, (result or {}).get("status", "unknown"),
+                "re-peg %s: broker refused the replacement of %s (%s) — the original order remains authoritative",
+                symbol,
+                order_id,
+                (result or {}).get("status", "unknown"),
             )
             _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "replace_rejected",
-                "repeg_replace_rejected", broker_order_id=order_id,
-                detail=str((result or {}).get("detail") or
-                           (result or {}).get("status") or ""),
+                pipeline,
+                ctx,
+                symbol,
+                "repeg",
+                "replace_rejected",
+                "repeg_replace_rejected",
+                broker_order_id=order_id,
+                detail=str((result or {}).get("detail") or (result or {}).get("status") or ""),
             )
             return order_id, 0.0, "replace_rejected"
         # The PATCH actually landed even though the response was lost.
         logger.warning(
             "re-peg %s: replacement of %s reported failure but the broker "
             "shows it replaced by %s — adopting the real id",
-            symbol, order_id, resolved,
+            symbol,
+            order_id,
+            resolved,
         )
         new_id = resolved
 
@@ -888,16 +980,28 @@ def _apply_repeg(
         _delete_repeg_wal(pipeline, wal_row_id)
 
     _record_pipeline_event(
-        pipeline, ctx, symbol, "repeg", "replaced", "repeg_replaced",
-        broker_order_id=str(new_id), replaces_order_id=order_id,
-        limit_price=target, ceiling=ceiling, ask=ask,
+        pipeline,
+        ctx,
+        symbol,
+        "repeg",
+        "replaced",
+        "repeg_replaced",
+        broker_order_id=str(new_id),
+        replaces_order_id=order_id,
+        limit_price=target,
+        ceiling=ceiling,
+        ask=ask,
         crosses_market=bool(crosses_market),
     )
     logger.info(
-        "re-peg %s: ONE reprice, order %s → %s at $%.4f (ceiling $%.4f, "
-        "ask $%s, crosses market: %s)",
-        symbol, order_id, new_id, target, ceiling,
-        f"{ask:.4f}" if isinstance(ask, (int, float)) else "?", crosses_market,
+        "re-peg %s: ONE reprice, order %s → %s at $%.4f (ceiling $%.4f, ask $%s, crosses market: %s)",
+        symbol,
+        order_id,
+        new_id,
+        target,
+        ceiling,
+        f"{ask:.4f}" if isinstance(ask, (int, float)) else "?",
+        crosses_market,
     )
 
     # THE RACE. The order could have filled between the zero-fill read above
@@ -918,51 +1022,71 @@ def _apply_repeg(
             "re-peg %s: superseded order %s filled %.4f share(s) in the "
             "replace window — cancelling replacement %s rather than risk "
             "buying the same idea twice; the stop will cover the %.4f "
-            "already acquired", symbol, order_id, ancestor_filled,
-            new_id, ancestor_filled,
+            "already acquired",
+            symbol,
+            order_id,
+            ancestor_filled,
+            new_id,
+            ancestor_filled,
         )
         pipeline.broker.cancel_entry_order(str(new_id))
         _record_pipeline_event(
-            pipeline, ctx, symbol, "repeg", "raced_partial_fill",
-            "repeg_ancestor_filled", broker_order_id=str(new_id),
-            replaces_order_id=order_id, fill_qty=ancestor_filled,
+            pipeline,
+            ctx,
+            symbol,
+            "repeg",
+            "raced_partial_fill",
+            "repeg_ancestor_filled",
+            broker_order_id=str(new_id),
+            replaces_order_id=order_id,
+            fill_qty=ancestor_filled,
         )
         return str(new_id), ancestor_filled, "partial_fill"
 
     return str(new_id), 0.0, "replaced"
 
-def _repoint_trade(pipeline, trade_row_id, old_order_id: str,
-                   new_order_id: str, symbol) -> bool:
+
+def _repoint_trade(pipeline, trade_row_id, old_order_id: str, new_order_id: str, symbol) -> bool:
     """Point the trades row at the replacement id. True when it stuck."""
     if not trade_row_id:
         logger.error(
             "re-peg %s: no trades row id for order %s — cannot repoint to "
             "%s; fill reconciliation would follow a dead order",
-            symbol, old_order_id, new_order_id,
+            symbol,
+            old_order_id,
+            new_order_id,
         )
         return False
     try:
         rows = pipeline.db.repoint_trade_broker_order_id(
-            trade_row_id, old_order_id=old_order_id, new_order_id=new_order_id,
+            trade_row_id,
+            old_order_id=old_order_id,
+            new_order_id=new_order_id,
         )
     except Exception as exc:  # noqa: BLE001
         record_swallowed(pipeline, "repeg.repoint", exc, symbol=symbol)
         logger.error(
             "re-peg %s: repointing trades row %s from %s to %s FAILED: %s — "
             "the WAL row is left for the session-start drain",
-            symbol, trade_row_id, old_order_id, new_order_id, exc,
+            symbol,
+            trade_row_id,
+            old_order_id,
+            new_order_id,
+            exc,
         )
         return False
     else:
         record_clean_pass(pipeline, "repeg.repoint", symbol=symbol)
     if not rows:
         logger.warning(
-            "re-peg %s: trades row %s no longer pointed at %s — leaving the "
-            "WAL row for the drain to adjudicate",
-            symbol, trade_row_id, old_order_id,
+            "re-peg %s: trades row %s no longer pointed at %s — leaving the WAL row for the drain to adjudicate",
+            symbol,
+            trade_row_id,
+            old_order_id,
         )
         return False
     return True
+
 
 def _delete_repeg_wal(pipeline, wal_row_id) -> None:
     if not wal_row_id:

@@ -25,6 +25,7 @@ def _session_gross_ceiling(pipeline, ctx):
         return None
     try:
         from src.risk.rules import GrossCeiling
+
         ceiling = resolve(ctx)
         return ceiling if isinstance(ceiling, GrossCeiling) else None
     except Exception as exc:  # noqa: BLE001

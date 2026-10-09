@@ -92,7 +92,8 @@ class LLMCostCircuitConfig(BaseModel):
     # requests are made. This only decides when the circuit intervenes.
     max_provider_attempts_per_call: int = Field(
         default_factory=lambda: provider_attempt_budget(
-            failover_available=True, tertiary_available=True,
+            failover_available=True,
+            tertiary_available=True,
         ),
         ge=1,
     )
@@ -128,7 +129,8 @@ class LLMCostCircuitConfig(BaseModel):
     # a human -- which is also what bounds how many unproven-cost calls a
     # single day can forgive without one.
     max_transient_latch_auto_clears_per_day: int = Field(
-        default_factory=lambda: _paid_run_count(), ge=1,
+        default_factory=lambda: _paid_run_count(),
+        ge=1,
     )
     # === OpenRouter pricing staleness grace window (SPOF fix, 2026-08-28) ===
     # Before this fix, `cost_table.refresh_openrouter_pricing()` accepted a
@@ -162,7 +164,10 @@ class LLMCostCircuitConfig(BaseModel):
     # who wants it back. Independent of item 14: this bounds the pricing
     # CATALOG's own staleness, not a call's dollar reservation (deleted).
     openrouter_pricing_grace_period_hours: float = Field(
-        default=24.0, ge=0.0, le=168.0, allow_inf_nan=False,
+        default=24.0,
+        ge=0.0,
+        le=168.0,
+        allow_inf_nan=False,
     )
     # Multiplier applied to a stale-but-in-grace rate at the FAR edge of the
     # grace window above (`cost_table.openrouter_pricing_reservation_
@@ -172,7 +177,10 @@ class LLMCostCircuitConfig(BaseModel):
     # though item 14 removed the per-call reservation this was originally
     # sized for.
     openrouter_pricing_stale_multiplier_max: float = Field(
-        default=1.50, ge=1.0, le=5.0, allow_inf_nan=False,
+        default=1.50,
+        ge=1.0,
+        le=5.0,
+        allow_inf_nan=False,
     )
     # === Infrastructure-fault retry (docs/WORK.md item 17a, 2026-09-03) ===
     # Before this, ANY exception while reading/seeding the ledger --
@@ -240,7 +248,8 @@ class LLMCostCircuitConfig(BaseModel):
             present = sorted(removed_keys & set(data))
             if present:
                 raise ValueError(
-                    "llm_cost_circuit no longer supports: " + ", ".join(present)
+                    "llm_cost_circuit no longer supports: "
+                    + ", ".join(present)
                     + " -- item 14 (2026-09-02, docs/WORK.md) deleted the "
                     "per-call cost reservation layer these configured. Remove "
                     "them from the settings file; see max_calls_per_session "
@@ -251,9 +260,7 @@ class LLMCostCircuitConfig(BaseModel):
     @model_validator(mode="after")
     def _daily_not_below_session(self):
         if self.enabled is not True:
-            raise ValueError(
-                "llm_cost_circuit.enabled must remain true; paid-analysis protection is mandatory"
-            )
+            raise ValueError("llm_cost_circuit.enabled must remain true; paid-analysis protection is mandatory")
         if self.require_telegram_alerts is not True:
             raise ValueError(
                 "llm_cost_circuit.require_telegram_alerts must remain true; "

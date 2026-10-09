@@ -46,6 +46,7 @@ THE JUSTIFICATION
 STORES NOTHING. Computed against origin/main at check time; when the base
 cannot be read the gate FAILS -- inability to compare is never a pass.
 """
+
 from __future__ import annotations
 
 import ast
@@ -61,13 +62,11 @@ except ImportError:  # run as a bare script
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts import definition_of_done as dod
 
-GUARD_PATTERNS = ("scripts/*guard*.py", "tests/test_*guard*.py",
-                  "tests/test_*ratchet*.py")
+GUARD_PATTERNS = ("scripts/*guard*.py", "tests/test_*guard*.py", "tests/test_*ratchet*.py")
 ALLOWLIST_PATTERN = "config/check_allowlists/*.txt"
 PYPROJECT = "pyproject.toml"
 ENFORCE_BEHAVIOURAL = False  # report-only until the open changes that edit them land
-_INSPECTS = {"rglob", "glob", "walk", "iterdir", "parse", "_git", "base_ref",
-             "file_at", "check_output", "run"}
+_INSPECTS = {"rglob", "glob", "walk", "iterdir", "parse", "_git", "base_ref", "file_at", "check_output", "run"}
 MIN_WORDS = 25
 LINE = re.compile(r"^[ \t]*Guard-rule-change[ \t]*:[ \t]*(.+?)[ \t]*$", re.M)
 
@@ -75,12 +74,12 @@ REQUIREMENT = (
     "a change that edits a guard must carry, on ONE PHYSICAL LINE of a commit "
     f"message, `Guard-rule-change:` followed by at least {MIN_WORDS} words that "
     "(a) name the mechanism making the existing rule incorrect and (b) state "
-    "why the new rule cannot be gamed")
+    "why the new rule cannot be gamed"
+)
 
 
 def is_guard(path: str) -> bool:
-    return any(fnmatch.fnmatchcase(path, p) and path.count("/") == p.count("/")
-               for p in GUARD_PATTERNS)
+    return any(fnmatch.fnmatchcase(path, p) and path.count("/") == p.count("/") for p in GUARD_PATTERNS)
 
 
 def is_allowlist(path: str) -> bool:
@@ -130,8 +129,7 @@ def behaves_as_guard(source: str) -> bool:
         if isinstance(n, ast.Call):
             f = n.func
             name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
-            refuses = refuses or (name == "exit" and getattr(
-                getattr(f, "value", None), "id", "") == "sys")
+            refuses = refuses or (name == "exit" and getattr(getattr(f, "value", None), "id", "") == "sys")
             inspects = inspects or name in _INSPECTS
         if isinstance(n, ast.Constant) and isinstance(n.value, str):
             inspects = inspects or "origin/main" in n.value
@@ -145,27 +143,27 @@ def _is_script(path: str) -> bool:
 def _covered(path: str, source: str | None, enforce_behaviour: bool) -> bool:
     if is_guard(path):
         return True
-    return bool(enforce_behaviour and _is_script(path) and source is not None
-                and behaves_as_guard(source))
+    return bool(enforce_behaviour and _is_script(path) and source is not None and behaves_as_guard(source))
 
 
 def coverage(repo: Path | None = None) -> tuple[int, int, int]:
     """(scripts searched, behave as guards, of those caught by name)."""
     repo = repo or dod.REPO_ROOT
-    found = [p for p in sorted((repo / "scripts").glob("*.py"))
-             if behaves_as_guard(p.read_text())]
+    found = [p for p in sorted((repo / "scripts").glob("*.py")) if behaves_as_guard(p.read_text())]
     named = sum(is_guard(f"scripts/{p.name}") for p in found)
     return len(list((repo / "scripts").glob("*.py"))), len(found), named
 
 
 def _strip_docstrings(tree: ast.AST) -> ast.AST:
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef)):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             body = node.body
-            if (body and isinstance(body[0], ast.Expr)
-                    and isinstance(body[0].value, ast.Constant)
-                    and isinstance(body[0].value.value, str)):
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
                 node.body = body[1:] or [ast.Pass()]
     return tree
 
@@ -191,17 +189,18 @@ def unenforced_touched(base: str, repo: Path) -> list[str]:
     return out
 
 
-def problems(base: str | None, repo: Path | None = None,
-             messages: str | None = None,
-             enforce_behaviour: bool | None = None) -> list[str]:
+def problems(
+    base: str | None, repo: Path | None = None, messages: str | None = None, enforce_behaviour: bool | None = None
+) -> list[str]:
     if enforce_behaviour is None:
         enforce_behaviour = ENFORCE_BEHAVIOURAL
     if not base:
-        return ["cannot read origin/main to compare against; refusing rather "
-                "than passing (inability to compare is never a pass)"]
+        return [
+            "cannot read origin/main to compare against; refusing rather "
+            "than passing (inability to compare is never a pass)"
+        ]
     repo = repo or dod.REPO_ROOT
-    r = dod._git("diff", "--name-only", "--no-renames", f"{base}...HEAD",
-                 repo=repo)
+    r = dod._git("diff", "--name-only", "--no-renames", f"{base}...HEAD", repo=repo)
     if r.returncode != 0:
         return ["git diff against the base failed; refusing: " + r.stderr.strip()]
     touched = []
@@ -231,15 +230,16 @@ def problems(base: str | None, repo: Path | None = None,
         messages = log.stdout
     if any(len(m.split()) >= MIN_WORDS for m in LINE.findall(messages)):
         return []
-    return [f"guard file(s) changed without justification: "
-            f"{', '.join(touched)}. Requirement: {REQUIREMENT}."]
+    return [f"guard file(s) changed without justification: {', '.join(touched)}. Requirement: {REQUIREMENT}."]
 
 
 def main() -> int:
     base = dod.base_ref()
     scripts, real, named = coverage()
-    print(f"guard coverage: {real} of {scripts} scripts behave as guards; "
-          f"the name rule covers {named}; enforcing identity: {ENFORCE_BEHAVIOURAL}")
+    print(
+        f"guard coverage: {real} of {scripts} scripts behave as guards; "
+        f"the name rule covers {named}; enforcing identity: {ENFORCE_BEHAVIOURAL}"
+    )
     if base and not ENFORCE_BEHAVIOURAL:
         for path in unenforced_touched(base, dod.REPO_ROOT):
             print(f"NOTE (not enforced yet): {path} behaves as a guard")

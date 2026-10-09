@@ -29,8 +29,9 @@ def _bars(closes, start_day=1):
 
 
 def test_resolves_a_forward_return_at_an_explicit_horizon():
-    rows = [{"symbol": "AAA", "transaction_date": "2026-01-01",
-             "reference_price": 10.0, "holdings_fraction_band": "mid"}]
+    rows = [
+        {"symbol": "AAA", "transaction_date": "2026-01-01", "reference_price": 10.0, "holdings_fraction_band": "mid"}
+    ]
     out = join_forward_returns(rows, {"AAA": _bars([100.0, 101.0, 110.0])}, 2)
     assert out["n_resolved"] == 1 and out["n_excluded"] == 0
     rec = out["records"][0]
@@ -48,7 +49,9 @@ def test_missing_symbol_missing_date_and_unresolved_window_are_excluded_by_reaso
     out = join_forward_returns(rows, {"AAA": _bars([100.0, 101.0])}, 5)
     assert out["n_resolved"] == 0
     assert out["excluded_by_reason"] == {
-        EXCLUDED_NO_SYMBOL: 1, EXCLUDED_NO_DATE: 1, EXCLUDED_UNRESOLVED: 1,
+        EXCLUDED_NO_SYMBOL: 1,
+        EXCLUDED_NO_DATE: 1,
+        EXCLUDED_UNRESOLVED: 1,
     }
     assert all(r["forward_return_pct"] is None for r in out["records"])
 

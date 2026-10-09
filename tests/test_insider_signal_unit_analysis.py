@@ -32,10 +32,9 @@ def _row(direction: str, shares: float, post_shares: float) -> SmartMoneyObserva
 
 def test_per_filing_detail_does_not_borrow_aggregate_study_outcomes():
     """One Form 4 row is not Scott/Xu's six-month stock-wide aggregate."""
+
     def detail_for(direction: str, shares: float, post: float) -> str:
-        return classify_transaction(
-            _row(direction, shares, post), InsiderHistory()
-        ).detail
+        return classify_transaction(_row(direction, shares, post), InsiderHistory()).detail
 
     details = [
         detail_for("sell", 9_999.0, 90_001.0),

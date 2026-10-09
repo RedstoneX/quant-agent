@@ -17,10 +17,15 @@ def test_insert_trade_with_broker_order_id_sets_submitted_status(tmp_path):
     db.initialize()
 
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="test", run_id="r1",
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="test",
+        run_id="r1",
         broker_order_id="ord-abc-123",
-        fill_status="submitted", stop_loss=90.0,
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     assert row_id > 0
 
@@ -35,14 +40,22 @@ def test_update_trade_fill_marks_row_reconciled(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="test", run_id="r1",
-        broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="test",
+        run_id="r1",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
 
     n = db.update_trade_fill(
-        broker_order_id="ord-1", fill_status="filled",
-        fill_qty=10.0, fill_price=99.95,
+        broker_order_id="ord-1",
+        fill_status="filled",
+        fill_qty=10.0,
+        fill_price=99.95,
     )
     assert n == 1
 
@@ -63,9 +76,15 @@ def test_get_symbol_last_buy_ignores_canceled_buys(tmp_path):
     db.initialize()
 
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="never filled", run_id="r1",
-        broker_order_id="ord-bad", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="never filled",
+        run_id="r1",
+        broker_order_id="ord-bad",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.update_trade_fill(broker_order_id="ord-bad", fill_status="canceled")
 
@@ -80,8 +99,13 @@ def test_legacy_null_fill_status_treated_as_filled(tmp_path):
 
     # Insert a row without broker_order_id / fill_status — simulates legacy
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="legacy", run_id="r1", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="legacy",
+        run_id="r1",
+        stop_loss=90.0,
     )
     row = db.get_symbol_last_buy("NVDA")
     assert row is not None
@@ -94,13 +118,23 @@ def test_executed_only_excludes_hold_audit_rows(tmp_path):
     db.initialize()
 
     db.insert_trade(
-        symbol="AAPL", action="HOLD", qty=0.0, price=0.0,
-        reasoning="audit only", run_id="r1",
+        symbol="AAPL",
+        action="HOLD",
+        qty=0.0,
+        price=0.0,
+        reasoning="audit only",
+        run_id="r1",
     )
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10.0, price=180.0,
-        reasoning="filled buy", run_id="r1",
-        broker_order_id="ord-buy", fill_status="filled", stop_loss=90.0,
+        symbol="AAPL",
+        action="BUY",
+        qty=10.0,
+        price=180.0,
+        reasoning="filled buy",
+        run_id="r1",
+        broker_order_id="ord-buy",
+        fill_status="filled",
+        stop_loss=90.0,
     )
 
     rows = db.get_trades(symbol="AAPL", executed_only=True)
@@ -116,14 +150,22 @@ def test_reconcile_fills_updates_filled_orders(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="test", run_id="r1",
-        broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="test",
+        run_id="r1",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
 
     broker = MagicMock()
     broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": 10.0, "filled_avg_price": 100.25,
+        "status": "filled",
+        "filled_qty": 10.0,
+        "filled_avg_price": 100.25,
     }
 
     pipeline = _mk_pipeline(db, broker)
@@ -137,8 +179,7 @@ def test_reconcile_fills_updates_filled_orders(tmp_path):
     assert row["fill_qty"] == 10.0
     assert row["fill_price"] == 100.25
     event = db.conn.execute(
-        "SELECT evidence_json FROM specialist_evidence "
-        "WHERE run_id='r1' AND symbol='NVDA' AND kind='pipeline_event'"
+        "SELECT evidence_json FROM specialist_evidence WHERE run_id='r1' AND symbol='NVDA' AND kind='pipeline_event'"
     ).fetchone()
     assert '"stage": "order"' in event["evidence_json"]
     assert '"outcome": "filled"' in event["evidence_json"]
@@ -150,14 +191,22 @@ def test_reconcile_fills_flags_canceled_orders(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="stale limit", run_id="r1",
-        broker_order_id="ord-2", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="stale limit",
+        run_id="r1",
+        broker_order_id="ord-2",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
 
     broker = MagicMock()
     broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": 0.0, "filled_avg_price": 0.0,
+        "status": "canceled",
+        "filled_qty": 0.0,
+        "filled_avg_price": 0.0,
     }
 
     pipeline = _mk_pipeline(db, broker)
@@ -175,14 +224,22 @@ def test_reconcile_fills_preserves_partial_terminal_fill(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="partially filled then canceled", run_id="r1",
-        broker_order_id="ord-partial", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="partially filled then canceled",
+        run_id="r1",
+        broker_order_id="ord-partial",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
 
     broker = MagicMock()
     broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": 3.0, "filled_avg_price": 101.25,
+        "status": "canceled",
+        "filled_qty": 3.0,
+        "filled_avg_price": 101.25,
     }
 
     pipeline = _mk_pipeline(db, broker)
@@ -208,15 +265,22 @@ def test_reconcile_fills_leaves_non_terminal_for_next_pass(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="still pending", run_id="r1",
-        broker_order_id="ord-3", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="still pending",
+        run_id="r1",
+        broker_order_id="ord-3",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
 
     broker = MagicMock()
     broker.get_order_fill_info.return_value = {
         "status": "accepted",  # non-terminal
-        "filled_qty": 0.0, "filled_avg_price": 0.0,
+        "filled_qty": 0.0,
+        "filled_avg_price": 0.0,
     }
 
     pipeline = _mk_pipeline(db, broker)
@@ -244,9 +308,14 @@ def _partial_pipeline(tmp_path, *, action="SELL", qty=10.0, order_id="ord-p"):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="NVDA", action=action, qty=qty, price=100.0,
-        reasoning="partial-fill danger case", run_id="r1",
-        broker_order_id=order_id, fill_status="submitted",
+        symbol="NVDA",
+        action=action,
+        qty=qty,
+        price=100.0,
+        reasoning="partial-fill danger case",
+        run_id="r1",
+        broker_order_id=order_id,
+        fill_status="submitted",
     )
     broker = MagicMock()
     pipeline = _mk_pipeline(db, broker)
@@ -260,7 +329,9 @@ def test_partial_fill_is_recorded_but_stays_reconcilable(tmp_path):
     the remainder is still picked up by the next reconciliation pass."""
     db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.5,
     }
 
     pipeline._reconcile_fills(ctx)
@@ -281,11 +352,15 @@ def test_partial_then_bigger_partial_no_double_count(tmp_path):
     db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
 
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.5,
     }
     pipeline._reconcile_fills(ctx)
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 7.0, "filled_avg_price": 100.8,
+        "status": "partially_filled",
+        "filled_qty": 7.0,
+        "filled_avg_price": 100.8,
     }
     pipeline._reconcile_fills(ctx)
 
@@ -302,18 +377,22 @@ def test_partial_then_cancel_keeps_filled_portion(tmp_path):
     db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
 
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.5,
     }
     pipeline._reconcile_fills(ctx)
     # Remainder killed: broker's cumulative snapshot still shows the 4 filled.
     broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+        "status": "canceled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.5,
     }
     pipeline._reconcile_fills(ctx)
 
     row = db.get_trades(symbol="NVDA")[0]
     assert row["fill_status"] == "canceled"
-    assert row["fill_qty"] == 4.0          # NOT zeroed
+    assert row["fill_qty"] == 4.0  # NOT zeroed
     assert row["fill_price"] == 100.5
     assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -4.0
     assert db.get_unreconciled_orders(run_id="r1") == []
@@ -325,17 +404,21 @@ def test_partial_then_full_fill_lands_on_total_not_sum(tmp_path):
     db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
 
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.5,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.5,
     }
     pipeline._reconcile_fills(ctx)
     broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": 10.0, "filled_avg_price": 100.7,
+        "status": "filled",
+        "filled_qty": 10.0,
+        "filled_avg_price": 100.7,
     }
     pipeline._reconcile_fills(ctx)
 
     row = db.get_trades(symbol="NVDA")[0]
     assert row["fill_status"] == "filled"
-    assert row["fill_qty"] == 10.0         # NOT 4.0 + 10.0
+    assert row["fill_qty"] == 10.0  # NOT 4.0 + 10.0
     assert row["fill_price"] == 100.7
     assert db.get_symbols_with_open_ledger_qty().get("NVDA") == -10.0
     assert db.get_unreconciled_orders(run_id="r1") == []
@@ -346,7 +429,9 @@ def test_zero_fill_working_order_is_untouched(tmp_path):
     stays 'submitted' (regression guard for the new partial branch)."""
     db, broker, pipeline, ctx = _partial_pipeline(tmp_path)
     broker.get_order_fill_info.return_value = {
-        "status": "accepted", "filled_qty": 0.0, "filled_avg_price": 0.0,
+        "status": "accepted",
+        "filled_qty": 0.0,
+        "filled_avg_price": 0.0,
     }
 
     pipeline._reconcile_fills(ctx)
@@ -365,7 +450,9 @@ def test_partial_fill_missing_avg_price_records_qty_without_raising(tmp_path):
 
     # Broker reports shares filled but no numeric average price yet.
     broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 5.0, "filled_avg_price": None,
+        "status": "partially_filled",
+        "filled_qty": 5.0,
+        "filled_avg_price": None,
     }
     pipeline._reconcile_fills(ctx)  # must not raise
 
@@ -379,7 +466,9 @@ def test_partial_fill_missing_avg_price_records_qty_without_raising(tmp_path):
 
     # Next pass supplies the numeric average price -> backfilled absolute.
     broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": 5.0, "filled_avg_price": 100.6,
+        "status": "filled",
+        "filled_qty": 5.0,
+        "filled_avg_price": 100.6,
     }
     pipeline._reconcile_fills(ctx)
     row = db.get_trades(symbol="NVDA")[0]
@@ -412,49 +501,33 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
     db.initialize()
 
     # Filled pair: won + lost (FIFO)
-    db.insert_trade("NVDA", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='buy-1'"
-    )
+    db.insert_trade("NVDA", "BUY", 10, 100.0, "x", "r1", broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='buy-1'")
     db.conn.commit()
-    db.insert_trade("NVDA", "SELL", 10, 110.0, "x", "r2",
-                    broker_order_id="sell-1", fill_status="filled")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-5 days') WHERE broker_order_id='sell-1'"
-    )
+    db.insert_trade("NVDA", "SELL", 10, 110.0, "x", "r2", broker_order_id="sell-1", fill_status="filled")
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-5 days') WHERE broker_order_id='sell-1'")
     db.conn.commit()
 
     # Another pair, but canceled - should NOT appear in stats
-    db.insert_trade("AAPL", "BUY", 10, 200.0, "x", "r1",
-                    broker_order_id="buy-2", fill_status="canceled", stop_loss=90.0)
-    db.insert_trade("AAPL", "SELL", 10, 190.0, "x", "r2",
-                    broker_order_id="sell-2", fill_status="canceled")
+    db.insert_trade(
+        "AAPL", "BUY", 10, 200.0, "x", "r1", broker_order_id="buy-2", fill_status="canceled", stop_loss=90.0
+    )
+    db.insert_trade("AAPL", "SELL", 10, 190.0, "x", "r2", broker_order_id="sell-2", fill_status="canceled")
 
     # Third pair with legacy NULL fill_status — treated as filled
     db.insert_trade("JPM", "BUY", 5, 180.0, "x", "r1", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE symbol='JPM' AND action='BUY'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE symbol='JPM' AND action='BUY'")
     db.conn.commit()
     db.insert_trade("JPM", "SELL", 5, 195.0, "x", "r2")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-2 days') WHERE symbol='JPM' AND action='SELL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-2 days') WHERE symbol='JPM' AND action='SELL'")
     db.conn.commit()
 
     # Fourth pair filled — calibration needs ≥3 closed trades to report.
-    db.insert_trade("MSFT", "BUY", 10, 300.0, "x", "r1",
-                    broker_order_id="buy-3", fill_status="filled", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-12 days') WHERE broker_order_id='buy-3'"
-    )
+    db.insert_trade("MSFT", "BUY", 10, 300.0, "x", "r1", broker_order_id="buy-3", fill_status="filled", stop_loss=90.0)
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-12 days') WHERE broker_order_id='buy-3'")
     db.conn.commit()
-    db.insert_trade("MSFT", "SELL", 10, 310.0, "x", "r2",
-                    broker_order_id="sell-3", fill_status="filled")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-3 days') WHERE broker_order_id='sell-3'"
-    )
+    db.insert_trade("MSFT", "SELL", 10, 310.0, "x", "r2", broker_order_id="sell-3", fill_status="filled")
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-3 days') WHERE broker_order_id='sell-3'")
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=30)
@@ -471,40 +544,22 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
     db.initialize()
 
     # BUY 10 @ 100, then partial TAKE_PROFIT 3 @ 110 (+10% on 3 shares)
-    db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='b1'"
-    )
-    db.insert_trade("AAPL", "TAKE_PROFIT", 3, 110.0, "x", "r2",
-                    broker_order_id="tp1", fill_status="filled")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-3 days') WHERE broker_order_id='tp1'"
-    )
+    db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='b1'")
+    db.insert_trade("AAPL", "TAKE_PROFIT", 3, 110.0, "x", "r2", broker_order_id="tp1", fill_status="filled")
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-3 days') WHERE broker_order_id='tp1'")
 
     # BUY 5 @ 200, then midday REDUCE 5 @ 220 (full trim, +10%)
-    db.insert_trade("MSFT", "BUY", 5, 200.0, "x", "r1",
-                    broker_order_id="b2", fill_status="filled", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE broker_order_id='b2'"
-    )
-    db.insert_trade("MSFT", "REDUCE", 5, 220.0, "x", "r2",
-                    broker_order_id="red1", fill_status="filled")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-2 days') WHERE broker_order_id='red1'"
-    )
+    db.insert_trade("MSFT", "BUY", 5, 200.0, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE broker_order_id='b2'")
+    db.insert_trade("MSFT", "REDUCE", 5, 220.0, "x", "r2", broker_order_id="red1", fill_status="filled")
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-2 days') WHERE broker_order_id='red1'")
 
     # BUY 4 @ 50, full SELL at 55 — third pair to cross the n>=3 threshold
-    db.insert_trade("JPM", "BUY", 4, 50.0, "x", "r1",
-                    broker_order_id="b3", fill_status="filled", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE broker_order_id='b3'"
-    )
-    db.insert_trade("JPM", "SELL", 4, 55.0, "x", "r2",
-                    broker_order_id="s3", fill_status="filled")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-1 days') WHERE broker_order_id='s3'"
-    )
+    db.insert_trade("JPM", "BUY", 4, 50.0, "x", "r1", broker_order_id="b3", fill_status="filled", stop_loss=90.0)
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE broker_order_id='b3'")
+    db.insert_trade("JPM", "SELL", 4, 55.0, "x", "r2", broker_order_id="s3", fill_status="filled")
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-1 days') WHERE broker_order_id='s3'")
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=30)
@@ -519,13 +574,20 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
 # confirm_trade_submitted(). Nothing swept these; the docstring lied.
 # ---------------------------------------------------------------------------
 
+
 def _insert_orphan(db: Database, *, symbol="NVDA", qty=10, age_seconds=3600) -> int:
     """A pending_submit / NULL-broker_order_id row, backdated past the
     age gate so the sweep treats it as a prior-session orphan."""
     row_id = db.insert_trade(
-        symbol=symbol, action="BUY", qty=qty, price=100.0,
-        reasoning="write-ahead intent", run_id="r-old",
-        broker_order_id=None, fill_status="pending_submit", stop_loss=90.0,
+        symbol=symbol,
+        action="BUY",
+        qty=qty,
+        price=100.0,
+        reasoning="write-ahead intent",
+        run_id="r-old",
+        broker_order_id=None,
+        fill_status="pending_submit",
+        stop_loss=90.0,
     )
     db.execute(
         "UPDATE trades SET timestamp = datetime('now', ?) WHERE id = ?",
@@ -536,10 +598,12 @@ def _insert_orphan(db: Database, *, symbol="NVDA", qty=10, age_seconds=3600) -> 
 
 
 def _row(db: Database, row_id: int) -> dict:
-    return dict(db.execute(
-        "SELECT fill_status, broker_order_id FROM trades WHERE id = ?",
-        (row_id,),
-    ).fetchone())
+    return dict(
+        db.execute(
+            "SELECT fill_status, broker_order_id FROM trades WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+    )
 
 
 def test_get_orphaned_pending_submits_age_gate(tmp_path):
@@ -548,18 +612,39 @@ def test_get_orphaned_pending_submits_age_gate(tmp_path):
 
     # Fresh pending_submit (same-process in-flight) — must be EXCLUDED.
     fresh = db.insert_trade(
-        symbol="AAPL", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id=None, fill_status="pending_submit", stop_loss=90.0,
+        symbol="AAPL",
+        action="BUY",
+        qty=5,
+        price=10.0,
+        reasoning="x",
+        run_id="r1",
+        broker_order_id=None,
+        fill_status="pending_submit",
+        stop_loss=90.0,
     )
     # A normal submitted row + a pending_submit that DID get an id —
     # neither is an orphan.
     db.insert_trade(
-        symbol="MSFT", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="MSFT",
+        action="BUY",
+        qty=5,
+        price=10.0,
+        reasoning="x",
+        run_id="r1",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_trade(
-        symbol="JPM", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id="ord-2", fill_status="pending_submit", stop_loss=90.0,
+        symbol="JPM",
+        action="BUY",
+        qty=5,
+        price=10.0,
+        reasoning="x",
+        run_id="r1",
+        broker_order_id="ord-2",
+        fill_status="pending_submit",
+        stop_loss=90.0,
     )
     assert db.get_orphaned_pending_submits() == []
 
@@ -588,8 +673,7 @@ def test_orphan_sweep_adopts_single_broker_match(tmp_path):
 
     broker = MagicMock()
     broker.list_recent_orders.return_value = [
-        {"id": "alp-99", "symbol": "NVDA", "side": "buy", "qty": 10.0,
-         "status": "filled"},
+        {"id": "alp-99", "symbol": "NVDA", "side": "buy", "qty": 10.0, "status": "filled"},
     ]
     pipeline = _mk_pipeline(db, broker)
 
@@ -642,10 +726,8 @@ def test_orphan_sweep_leaves_ambiguous_for_manual(tmp_path):
 
     broker = MagicMock()
     broker.list_recent_orders.return_value = [
-        {"id": "alp-A", "symbol": "NVDA", "side": "buy", "qty": 10.0,
-         "status": "filled"},
-        {"id": "alp-B", "symbol": "NVDA", "side": "buy", "qty": 10.0,
-         "status": "filled"},
+        {"id": "alp-A", "symbol": "NVDA", "side": "buy", "qty": 10.0, "status": "filled"},
+        {"id": "alp-B", "symbol": "NVDA", "side": "buy", "qty": 10.0, "status": "filled"},
     ]
     pipeline = _mk_pipeline(db, broker)
 
@@ -664,8 +746,7 @@ def test_orphan_sweep_qty_mismatch_is_not_a_match(tmp_path):
 
     broker = MagicMock()
     broker.list_recent_orders.return_value = [
-        {"id": "alp-X", "symbol": "NVDA", "side": "buy", "qty": 7.0,
-         "status": "filled"},
+        {"id": "alp-X", "symbol": "NVDA", "side": "buy", "qty": 7.0, "status": "filled"},
     ]
     pipeline = _mk_pipeline(db, broker)
 
@@ -692,9 +773,15 @@ def test_submit_failed_row_is_invisible_to_orphan_sweep(tmp_path):
 
     visible_id = _insert_orphan(db, symbol="AAPL", qty=10)
     hidden_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
         reasoning="simulating old mark-on-exception behavior",
-        run_id="r-old", broker_order_id=None, fill_status="submit_failed", stop_loss=90.0,
+        run_id="r-old",
+        broker_order_id=None,
+        fill_status="submit_failed",
+        stop_loss=90.0,
     )
     # Backdate so it would clear the age gate if it were eligible.
     db.execute(
@@ -705,10 +792,8 @@ def test_submit_failed_row_is_invisible_to_orphan_sweep(tmp_path):
 
     ids = {o["id"] for o in db.get_orphaned_pending_submits()}
     assert visible_id in ids, (
-        "pending_submit row MUST be visible to the sweep — that's the "
-        "whole recovery path for submit-exception BUYs"
+        "pending_submit row MUST be visible to the sweep — that's the whole recovery path for submit-exception BUYs"
     )
     assert hidden_id not in ids, (
-        "submit_failed rows are NOT sweep candidates by design "
-        "(broker explicitly rejected — no orphan to adopt)"
+        "submit_failed rows are NOT sweep candidates by design (broker explicitly rejected — no orphan to adopt)"
     )

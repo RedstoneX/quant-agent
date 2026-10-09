@@ -22,6 +22,7 @@ Not caught (gameable): mutation from ANOTHER module via import; mutable
 state hidden in a class attribute, a function default arg, a closure or an
 `lru_cache`; mutation through an alias (`d = _REG; d[k] = v`); `globals()[...]`; sqlite/file state.
 """
+
 from __future__ import annotations
 
 import ast
@@ -35,21 +36,35 @@ SCANNED = ("src",)
 
 _CTORS = {"dict", "list", "set", "defaultdict", "Counter", "OrderedDict", "deque"}
 _MUTATORS = {
-    "append", "extend", "insert", "update", "add", "setdefault", "pop",
-    "popitem", "clear", "remove", "discard", "appendleft", "extendleft",
-    "popleft", "subtract", "sort", "reverse", "difference_update",
-    "intersection_update", "symmetric_difference_update",
+    "append",
+    "extend",
+    "insert",
+    "update",
+    "add",
+    "setdefault",
+    "pop",
+    "popitem",
+    "clear",
+    "remove",
+    "discard",
+    "appendleft",
+    "extendleft",
+    "popleft",
+    "subtract",
+    "sort",
+    "reverse",
+    "difference_update",
+    "intersection_update",
+    "symmetric_difference_update",
 }
 
 
 def _is_mutable_value(node: ast.AST | None) -> bool:
-    if isinstance(node, (ast.Dict, ast.List, ast.Set, ast.DictComp,
-                         ast.ListComp, ast.SetComp)):
+    if isinstance(node, (ast.Dict, ast.List, ast.Set, ast.DictComp, ast.ListComp, ast.SetComp)):
         return True
     if isinstance(node, ast.Call):
         f = node.func
-        name = f.id if isinstance(f, ast.Name) else (
-            f.attr if isinstance(f, ast.Attribute) else None)
+        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
         return name in _CTORS
     return False
 
@@ -65,8 +80,7 @@ def _module_mutables(tree: ast.Module) -> set[str]:
     for st in tree.body:
         if isinstance(st, ast.Assign) and _is_mutable_value(st.value):
             out.update(t.id for t in st.targets if isinstance(t, ast.Name))
-        elif (isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name)
-              and _is_mutable_value(st.value)):
+        elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name) and _is_mutable_value(st.value):
             out.add(st.target.id)
     out.discard("__all__")
     return out
@@ -105,8 +119,7 @@ def _mutated_names(tree: ast.Module, candidates: set[str]) -> set[str]:
         elif isinstance(node, ast.Delete):
             for t in node.targets:
                 note(t, direct_ok=False)
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-              and node.func.attr in _MUTATORS):
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _MUTATORS:
             r = _root(node.func.value)
             if r in live:
                 hit.add(r)
@@ -127,8 +140,7 @@ def _mutated_names(tree: ast.Module, candidates: set[str]) -> set[str]:
             if isinstance(n, ast.Global):
                 globals_here.update(n.names)
         for n in ast.walk(fn):
-            if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
-                    and n.id in globals_here and n.id in candidates):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in globals_here and n.id in candidates:
                 hit.add(n.id)
         for child in fn.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -161,17 +173,14 @@ def _scan(sources: dict[str, str]) -> dict[str, Counter]:
 
 
 def working_sources() -> dict[str, str]:
-    paths = [p for p in guard_reference.working_paths("*.py")
-             if p.split("/", 1)[0] in SCANNED]
-    return {p: (guard_reference.ROOT / p).read_text(encoding="utf-8")
-            for p in paths}
+    paths = [p for p in guard_reference.working_paths("*.py") if p.split("/", 1)[0] in SCANNED]
+    return {p: (guard_reference.ROOT / p).read_text(encoding="utf-8") for p in paths}
 
 
 def found_accumulators(work: dict[str, str] | None = None) -> list[str]:
     """Every accumulator in the working tree, as ``path | name``."""
     work = working_sources() if work is None else work
-    return [f"{path} | {name}" for path, names in sorted(_scan(work).items())
-            for name in sorted(names.elements())]
+    return [f"{path} | {name}" for path, names in sorted(_scan(work).items()) for name in sorted(names.elements())]
 
 
 def violations(work: dict[str, str] | None = None, directory: Path | None = None) -> list[str]:
@@ -221,6 +230,7 @@ def test_a_moved_accumulator_needs_a_visible_list_edit(tmp_path):
 
 # --- prove it bites -------------------------------------------------------
 
+
 def test_bites_on_the_banned_pattern():
     src = (
         "_STATS = {}\n"
@@ -234,13 +244,18 @@ def test_bites_on_the_banned_pattern():
 
 
 def test_bites_on_each_mutation_shape():
-    for body in ("_X.append(1)", "_X[0] = 1", "global _X; _X += [1]", "_X.update({})",
-                 "_X.add(1)", "del _X[0]", "_X[0][1] = 2"):
+    for body in (
+        "_X.append(1)",
+        "_X[0] = 1",
+        "global _X; _X += [1]",
+        "_X.update({})",
+        "_X.add(1)",
+        "del _X[0]",
+        "_X[0][1] = 2",
+    ):
         src = f"_X = []\ndef f():\n    {body}\n"
         assert offenders_in_source(src) == ["_X"], body
-    assert offenders_in_source(
-        "_X = Counter()\ndef f():\n    global _X\n    _X = Counter()\n"
-    ) == ["_X"]
+    assert offenders_in_source("_X = Counter()\ndef f():\n    global _X\n    _X = Counter()\n") == ["_X"]
 
 
 def test_read_only_constants_pass():

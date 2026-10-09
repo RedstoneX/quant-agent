@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,7 +59,6 @@ from src.trader_feed.intraday import (
 from src.trader_feed.dispatch import (
     format_session_result,
 )
-
 
 
 def format_desk_status(
@@ -137,7 +137,8 @@ _STORED_EVENING_GAP_WORDS: tuple[tuple[str, str], ...] = (
 
 
 def read_stored_evening(
-    date: str | None = None, db_path: Any = None,
+    date: str | None = None,
+    db_path: Any = None,
 ) -> dict[str, Any] | None:
     """One `evening_reports` row, through a READ-ONLY connection.
 
@@ -158,18 +159,19 @@ def read_stored_evening(
     conn = None
     try:
         conn = sqlite3.connect(
-            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+            f"file:{path.resolve()}?mode=ro",
+            uri=True,
+            timeout=1.0,
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=1000")
         if date:
             row = conn.execute(
-                "SELECT * FROM evening_reports WHERE date = ?", (date,),
+                "SELECT * FROM evening_reports WHERE date = ?",
+                (date,),
             ).fetchone()
         else:
-            row = conn.execute(
-                "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1").fetchone()
     except sqlite3.DatabaseError as exc:
         logger.warning("stored evening report read failed: %s", exc)
         return None
@@ -288,7 +290,9 @@ _STORED_SESSION_LABELS = {
 
 
 def read_stored_session_report(
-    mode: str, date: str | None = None, db_path: Any = None,
+    mode: str,
+    date: str | None = None,
+    db_path: Any = None,
 ) -> dict[str, Any] | None:
     """One `session_reports` row for `mode` ('morning', 'midday', 'close'),
     through a read-only connection. Mirrors `read_stored_evening`'s
@@ -301,7 +305,9 @@ def read_stored_session_report(
     conn = None
     try:
         conn = sqlite3.connect(
-            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+            f"file:{path.resolve()}?mode=ro",
+            uri=True,
+            timeout=1.0,
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=1000")
@@ -312,8 +318,8 @@ def read_stored_session_report(
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT * FROM session_reports WHERE mode = ? "
-                "ORDER BY date DESC LIMIT 1", (mode,),
+                "SELECT * FROM session_reports WHERE mode = ? ORDER BY date DESC LIMIT 1",
+                (mode,),
             ).fetchone()
     except sqlite3.DatabaseError as exc:
         logger.warning("stored %s report read failed: %s", mode, exc)
@@ -332,7 +338,8 @@ def read_stored_session_report(
     except (TypeError, ValueError):
         logger.error(
             "stored %s report for %s has unreadable payload",
-            mode, record.get("date"),
+            mode,
+            record.get("date"),
         )
         return None
     if not isinstance(payload, dict):
@@ -355,7 +362,9 @@ def read_stored_session_report(
 
 
 def render_stored_session_report(
-    mode: str, record: dict, elapsed_seconds: float = 0.0,
+    mode: str,
+    record: dict,
+    elapsed_seconds: float = 0.0,
 ) -> str:
     """One stored morning/midday/close report as a Telegram message.
 
@@ -425,7 +434,9 @@ def render_stored_session_report(
 
 
 def read_stored_intra_check(
-    run_id: str | None = None, date: str | None = None, db_path: Any = None,
+    run_id: str | None = None,
+    date: str | None = None,
+    db_path: Any = None,
 ) -> dict[str, Any] | None:
     """One `intra_check_reports` row, through a read-only connection.
 
@@ -439,7 +450,9 @@ def read_stored_intra_check(
     conn = None
     try:
         conn = sqlite3.connect(
-            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+            f"file:{path.resolve()}?mode=ro",
+            uri=True,
+            timeout=1.0,
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=1000")
@@ -450,14 +463,11 @@ def read_stored_intra_check(
             ).fetchone()
         elif date:
             row = conn.execute(
-                "SELECT * FROM intra_check_reports WHERE date = ? "
-                "ORDER BY timestamp DESC LIMIT 1", (date,),
+                "SELECT * FROM intra_check_reports WHERE date = ? ORDER BY timestamp DESC LIMIT 1",
+                (date,),
             ).fetchone()
         else:
-            row = conn.execute(
-                "SELECT * FROM intra_check_reports "
-                "ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM intra_check_reports ORDER BY timestamp DESC LIMIT 1").fetchone()
     except sqlite3.DatabaseError as exc:
         logger.warning("stored intra_check report read failed: %s", exc)
         return None
@@ -540,7 +550,6 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
         "this: no broker call, no model call, no order. This tick's own "
         "status only — not a re-derivation of the hourly DESK CHECK "
         "message, which also reflects other ticks around it.",
-
     ]
     # P&L FIRST, directly under the heading block — owner, 2026-09-18. It
     # used to follow the status line; the status of a replayed tick is
@@ -549,9 +558,9 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
     _new_section(lines, f"{_status_emoji(status)} {humanize_status(status)}")
     _new_block(lines, _append_coverage_gaps, result)
     risk_positions = [
-        row for row in result["_positions"]
-        if isinstance(row, dict)
-        and str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
+        row
+        for row in result["_positions"]
+        if isinstance(row, dict) and str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
     ]
     profiles = _profiles(risk_positions)
     lines.append(f"💼 Positions held: {len(risk_positions)}")

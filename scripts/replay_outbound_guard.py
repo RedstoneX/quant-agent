@@ -24,6 +24,7 @@ is reviewed. It is a definition, not a record of the current state.
 
 Run it directly: ``python -m scripts.replay_outbound_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -35,10 +36,28 @@ from scripts.guard_reference import ROOT, working_paths
 SCAN_DIR = "src"
 
 CLIENT_MODULES = {
-    "requests", "httpx", "urllib", "urllib3", "aiohttp", "curl_cffi", "yfinance",
-    "fredapi", "openai", "anthropic", "websockets", "websocket", "http", "smtplib",
-    "ftplib", "telegram", "alpaca", "alpaca_trade_api", "feedparser",
-    "pandas_datareader", "socket", "ssl",
+    "requests",
+    "httpx",
+    "urllib",
+    "urllib3",
+    "aiohttp",
+    "curl_cffi",
+    "yfinance",
+    "fredapi",
+    "openai",
+    "anthropic",
+    "websockets",
+    "websocket",
+    "http",
+    "smtplib",
+    "ftplib",
+    "telegram",
+    "alpaca",
+    "alpaca_trade_api",
+    "feedparser",
+    "pandas_datareader",
+    "socket",
+    "ssl",
 }
 
 

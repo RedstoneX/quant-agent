@@ -15,7 +15,11 @@ import logging
 
 from src.pipeline_protection import RestoreDrain, _WAL_SELL_SENTINEL
 from src.sentinel.reconciliation import (
-    AGREED, DISAGREED, NOT_RUN, ReconciliationLog, record_guarded_outcome,
+    AGREED,
+    DISAGREED,
+    NOT_RUN,
+    ReconciliationLog,
+    record_guarded_outcome,
 )
 from src.storage.db import Database
 
@@ -40,7 +44,7 @@ def test_a_swallowed_programming_error_logs_a_traceback_and_counts_a_row(tmp_pat
     assert _status(db, "demo") == NOT_RUN
     with caplog.at_level(logging.ERROR):
         try:
-            dict(a=1, **{"a": 2})          # a real duplicate-argument TypeError
+            dict(a=1, **{"a": 2})  # a real duplicate-argument TypeError
         except TypeError as exc:
             record_guarded_outcome(db=db, where="demo", exc=exc)
     record = [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -55,15 +59,16 @@ def test_ran_clean_is_a_different_answer_from_never_ran(tmp_path):
     assert _status(db, "quiet") == NOT_RUN
     record_guarded_outcome(db=db, where="quiet")
     assert _status(db, "quiet") == AGREED, (
-        "a counter that only fires on failure cannot tell a clean pass from "
-        "a site that was never reached"
+        "a counter that only fires on failure cannot tell a clean pass from a site that was never reached"
     )
 
 
 def _drain(db, broker):
     """Build the drain with whatever collaborators its constructor takes."""
     offered = {
-        "db": db, "broker": broker, "market": None,
+        "db": db,
+        "broker": broker,
+        "market": None,
         "restore_after_unconfirmed_sell": lambda *a, **k: (False, None),
         "finalize_protection_after_sell": lambda *a, **k: (False, None),
     }
@@ -79,8 +84,11 @@ class _BrokerRaisingTypeError:
 def test_the_drain_makes_a_broker_query_programming_error_loud(tmp_path, caplog):
     db = _db(tmp_path)
     db.insert_pending_protection_restore(
-        symbol="AAA", sell_order_id="order-1", position_qty_before_sell=10.0,
-        specs_json=json.dumps([{"stop_price": 1.0}]), side="sell",
+        symbol="AAA",
+        sell_order_id="order-1",
+        position_qty_before_sell=10.0,
+        specs_json=json.dumps([{"stop_price": 1.0}]),
+        side="sell",
     )
     drain = _drain(db, _BrokerRaisingTypeError())
     with caplog.at_level(logging.ERROR):
@@ -89,16 +97,17 @@ def test_the_drain_makes_a_broker_query_programming_error_loud(tmp_path, caplog)
     assert "TypeError" in _detail(db, "drain.broker_fill_query")
     assert any(r.exc_info for r in caplog.records if r.levelno >= logging.ERROR)
     assert _status(db, "drain.completed") == AGREED, (
-        "the drain must leave proof it RAN, or a clean run and a run that "
-        "never happened look identical"
+        "the drain must leave proof it RAN, or a clean run and a run that never happened look identical"
     )
 
 
 def test_an_unparseable_row_is_counted_and_the_sentinel_row_does_not_crash(tmp_path):
     db = _db(tmp_path)
     db.insert_pending_protection_restore(
-        symbol="BBB", sell_order_id=_WAL_SELL_SENTINEL,
-        position_qty_before_sell=5.0, specs_json="{not json",
+        symbol="BBB",
+        sell_order_id=_WAL_SELL_SENTINEL,
+        position_qty_before_sell=5.0,
+        specs_json="{not json",
         side="sell",
     )
     drain = _drain(db, _BrokerRaisingTypeError())

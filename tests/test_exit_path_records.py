@@ -10,6 +10,7 @@ Each test below fails if the line that writes its record is removed:
 Recording only. The tests also pin that the decisions themselves are
 unchanged (same proposal, same False, same halted status).
 """
+
 from __future__ import annotations
 
 import json
@@ -42,21 +43,21 @@ def _db(tmp_path) -> Database:
 def _rows(db: Database, kind: str) -> list[dict]:
     with db._lock:
         rows = db.conn.execute(
-            "SELECT symbol, run_id, evidence_json FROM specialist_evidence "
-            "WHERE kind=? ORDER BY id", (kind,),
+            "SELECT symbol, run_id, evidence_json FROM specialist_evidence WHERE kind=? ORDER BY id",
+            (kind,),
         ).fetchall()
-    return [
-        {"symbol": r["symbol"], "run_id": r["run_id"],
-         **json.loads(r["evidence_json"])}
-        for r in rows
-    ]
+    return [{"symbol": r["symbol"], "run_id": r["run_id"], **json.loads(r["evidence_json"])} for r in rows]
 
 
 def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=105.0):
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry, current_price=current_price,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
         market_value=qty * current_price,
-        unrealized_pnl=qty * (current_price - avg_entry), sector="Technology",
+        unrealized_pnl=qty * (current_price - avg_entry),
+        sector="Technology",
     )
 
 
@@ -64,15 +65,21 @@ def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=105.0):
 # 1. trailing stop
 # ---------------------------------------------------------------------------
 
+
 def test_evaluate_returns_the_same_proposal_as_compute_plus_a_code():
     kwargs = dict(
-        symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
-        current_stop=90.0, reference_target=140.0, initial_stop=90.0,
+        symbol="AAA",
+        setup_type="range",
+        entry=100.0,
+        current_price=105.0,
+        current_stop=90.0,
+        reference_target=140.0,
+        initial_stop=90.0,
     )
     ev = evaluate_trailing_stop(**kwargs)
     assert ev.proposal is None and compute_trailing_stop(**kwargs) is None
     assert ev.code == TRAIL_CODE_RANGE_BELOW_1R
-    kwargs["current_price"] = 112.0   # past +1R: the breakeven ratchet fires
+    kwargs["current_price"] = 112.0  # past +1R: the breakeven ratchet fires
     ev = evaluate_trailing_stop(**kwargs)
     assert ev.code == TRAIL_CODE_TRAILED
     assert ev.proposal == compute_trailing_stop(**kwargs)
@@ -92,11 +99,9 @@ def _trail_pipeline(db, buy_row, stop):
 
 def test_a_stop_that_does_not_trail_leaves_its_reason_once_per_change(tmp_path):
     db = _db(tmp_path)
-    buy = {"setup_type": "range", "take_profit": 140.0, "stop_loss": 90.0,
-           "timestamp": "2026-09-01 14:00:00"}
+    buy = {"setup_type": "range", "take_profit": 140.0, "stop_loss": 90.0, "timestamp": "2026-09-01 14:00:00"}
     p = _trail_pipeline(db, buy, 90.0)
-    with patch("src.execution.scale_in.pending_protection_symbols",
-               return_value=set()):
+    with patch("src.execution.scale_in.pending_protection_symbols", return_value=set()):
         for run in ("r1", "r2", "r3"):
             assert p._apply_deterministic_trails([_position()], run_id=run) == []
         rows = _rows(db, TRAIL_STATE_KIND)
@@ -110,7 +115,8 @@ def test_a_stop_that_does_not_trail_leaves_its_reason_once_per_change(tmp_path):
         p._apply_deterministic_trails([_position()], run_id="r4")
     rows = _rows(db, TRAIL_STATE_KIND)
     assert [r["code"] for r in rows] == [
-        TRAIL_CODE_RANGE_BELOW_1R, TRAIL_CODE_NO_LIVE_STOP,
+        TRAIL_CODE_RANGE_BELOW_1R,
+        TRAIL_CODE_NO_LIVE_STOP,
     ]
     assert rows[1]["previous_code"] == TRAIL_CODE_RANGE_BELOW_1R
 
@@ -118,23 +124,25 @@ def test_a_stop_that_does_not_trail_leaves_its_reason_once_per_change(tmp_path):
 def test_a_position_with_no_opening_row_is_recorded_not_skipped_silently(tmp_path):
     db = _db(tmp_path)
     p = _trail_pipeline(db, None, 90.0)
-    with patch("src.execution.scale_in.pending_protection_symbols",
-               return_value=set()):
+    with patch("src.execution.scale_in.pending_protection_symbols", return_value=set()):
         p._apply_deterministic_trails([_position()], run_id="r1")
     assert [r["code"] for r in _rows(db, TRAIL_STATE_KIND)] == ["no_opening_buy_row"]
 
 
 def test_a_rejected_replace_is_recorded(tmp_path):
     db = _db(tmp_path)
-    buy = {"setup_type": "range", "take_profit": 140.0, "stop_loss": 90.0,
-           "timestamp": "2026-09-01 14:00:00"}
+    buy = {"setup_type": "range", "take_profit": 140.0, "stop_loss": 90.0, "timestamp": "2026-09-01 14:00:00"}
     p = _trail_pipeline(db, buy, 90.0)
-    with patch("src.execution.scale_in.pending_protection_symbols",
-               return_value=set()), \
-         patch("src.execution.stop_records.replace_stop_and_record",
-               return_value={"id": None, "status": "kill_switch_halted"}):
+    with (
+        patch("src.execution.scale_in.pending_protection_symbols", return_value=set()),
+        patch(
+            "src.execution.stop_records.replace_stop_and_record",
+            return_value={"id": None, "status": "kill_switch_halted"},
+        ),
+    ):
         orders = p._apply_deterministic_trails(
-            [_position(current_price=112.0)], run_id="r1",
+            [_position(current_price=112.0)],
+            run_id="r1",
         )
     assert orders == []
     rows = _rows(db, TRAIL_STATE_KIND)
@@ -146,6 +154,7 @@ def test_a_rejected_replace_is_recorded(tmp_path):
 # ---------------------------------------------------------------------------
 # 2. stop repair refusal
 # ---------------------------------------------------------------------------
+
 
 def _repair_broker(result, price=165.0):
     broker = MagicMock()
@@ -163,14 +172,25 @@ def test_a_partial_repair_writes_a_durable_row_with_what_was_resting(tmp_path):
     db = _db(tmp_path)
     resting = [{"id": "gtc-1", "qty": 4.0, "stop_price": 158.0}]
     outcome = {"held_qty": 4.4, "covered_qty": 4.0}
-    broker = _repair_broker({
-        "id": "gtc-2", "covered_qty": 0.0, "uncovered_qty": 0.4,
-        "gtc_qty": 0.0, "day_qty": 0.0,
-    })
+    broker = _repair_broker(
+        {
+            "id": "gtc-2",
+            "covered_qty": 0.0,
+            "uncovered_qty": 0.4,
+            "gtc_qty": 0.0,
+            "day_qty": 0.0,
+        }
+    )
     placed = repair_stop_coverage(
-        broker=broker, last_buy=lambda s, action="BUY": {"stop_loss": 158.75},
-        symbol="NET", uncovered_qty=0.4, is_short=False, db=db,
-        outcome=outcome, resting_stops=resting, caller="test",
+        broker=broker,
+        last_buy=lambda s, action="BUY": {"stop_loss": 158.75},
+        symbol="NET",
+        uncovered_qty=0.4,
+        is_short=False,
+        db=db,
+        outcome=outcome,
+        resting_stops=resting,
+        caller="test",
     )
     assert placed is False
     rows = _rows(db, STOP_REPAIR_REFUSAL_KIND)
@@ -192,7 +212,10 @@ def test_a_guard_refusal_writes_a_row(tmp_path):
     placed = repair_stop_coverage(
         broker=_repair_broker(None, price=150.0),
         last_buy=lambda s, action="BUY": {"stop_loss": 158.75},
-        symbol="VST", uncovered_qty=31.0, is_short=False, db=db,
+        symbol="VST",
+        uncovered_qty=31.0,
+        is_short=False,
+        db=db,
     )
     assert placed is False
     rows = _rows(db, STOP_REPAIR_REFUSAL_KIND)
@@ -224,6 +247,7 @@ def test_the_session_sweep_passes_the_resting_orders_to_the_record(tmp_path):
 # 3. kill switch blocking a protective stop
 # ---------------------------------------------------------------------------
 
+
 def test_a_kill_switch_block_in_repair_says_kill_switch_not_broker(tmp_path):
     from src.execution.stop_repair import repair_stop_coverage
 
@@ -232,7 +256,10 @@ def test_a_kill_switch_block_in_repair_says_kill_switch_not_broker(tmp_path):
     placed = repair_stop_coverage(
         broker=_repair_broker({"id": None, "status": "kill_switch_halted"}),
         last_buy=lambda s, action="BUY": {"stop_loss": 158.75},
-        symbol="RSG", uncovered_qty=2.0, is_short=False, db=db,
+        symbol="RSG",
+        uncovered_qty=2.0,
+        is_short=False,
+        db=db,
         outcome=outcome,
     )
     assert placed is False
@@ -245,7 +272,8 @@ def test_a_kill_switch_block_in_repair_says_kill_switch_not_broker(tmp_path):
 
 @patch("src.execution.broker.TradingClient")
 def test_the_broker_records_every_protective_stop_its_kill_switch_refuses(
-    mock_tc_cls, tmp_path,
+    mock_tc_cls,
+    tmp_path,
 ):
     from src.execution.broker import AlpacaBroker
 
@@ -253,14 +281,19 @@ def test_the_broker_records_every_protective_stop_its_kill_switch_refuses(
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
     broker = AlpacaBroker(
-        api_key="test", secret_key="test", paper=True,
+        api_key="test",
+        secret_key="test",
+        paper=True,
         kill_switch_path=str(flag),
     )
     db = _db(tmp_path)
     p = build_pipeline(broker=broker, db=db)
     p._wire_protective_stop_block_recorder()
     result = broker._submit_stop_limit_order(
-        symbol="AAA", qty=5, stop_price=90.0, side="sell",
+        symbol="AAA",
+        qty=5,
+        stop_price=90.0,
+        side="sell",
     )
     # The decision is unchanged: still halted, still no order id.
     assert result["status"] == "kill_switch_halted" and result["id"] is None
@@ -289,12 +322,17 @@ def test_a_failing_recorder_never_changes_the_refusal(tmp_path):
         flag = tmp_path / "KILL_SWITCH"
         flag.touch()
         broker = AlpacaBroker(
-            api_key="test", secret_key="test", paper=True,
+            api_key="test",
+            secret_key="test",
+            paper=True,
             kill_switch_path=str(flag),
         )
     broker.protective_stop_block_recorder = MagicMock(side_effect=RuntimeError("x"))
     result = broker._submit_stop_limit_order(
-        symbol="AAA", qty=5, stop_price=90.0, side="sell",
+        symbol="AAA",
+        qty=5,
+        stop_price=90.0,
+        side="sell",
     )
     assert result["status"] == "kill_switch_halted"
     broker.protective_stop_block_recorder.assert_called_once()

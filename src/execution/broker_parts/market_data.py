@@ -4,6 +4,7 @@ Fourth (final) broker instalment. `LivePrice`, `_BROKER_HTTP_TIMEOUT` and
 `_install_http_timeout` moved here as-is and are re-exported by
 `src.execution.broker`. `MarketData` holds the former `AlpacaBroker` read methods.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,13 +16,15 @@ from src.execution.broker_parts.trade_stream import _OnState
 from src.sentinel.counted import record_swallowed
 from src.execution.price_read import read_price_with_retry
 from src.execution.broker_parts.http_timeout import (  # noqa: F401 (re-export)
-    _BROKER_HTTP_TIMEOUT, _install_http_timeout,
+    _BROKER_HTTP_TIMEOUT,
+    _install_http_timeout,
 )
 from src.execution.broker_parts.intraday_snapshots import snapshots_from_client
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
+
 
 @dataclass(frozen=True)
 class LivePrice:
@@ -68,7 +71,8 @@ class MarketData:
     _screener_client = _OnState()
 
     def __init__(
-        self, *,
+        self,
+        *,
         state,
         api_key,
         secret_key,
@@ -86,7 +90,6 @@ class MarketData:
             self.get_latest_price_stamped = get_latest_price_stamped
         if _extract_symbol_payload is not None:
             self._extract_symbol_payload = _extract_symbol_payload
-
 
     def get_top_movers(self, n: int = 15) -> list[dict]:
         """Return today's top-`n` gainers from Alpaca's screener.
@@ -112,7 +115,8 @@ class MarketData:
         if not hasattr(self, "_screener_client") or self._screener_client is None:
             try:
                 self._screener_client = ScreenerClient(
-                    api_key=self.api_key, secret_key=self.secret_key,
+                    api_key=self.api_key,
+                    secret_key=self.secret_key,
                 )
                 _install_http_timeout(self._screener_client)
             except Exception as exc:
@@ -121,9 +125,7 @@ class MarketData:
                 return []
 
         try:
-            movers = self._screener_client.get_market_movers(
-                MarketMoversRequest(top=n)
-            )
+            movers = self._screener_client.get_market_movers(MarketMoversRequest(top=n))
         except Exception as exc:
             record_swallowed("broker.get_top_movers", exc, log=logger)
             return []
@@ -149,11 +151,13 @@ class MarketData:
                 continue
             sym_upper = _internal_symbol(alpaca_sym_upper)
             try:
-                out.append({
-                    "symbol": sym_upper,
-                    "percent_change": float(getattr(m, "percent_change", 0) or 0),
-                    "price": float(getattr(m, "price", 0) or 0),
-                })
+                out.append(
+                    {
+                        "symbol": sym_upper,
+                        "percent_change": float(getattr(m, "percent_change", 0) or 0),
+                        "price": float(getattr(m, "price", 0) or 0),
+                    }
+                )
             except (TypeError, ValueError):
                 continue
             if len(out) >= n:
@@ -174,9 +178,8 @@ class MarketData:
         try:
             if self._data_client is None:
                 from alpaca.data.historical.stock import StockHistoricalDataClient
-                self._data_client = StockHistoricalDataClient(
-                    self.api_key, self.secret_key
-                )
+
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
                 _install_http_timeout(self._data_client)
 
             from alpaca.data.requests import StockBarsRequest
@@ -209,14 +212,16 @@ class MarketData:
                     if d is None:
                         continue
                     try:
-                        parsed.append(OHLCV(
-                            date=d,
-                            open=float(getattr(b, "open", 0) or 0),
-                            high=float(getattr(b, "high", 0) or 0),
-                            low=float(getattr(b, "low", 0) or 0),
-                            close=float(getattr(b, "close", 0) or 0),
-                            volume=int(getattr(b, "volume", 0) or 0),
-                        ))
+                        parsed.append(
+                            OHLCV(
+                                date=d,
+                                open=float(getattr(b, "open", 0) or 0),
+                                high=float(getattr(b, "high", 0) or 0),
+                                low=float(getattr(b, "low", 0) or 0),
+                                close=float(getattr(b, "close", 0) or 0),
+                                volume=int(getattr(b, "volume", 0) or 0),
+                            )
+                        )
                     except (TypeError, ValueError):
                         continue
                 return parsed
@@ -251,9 +256,7 @@ class MarketData:
             record_swallowed("broker.get_bars", e, log=logger, symbol=symbol)
             return []
 
-    def get_intraday_chart_bars(
-        self, symbol: str, timeframe: str, lookback_days: int
-    ) -> list[dict]:
+    def get_intraday_chart_bars(self, symbol: str, timeframe: str, lookback_days: int) -> list[dict]:
         """Fetch read-only intraday OHLCV bars for Mission Control.
 
         This deliberately does not participate in trading decisions or
@@ -269,6 +272,7 @@ class MarketData:
         try:
             if self._data_client is None:
                 from alpaca.data.historical.stock import StockHistoricalDataClient
+
                 self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
                 _install_http_timeout(self._data_client)
 
@@ -368,8 +372,7 @@ class MarketData:
             out.sort(key=lambda b: b["timestamp"])
             return out
         except Exception as exc:
-            record_swallowed("broker.intraday_chart_bars", exc, log=logger,
-                             symbol=symbol, timeframe=str(timeframe))
+            record_swallowed("broker.intraday_chart_bars", exc, log=logger, symbol=symbol, timeframe=str(timeframe))
             return []
 
     def get_latest_price_stamped(self, symbol: str) -> "LivePrice | None":
@@ -396,9 +399,7 @@ class MarketData:
 
         alpaca_symbol = _alpaca_symbol(symbol)
 
-        trade_data = self._data_client.get_stock_latest_trade(
-            StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
-        )
+        trade_data = self._data_client.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol))
         trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
         trade_price = float(getattr(trade, "price", 0) or 0)
         if trade_price > 0:
@@ -407,13 +408,14 @@ class MarketData:
 
             fresh = bool(live_price_is_today(trade_at))
             return LivePrice(
-                price=trade_price, source="last_trade", trade_at=trade_at,
-                is_today=fresh, is_today_print=fresh,
+                price=trade_price,
+                source="last_trade",
+                trade_at=trade_at,
+                is_today=fresh,
+                is_today_print=fresh,
             )
 
-        quote_data = self._data_client.get_stock_latest_quote(
-            StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
-        )
+        quote_data = self._data_client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol))
         quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
         ask_price = float(getattr(quote, "ask_price", 0) or 0)
         bid_price = float(getattr(quote, "bid_price", 0) or 0)
@@ -423,18 +425,27 @@ class MarketData:
         quote_today = bool(live_price_is_today(quote_at))
         if ask_price > 0 and bid_price > 0:
             return LivePrice(
-                price=(ask_price + bid_price) / 2, source="quote_mid",
-                trade_at=quote_at, is_today=quote_today, is_today_print=False,
+                price=(ask_price + bid_price) / 2,
+                source="quote_mid",
+                trade_at=quote_at,
+                is_today=quote_today,
+                is_today_print=False,
             )
         if ask_price > 0:
             return LivePrice(
-                price=ask_price, source="quote_ask", trade_at=quote_at,
-                is_today=quote_today, is_today_print=False,
+                price=ask_price,
+                source="quote_ask",
+                trade_at=quote_at,
+                is_today=quote_today,
+                is_today_print=False,
             )
         if bid_price > 0:
             return LivePrice(
-                price=bid_price, source="quote_bid", trade_at=quote_at,
-                is_today=quote_today, is_today_print=False,
+                price=bid_price,
+                source="quote_bid",
+                trade_at=quote_at,
+                is_today=quote_today,
+                is_today_print=False,
             )
         return None
 
@@ -512,8 +523,11 @@ class MarketData:
                 trade_at = getattr(trade, "timestamp", None)
                 if trade_price > 0 and live_price_is_today(trade_at):
                     prints[symbol] = LivePrice(
-                        price=trade_price, source="last_trade", trade_at=trade_at,
-                        is_today=True, is_today_print=True,
+                        price=trade_price,
+                        source="last_trade",
+                        trade_at=trade_at,
+                        is_today=True,
+                        is_today_print=True,
                     )
             return prints
 

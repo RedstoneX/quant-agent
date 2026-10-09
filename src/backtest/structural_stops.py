@@ -4,6 +4,7 @@ Moved out of ``engine`` unchanged so that module can stop growing: the setup
 label for a signal and the stop/target taken from structural levels.
 ``engine`` re-exports both names.
 """
+
 from __future__ import annotations
 
 from src.backtest.swept_values import SweepMeter
@@ -24,10 +25,15 @@ def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
 
 
 def _resolve_structural_stop_and_target(
-    bars_through_signal: list[OHLCV], direction: str, entry_price: float,
+    bars_through_signal: list[OHLCV],
+    direction: str,
+    entry_price: float,
     meter: SweepMeter | None = None,
 ) -> tuple[
-    float | None, float | None, list[float], dict[float, int],
+    float | None,
+    float | None,
+    list[float],
+    dict[float, int],
     dict[float, list[tuple[float, float]]],
 ]:
     """Nearest structural level on the protective side of `entry_price`
@@ -76,12 +82,9 @@ def _resolve_structural_stop_and_target(
     meter = meter if meter is not None else SweepMeter()
     supports, resistances = find_structural_levels(
         bars_through_signal,
-        pivot_window=meter.read(
-            "levels.pivot_window", levels_module.PIVOT_WINDOW),
-        tolerance_pct=meter.read(
-            "levels.cluster_tolerance_pct", levels_module.CLUSTER_TOLERANCE_PCT),
-        min_touches=meter.read(
-            "levels.min_touches", levels_module.MIN_TOUCHES),
+        pivot_window=meter.read("levels.pivot_window", levels_module.PIVOT_WINDOW),
+        tolerance_pct=meter.read("levels.cluster_tolerance_pct", levels_module.CLUSTER_TOLERANCE_PCT),
+        min_touches=meter.read("levels.min_touches", levels_module.MIN_TOUCHES),
     )
     all_level_objs = (*supports, *resistances)
     all_levels = sorted(lv.price for lv in all_level_objs)
@@ -95,10 +98,12 @@ def _resolve_structural_stop_and_target(
     stop = structural_floor(all_levels, entry_price, direction)
     if direction == "long":
         target = min(
-            (lv.price for lv in resistances if lv.price > entry_price), default=None,
+            (lv.price for lv in resistances if lv.price > entry_price),
+            default=None,
         )
     else:
         target = max(
-            (lv.price for lv in supports if lv.price < entry_price), default=None,
+            (lv.price for lv in supports if lv.price < entry_price),
+            default=None,
         )
     return stop, target, all_levels, touches, level_bars

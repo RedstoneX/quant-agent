@@ -138,8 +138,7 @@ def _trade(db, run_id, symbol, action, qty=1, price=100, status="filled", reason
 def _agent_log(db, run_id, agent, summary, cost=0.001):
     conn = sqlite3.connect(db)
     conn.execute(
-        "INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) VALUES (?, ?, ?, ?)",
         (agent, run_id, summary, cost),
     )
     conn.commit()
@@ -150,40 +149,60 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
     db = _make_db(tmp_path, monkeypatch)
     run = "run-rich"
     _evidence(
-        db, run, "macro_analyst", "analysis",
+        db,
+        run,
+        "macro_analyst",
+        "analysis",
         {
-            "regime": "risk-off", "equity_outlook": "bearish", "confidence": "high",
+            "regime": "risk-off",
+            "equity_outlook": "bearish",
+            "confidence": "high",
             "position_guidance": {"target_invested_pct": 40},
         },
     )
     _evidence(
-        db, run, "tech_analyst", "analysis",
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
         {
-            "symbol": "SQQQ", "rating": "strong_buy", "conviction": "high",
-            "risk_reward": 2.4, "reasoning": "NASDAQ downside acceleration",
+            "symbol": "SQQQ",
+            "rating": "strong_buy",
+            "conviction": "high",
+            "risk_reward": 2.4,
+            "reasoning": "NASDAQ downside acceleration",
         },
         symbol="SQQQ",
     )
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
         {"portfolio_view": "Bearish tape; express downside selectively."},
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8,
-         "reasoning": "Defined-risk bearish expression"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8, "reasoning": "Defined-risk bearish expression"},
         symbol="SQQQ",
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "HOLD", "symbol": "NVDA", "allocation_pct": 0,
-         "reasoning": "No clean entry after the move"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "HOLD", "symbol": "NVDA", "allocation_pct": 0, "reasoning": "No clean entry after the move"},
         symbol="NVDA",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
-         "reasoning": "Sizing acceptable."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0, "reasoning": "Sizing acceptable."},
     )
     _trade(db, run, "SGOV", "SWEEP_SELL", qty=3, price=100.5)
     _trade(db, run, "SQQQ", "BUY", qty=4, price=25.02)
@@ -196,8 +215,12 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
 
     msg = trader_feed.format_session_result(
         "morning",
-        {"status": "executed", "run_id": run, "orders": [{"symbol": "SQQQ"}],
-         "data_status": {"macro": "ok", "tech": "ok", "news": "ok", "earnings": "ok"}},
+        {
+            "status": "executed",
+            "run_id": run,
+            "orders": [{"symbol": "SQQQ"}],
+            "data_status": {"macro": "ok", "tech": "ok", "news": "ok", "earnings": "ok"},
+        },
         61.0,
     )
 
@@ -220,19 +243,30 @@ def test_morning_hold_explains_no_trade_in_investment_terms(tmp_path, monkeypatc
     run = "run-hold"
     _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "No setup clears the bar."})
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "HOLD", "symbol": "AAPL", "allocation_pct": 0,
-         "reasoning": "R/R insufficient after the opening move"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {
+            "action": "HOLD",
+            "symbol": "AAPL",
+            "allocation_pct": 0,
+            "reasoning": "R/R insufficient after the opening move",
+        },
         symbol="AAPL",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
-         "reasoning": "No risk objection."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0, "reasoning": "No risk objection."},
     )
 
     msg = trader_feed.format_session_result(
-        "morning", {"status": "executed", "run_id": run, "orders": []}, 30.0,
+        "morning",
+        {"status": "executed", "run_id": run, "orders": []},
+        30.0,
     )
     assert "PASS AAPL" in msg
     assert "NO TRADE — PM/constructor produced HOLD only" in msg
@@ -244,7 +278,9 @@ def test_morning_pm_no_change_uses_agent_summary_when_structured_evidence_absent
     run = "run-pm-none"
     _agent_log(db, run, "portfolio_manager", "no trades")
     msg = trader_feed.format_session_result(
-        "morning", {"status": "executed", "run_id": run, "orders": []}, 20.0,
+        "morning",
+        {"status": "executed", "run_id": run, "orders": []},
+        20.0,
     )
     assert "PM produced no executable portfolio change" in msg
     assert "detailed PM evidence unavailable" not in msg
@@ -255,20 +291,28 @@ def test_risk_veto_is_distinguished_from_pm_no_trade(tmp_path, monkeypatch):
     run = "run-veto"
     _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "One candidate qualifies."})
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "NVDA", "allocation_pct": 10,
-         "reasoning": "Setup qualifies"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "NVDA", "allocation_pct": 10, "reasoning": "Setup qualifies"},
         symbol="NVDA",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": False, "reason_category": "event_risk", "scale_all_buys": 1.0,
-         "reasoning": "Earnings event risk is too close."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {
+            "approved": False,
+            "reason_category": "event_risk",
+            "scale_all_buys": 1.0,
+            "reasoning": "Earnings event risk is too close.",
+        },
     )
     msg = trader_feed.format_session_result(
         "morning",
-        {"status": "rejected", "run_id": run, "orders": [],
-         "reason": "Earnings event risk is too close."},
+        {"status": "rejected", "run_id": run, "orders": [], "reason": "Earnings event risk is too close."},
         30.0,
     )
     assert "Risk: REJECTED" in msg
@@ -279,20 +323,30 @@ def test_execution_skip_is_not_misreported_as_investment_hold(tmp_path, monkeypa
     db = _make_db(tmp_path, monkeypatch)
     run = "run-unfunded"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
         {"action": "BUY", "symbol": "AMD", "allocation_pct": 8, "reasoning": "Qualified setup"},
         symbol="AMD",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
-         "reasoning": "Approved."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0, "reasoning": "Approved."},
     )
     msg = trader_feed.format_session_result(
         "morning",
-        {"status": "buys_unfunded", "run_id": run, "orders": [],
-         "execution_skips": [{"symbol": "AMD", "reason": "insufficient_cash",
-                               "detail": "funding sale not confirmed"}]},
+        {
+            "status": "buys_unfunded",
+            "run_id": run,
+            "orders": [],
+            "execution_skips": [
+                {"symbol": "AMD", "reason": "insufficient_cash", "detail": "funding sale not confirmed"}
+            ],
+        },
         50.0,
     )
     assert "Execution gate: 1 skip" in msg
@@ -308,22 +362,34 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
     db = _make_db(tmp_path, monkeypatch)
     run = "intra_check-demo"
     _evidence(
-        db, run, "tech_analyst", "analysis",
-        {"symbol": "SDS", "rating": "buy", "conviction": "medium", "risk_reward": 1.8,
-         "reasoning": "Broad downside move triggered scan"},
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
+        {
+            "symbol": "SDS",
+            "rating": "buy",
+            "conviction": "medium",
+            "risk_reward": 1.8,
+            "reasoning": "Broad downside move triggered scan",
+        },
         symbol="SDS",
     )
     _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "Review hedge; do not chase."})
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "HOLD", "symbol": "SDS", "allocation_pct": 0,
-         "reasoning": "Move too extended"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "HOLD", "symbol": "SDS", "allocation_pct": 0, "reasoning": "Move too extended"},
         symbol="SDS",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
-         "reasoning": "No action to veto."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0, "reasoning": "No action to veto."},
     )
     # 2026-09-17 cadence change: a quiet "intraday_no_trades" tick (nothing
     # actionable at all) no longer sends its own message — it is folded
@@ -332,15 +398,20 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
     # regression: the nested `intraday_scan` result must render, never get
     # masked by the outer "ok" status.
     _evidence(
-        db, run, "execution", "execution_skip",
+        db,
+        run,
+        "execution",
+        "execution_skip",
         {"symbol": "SDS", "reason": "insufficient_cash", "detail": "n/a"},
         symbol="SDS",
     )
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": -42.0, "daily_return_pct": -0.42,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": -42.0,
+        "daily_return_pct": -0.42,
         "positions": 0,
-        "intraday_scan": {"status": "intraday_no_trades", "run_id": run,
-                          "candidates": ["SDS"], "orders": []},
+        "intraday_scan": {"status": "intraday_no_trades", "run_id": run, "candidates": ["SDS"], "orders": []},
     }
     msg = trader_feed.format_session_result("intra_check", outer, 12.0)
     assert "⚡ INTRADAY OPPORTUNITY" in msg
@@ -358,11 +429,14 @@ def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
     for status in (
-        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity",
     ):
         outer = {
-            "status": "ok", "run_id": "intra_check-quiet", "daily_pnl": 10.0,
+            "status": "ok",
+            "run_id": "intra_check-quiet",
+            "daily_pnl": 10.0,
             "intraday_scan": {"status": status, "run_id": "intra_check-quiet"},
         }
         msg = trader_feed.format_session_result("intra_check", outer, 4.0)
@@ -375,13 +449,15 @@ def test_intraday_evidence_gate_skip_is_not_silent(tmp_path, monkeypatch):
     no-new-activity statuses."""
     _make_db(tmp_path, monkeypatch)
     outer = {
-        "status": "ok", "run_id": "intra_check-skip", "daily_pnl": 10.0,
+        "status": "ok",
+        "run_id": "intra_check-skip",
+        "daily_pnl": 10.0,
         "intraday_scan": {
             "status": "evidence_gate_skip",
             "run_id": "intra_check-skip",
             "lost_seats": ["news"],
             "reason": "decision skipped: 1 seat(s) were asked and their "
-                      "answer never arrived — news=carry_forward_empty.",
+            "answer never arrived — news=carry_forward_empty.",
             "candidates": ["AAPL"],
         },
     }
@@ -435,8 +511,7 @@ def test_midday_without_structured_review_is_not_mislabelled_as_pm_failure(tmp_p
     _pin_clock(monkeypatch, datetime(2026, 9, 17, 11, 0, tzinfo=_ET))
     msg = trader_feed.format_session_result(
         "midday",
-        {"status": "reviewed", "run_id": "midday-empty", "positions": 0,
-         "orders": [], "review": None},
+        {"status": "reviewed", "run_id": "midday-empty", "positions": 0, "orders": [], "review": None},
         8.0,
     )
     assert "MIDDAY REVIEW" in msg
@@ -472,9 +547,11 @@ def test_morning_pm_rationale_survives_past_old_105_char_clip(tmp_path, monkeypa
     )
     assert len(long_reasoning) > 105
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6,
-         "reasoning": long_reasoning},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6, "reasoning": long_reasoning},
         symbol="CRM",
     )
 
@@ -496,9 +573,11 @@ def test_morning_pm_rationale_past_new_limit_clips_on_word_boundary(tmp_path, mo
     very_long_reasoning = "accumulation volume confirms the breakout thesis. " * 15
     assert len(very_long_reasoning) > 420
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6,
-         "reasoning": very_long_reasoning},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "CRM", "allocation_pct": 6, "reasoning": very_long_reasoning},
         symbol="CRM",
     )
 
@@ -522,7 +601,7 @@ def test_morning_pm_rationale_past_new_limit_clips_on_word_boundary(tmp_path, mo
     # boundary-awareness. The real test: the character immediately after
     # `core` in the source must be whitespace or end-of-string, never a
     # letter, which is what a mid-word chop would leave behind.
-    tail = collapsed[len(core):len(core) + 1]
+    tail = collapsed[len(core) : len(core) + 1]
     assert tail in ("", " ")
 
 
@@ -535,7 +614,9 @@ def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
     conn.close()
 
     trader_feed.format_session_result(
-        "morning", {"status": "executed", "run_id": run, "orders": []}, 5.0,
+        "morning",
+        {"status": "executed", "run_id": run, "orders": []},
+        5.0,
     )
 
     conn = sqlite3.connect(db)
@@ -546,17 +627,26 @@ def test_trader_feed_reads_database_without_mutating_it(tmp_path, monkeypatch):
 
 # === extract_alert_symbols (feeds TelegramNotifier's per-symbol links) ===
 
+
 def test_extract_alert_symbols_collects_pm_orders_trades_and_skips(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-symbols"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8}, symbol="SQQQ",
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "SQQQ", "allocation_pct": 8},
+        symbol="SQQQ",
     )
     _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
     _evidence(
-        db, run, "execution", "execution_skip",
-        {"symbol": "MSFT", "reason": "no_cash"}, symbol="MSFT",
+        db,
+        run,
+        "execution",
+        "execution_skip",
+        {"symbol": "MSFT", "reason": "no_cash"},
+        symbol="MSFT",
     )
 
     symbols = trader_feed.extract_alert_symbols(run, {"status": "executed", "run_id": run})
@@ -626,16 +716,19 @@ def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-morning"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
-         "reasoning": "Uranium demand tailwind"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8, "reasoning": "Uranium demand tailwind"},
         symbol="CCJ",
     )
     _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -657,16 +750,19 @@ def test_closing_sell_does_not_render_a_fake_zero_stop(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-closing-sell"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 100,
-         "stop_loss": 0.0, "reasoning": "Full close"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 100, "stop_loss": 0.0, "reasoning": "Full close"},
         symbol="CCJ",
     )
     _trade(db, run, "CCJ", "SELL", qty=40, price=58.10)
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -688,15 +784,19 @@ def test_allocation_pct_is_labelled_honestly_by_action(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-alloc-label"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "AMD", "allocation_pct": 10,
-         "reasoning": "New position"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "AMD", "allocation_pct": 10, "reasoning": "New position"},
         symbol="AMD",
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 50,
-         "reasoning": "Partial trim"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "SELL", "symbol": "CCJ", "allocation_pct": 50, "reasoning": "Partial trim"},
         symbol="CCJ",
     )
     result = {"status": "executed", "run_id": run, "orders": []}
@@ -713,14 +813,16 @@ def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     run = "run-identity-midday"
     _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
     result = {
-        "status": "reviewed", "run_id": run, "positions": 1,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 1,
         "orders": [{"symbol": "CCJ"}],
-        "review": {"actions": [{"action": "REDUCE", "symbol": "CCJ",
-                                 "reason": "trim the winner"}]},
+        "review": {"actions": [{"action": "REDUCE", "symbol": "CCJ", "reason": "trim the winner"}]},
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
@@ -734,12 +836,16 @@ def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     run = "run-identity-close"
     _trade(db, run, "CCJ", "SELL", qty=10, price=61.0)
     result = {
-        "status": "reviewed", "run_id": run, "positions": 0,
-        "orders": [{"symbol": "CCJ"}], "review": None,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 0,
+        "orders": [{"symbol": "CCJ"}],
+        "review": None,
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("close", result, 7.0)
@@ -759,10 +865,15 @@ def test_position_review_now_shows_todays_and_total_pnl(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-review-pnl"
     result = {
-        "status": "reviewed", "run_id": run, "positions": 1,
-        "orders": [], "review": None,
-        "daily_pnl": 12.34, "daily_return_pct": 0.13,
-        "total_pnl": 44.70, "total_return_pct": 0.46,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 1,
+        "orders": [],
+        "review": None,
+        "daily_pnl": 12.34,
+        "daily_return_pct": 0.13,
+        "total_pnl": 44.70,
+        "total_return_pct": 0.46,
         "total_pnl_since": "2026-09-02",
     }
     msg = trader_feed.format_session_result("midday", result, 5.0)
@@ -779,8 +890,11 @@ def test_position_review_missing_pnl_says_not_available_never_zero(tmp_path, mon
     db = _make_db(tmp_path, monkeypatch)
     run = "run-review-no-pnl"
     result = {
-        "status": "reviewed", "run_id": run, "positions": 0,
-        "orders": [], "review": None,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 0,
+        "orders": [],
+        "review": None,
     }
     msg = trader_feed.format_session_result("midday", result, 5.0)
     assert msg is not None
@@ -794,15 +908,21 @@ def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     run = "run-identity-intra"
     _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": -5.0,
+        "daily_return_pct": -0.05,
         "intraday_scan": {
-            "status": "intraday_executed", "run_id": run,
-            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+            "status": "intraday_executed",
+            "run_id": run,
+            "candidates": ["CCJ"],
+            "orders": [{"symbol": "CCJ"}],
         },
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("intra_check", outer, 4.0)
@@ -818,9 +938,11 @@ def test_missing_profile_degrades_cleanly_through_the_real_formatter(tmp_path, m
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-unknown"
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "ZZZZ", "allocation_pct": 5,
-         "reasoning": "Speculative small-cap entry"},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "ZZZZ", "allocation_pct": 5, "reasoning": "Speculative small-cap entry"},
         symbol="ZZZZ",
     )
     _trade(db, run, "ZZZZ", "BUY", qty=100, price=2.10)
@@ -830,10 +952,9 @@ def test_missing_profile_degrades_cleanly_through_the_real_formatter(tmp_path, m
     # CompanyProfileStore.get_many behaviour with allow_fetch=False) but with
     # every field None — the identity-worthy `bits` list ends up empty.
     with patch.object(
-        CompanyProfileStore, "get_many",
-        lambda self, symbols, allow_fetch=True: {
-            s: CompanyProfile(symbol=s) for s in symbols
-        },
+        CompanyProfileStore,
+        "get_many",
+        lambda self, symbols, allow_fetch=True: {s: CompanyProfile(symbol=s) for s in symbols},
     ):
         msg = trader_feed.format_session_result("morning", result, 11.0)
 
@@ -877,19 +998,31 @@ def test_length_pressure_drops_details_before_scan_first_content(tmp_path, monke
     run = "run-tight-budget"
     long_reasoning = "Uranium demand tailwind, clean breakout. " * 60  # ~2500 chars
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
         {"portfolio_view": "Only one clean setup survives the morning screen"},
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
-         "reasoning": long_reasoning},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8, "reasoning": long_reasoning},
         symbol="CCJ",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
-         "reasoning": "Sizing acceptable given current exposure"},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {
+            "approved": True,
+            "reason_category": "clean",
+            "scale_all_buys": 1.0,
+            "reasoning": "Sizing acceptable given current exposure",
+        },
     )
     _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
@@ -897,10 +1030,13 @@ def test_length_pressure_drops_details_before_scan_first_content(tmp_path, monke
     # A tight budget — comfortably fits the scan-first sections (header,
     # P&L-less morning header, DONE) but not the full ~2500-char DETAILS
     # payload plus its wrapper tags.
-    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 911)  # was 900; header grew 11 chars with the date (item 231)
+    monkeypatch.setattr(
+        TelegramNotifier, "MAX_MESSAGE_CHARS", 911
+    )  # was 900; header grew 11 chars with the date (item 231)
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -940,7 +1076,8 @@ def test_done_line_carries_trade_reasoning_inline(tmp_path, monkeypatch):
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -959,19 +1096,28 @@ def test_pm_line_surfaces_sizing_logic(tmp_path, monkeypatch):
     run = "run-sizing-logic"
     sizing_text = "Half size given the name's earnings print next week."
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
         {
             "portfolio_view": "One clean setup",
             "reasoning_chain": {
-                "macro_filter": "clear", "news_check": "clean",
-                "earnings_check": "watched", "signal_conflicts": "none",
+                "macro_filter": "clear",
+                "news_check": "clean",
+                "earnings_check": "watched",
+                "signal_conflicts": "none",
                 "sizing_logic": sizing_text,
-                "portfolio_balance": "fine", "cash_target": "met",
+                "portfolio_balance": "fine",
+                "cash_target": "met",
             },
         },
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
         {"action": "BUY", "symbol": "CCJ", "allocation_pct": 4, "reasoning": "clean breakout"},
         symbol="CCJ",
     )
@@ -979,7 +1125,8 @@ def test_pm_line_surfaces_sizing_logic(tmp_path, monkeypatch):
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -1001,30 +1148,40 @@ def test_length_pressure_protects_risk_and_execution_reasoning(tmp_path, monkeyp
     run = "run-protect-risk-exec"
     long_reasoning = "Uranium demand tailwind, clean breakout thesis. " * 60  # ~2500 chars
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
         {"portfolio_view": "Only one clean setup survives the morning screen"},
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
-         "reasoning": long_reasoning},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8, "reasoning": long_reasoning},
         symbol="CCJ",
     )
     risk_reasoning = "Sized to half conviction pending the next inventory print."
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "clean", "scale_all_buys": 0.5,
-         "reasoning": risk_reasoning},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {"approved": True, "reason_category": "clean", "scale_all_buys": 0.5, "reasoning": risk_reasoning},
     )
     _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
 
     # Tight enough that the PM's long reasoning alone would consume the
     # whole DETAILS budget under the old flat-clip behaviour.
-    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 911)  # was 900; header grew 11 chars with the date (item 231)
+    monkeypatch.setattr(
+        TelegramNotifier, "MAX_MESSAGE_CHARS", 911
+    )  # was 900; header grew 11 chars with the date (item 231)
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
@@ -1065,12 +1222,12 @@ def test_length_pressure_protects_risk_and_execution_reasoning(tmp_path, monkeyp
 # into `TelegramNotifier._build_payload` for the real link — the exact two
 # consumers `src/scheduler.py`/`main.py` wire together for a live alert.
 
+
 def _insert_position(db, symbol, qty=10, avg_entry=100.0, current_price=105.0):
     conn = sqlite3.connect(db)
     conn.execute(
         "INSERT INTO positions VALUES (?, ?, ?, ?, ?, ?)",
-        (symbol, qty, avg_entry, current_price, qty * current_price,
-         qty * (current_price - avg_entry)),
+        (symbol, qty, avg_entry, current_price, qty * current_price, qty * (current_price - avg_entry)),
     )
     conn.commit()
     conn.close()
@@ -1088,7 +1245,9 @@ def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatc
     run = "run-hold-only"
     _insert_position(db, "NVDA")
     result = {
-        "status": "reviewed", "run_id": run, "positions": 1,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 1,
         "orders": [],
         "review": {
             "risk_level": "low",
@@ -1098,7 +1257,8 @@ def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatc
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
@@ -1124,7 +1284,9 @@ def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, 
     run = "run-sell-unexecuted"
     _insert_position(db, "NVDA")
     result = {
-        "status": "reviewed", "run_id": run, "positions": 1,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 1,
         "orders": [],
         "review": {
             "risk_level": "elevated",
@@ -1134,7 +1296,8 @@ def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, 
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"NVDA": NVIDIA},
     ):
         msg = trader_feed.format_session_result("close", result, 9.0)
@@ -1160,7 +1323,9 @@ def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, mo
     run = "run-dedupe"
     _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
     result = {
-        "status": "reviewed", "run_id": run, "positions": 1,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 1,
         "orders": [{"symbol": "CCJ"}],
         "review": {
             "actions": [{"action": "REDUCE", "symbol": "CCJ", "reason": "trim the winner"}],
@@ -1172,7 +1337,8 @@ def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, mo
     assert symbols.count("CCJ") == 1
 
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"CCJ": CAMECO},
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
@@ -1191,7 +1357,9 @@ def test_symbol_order_is_stable_across_repeated_calls(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-order-stable"
     result = {
-        "status": "reviewed", "run_id": run, "positions": 3,
+        "status": "reviewed",
+        "run_id": run,
+        "positions": 3,
         "orders": [{"symbol": "AAPL"}],
         "review": {
             "actions": [
@@ -1216,12 +1384,15 @@ def test_extract_alert_symbols_direct_call_includes_review_actions(tmp_path, mon
     db = _make_db(tmp_path, monkeypatch)
     run = "run-direct"
     result = {
-        "status": "reviewed", "run_id": run,
+        "status": "reviewed",
+        "run_id": run,
         "orders": [{"symbol": "aapl"}],
-        "review": {"actions": [
-            {"action": "hold", "symbol": "msft"},
-            {"action": "SELL", "symbol": "nvda"},
-        ]},
+        "review": {
+            "actions": [
+                {"action": "hold", "symbol": "msft"},
+                {"action": "SELL", "symbol": "nvda"},
+            ]
+        },
     }
     assert trader_feed.extract_alert_symbols(run, result) == ["AAPL", "MSFT", "NVDA"]
 
@@ -1246,34 +1417,55 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     db = _make_db(tmp_path, monkeypatch)
     run = "run-readability"
     _evidence(
-        db, run, "tech_analyst", "analysis",
-        {"symbol": "VST", "rating": "buy", "conviction": "low", "risk_reward": 1.83,
-         "reasoning": "Momentum continuation but extended near-term."},
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
+        {
+            "symbol": "VST",
+            "rating": "buy",
+            "conviction": "low",
+            "risk_reward": 1.83,
+            "reasoning": "Momentum continuation but extended near-term.",
+        },
         symbol="VST",
     )
     _evidence(
-        db, run, "tech_analyst", "analysis",
-        {"symbol": "AVGO", "rating": "neutral", "conviction": "low",
-         "reasoning": "No clean setup."},
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
+        {"symbol": "AVGO", "rating": "neutral", "conviction": "low", "reasoning": "No clean setup."},
         symbol="AVGO",
     )
     _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "No trades today."})
     _evidence(
-        db, run, "execution", "execution_skip",
+        db,
+        run,
+        "execution",
+        "execution_skip",
         {"symbol": "VST", "reason": "insufficient_cash", "detail": "funding sale pending"},
         symbol="VST",
     )
     _agent_log(db, run, "portfolio_manager", "no trades", cost=0.10)
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": 0.13, "daily_return_pct": 0.001,
-        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": 0.13,
+        "daily_return_pct": 0.001,
+        "total_pnl": 44.70,
+        "total_return_pct": 0.46,
+        "total_pnl_since": "2026-09-02",
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run,
-            "candidates": ["VST", "AVGO"], "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": run,
+            "candidates": ["VST", "AVGO"],
+            "orders": [],
         },
     }
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: {"VST": VISTRA},
     ):
         # Not the top-of-hour tick — isolates `_format_intraday`'s own
@@ -1337,7 +1529,8 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
 
 
 def test_footer_never_claims_free_when_the_cost_circuit_marked_it_inexact(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """2026-09-29 log defect: five intraday Telegram messages ended with
     "AI cost: none -- this run used only free models" while, seconds
@@ -1367,21 +1560,28 @@ def test_footer_never_claims_free_when_the_cost_circuit_marked_it_inexact(
             "actual_cost_usd REAL, costs_exact INTEGER)"
         )
         conn.execute(
-            "INSERT INTO llm_budget_sessions "
-            "(run_id, day, mode, actual_cost_usd, costs_exact) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO llm_budget_sessions (run_id, day, mode, actual_cost_usd, costs_exact) VALUES (?, ?, ?, ?, ?)",
             (run, "2026-09-29", "intra_check", 0.0, 0),
         )
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": 0.0, "daily_return_pct": 0.0,
-        "total_pnl": 0.0, "total_return_pct": 0.0, "total_pnl_since": "2026-09-02",
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": 0.0,
+        "daily_return_pct": 0.0,
+        "total_pnl": 0.0,
+        "total_return_pct": 0.0,
+        "total_pnl_since": "2026-09-02",
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run,
-            "candidates": [], "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": run,
+            "candidates": [],
+            "orders": [],
         },
     }
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with patch.object(
-        trader_feed, "_intraday_tick_actionable",
+        trader_feed,
+        "_intraday_tick_actionable",
         lambda result, nested, snap: True,
     ):
         msg = trader_feed.format_session_result("intra_check", outer, 2.0)
@@ -1403,12 +1603,13 @@ def test_every_formatter_header_uses_a_12_hour_clock(tmp_path, monkeypatch):
     _pin_clock(monkeypatch, when)
 
     morning_msg = trader_feed.format_session_result(
-        "morning", {"status": "executed", "run_id": "run-clock-morning", "orders": []}, 1.0,
+        "morning",
+        {"status": "executed", "run_id": "run-clock-morning", "orders": []},
+        1.0,
     )
     midday_msg = trader_feed.format_session_result(
         "midday",
-        {"status": "reviewed", "run_id": "run-clock-midday", "positions": 0,
-         "orders": [], "review": None},
+        {"status": "reviewed", "run_id": "run-clock-midday", "positions": 0, "orders": [], "review": None},
         1.0,
     )
     # Called directly (not through format_session_result's cadence
@@ -1418,18 +1619,24 @@ def test_every_formatter_header_uses_a_12_hour_clock(tmp_path, monkeypatch):
     intraday_msg = trader_feed._format_intraday(
         {"run_id": "run-clock-intra"},
         {
-            "status": "intraday_no_trades", "run_id": "run-clock-intra",
-            "candidates": [], "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": "run-clock-intra",
+            "candidates": [],
+            "orders": [],
         },
         1.0,
     )
     conn = sqlite3.connect(db)
-    conn.execute("INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) VALUES (?, ?, ?, ?)",
-                 ("x", "run-clock-hour", "x", 0.0))
+    conn.execute(
+        "INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) VALUES (?, ?, ?, ?)",
+        ("x", "run-clock-hour", "x", 0.0),
+    )
     conn.commit()
     conn.close()
     hourly_msg = trader_feed._format_hourly_desk_check(
-        {"run_id": "run-clock-hour", "daily_pnl": None}, None, 1.0,
+        {"run_id": "run-clock-hour", "daily_pnl": None},
+        None,
+        1.0,
     )
 
     for msg in (morning_msg, midday_msg, intraday_msg, hourly_msg):
@@ -1450,11 +1657,16 @@ def test_base_formatter_header_timestamp_is_also_12_hour(monkeypatch):
     # module-level import, patching `src.notifier.et_now` would do
     # nothing here. Patch the source it actually re-imports from.
     import src.trading_calendar as _trading_calendar
+
     monkeypatch.setattr(
-        _trading_calendar, "et_now", lambda: datetime(2026, 9, 17, 13, 5, tzinfo=_ET),
+        _trading_calendar,
+        "et_now",
+        lambda: datetime(2026, 9, 17, 13, 5, tzinfo=_ET),
     )
     msg = trader_feed.format_session_result(
-        "morning", {"status": "market_holiday"}, 1.0,
+        "morning",
+        {"status": "market_holiday"},
+        1.0,
     )
     assert msg is not None
     assert "1:05 PM ET" in msg
@@ -1466,12 +1678,12 @@ def test_mission_control_link_has_exactly_one_blank_line_before_it():
     link append — still exactly one blank line before the Mission Control
     anchor, per `_build_payload`."""
     notifier = TelegramNotifier(
-        token="t", chat_id="c", mission_control_url="https://mc.example/run/1",
+        token="t",
+        chat_id="c",
+        mission_control_url="https://mc.example/run/1",
     )
     payload = notifier._build_payload("⚪ intra_check · body\n\nsecond section")
-    assert payload["text"].endswith(
-        '\n\n<a href="https://mc.example/run/1">🔗 Open Mission Control</a>'
-    )
+    assert payload["text"].endswith('\n\n<a href="https://mc.example/run/1">🔗 Open Mission Control</a>')
     assert "\n\n\n" not in payload["text"]
 
 
@@ -1484,17 +1696,24 @@ def test_quiet_intraday_no_trades_tick_sends_nothing(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-quiet-half-hour"
     _evidence(
-        db, run, "tech_analyst", "analysis",
-        {"symbol": "AVGO", "rating": "neutral", "conviction": "low",
-         "reasoning": "No clean setup."},
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
+        {"symbol": "AVGO", "rating": "neutral", "conviction": "low", "reasoning": "No clean setup."},
         symbol="AVGO",
     )
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # NOT the top-of-hour tick
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": 3.0, "daily_return_pct": 0.01,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": 3.0,
+        "daily_return_pct": 0.01,
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run,
-            "candidates": ["AVGO"], "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": run,
+            "candidates": ["AVGO"],
+            "orders": [],
         },
     }
     msg = trader_feed.format_session_result("intra_check", outer, 2.0)
@@ -1508,22 +1727,38 @@ def test_actionable_intraday_tick_sends_immediately_at_any_time(tmp_path, monkey
     db = _make_db(tmp_path, monkeypatch)
     run = "run-actionable-half-hour"
     _evidence(
-        db, run, "tech_analyst", "analysis",
-        {"symbol": "AMD", "rating": "buy", "conviction": "medium", "risk_reward": 1.5,
-         "reasoning": "Breakout above resistance."},
+        db,
+        run,
+        "tech_analyst",
+        "analysis",
+        {
+            "symbol": "AMD",
+            "rating": "buy",
+            "conviction": "medium",
+            "risk_reward": 1.5,
+            "reasoning": "Breakout above resistance.",
+        },
         symbol="AMD",
     )
     _evidence(
-        db, run, "execution", "execution_skip",
+        db,
+        run,
+        "execution",
+        "execution_skip",
         {"symbol": "AMD", "reason": "insufficient_cash", "detail": "funding sale pending"},
         symbol="AMD",
     )
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # NOT the top-of-hour tick
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": -1.0, "daily_return_pct": -0.01,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": -1.0,
+        "daily_return_pct": -0.01,
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run,
-            "candidates": ["AMD"], "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": run,
+            "candidates": ["AMD"],
+            "orders": [],
         },
     }
     msg = trader_feed.format_session_result("intra_check", outer, 3.0)
@@ -1537,7 +1772,8 @@ def test_actionable_intraday_tick_sends_immediately_at_any_time(tmp_path, monkey
 
 
 def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The guaranteed hourly pulse: the :00 tick itself is quiet (no
     candidates moved this tick), but the :30 tick earlier in the hour DID
@@ -1548,17 +1784,23 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     db = _make_db(tmp_path, monkeypatch)
     half_hour_run = "run-half-hour-earlier"
     _evidence(
-        db, half_hour_run, "tech_analyst", "analysis",
-        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
-         "reasoning": "Range-bound, no signal."},
+        db,
+        half_hour_run,
+        "tech_analyst",
+        "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low", "reasoning": "Range-bound, no signal."},
         symbol="CEG",
     )
     top_of_hour_run = "run-top-of-hour"
     _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
     outer = {
-        "status": "ok", "run_id": top_of_hour_run,
-        "daily_pnl": 5.5, "daily_return_pct": 0.02,
-        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
+        "status": "ok",
+        "run_id": top_of_hour_run,
+        "daily_pnl": 5.5,
+        "daily_return_pct": 0.02,
+        "total_pnl": 44.70,
+        "total_return_pct": 0.46,
+        "total_pnl_since": "2026-09-02",
         # No `intraday_scan` key at all — this tick's own scan did not run
         # (e.g. nothing moved enough to qualify).
     }
@@ -1590,8 +1832,7 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
 # re-parses that same file and fails the build the moment the two disagree.
 
 _INTRA_CHECK_TIMER = (
-    Path(trader_feed.__file__).resolve().parent.parent.parent
-    / "scripts" / "systemd" / "quant-agent-intra_check.timer"
+    Path(trader_feed.__file__).resolve().parent.parent.parent / "scripts" / "systemd" / "quant-agent-intra_check.timer"
 )
 
 
@@ -1601,11 +1842,7 @@ def _real_intra_check_oncalendar_minutes() -> tuple[int, ...]:
     `trader_feed._intra_check_tick_minutes`, so a bug in that function's own
     parsing can't hide from this test."""
     text = _INTRA_CHECK_TIMER.read_text()
-    spec = next(
-        line.split("=", 1)[1].strip()
-        for line in text.splitlines()
-        if line.strip().startswith("OnCalendar=")
-    )
+    spec = next(line.split("=", 1)[1].strip() for line in text.splitlines() if line.strip().startswith("OnCalendar="))
     match = re.fullmatch(r"\*:(\d{1,2}(?:,\d{1,2})*)", spec)
     assert match, f"unexpected OnCalendar spec {spec!r} in {_INTRA_CHECK_TIMER}"
     return tuple(sorted({int(m) for m in match.group(1).split(",")}))
@@ -1635,7 +1872,8 @@ def test_is_hourly_checkpoint_follows_a_synthetic_cadence_change(monkeypatch):
 
 
 def test_intra_check_ticks_send_exactly_one_guaranteed_message_per_hour(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Walk every real intra_check tick across a full trading session
     (09:30-16:00 ET, `*:15,45` cadence) on a completely quiet day and
@@ -1646,13 +1884,11 @@ def test_intra_check_ticks_send_exactly_one_guaranteed_message_per_hour(
     # The real intra_check schedule: 9:30 (session open, no earlier :15/:45
     # tick that day), then every configured minute from 9:45 through 15:45.
     ticks = [(9, 30)] + [
-        (hour, minute)
-        for hour in range(9, 16)
-        for minute in minutes
-        if not (hour == 9 and minute < 30)
+        (hour, minute) for hour in range(9, 16) for minute in minutes if not (hour == 9 and minute < 30)
     ]
     checkpoint_hits = [
-        (hour, minute) for hour, minute in ticks
+        (hour, minute)
+        for hour, minute in ticks
         if trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, hour, minute, tzinfo=_ET))
     ]
     # One session-open exception, plus one per ordinary hour 10 through 15.
@@ -1705,15 +1941,19 @@ def test_quiet_collision_tick_suppressed(tmp_path, monkeypatch):
     tick there is suppressed, before `_is_hourly_checkpoint` is consulted."""
     db = _make_db(tmp_path, monkeypatch)
     _evidence(
-        db, "run-half-hour-earlier", "tech_analyst", "analysis",
-        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
-         "reasoning": "Range-bound, no signal."},
+        db,
+        "run-half-hour-earlier",
+        "tech_analyst",
+        "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low", "reasoning": "Range-bound, no signal."},
         symbol="CEG",
     )
     _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
     outer = {
-        "status": "ok", "run_id": "run-midday-collision",
-        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "status": "ok",
+        "run_id": "run-midday-collision",
+        "daily_pnl": 2.0,
+        "daily_return_pct": 0.01,
         "intraday_scan": {
             "status": "intraday_scan_no_opportunity",
             "run_id": "run-midday-collision",
@@ -1731,15 +1971,19 @@ def test_later_hourly_pulse_in_window_still_sends(tmp_path, monkeypatch):
     15:15. 14:15 must still send."""
     db = _make_db(tmp_path, monkeypatch)
     _evidence(
-        db, "run-earlier", "tech_analyst", "analysis",
-        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
-         "reasoning": "Range-bound, no signal."},
+        db,
+        "run-earlier",
+        "tech_analyst",
+        "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low", "reasoning": "Range-bound, no signal."},
         symbol="CEG",
     )
     _pin_clock(monkeypatch, _MIDDAY_TOP_OF_HOUR_TIME)  # 14:15 ET
     outer = {
-        "status": "ok", "run_id": "run-midday-later-hour",
-        "daily_pnl": 1.0, "daily_return_pct": 0.005,
+        "status": "ok",
+        "run_id": "run-midday-later-hour",
+        "daily_pnl": 1.0,
+        "daily_return_pct": 0.005,
     }
     msg = trader_feed.format_session_result("intra_check", outer, 1.0)
     assert msg is not None
@@ -1754,10 +1998,13 @@ def test_ordinary_quiet_tick_in_window_unchanged(tmp_path, monkeypatch):
     _pin_clock(monkeypatch, _MIDDAY_QUIET_TICK_TIME)  # 13:45 ET
     assert trader_feed._is_midday_collision_tick(_MIDDAY_QUIET_TICK_TIME) is False
     outer = {
-        "status": "ok", "run_id": "run-midday-quiet",
-        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "status": "ok",
+        "run_id": "run-midday-quiet",
+        "daily_pnl": 2.0,
+        "daily_return_pct": 0.01,
         "intraday_scan": {
-            "status": "intraday_scan_no_opportunity", "run_id": "run-midday-quiet",
+            "status": "intraday_scan_no_opportunity",
+            "run_id": "run-midday-quiet",
         },
     }
     assert trader_feed.format_session_result("intra_check", outer, 2.0) is None
@@ -1769,15 +2016,19 @@ def test_same_hourly_pulse_minute_outside_window_still_sends(tmp_path, monkeypat
     control for `test_quiet_collision_tick_suppressed`."""
     db = _make_db(tmp_path, monkeypatch)
     _evidence(
-        db, "run-outside", "tech_analyst", "analysis",
-        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
-         "reasoning": "Range-bound, no signal."},
+        db,
+        "run-outside",
+        "tech_analyst",
+        "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low", "reasoning": "Range-bound, no signal."},
         symbol="CEG",
     )
     _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME.replace(hour=11))  # 11:15 ET
     outer = {
-        "status": "ok", "run_id": "run-outside-collision-minute",
-        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "status": "ok",
+        "run_id": "run-outside-collision-minute",
+        "daily_pnl": 2.0,
+        "daily_return_pct": 0.01,
         "intraday_scan": {
             "status": "intraday_scan_no_opportunity",
             "run_id": "run-outside-collision-minute",
@@ -1802,10 +2053,15 @@ def test_order_placed_still_sends_at_collision_tick(tmp_path, monkeypatch):
     _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
     _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": -5.0,
+        "daily_return_pct": -0.05,
         "intraday_scan": {
-            "status": "intraday_executed", "run_id": run,
-            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+            "status": "intraday_executed",
+            "run_id": run,
+            "candidates": ["CCJ"],
+            "orders": [{"symbol": "CCJ"}],
         },
     }
     msg = trader_feed.format_session_result("intra_check", outer, 4.0)
@@ -1817,8 +2073,10 @@ def test_stop_coverage_gap_still_sends_at_collision_tick(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
     outer = {
-        "status": "ok", "run_id": "run-midday-gap",
-        "daily_pnl": -1.0, "daily_return_pct": -0.01,
+        "status": "ok",
+        "run_id": "run-midday-gap",
+        "daily_pnl": -1.0,
+        "daily_return_pct": -0.01,
         "stop_coverage_gaps": [{"symbol": "TSLA", "covered_qty": 0, "held_qty": 10}],
     }
     msg = trader_feed.format_session_result("intra_check", outer, 3.0)
@@ -1831,10 +2089,13 @@ def test_crashed_scan_still_sends_at_collision_tick(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
     outer = {
-        "status": "ok", "run_id": "run-midday-crash",
-        "daily_pnl": 0.0, "daily_return_pct": 0.0,
+        "status": "ok",
+        "run_id": "run-midday-crash",
+        "daily_pnl": 0.0,
+        "daily_return_pct": 0.0,
         "intraday_scan": {
-            "status": "intraday_scan_crashed", "run_id": "run-midday-crash",
+            "status": "intraday_scan_crashed",
+            "run_id": "run-midday-crash",
         },
     }
     assert trader_feed.format_session_result("intra_check", outer, 3.0) is not None
@@ -1859,22 +2120,32 @@ def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
     symbols = ["SOXX", "NVDA", "AMD", "AVGO", "QCOM"]
     for sym in symbols:
         _evidence(
-            db, run, "tech_analyst", "analysis",
-            {"symbol": sym, "rating": "neutral", "conviction": "low",
-             "reasoning": f"{sym}: no clean setup."},
+            db,
+            run,
+            "tech_analyst",
+            "analysis",
+            {"symbol": sym, "rating": "neutral", "conviction": "low", "reasoning": f"{sym}: no clean setup."},
             symbol=sym,
         )
     _evidence(
-        db, run, "execution", "execution_skip",
+        db,
+        run,
+        "execution",
+        "execution_skip",
         {"symbol": "NVDA", "reason": "insufficient_cash", "detail": "n/a"},
         symbol="NVDA",
     )
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": 1.0, "daily_return_pct": 0.01,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": 1.0,
+        "daily_return_pct": 0.01,
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": run,
-            "candidates": symbols, "orders": [],
+            "status": "intraday_no_trades",
+            "run_id": run,
+            "candidates": symbols,
+            "orders": [],
         },
     }
     msg = trader_feed.format_session_result("intra_check", outer, 2.0)
@@ -1901,8 +2172,11 @@ CHPX_PROFILE = CompanyProfile(symbol="CHPX", name="Global X AI Semiconductor ETF
 OKLO_PROFILE = CompanyProfile(symbol="OKLO", name="Oklo Inc", industry="Nuclear Power")
 RKLB_PROFILE = CompanyProfile(symbol="RKLB", name="Rocket Lab", industry="Aerospace")
 _1305_PROFILES = {
-    "AMD": AMD_PROFILE, "FLNC": FLNC_PROFILE, "CHPX": CHPX_PROFILE,
-    "OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE,
+    "AMD": AMD_PROFILE,
+    "FLNC": FLNC_PROFILE,
+    "CHPX": CHPX_PROFILE,
+    "OKLO": OKLO_PROFILE,
+    "RKLB": RKLB_PROFILE,
 }
 
 
@@ -1934,33 +2208,63 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
         ("RKLB", "buy", "medium", 1.5, "Launch cadence news flow supportive."),
     ]:
         _evidence(
-            db, run, "tech_analyst", "analysis",
-            {"symbol": sym, "rating": rating, "conviction": conviction,
-             "risk_reward": rr, "reasoning": reason},
+            db,
+            run,
+            "tech_analyst",
+            "analysis",
+            {"symbol": sym, "rating": rating, "conviction": conviction, "risk_reward": rr, "reasoning": reason},
             symbol=sym,
         )
 
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
-        {"portfolio_view": "AMD and FLNC clear the bar this check; CHPX/OKLO/RKLB are "
-                            "tracking their group moves without an idiosyncratic edge."},
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
+        {
+            "portfolio_view": "AMD and FLNC clear the bar this check; CHPX/OKLO/RKLB are "
+            "tracking their group moves without an idiosyncratic edge."
+        },
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "BUY", "symbol": "AMD", "allocation_pct": 19.81,
-         "stop_loss": 493.24, "reasoning": "Breakout confirmation, cleanest expression in the book."},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {
+            "action": "BUY",
+            "symbol": "AMD",
+            "allocation_pct": 19.81,
+            "stop_loss": 493.24,
+            "reasoning": "Breakout confirmation, cleanest expression in the book.",
+        },
         symbol="AMD",
     )
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
-        {"action": "SHORT", "symbol": "FLNC", "allocation_pct": 3.46,
-         "stop_loss": 9.66, "reasoning": "Short expression of storage-sector weakness."},
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {
+            "action": "SHORT",
+            "symbol": "FLNC",
+            "allocation_pct": 3.46,
+            "stop_loss": 9.66,
+            "reasoning": "Short expression of storage-sector weakness.",
+        },
         symbol="FLNC",
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
-        {"approved": True, "reason_category": "rr_fail", "scale_all_buys": 1.0,
-         "reasoning": "AMD's structural R/R is thin but sizing is inside policy."},
+        db,
+        run,
+        "risk_manager",
+        "verdict",
+        {
+            "approved": True,
+            "reason_category": "rr_fail",
+            "scale_all_buys": 1.0,
+            "reasoning": "AMD's structural R/R is thin but sizing is inside policy.",
+        },
     )
 
     # AMD: order accepted by the broker, still working (never implies a fill).
@@ -1975,27 +2279,32 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     # words (src/execution/broker.py's `_PLAIN_PRICE_LABELS`), never the
     # internal field name/precision a log line carries.
     _evidence(
-        db, run, "execution", "execution_skip",
-        {"symbol": "FLNC", "reason": "fat_finger_guard",
-         "detail": "stop $9.66 is 24% from price $7.79"},
+        db,
+        run,
+        "execution",
+        "execution_skip",
+        {"symbol": "FLNC", "reason": "fat_finger_guard", "detail": "stop $9.66 is 24% from price $7.79"},
         symbol="FLNC",
     )
     _agent_log(db, run, "portfolio_manager", "2 changes", cost=0.21)
 
     outer = {
-        "status": "ok", "run_id": run, "daily_pnl": 34.34, "daily_return_pct": 0.35,
+        "status": "ok",
+        "run_id": run,
+        "daily_pnl": 34.34,
+        "daily_return_pct": 0.35,
         "intraday_scan": {
-            "status": "intraday_executed", "run_id": run,
+            "status": "intraday_executed",
+            "run_id": run,
             "candidates": ["AMD", "CHPX", "FLNC", "OKLO", "RKLB"],
             "orders": [{"symbol": "AMD"}, {"symbol": "FLNC"}],
         },
     }
 
     with patch.object(
-        CompanyProfileStore, "get_many",
-        lambda self, symbols, allow_fetch=True: {
-            s: _1305_PROFILES[s] for s in symbols if s in _1305_PROFILES
-        },
+        CompanyProfileStore,
+        "get_many",
+        lambda self, symbols, allow_fetch=True: {s: _1305_PROFILES[s] for s in symbols if s in _1305_PROFILES},
     ):
         _pin_clock(monkeypatch, datetime(2026, 9, 17, 13, 5, tzinfo=_ET))
         msg = trader_feed.format_session_result("intra_check", outer, 300.0)
@@ -2011,8 +2320,11 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     # --- section placement: DONE, then BLOCKED, then LOOKED AT, then
     # DETAILS, then the footer — in that order, each present exactly once ---
     for marker in (
-        "<b>✅ DONE</b>", "<b>❌ FAILED</b>",
-        "<b>👀 LOOKED AT, NO TRADE</b>", "<b>DETAILS</b>", "🧾 AI cost",
+        "<b>✅ DONE</b>",
+        "<b>❌ FAILED</b>",
+        "<b>👀 LOOKED AT, NO TRADE</b>",
+        "<b>DETAILS</b>",
+        "🧾 AI cost",
     ):
         assert msg.count(marker) == 1, f"{marker!r} should appear exactly once"
     done_idx = msg.index("<b>✅ DONE</b>")
@@ -2134,9 +2446,13 @@ def _evening_result(**overrides):
 def _expected_fractional_gap(symbol="AAPL", covered=9.0):
     """The overnight state the hybrid-stop design produces every night."""
     return {
-        "symbol": symbol, "held_qty": covered + 0.76, "covered_qty": covered,
-        "coverage": "fractional_overnight", "uncovered_qty": 0.76,
-        "unprotected_value": 256.44, "repaired": False,
+        "symbol": symbol,
+        "held_qty": covered + 0.76,
+        "covered_qty": covered,
+        "coverage": "fractional_overnight",
+        "uncovered_qty": 0.76,
+        "unprotected_value": 256.44,
+        "repaired": False,
     }
 
 
@@ -2212,7 +2528,8 @@ def test_evening_cost_says_not_available_when_a_price_is_missing(tmp_path, monke
 
 
 def test_evening_is_silent_about_the_expected_overnight_fractional_state(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The sub-share DAY stop lapsing at the close happens to every
     fractional position every night. A line that never varies is not
@@ -2228,9 +2545,12 @@ def test_evening_is_silent_about_the_expected_overnight_fractional_state(
     """
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
-    result = _evening_result(stop_coverage_gaps=[
-        _expected_fractional_gap("AAPL"), _expected_fractional_gap("AMD", 1.0),
-    ])
+    result = _evening_result(
+        stop_coverage_gaps=[
+            _expected_fractional_gap("AAPL"),
+            _expected_fractional_gap("AMD", 1.0),
+        ]
+    )
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "NO STOP" not in msg
@@ -2242,7 +2562,8 @@ def test_evening_is_silent_about_the_expected_overnight_fractional_state(
 
 
 def test_evening_detail_names_every_unprotected_remainder_not_the_first_six(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The live case this was found on: 2026-09-29 held NINE remainders.
     A count of nine followed by six names is a sentence that does not add
@@ -2250,9 +2571,7 @@ def test_evening_detail_names_every_unprotected_remainder_not_the_first_six(
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
     symbols = ["AAPL", "AMD", "ETN", "META", "MRVL", "NET", "NOK", "RKLB", "VLO"]
-    result = _evening_result(stop_coverage_gaps=[
-        _expected_fractional_gap(sym) for sym in symbols
-    ])
+    result = _evening_result(stop_coverage_gaps=[_expected_fractional_gap(sym) for sym in symbols])
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "across 9 holding(s)" in msg
@@ -2261,21 +2580,28 @@ def test_evening_detail_names_every_unprotected_remainder_not_the_first_six(
 
 
 def test_evening_detail_excludes_the_abnormal_rows_the_banner_already_owns(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """A sub-one-share holding is stopless in WHOLE, gets the 🛑 banner,
     and must not also be summed into the by-design detail — the same shares
     counted in two places would overstate the accepted exposure."""
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
-    result = _evening_result(stop_coverage_gaps=[
-        _expected_fractional_gap("AAPL"),
-        {
-            "symbol": "BRK-B", "held_qty": 0.44, "covered_qty": 0.0,
-            "coverage": "fractional_overnight", "uncovered_qty": 0.44,
-            "unprotected_value": 223.74, "repaired": False,
-        },
-    ])
+    result = _evening_result(
+        stop_coverage_gaps=[
+            _expected_fractional_gap("AAPL"),
+            {
+                "symbol": "BRK-B",
+                "held_qty": 0.44,
+                "covered_qty": 0.0,
+                "coverage": "fractional_overnight",
+                "uncovered_qty": 0.44,
+                "unprotected_value": 223.74,
+                "repaired": False,
+            },
+        ]
+    )
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "🛑 NO STOP OVERNIGHT" in msg
@@ -2289,11 +2615,19 @@ def test_evening_speaks_when_a_sub_one_share_holding_has_no_stop(tmp_path, monke
     stopless overnight — the classifier still calls it 'fractional'."""
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
-    result = _evening_result(stop_coverage_gaps=[{
-        "symbol": "BRK-B", "held_qty": 0.44, "covered_qty": 0.0,
-        "coverage": "fractional_overnight", "uncovered_qty": 0.44,
-        "unprotected_value": 223.74, "repaired": False,
-    }])
+    result = _evening_result(
+        stop_coverage_gaps=[
+            {
+                "symbol": "BRK-B",
+                "held_qty": 0.44,
+                "covered_qty": 0.0,
+                "coverage": "fractional_overnight",
+                "uncovered_qty": 0.44,
+                "unprotected_value": 223.74,
+                "repaired": False,
+            }
+        ]
+    )
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "🛑 NO STOP OVERNIGHT" in msg
@@ -2302,17 +2636,26 @@ def test_evening_speaks_when_a_sub_one_share_holding_has_no_stop(tmp_path, monke
 
 
 def test_evening_speaks_when_a_remainder_was_not_recovered_in_session(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """'fractional_replaced' means the session's sweep put the stop back.
     A row that claims that without having repaired anything is a fault."""
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
-    result = _evening_result(stop_coverage_gaps=[{
-        "symbol": "NET", "held_qty": 3.48, "covered_qty": 3.0,
-        "coverage": "fractional_replaced", "uncovered_qty": 0.48,
-        "unprotected_value": 160.30, "repaired": False,
-    }])
+    result = _evening_result(
+        stop_coverage_gaps=[
+            {
+                "symbol": "NET",
+                "held_qty": 3.48,
+                "covered_qty": 3.0,
+                "coverage": "fractional_replaced",
+                "uncovered_qty": 0.48,
+                "unprotected_value": 160.30,
+                "repaired": False,
+            }
+        ]
+    )
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "🛑 NO STOP OVERNIGHT" in msg
@@ -2324,10 +2667,12 @@ def test_evening_still_raises_a_real_uncovered_position(tmp_path, monkeypatch):
     matters: a whole-share position with zero coverage."""
     db = _make_db(tmp_path, monkeypatch)
     _insert_position(db, "NVDA")
-    result = _evening_result(stop_coverage_gaps=[
-        {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none"},
-        _expected_fractional_gap("AAPL"),
-    ])
+    result = _evening_result(
+        stop_coverage_gaps=[
+            {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none"},
+            _expected_fractional_gap("AAPL"),
+        ]
+    )
     msg = trader_feed.format_session_result("evening", result, 41.6)
 
     assert "🛑🛑🛑 NO STOP AT ALL" in msg
@@ -2369,8 +2714,7 @@ def test_evening_reports_stop_proximity_and_earnings(tmp_path, monkeypatch):
     _insert_position(db, "NVDA")
     result = _evening_result(
         stop_proximity=[
-            {"symbol": "ETN", "status": "near", "price": 409.46,
-             "stop": 400.12, "gap": 9.34, "atr": 11.2},
+            {"symbol": "ETN", "status": "near", "price": 409.46, "stop": 400.12, "gap": 9.34, "atr": 11.2},
             {"symbol": "BRK-B", "status": "unknown"},
         ],
         earnings_proximity=[
@@ -2427,10 +2771,9 @@ MRVL_PROFILE = CompanyProfile(symbol="MRVL", name="Marvell Technology", industry
 
 def _profiles_patch(profiles: dict):
     return patch.object(
-        CompanyProfileStore, "get_many",
-        lambda self, symbols, allow_fetch=False: {
-            s: profiles[s] for s in symbols if s in profiles
-        },
+        CompanyProfileStore,
+        "get_many",
+        lambda self, symbols, allow_fetch=False: {s: profiles[s] for s in symbols if s in profiles},
     )
 
 
@@ -2438,14 +2781,22 @@ def test_earnings_message_names_each_company_and_what_it_concluded(tmp_path, mon
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     result = {
-        "status": "preprocessed", "run_id": "ep-1",
-        "analyzed": 1, "confirmed": 1, "failed": 1,
+        "status": "preprocessed",
+        "run_id": "ep-1",
+        "analyzed": 1,
+        "confirmed": 1,
+        "failed": 1,
         "filings": [
-            {"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
-             "outcome": "analyzed", "sentiment": "bullish", "conviction": "high",
-             "key_thesis": "Data-centre revenue accelerated again."},
-            {"symbol": "OKLO", "form_type": "10-K", "filing_date": "2026-09-16",
-             "outcome": "failed"},
+            {
+                "symbol": "NVDA",
+                "form_type": "10-Q",
+                "filing_date": "2026-09-17",
+                "outcome": "analyzed",
+                "sentiment": "bullish",
+                "conviction": "high",
+                "key_thesis": "Data-centre revenue accelerated again.",
+            },
+            {"symbol": "OKLO", "form_type": "10-K", "filing_date": "2026-09-16", "outcome": "failed"},
         ],
     }
     with _profiles_patch({"NVDA": NVDA_PROFILE, "OKLO": OKLO_PROFILE}):
@@ -2479,9 +2830,10 @@ def test_earnings_fault_names_the_filings_left_waiting(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     result = {
-        "status": "analysis_error", "run_id": "ep-2", "error": "RateLimitError: 429",
-        "filings": [{"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
-                     "outcome": "waiting"}],
+        "status": "analysis_error",
+        "run_id": "ep-2",
+        "error": "RateLimitError: 429",
+        "filings": [{"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17", "outcome": "waiting"}],
     }
     with _profiles_patch({"NVDA": NVDA_PROFILE}):
         msg = trader_feed.format_session_result("earnings_preprocess", result, 2.0)
@@ -2498,9 +2850,14 @@ def test_earnings_silent_statuses_stay_silent(tmp_path, monkeypatch):
     """The noise policy is untouched: nothing_new / fetch_error / holiday."""
     _make_db(tmp_path, monkeypatch)
     for status in ("nothing_new", "fetch_error", "market_holiday"):
-        assert trader_feed.format_session_result(
-            "earnings_preprocess", {"status": status, "run_id": "x"}, 1.0,
-        ) is None
+        assert (
+            trader_feed.format_session_result(
+                "earnings_preprocess",
+                {"status": status, "run_id": "x"},
+                1.0,
+            )
+            is None
+        )
 
 
 def test_hourly_desk_check_names_the_orders_and_the_holdings(tmp_path, monkeypatch):
@@ -2535,9 +2892,10 @@ def test_degraded_research_is_named_in_words_not_component_names(tmp_path, monke
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     result = {
-        "status": "no_trades", "run_id": "run-deg", "orders": [],
-        "data_status": {"macro": "failed", "tech": "partial", "news": "ok",
-                        "smart_money": "wobbly_new_token"},
+        "status": "no_trades",
+        "run_id": "run-deg",
+        "orders": [],
+        "data_status": {"macro": "failed", "tech": "partial", "news": "ok", "smart_money": "wobbly_new_token"},
     }
     msg = trader_feed.format_session_result("morning", result, 1.0)
     assert "Research was incomplete this session" in msg
@@ -2552,17 +2910,28 @@ def test_coverage_gap_names_the_company_and_says_what_to_do(tmp_path, monkeypatc
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     result = {
-        "status": "no_trades", "run_id": "run-gap", "orders": [],
+        "status": "no_trades",
+        "run_id": "run-gap",
+        "orders": [],
         "stop_coverage_gaps": [
-            {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none",
-             "unprotected_value": 151.30, "repair_refusal": "no recorded stop level to rebuild from"},
+            {
+                "symbol": "MRVL",
+                "held_qty": 2.0,
+                "covered_qty": 0.0,
+                "coverage": "none",
+                "unprotected_value": 151.30,
+                "repair_refusal": "no recorded stop level to rebuild from",
+            },
             {"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0, "coverage": "partial"},
         ],
     }
     with _profiles_patch({"NVDA": NVDA_PROFILE, "MRVL": MRVL_PROFILE}):
         msg = trader_feed.format_session_result("morning", result, 1.0)
     assert "🛑🛑🛑 NO STOP AT ALL: 1 position(s) with nothing protecting them" in msg
-    assert "MRVL (Marvell Technology), holding 2, stop covers 0, $151.30 unprotected — no recorded stop level to rebuild from" in msg
+    assert (
+        "MRVL (Marvell Technology), holding 2, stop covers 0, $151.30 unprotected — no recorded stop level to rebuild from"
+        in msg
+    )
     assert "Place a protective stop by hand or close the position." in msg
     assert "⚠️ STOP MIS-SIZED: 1 position(s) only partly protected" in msg
     assert "NVDA (NVIDIA), holding 10, stop covers 4" in msg
@@ -2572,16 +2941,28 @@ def test_looked_at_carries_the_pm_reason_or_says_none_recorded(tmp_path, monkeyp
     db = _make_db(tmp_path, monkeypatch)
     run = "run-pass"
     for sym in ("OKLO", "RKLB"):
-        _evidence(db, run, "tech_analyst", "analysis",
-                  {"symbol": sym, "rating": "buy", "conviction": "medium", "risk_reward": 1.8},
-                  symbol=sym)
-    _evidence(db, run, "portfolio_manager", "proposed_order",
-              {"action": "HOLD", "symbol": "OKLO", "reasoning": "Extended after a 30% run."},
-              symbol="OKLO")
+        _evidence(
+            db,
+            run,
+            "tech_analyst",
+            "analysis",
+            {"symbol": sym, "rating": "buy", "conviction": "medium", "risk_reward": 1.8},
+            symbol=sym,
+        )
+    _evidence(
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
+        {"action": "HOLD", "symbol": "OKLO", "reasoning": "Extended after a 30% run."},
+        symbol="OKLO",
+    )
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+            "morning",
+            {"status": "no_trades", "run_id": run, "orders": []},
+            1.0,
         )
     assert "the desk did not take these because Extended after a 30% run." in msg
     assert "OKLO (Oklo Inc) BUY/medium" in msg
@@ -2597,9 +2978,12 @@ def test_position_review_risk_rating_carries_its_scale(tmp_path, monkeypatch):
     _insert_position(db, "NVDA")
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     result = {
-        "status": "reviewed", "run_id": "run-rev", "positions": 1,
+        "status": "reviewed",
+        "run_id": "run-rev",
+        "positions": 1,
         "review": {"risk_level": "elevated", "overall_assessment": "x", "actions": []},
-        "orders": [], "daily_pnl": 0.0,
+        "orders": [],
+        "daily_pnl": 0.0,
     }
     msg = trader_feed.format_session_result("midday", result, 1.0)
     assert "risk elevated — step 3 of 4 (low · moderate · elevated · high)" in msg
@@ -2613,8 +2997,14 @@ def test_company_names_are_not_cut_off_after_the_twelfth_name(tmp_path, monkeypa
         _insert_position(db, sym)
     profiles = {s: CompanyProfile(symbol=s, name=f"Company {s}", industry="x") for s in symbols}
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
-    result = {"status": "reviewed", "run_id": "run-many", "positions": 15,
-              "review": {"actions": []}, "orders": [], "daily_pnl": 0.0}
+    result = {
+        "status": "reviewed",
+        "run_id": "run-many",
+        "positions": 15,
+        "review": {"actions": []},
+        "orders": [],
+        "daily_pnl": 0.0,
+    }
     with _profiles_patch(profiles):
         msg = trader_feed.format_session_result("close", result, 1.0)
     for sym in symbols:
@@ -2627,13 +3017,18 @@ def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
     plain sentence that already said the same thing."""
     _make_db(tmp_path, monkeypatch)
     outer = {
-        "status": "ok", "run_id": "intra_check-cfb08f1c", "daily_pnl": -148.62,
+        "status": "ok",
+        "run_id": "intra_check-cfb08f1c",
+        "daily_pnl": -148.62,
         "intraday_scan": {
             "status": "evidence_gate_skip",
             "run_id": "intra_check-cfb08f1c",
             "data_status": {
-                "tech": "ok", "macro": "carried_from_morning", "news": "ok",
-                "earnings": "carried_from_morning", "smart_money": "expired",
+                "tech": "ok",
+                "macro": "carried_from_morning",
+                "news": "ok",
+                "earnings": "carried_from_morning",
+                "smart_money": "expired",
             },
             "lost_seats": ["smart_money"],
             "reason": (
@@ -2648,8 +3043,7 @@ def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
     msg = trader_feed.format_session_result("intra_check", outer, 253.0)
     assert msg is not None
     assert "DECISION SKIPPED" in msg
-    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
-                   "=expired", "intra_check-cfb08f1c"):
+    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)", "=expired", "intra_check-cfb08f1c"):
         assert banned not in msg, f"intraday message still contains {banned!r}"
     # congress_enabled is on (src/config.py default since the 2026-09-20
     # owner ruling), so this must say "insider-and-congressional", not the
@@ -2664,7 +3058,9 @@ def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     lines: list[str] = []
     trader_feed._append_gate_and_execution(
-        lines, {"status": "ok"}, trader_feed._empty_snapshot(),
+        lines,
+        {"status": "ok"},
+        trader_feed._empty_snapshot(),
     )
     body = "\n".join(lines)
     assert "detailed PM evidence unavailable" not in body
@@ -2683,15 +3079,22 @@ def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
 # `specialist_evidence`; `_read_run` admitted only `deterministic_gate`
 # pipeline events, so none of them reached the renderer.
 
+
 def _accounting(db, run_id, symbol, code, note, outcome="not_selected"):
     """One `pm_accounting` row exactly as `_record_accounted_candidate`
     writes it — stage `portfolio_manager`, the CODE in `refusal` and the
     seat's prose in `note`."""
     _evidence(
-        db, run_id, "pipeline", "pipeline_event",
+        db,
+        run_id,
+        "pipeline",
+        "pipeline_event",
         {
-            "stage": "portfolio_manager", "outcome": outcome,
-            "reason": "pm_rejected_candidate", "refusal": code, "note": note,
+            "stage": "portfolio_manager",
+            "outcome": outcome,
+            "reason": "pm_rejected_candidate",
+            "refusal": code,
+            "note": note,
         },
         symbol=symbol,
     )
@@ -2711,67 +3114,72 @@ def _looked_at_block(msg: str) -> list[str]:
 
 
 def test_looked_at_renders_the_recorded_ground_never_did_not_record_why(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-ground"
     for sym in ("OKLO", "RKLB"):
-        _evidence(db, run, "tech_analyst", "analysis",
-                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
-                  symbol=sym)
-    _accounting(db, run, "OKLO", "no_deployment_headroom",
-                "OKLO would add tech exposure with no gross headroom left.")
-    _accounting(db, run, "RKLB", "reward_not_worth_risk",
-                "The stop distance swamps the measured upside.")
+        _evidence(
+            db, run, "tech_analyst", "analysis", {"symbol": sym, "rating": "buy", "conviction": "medium"}, symbol=sym
+        )
+    _accounting(db, run, "OKLO", "no_deployment_headroom", "OKLO would add tech exposure with no gross headroom left.")
+    _accounting(db, run, "RKLB", "reward_not_worth_risk", "The stop distance swamps the measured upside.")
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+            "morning",
+            {"status": "no_trades", "run_id": run, "orders": []},
+            1.0,
         )
     assert "the desk did not record why" not in msg
     assert "there was no cash or buying power left to put behind it" in msg
     assert "the money it stood to make did not justify the money it put at risk" in msg
     assert "OKLO would add tech exposure with no gross headroom left." in msg
     # The internal code itself never reaches the owner.
-    for code in ("no_deployment_headroom", "reward_not_worth_risk",
-                 "pm_rejected_candidate", "not_selected"):
+    for code in ("no_deployment_headroom", "reward_not_worth_risk", "pm_rejected_candidate", "not_selected"):
         assert code not in msg
 
 
 def test_looked_at_still_admits_a_candidate_with_no_recorded_ground(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The honest fallback survives — and is now conditioned on there being
     NO ground, not on the renderer failing to reach one."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-silent"
-    _evidence(db, run, "tech_analyst", "analysis",
-              {"symbol": "RKLB", "rating": "buy", "conviction": "medium"},
-              symbol="RKLB")
+    _evidence(
+        db, run, "tech_analyst", "analysis", {"symbol": "RKLB", "rating": "buy", "conviction": "medium"}, symbol="RKLB"
+    )
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with _profiles_patch({"RKLB": RKLB_PROFILE}):
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+            "morning",
+            {"status": "no_trades", "run_id": run, "orders": []},
+            1.0,
         )
     assert "the desk did not record why it passed on these" in msg
     assert "RKLB (Rocket Lab) BUY/medium" in msg
 
 
 def test_looked_at_groups_a_shared_ground_once_and_hides_no_name(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-group"
     symbols = [f"S{i:02d}" for i in range(12)]
     for sym in symbols:
-        _evidence(db, run, "tech_analyst", "analysis",
-                  {"symbol": sym, "rating": "neutral", "conviction": "low"},
-                  symbol=sym)
-        _accounting(db, run, sym, "no_readable_structure",
-                    f"{sym} has no level to enter against.")
+        _evidence(
+            db, run, "tech_analyst", "analysis", {"symbol": sym, "rating": "neutral", "conviction": "low"}, symbol=sym
+        )
+        _accounting(db, run, sym, "no_readable_structure", f"{sym} has no level to enter against.")
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        1.0,
     )
     ground = "there was no level on the chart to enter against or to be proved wrong by"
     assert msg.count(ground) == 1, "the shared ground must be stated once"
@@ -2783,22 +3191,24 @@ def test_looked_at_groups_a_shared_ground_once_and_hides_no_name(
 
 
 def test_looked_at_separates_no_capacity_from_rejected_on_merit(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Two completely different things to the owner: the desk had no room,
     versus the desk judged the name and said no."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-split"
-    for sym, code in (("OKLO", "no_deployment_headroom"),
-                      ("RKLB", "evidence_insufficient")):
-        _evidence(db, run, "tech_analyst", "analysis",
-                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
-                  symbol=sym)
+    for sym, code in (("OKLO", "no_deployment_headroom"), ("RKLB", "evidence_insufficient")):
+        _evidence(
+            db, run, "tech_analyst", "analysis", {"symbol": sym, "rating": "buy", "conviction": "medium"}, symbol=sym
+        )
         _accounting(db, run, sym, code, "")
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+            "morning",
+            {"status": "no_trades", "run_id": run, "orders": []},
+            1.0,
         )
     block = _looked_at_block(msg)
     headers = [ln for ln in block if ln.strip().startswith("▪")]
@@ -2808,7 +3218,8 @@ def test_looked_at_separates_no_capacity_from_rejected_on_merit(
 
 
 def test_looked_at_drops_a_detail_that_is_the_group_heading_again(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """`held_unchanged` carries one fixed sentence for every name; printing
     it twelve times under a heading that already says it is the repetition
@@ -2817,15 +3228,16 @@ def test_looked_at_drops_a_detail_that_is_the_group_heading_again(
     run = "run-held"
     boiler = "the seat left a held name out of its targets"
     for sym in ("OKLO", "RKLB"):
-        _evidence(db, run, "tech_analyst", "analysis",
-                  {"symbol": sym, "rating": "buy", "conviction": "medium"},
-                  symbol=sym)
-        _accounting(db, run, sym, "held_unchanged", boiler,
-                    outcome="held_unchanged")
+        _evidence(
+            db, run, "tech_analyst", "analysis", {"symbol": sym, "rating": "buy", "conviction": "medium"}, symbol=sym
+        )
+        _accounting(db, run, sym, "held_unchanged", boiler, outcome="held_unchanged")
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+            "morning",
+            {"status": "no_trades", "run_id": run, "orders": []},
+            1.0,
         )
     assert boiler not in msg
     assert "already held and the desk decided to leave it exactly as it is" in msg
@@ -2839,13 +3251,23 @@ def test_looked_at_drops_a_detail_that_is_the_group_heading_again(
 # things, which is how we built it. Report has to show that properly."
 # ---------------------------------------------------------------------------
 
+
 def _rotation_row(db, run, outcome, **extra):
     _evidence(
-        db, run, "pipeline", "pipeline_event",
+        db,
+        run,
+        "pipeline",
+        "pipeline_event",
         {
-            "stage": "rotation", "outcome": "precheck", "reason": outcome,
-            "headroom_pct": 0.09, "ceiling_pct": 25.0, "floor_pct": 0.5,
-            "execute_enabled": True, "ranked_margin_enabled": False, **extra,
+            "stage": "rotation",
+            "outcome": "precheck",
+            "reason": outcome,
+            "headroom_pct": 0.09,
+            "ceiling_pct": 25.0,
+            "floor_pct": 0.5,
+            "execute_enabled": True,
+            "ranked_margin_enabled": False,
+            **extra,
         },
     )
 
@@ -2853,19 +3275,24 @@ def _rotation_row(db, run, outcome, **extra):
 def _morning(db, run, monkeypatch):
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     return trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        1.0,
     )
 
 
 def test_full_book_is_reported_as_a_normal_state_not_an_error(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     # The book really is full here, so the binding limit is recorded —
     # the message now asserts fullness from THAT, not from the outcome name,
     # because an outcome can also be reached on an unconstrained book.
     _rotation_row(
-        db, "run-full", "full_nothing_outranked_a_holding",
+        db,
+        "run-full",
+        "full_nothing_outranked_a_holding",
         binding="risk_headroom",
     )
     msg = _morning(db, "run-full", monkeypatch)
@@ -2880,7 +3307,8 @@ def test_full_book_is_reported_as_a_normal_state_not_an_error(
 
 
 def test_rotation_says_when_there_was_room_and_when_it_could_not_look(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     _rotation_row(db, "run-room", "room_available")
@@ -2892,15 +3320,20 @@ def test_rotation_says_when_there_was_room_and_when_it_could_not_look(
 
 
 def test_rotation_says_a_tier_the_desk_may_not_act_on_was_never_put_to_it(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """`execution.rotation_ranked_margin_enabled` is False live. The owner
     must not read a surfaced ranked-margin comparison as one the desk
     weighed and declined."""
     db = _make_db(tmp_path, monkeypatch)
     _rotation_row(
-        db, "run-tier", "full_candidate_outranked_a_holding",
-        tier="ranked_margin", held_symbol="OKLO", new_symbol="RKLB",
+        db,
+        "run-tier",
+        "full_candidate_outranked_a_holding",
+        tier="ranked_margin",
+        held_symbol="OKLO",
+        new_symbol="RKLB",
     )
     msg = _morning(db, "run-tier", monkeypatch)
     assert "RKLB outranks OKLO" in msg
@@ -2909,7 +3342,8 @@ def test_rotation_says_a_tier_the_desk_may_not_act_on_was_never_put_to_it(
 
 
 def test_a_run_with_no_rotation_row_renders_no_rotation_block(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Every session before this shipped, and any replayed stored report."""
     db = _make_db(tmp_path, monkeypatch)
@@ -2958,7 +3392,10 @@ def _full_morning_session(db, run):
             symbol = symbols[index]
             index += 1
             _evidence(
-                db, run, "tech_analyst", "analysis",
+                db,
+                run,
+                "tech_analyst",
+                "analysis",
                 {
                     "symbol": symbol,
                     "rating": "neutral" if index > 20 else "buy",
@@ -2974,12 +3411,15 @@ def _full_morning_session(db, run):
                 symbol=symbol,
             )
             _evidence(
-                db, run, "pipeline", "pipeline_event",
+                db,
+                run,
+                "pipeline",
+                "pipeline_event",
                 {
-                    "stage": "portfolio_manager", "refusal": code,
+                    "stage": "portfolio_manager",
+                    "refusal": code,
                     "note": (
-                        "The seat recorded its own specifics for this name "
-                        "at roughly this length in the real run."
+                        "The seat recorded its own specifics for this name at roughly this length in the real run."
                     ),
                 },
                 symbol=symbol,
@@ -2987,7 +3427,10 @@ def _full_morning_session(db, run):
     for symbol in symbols[:12]:
         _insert_position(db, symbol)
     _evidence(
-        db, run, "portfolio_manager", "reasoning",
+        db,
+        run,
+        "portfolio_manager",
+        "reasoning",
         {
             "portfolio_view": (
                 "Hold the book unchanged today. The account is already near "
@@ -2999,7 +3442,10 @@ def _full_morning_session(db, run):
         },
     )
     _evidence(
-        db, run, "risk_manager", "verdict",
+        db,
+        run,
+        "risk_manager",
+        "verdict",
         {"approved": True, "reason_category": "clean"},
     )
     _agent_log(db, run, "portfolio_manager", "no trades", cost=0.21)
@@ -3023,13 +3469,17 @@ def test_full_morning_message_fits_and_keeps_the_reasoning(tmp_path, monkeypatch
 
     _pin_clock(monkeypatch, datetime(2026, 9, 23, 9, 37, tzinfo=_ET))
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run}, 120.0,
+        "morning",
+        {"status": "no_trades", "run_id": run},
+        120.0,
     )
     assert msg is not None
 
     # --- it fits, as the payload actually put on the wire ---
     notifier = TelegramNotifier(
-        token="t", chat_id="c", mission_control_url="https://example.invalid/mc",
+        token="t",
+        chat_id="c",
+        mission_control_url="https://example.invalid/mc",
     )
     sent = notifier._build_payload(msg, preserve_structural_markup=True)["text"]
     assert len(sent) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
@@ -3040,11 +3490,11 @@ def test_full_morning_message_fits_and_keeps_the_reasoning(tmp_path, monkeypatch
     # --- the reasoning is PRESENT and NON-EMPTY, which is the whole point ---
     assert "<blockquote expandable></blockquote>" not in msg
     assert "PM view (this check): Hold the book unchanged today." in msg
-    details = msg[msg.index("<b>DETAILS</b>"):]
+    details = msg[msg.index("<b>DETAILS</b>") :]
     assert len(details) > 400, "DETAILS must carry real content, not a stub"
 
     # --- and no candidate was lost to make room ---
-    looked = msg[msg.index("<b>👀 LOOKED AT, NO TRADE</b>"):msg.index("<b>DETAILS</b>")]
+    looked = msg[msg.index("<b>👀 LOOKED AT, NO TRADE</b>") : msg.index("<b>DETAILS</b>")]
     for symbol in symbols:
         assert symbol in looked, f"{symbol} vanished from the candidate list"
     for _code, count in _REAL_MORNING_GROUNDS:
@@ -3061,20 +3511,27 @@ def test_reasoning_survives_when_the_candidate_list_is_huge(tmp_path, monkeypatc
     for index in range(200):
         symbol = f"ZZ{index:03d}"
         _evidence(
-            db, run, "tech_analyst", "analysis",
-            {"symbol": symbol, "rating": "neutral", "conviction": "low",
-             "reasoning": "No clean setup." * 10},
+            db,
+            run,
+            "tech_analyst",
+            "analysis",
+            {"symbol": symbol, "rating": "neutral", "conviction": "low", "reasoning": "No clean setup." * 10},
             symbol=symbol,
         )
         _evidence(
-            db, run, "pipeline", "pipeline_event",
+            db,
+            run,
+            "pipeline",
+            "pipeline_event",
             {"stage": "portfolio_manager", "refusal": "no_readable_structure"},
             symbol=symbol,
         )
 
     _pin_clock(monkeypatch, datetime(2026, 9, 23, 9, 37, tzinfo=_ET))
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run}, 120.0,
+        "morning",
+        {"status": "no_trades", "run_id": run},
+        120.0,
     )
     assert msg is not None
     assert "PM view (this check): Hold the book unchanged today." in msg
@@ -3092,23 +3549,38 @@ def test_correct_refusals_do_not_read_failed(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-refusals-only"
     for symbol, detail in (
-        ("DRAM", "only 118 completed session(s) of history against the "
-                 "200-session window the analyst's own trend reference needs."),
-        ("CBRS", "only 89 completed session(s) of history against the "
-                 "200-session window the analyst's own trend reference needs."),
+        (
+            "DRAM",
+            "only 118 completed session(s) of history against the "
+            "200-session window the analyst's own trend reference needs.",
+        ),
+        (
+            "CBRS",
+            "only 89 completed session(s) of history against the "
+            "200-session window the analyst's own trend reference needs.",
+        ),
     ):
         _evidence(
-            db, run, "pipeline", "pipeline_event",
-            {"stage": "deterministic_gate", "outcome": "blocked",
-             "reason": "constructor_refused", "refusal": "insufficient_history",
-             "detail": detail},
+            db,
+            run,
+            "pipeline",
+            "pipeline_event",
+            {
+                "stage": "deterministic_gate",
+                "outcome": "blocked",
+                "reason": "constructor_refused",
+                "refusal": "insufficient_history",
+                "detail": detail,
+            },
             symbol=symbol,
         )
     _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
 
     _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run}, 60.0,
+        "morning",
+        {"status": "no_trades", "run_id": run},
+        60.0,
     )
     assert msg is not None
     header = msg.splitlines()[0]
@@ -3120,23 +3592,34 @@ def test_correct_refusals_do_not_read_failed(tmp_path, monkeypatch):
 
     # The gross-exposure ceiling and the minimum trade size are the same
     # kind of state and must read the same way.
-    for refusal in ("gross_exposure_ceiling_refused",
-                    "delta_below_min_trade_weight",
-                    "sector_crowding_leaves_below_min_order"):
+    for refusal in (
+        "gross_exposure_ceiling_refused",
+        "delta_below_min_trade_weight",
+        "sector_crowding_leaves_below_min_order",
+    ):
         folder = tmp_path / refusal
         folder.mkdir()
         db2 = _make_db(folder, monkeypatch)
         run2 = f"run-{refusal}"
         _evidence(
-            db2, run2, "pipeline", "pipeline_event",
-            {"stage": "deterministic_gate", "outcome": "blocked",
-             "reason": "constructor_refused", "refusal": refusal,
-             "detail": "the desk declined this on a standing rule."},
+            db2,
+            run2,
+            "pipeline",
+            "pipeline_event",
+            {
+                "stage": "deterministic_gate",
+                "outcome": "blocked",
+                "reason": "constructor_refused",
+                "refusal": refusal,
+                "detail": "the desk declined this on a standing rule.",
+            },
             symbol="FLNC",
         )
         _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
         other = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run2}, 60.0,
+            "morning",
+            {"status": "no_trades", "run_id": run2},
+            60.0,
         )
         assert other is not None
         assert other.splitlines()[0].endswith("· NO TRADE"), refusal
@@ -3150,15 +3633,21 @@ def test_a_session_that_genuinely_broke_still_reads_failed(tmp_path, monkeypatch
     with no reason written down cannot be told from a breakage, so all three
     keep the loud word."""
     cases = {
-        "broker": ("execution", "execution_skip",
-                   {"symbol": "NET", "reason": "broker_rejected",
-                    "detail": "the broker turned the order down"}),
-        "unknown": ("execution", "execution_skip",
-                    {"symbol": "NET", "reason": "a_code_added_next_year",
-                     "detail": "something new happened"}),
-        "unrecorded": ("pipeline", "pipeline_event",
-                       {"stage": "deterministic_gate", "outcome": "blocked",
-                        "reason": "constructor_dropped"}),
+        "broker": (
+            "execution",
+            "execution_skip",
+            {"symbol": "NET", "reason": "broker_rejected", "detail": "the broker turned the order down"},
+        ),
+        "unknown": (
+            "execution",
+            "execution_skip",
+            {"symbol": "NET", "reason": "a_code_added_next_year", "detail": "something new happened"},
+        ),
+        "unrecorded": (
+            "pipeline",
+            "pipeline_event",
+            {"stage": "deterministic_gate", "outcome": "blocked", "reason": "constructor_dropped"},
+        ),
     }
     for name, (agent, kind, data) in cases.items():
         folder = tmp_path / name
@@ -3169,7 +3658,9 @@ def test_a_session_that_genuinely_broke_still_reads_failed(tmp_path, monkeypatch
         _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
         _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run}, 60.0,
+            "morning",
+            {"status": "no_trades", "run_id": run},
+            60.0,
         )
         assert msg is not None, name
         assert msg.splitlines()[0].endswith("· FAILED"), (name, msg.splitlines()[0])
@@ -3186,23 +3677,36 @@ def test_quote_and_venue_refusals_are_not_treated_as_decisions(tmp_path, monkeyp
     40bp ceiling on a venue the code's own comments call routinely stale;
     `short_add_blocked`'s own detail reads "adding to a short is not built".
     A session lost to any of them is not a session that decided."""
-    for reason in ("slippage_gated", "latency_window", "short_add_blocked",
-                   "borrow_gate", "insufficient_cash", "unusable_stop",
-                   "fat_finger_guard", "no_price", "stale_entry",
-                   "geometry_rr"):
+    for reason in (
+        "slippage_gated",
+        "latency_window",
+        "short_add_blocked",
+        "borrow_gate",
+        "insufficient_cash",
+        "unusable_stop",
+        "fat_finger_guard",
+        "no_price",
+        "stale_entry",
+        "geometry_rr",
+    ):
         folder = tmp_path / reason
         folder.mkdir()
         db = _make_db(folder, monkeypatch)
         run = f"run-{reason}"
         _evidence(
-            db, run, "execution", "execution_skip",
+            db,
+            run,
+            "execution",
+            "execution_skip",
             {"symbol": "NET", "reason": reason, "detail": "see the code"},
             symbol="NET",
         )
         _agent_log(db, run, "portfolio_manager", "no trades", cost=0.2)
         _pin_clock(monkeypatch, datetime(2026, 9, 22, 9, 36, tzinfo=_ET))
         msg = trader_feed.format_session_result(
-            "morning", {"status": "no_trades", "run_id": run}, 60.0,
+            "morning",
+            {"status": "no_trades", "run_id": run},
+            60.0,
         )
         assert msg is not None, reason
         assert msg.splitlines()[0].endswith("· FAILED"), reason
@@ -3211,14 +3715,10 @@ def test_quote_and_venue_refusals_are_not_treated_as_decisions(tmp_path, monkeyp
 def test_every_candidate_survives_every_render_tier():
     """No name may be lost at any tier — the #600 rule that a grouping which
     hides a name is a worse failure than a repetitive one."""
-    rows = [
-        {"symbol": f"SY{i:02d}", "rating": "neutral", "conviction": "low"}
-        for i in range(69)
-    ]
+    rows = [{"symbol": f"SY{i:02d}", "rating": "neutral", "conviction": "low"} for i in range(69)]
     snap = {
         "pm_accounting": {
-            f"SY{i:02d}": {"refusal": "no_readable_structure",
-                           "note": f"name-specific note for SY{i:02d}"}
+            f"SY{i:02d}": {"refusal": "no_readable_structure", "note": f"name-specific note for SY{i:02d}"}
             for i in range(69)
         },
     }

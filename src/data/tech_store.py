@@ -46,8 +46,7 @@ class TechStore:
 
     def save(self, ratings: dict[str, dict]) -> None:
         _atomic_write(self.ratings_path, json.dumps(ratings, indent=2, ensure_ascii=False))
-        logger.info("Saved tech ratings cache → %s (%d symbols)",
-                    self.ratings_path, len(ratings))
+        logger.info("Saved tech ratings cache → %s (%d symbols)", self.ratings_path, len(ratings))
 
     def update(self, new_analyses) -> dict[str, dict]:
         """Merge today's analyses into the store.
@@ -72,12 +71,14 @@ class TechStore:
 
             # Maintain per-symbol history — dedupe by date so re-runs in one day don't double.
             history = [h for h in (prior_entry.get("history") or []) if h.get("date") != today]
-            history.append({
-                "date": today,
-                "rating": a.rating,
-                "conviction": a.conviction,
-                "risk_reward": getattr(a, "risk_reward", None),
-            })
+            history.append(
+                {
+                    "date": today,
+                    "rating": a.rating,
+                    "conviction": a.conviction,
+                    "risk_reward": getattr(a, "risk_reward", None),
+                }
+            )
             history = history[-14:]  # keep last 2 trading weeks
 
             # Board item 177: the inputs this verdict was a function of, and
@@ -92,7 +93,8 @@ class TechStore:
                 logger.warning(
                     "tech store: could not record the full verdict for %s "
                     "(%s); the re-read cache will ask the seat next time",
-                    sym, exc,
+                    sym,
+                    exc,
                 )
                 full, fingerprint = None, None
             prior[sym] = {

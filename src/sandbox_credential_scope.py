@@ -20,13 +20,15 @@ Only NAMES appear here. No value is read, returned or logged by this module.
 
 from __future__ import annotations
 
-SANDBOX_NEEDS: frozenset[str] = frozenset({
-    "ALPACA_API_KEY",
-    "ALPACA_SECRET_KEY",
-    "FRED_API_KEY",
-    "GOOGLE_API_KEY",
-    "OPENROUTER_API_KEY",
-})
+SANDBOX_NEEDS: frozenset[str] = frozenset(
+    {
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+        "FRED_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+    }
+)
 
 #: Names the sandbox must not hold, each with the reason it has no use for it.
 SANDBOX_FORBIDDEN: dict[str, str] = {
@@ -43,8 +45,4 @@ SANDBOX_FORBIDDEN: dict[str, str] = {
 
 def credential_scope_violations(env: dict[str, str]) -> list[str]:
     """Names in `env` that the sandbox must not hold, with the reason. Never values."""
-    return [
-        f"{name} ({reason})"
-        for name, reason in SANDBOX_FORBIDDEN.items()
-        if env.get(name, "").strip()
-    ]
+    return [f"{name} ({reason})" for name, reason in SANDBOX_FORBIDDEN.items() if env.get(name, "").strip()]

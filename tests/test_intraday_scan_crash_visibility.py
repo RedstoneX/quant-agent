@@ -43,6 +43,7 @@ crash status) and are silent on the Telegram feed (src/trader_feed.py's
 in the "never ran" section below were updated in place to assert the new
 explicit statuses rather than the absence of a key.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -62,8 +63,7 @@ from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_
 from tests.pipeline_factory import build_pipeline
 
 
-def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
-              other_session_rows=None):
+def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0, other_session_rows=None):
     """A TradingPipeline wired for a real, end-to-end `run_intra_check()`
     call — the intra_check preamble (account/position read, reconcilers,
     risk-engine loss check) AND the intraday scan's own dependencies
@@ -72,19 +72,39 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     the early-return paths under test are the genuine production code
     paths, not a stubbed return value.
     """
-    p = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), risk_engine=MagicMock())
+    p = build_pipeline(
+        news_provider=MagicMock(),
+        news_analyst=MagicMock(),
+        earnings_provider=MagicMock(),
+        earnings_analyst=MagicMock(),
+        broker=MagicMock(),
+        db=MagicMock(),
+        market=MagicMock(),
+        macro_store=MagicMock(),
+        news_store=MagicMock(),
+        tech_store=MagicMock(),
+        tech_analyst=MagicMock(),
+        decision_stage=MagicMock(),
+        risk_stage=MagicMock(),
+        execution_stage=MagicMock(),
+        risk_engine=MagicMock(),
+    )
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=list(universe), lookback_days=100),
         storage=SimpleNamespace(
             db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
         ),
         intraday_scan=IntradayScanConfig(
-            enabled=enabled, move_threshold_pct=move_threshold_pct,
-            cooldown_hours=3.0, max_candidates_per_scan=5,
+            enabled=enabled,
+            move_threshold_pct=move_threshold_pct,
+            cooldown_hours=3.0,
+            max_candidates_per_scan=5,
         ),
     )
     p.broker.get_account.return_value = {
-        "cash": 10_000.0, "portfolio_value": 10_100.0, "last_equity": 10_000.0,
+        "cash": 10_000.0,
+        "portfolio_value": 10_100.0,
+        "last_equity": 10_000.0,
         "non_marginable_buying_power": 10_000.0,
     }
     p.broker.get_positions.return_value = []
@@ -140,11 +160,20 @@ def _rehearsal_collect(result: dict):
         conn.close()
 
         return collect(
-            session="intra_check", rehearsed_date="2026-08-28",
-            run_id=result.get("run_id", "test-run"), source_run_id=None,
-            result=result, db_path=db_path, library=None, trading_stub=None,
-            isolation_checks=[], unavailable=[], network_attempts=[],
-            notes=[], fill_model="immediate", duration_s=0.1,
+            session="intra_check",
+            rehearsed_date="2026-08-28",
+            run_id=result.get("run_id", "test-run"),
+            source_run_id=None,
+            result=result,
+            db_path=db_path,
+            library=None,
+            trading_stub=None,
+            isolation_checks=[],
+            unavailable=[],
+            network_attempts=[],
+            notes=[],
+            fill_model="immediate",
+            duration_s=0.1,
         )
     finally:
         try:
@@ -161,9 +190,7 @@ def test_scan_crash_attaches_error_status_and_tick_completes():
     marker, mirroring the `paid_analysis_suspended` shape — not disappear
     into `scan_result = None`."""
     p = _pipeline(enabled=True)
-    p.broker.get_intraday_snapshots.side_effect = RuntimeError(
-        "snapshot feed unavailable"
-    )
+    p.broker.get_intraday_snapshots.side_effect = RuntimeError("snapshot feed unavailable")
 
     result = p.run_intra_check()
 
@@ -198,11 +225,16 @@ def test_scan_crash_reaches_operator_via_trader_feed(tmp_path, monkeypatch):
     notification mechanism."""
     _make_db(tmp_path, monkeypatch)
     outer = {
-        "status": "ok", "run_id": "intra_check-crash1", "daily_pnl": 12.0,
-        "daily_return_pct": 0.12, "positions": 1,
+        "status": "ok",
+        "run_id": "intra_check-crash1",
+        "daily_pnl": 12.0,
+        "daily_return_pct": 0.12,
+        "positions": 1,
         "intraday_scan": {
-            "status": "intraday_scan_crashed", "run_id": "intra_check-crash1",
-            "error": "snapshot feed unavailable", "error_type": "RuntimeError",
+            "status": "intraday_scan_crashed",
+            "run_id": "intra_check-crash1",
+            "error": "snapshot feed unavailable",
+            "error_type": "RuntimeError",
             "preserved": "intraday deterministic loss protection",
         },
     }
@@ -224,7 +256,8 @@ def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monk
 
     assert result["status"] == "ok"
     assert result["intraday_scan"] == {
-        "status": "intraday_scan_disabled", "run_id": result["run_id"],
+        "status": "intraday_scan_disabled",
+        "run_id": result["run_id"],
     }
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
@@ -239,7 +272,8 @@ def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monk
 
 
 def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     _make_db(tmp_path, monkeypatch)
     p = _pipeline(enabled=True)
@@ -254,7 +288,8 @@ def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
 
     assert result["status"] == "ok"
     assert result["intraday_scan"] == {
-        "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
+        "status": "intraday_scan_lock_contended",
+        "run_id": result["run_id"],
     }
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
@@ -265,7 +300,8 @@ def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
 
 
 def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     _make_db(tmp_path, monkeypatch)
     p = _pipeline(enabled=True)
@@ -292,7 +328,8 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
 
 
 def test_the_four_no_new_activity_statuses_are_pairwise_distinguishable(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The whole point of the 2026-08-31 fix: disabled, lock-contended,
     no-opportunity and crashed must be four different strings, not the same
@@ -322,8 +359,10 @@ def test_the_four_no_new_activity_statuses_are_pairwise_distinguishable(
 
     statuses = {disabled_status, lock_status, no_opportunity_status, crashed_status}
     assert statuses == {
-        "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity", "intraday_scan_crashed",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+        "intraday_scan_crashed",
     }
     assert len(statuses) == 4, "all four outcomes must be distinct strings"
 
@@ -334,11 +373,13 @@ def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
     from ops.rehearsal.report import _verdict
 
     for status in (
-        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity",
     ):
         result = {
-            "status": "ok", "run_id": "r-health",
+            "status": "ok",
+            "run_id": "r-health",
             "intraday_scan": {"status": status, "run_id": "r-health"},
         }
         report = _rehearsal_collect(result)
@@ -351,7 +392,9 @@ def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
 
 @patch("src.pipeline_intraday.compute_indicators")
 def test_normal_scan_with_no_opportunities_stays_healthy(
-    mock_compute_indicators, tmp_path, monkeypatch,
+    mock_compute_indicators,
+    tmp_path,
+    monkeypatch,
 ):
     """The scan genuinely runs — a candidate clears the move threshold and
     gets a real tech_analyst call — but the portfolio manager proposes no
@@ -372,17 +415,19 @@ def test_normal_scan_with_no_opportunities_stays_healthy(
         # `last_trade_at`/`session_bar_at` are board item 120: a payload
         # with no timestamps is correctly not-today and buys no paid
         # look, so a fixture that means "this traded today" says so.
-        "AAPL": {"last_price": 110.0, "prev_close": 100.0,
-                 "last_trade_at": todays_session_stamp()},  # 10% move
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0, "last_trade_at": todays_session_stamp()},  # 10% move
     }
     analysis = _ta_result("AAPL", rating="neutral")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+        ctx,
+        "portfolio_decision",
+        SimpleNamespace(decisions=[]),
     )
 
     result = p.run_intra_check()
@@ -414,10 +459,13 @@ def test_rig_reports_crash_as_fail():
     from ops.rehearsal.report import _verdict
 
     result = {
-        "status": "ok", "run_id": "r1",
+        "status": "ok",
+        "run_id": "r1",
         "intraday_scan": {
-            "status": "intraday_scan_crashed", "run_id": "r1",
-            "error": "boom", "error_type": "RuntimeError",
+            "status": "intraday_scan_crashed",
+            "run_id": "r1",
+            "error": "boom",
+            "error_type": "RuntimeError",
             "preserved": "intraday deterministic loss protection",
         },
     }
@@ -446,9 +494,11 @@ def test_rig_reports_no_opportunities_tick_as_pass():
     from ops.rehearsal.report import _verdict
 
     result = {
-        "status": "ok", "run_id": "r3",
+        "status": "ok",
+        "run_id": "r3",
         "intraday_scan": {
-            "status": "intraday_no_trades", "run_id": "r3",
+            "status": "intraday_no_trades",
+            "run_id": "r3",
             "candidates": ["AAPL"],
         },
     }
@@ -483,7 +533,7 @@ def test_crashed_status_is_not_in_the_verdicts_healthy_set():
     # A crude but effective guard: the literal status string must not
     # appear anywhere inside _verdict's healthy-set construction.
     healthy_line_start = src.index("healthy = {")
-    healthy_block = src[healthy_line_start: src.index("}", healthy_line_start)]
+    healthy_block = src[healthy_line_start : src.index("}", healthy_line_start)]
     assert "intraday_scan_crashed" not in healthy_block
 
 
@@ -494,7 +544,8 @@ def test_the_three_no_new_activity_statuses_are_in_the_rigs_vocabulary():
     from ops.rehearsal.report import STATUS_PLAIN
 
     for status in (
-        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity",
     ):
         assert status in STATUS_PLAIN
@@ -511,9 +562,10 @@ def test_the_three_no_new_activity_statuses_are_in_the_verdicts_healthy_set():
 
     src = inspect.getsource(_verdict)
     healthy_line_start = src.index("healthy = {")
-    healthy_block = src[healthy_line_start: src.index("}", healthy_line_start)]
+    healthy_block = src[healthy_line_start : src.index("}", healthy_line_start)]
     for status in (
-        "intraday_scan_disabled", "intraday_scan_lock_contended",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity",
     ):
         assert status in healthy_block, f"{status} must be in _verdict's healthy set"

@@ -3,6 +3,7 @@ two existing guards catch every bad shape union can produce from a collision.
 
 Runs real `git merge` in a throwaway repo using the repo's real .gitattributes.
 """
+
 import subprocess
 import tempfile
 from pathlib import Path

@@ -19,12 +19,7 @@ logger = logging.getLogger("src.pipeline")
 class StructuralProtection:
     """The structural-protection check for one holding: whether the level the thesis rests on still holds on the chart."""
 
-    def __init__(self, *,
-                 voice_structural_protection_break,
-                 config,
-                 db,
-                 market,
-                 risk_engine) -> None:
+    def __init__(self, *, voice_structural_protection_break, config, db, market, risk_engine) -> None:
         self._voice_structural_protection_break = voice_structural_protection_break
         self.config = config
         self.db = db
@@ -47,15 +42,21 @@ class StructuralProtection:
         except Exception as e:  # noqa: BLE001
             record_guarded_pass(self.db, "structural_protection.entry_date_for_noise_band", e)
             logger.warning(
-                "structural protection: no entry date for %s (%s) — the "
-                "noise band stays anchored on entry price", symbol, e,
+                "structural protection: no entry date for %s (%s) — the noise band stays anchored on entry price",
+                symbol,
+                e,
             )
             return None
         ts = str((row or {}).get("timestamp") or "")[:10]
         return ts or None
 
     def _extreme_since_entry(
-        self, symbol: str, sorted_bars: list, entry_date: str | None, *, is_short: bool,
+        self,
+        symbol: str,
+        sorted_bars: list,
+        entry_date: str | None,
+        *,
+        is_short: bool,
     ) -> float | None:
         """The position's RUNNING EXTREME since entry — highest high for a
         long, lowest low for a short — over the daily bars from the entry
@@ -75,7 +76,7 @@ class StructuralProtection:
         try:
             vals = []
             for b in sorted_bars:
-                if str(getattr(b, "date", "")) [:10] < ent_date:
+                if str(getattr(b, "date", ""))[:10] < ent_date:
                     continue
                 v = b.low if is_short else b.high
                 if v is None:
@@ -86,7 +87,9 @@ class StructuralProtection:
         except (TypeError, ValueError) as e:
             logger.warning(
                 "structural protection: unreadable bar extreme for %s (%s) — "
-                "the noise band stays anchored on entry price", symbol, e,
+                "the noise band stays anchored on entry price",
+                symbol,
+                e,
             )
             return None
         if not vals:
@@ -191,13 +194,12 @@ class StructuralProtection:
             if bars:
                 from src.data.levels import find_structural_levels
                 from src.data.technical import compute_indicators
+
                 sorted_bars = sorted(bars, key=lambda b: b.date)
                 last_bar = sorted_bars[-1]
                 close_price = float(last_bar.close)
                 bar_date = str(last_bar.date)
-                prior_session_dates = [
-                    str(b.date) for b in reversed(sorted_bars) if str(b.date) < bar_date
-                ]
+                prior_session_dates = [str(b.date) for b in reversed(sorted_bars) if str(b.date) < bar_date]
                 indicators = compute_indicators(symbol, bars)
                 atr = indicators.atr_14
                 ma_20, ma_50, ma_200 = indicators.ma_20, indicators.ma_50, indicators.ma_200
@@ -212,14 +214,14 @@ class StructuralProtection:
                     for lv in all_levels
                     if lv.zone_low is not None and lv.zone_high is not None
                 }
-                computed_level_bars = {
-                    lv.price: list(lv.pivot_bars) for lv in all_levels
-                }
+                computed_level_bars = {lv.price: list(lv.pivot_bars) for lv in all_levels}
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: bars/indicator fetch failed for %s "
                 "(%s) — checking with no close/level/MA data (falls back "
-                "to the noise-band check)", symbol, e,
+                "to the noise-band check)",
+                symbol,
+                e,
             )
         # A bars-fetch failure leaves no real close date; fall back to
         # wall-clock today purely as a persistence key — harmless because
@@ -231,7 +233,10 @@ class StructuralProtection:
         # THE NOISE BAND'S ANCHOR for this home (2026-10-04). Computed from
         # the bars already fetched above; None leaves the band entry-anchored.
         extreme_since_entry = self._extreme_since_entry(
-            symbol, sorted_bars, entry_date, is_short=is_short,
+            symbol,
+            sorted_bars,
+            entry_date,
+            is_short=is_short,
         )
 
         # Read the per-session break RECORDS for this position (most recent
@@ -242,12 +247,16 @@ class StructuralProtection:
         prior_break_records: list = []
         try:
             prior_break_records = self.db.get_recent_holding_protection_breaks(
-                symbol, before_bar_date=effective_bar_date, exclude_run_id=run_id,
+                symbol,
+                before_bar_date=effective_bar_date,
+                exclude_run_id=run_id,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: prior-close read failed for %s "
-                "(%s) — today's break, if any, starts unconfirmed", symbol, e,
+                "(%s) — today's break, if any, starts unconfirmed",
+                symbol,
+                e,
             )
 
         # Same two ratified bars `PortfolioConstructor`'s `ConstructorConfig`
@@ -278,7 +287,10 @@ class StructuralProtection:
             # the zones being matched against, so the tolerance cannot be
             # anything else. docs/WORK.md item 46.
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,
+            ma_20=ma_20,
+            ma_50=ma_50,
+            ma_200=ma_200,
+            ma_200_prior=ma_200_prior,
             adx=adx,
             prior_break_records=prior_break_records,
             prior_session_dates=prior_session_dates,
@@ -288,15 +300,21 @@ class StructuralProtection:
         try:
             if persist:
                 self.db.save_holding_protection_break(
-                    run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
-                    bar_date=effective_bar_date, close=close_price,
-                    basis=check.basis, detail=check.detail,
+                    run_id=run_id,
+                    symbol=symbol,
+                    raw_broken=check.raw_broken,
+                    bar_date=effective_bar_date,
+                    close=close_price,
+                    basis=check.basis,
+                    detail=check.detail,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: failed to persist today's read for "
                 "%s (%s) — the next trading day's confirmation check will "
-                "start unconfirmed for it", symbol, e,
+                "start unconfirmed for it",
+                symbol,
+                e,
             )
 
         # VOICE THE WHY (owner mandate 2026-09-24). When this gate reaches a
@@ -313,7 +331,9 @@ class StructuralProtection:
         # affects the protection verdict itself.
         if persist and check.owner_reason:
             self._voice_structural_protection_break(
-                symbol=symbol, run_id=run_id, check=check,
+                symbol=symbol,
+                run_id=run_id,
+                check=check,
             )
 
         return check

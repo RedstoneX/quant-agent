@@ -8,6 +8,7 @@ not the aggregate unit in Scott & Xu, so its ratio remains descriptive and
 must not inherit that study's return claims. See the module docstring,
 departure #3.
 """
+
 import json
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -74,15 +75,13 @@ def _row(
 
 
 def _history(owner="1", symbol="NVDA", direction="buy", days=()):
-    return InsiderHistory({
-        (owner, symbol): [
-            InsiderPriorTrade(transaction_date=day, direction=direction)
-            for day in days
-        ]
-    })
+    return InsiderHistory(
+        {(owner, symbol): [InsiderPriorTrade(transaction_date=day, direction=direction) for day in days]}
+    )
 
 
 # --- opportunistic ---------------------------------------------------------
+
 
 def test_discretionary_officer_purchase_is_opportunistic():
     verdict = classify_transaction(_row(), InsiderHistory())
@@ -113,6 +112,7 @@ def test_sale_large_relative_to_the_holding_is_opportunistic():
 
 # --- routine categories ----------------------------------------------------
 
+
 def test_same_calendar_month_for_three_years_is_routine():
     """Cohen/Malloy/Pomorski's own definition of a routine trader."""
     verdict = classify_transaction(
@@ -140,9 +140,14 @@ def test_a_gap_year_breaks_the_consecutive_streak():
     """2023 is missing, so the three preceding years are not consecutive."""
     verdict = classify_transaction(
         _row(transaction_date=date(2026, 8, 20)),
-        _history(days=[
-            date(2025, 8, 14), date(2022, 8, 3), date(2021, 8, 28), date(2020, 8, 9),
-        ]),
+        _history(
+            days=[
+                date(2025, 8, 14),
+                date(2022, 8, 3),
+                date(2021, 8, 28),
+                date(2020, 8, 9),
+            ]
+        ),
     )
 
     assert verdict.label == "opportunistic"
@@ -151,9 +156,14 @@ def test_a_gap_year_breaks_the_consecutive_streak():
 def test_history_in_the_other_direction_does_not_make_a_purchase_routine():
     verdict = classify_transaction(
         _row(direction="buy", transaction_date=date(2026, 8, 20)),
-        _history(direction="sell", days=[
-            date(2025, 8, 14), date(2024, 8, 3), date(2023, 8, 28),
-        ]),
+        _history(
+            direction="sell",
+            days=[
+                date(2025, 8, 14),
+                date(2024, 8, 3),
+                date(2023, 8, 28),
+            ],
+        ),
     )
 
     assert verdict.label == "opportunistic"
@@ -161,12 +171,16 @@ def test_history_in_the_other_direction_does_not_make_a_purchase_routine():
 
 def test_evenly_spaced_recurring_programme_is_routine():
     verdict = classify_transaction(
-        _row(direction="sell", shares=40_000.0, post_shares=10_000.0,
-             transaction_date=date(2026, 8, 20)),
-        _history(direction="sell", days=[
-            date(2026, 5, 20), date(2026, 2, 20), date(2025, 11, 20),
-            date(2025, 8, 20),
-        ]),
+        _row(direction="sell", shares=40_000.0, post_shares=10_000.0, transaction_date=date(2026, 8, 20)),
+        _history(
+            direction="sell",
+            days=[
+                date(2026, 5, 20),
+                date(2026, 2, 20),
+                date(2025, 11, 20),
+                date(2025, 8, 20),
+            ],
+        ),
     )
 
     assert verdict.label == "routine"
@@ -177,11 +191,16 @@ def test_evenly_spaced_recurring_programme_is_routine():
 def test_lumpy_discretionary_history_is_not_a_cadence():
     """Boundary: same trade count, irregular spacing, so no routine label."""
     verdict = classify_transaction(
-        _row(direction="sell", shares=40_000.0, post_shares=10_000.0,
-             transaction_date=date(2026, 8, 20)),
-        _history(direction="sell", days=[
-            date(2026, 8, 1), date(2026, 7, 28), date(2025, 12, 3), date(2025, 3, 9),
-        ]),
+        _row(direction="sell", shares=40_000.0, post_shares=10_000.0, transaction_date=date(2026, 8, 20)),
+        _history(
+            direction="sell",
+            days=[
+                date(2026, 8, 1),
+                date(2026, 7, 28),
+                date(2025, 12, 3),
+                date(2025, 3, 9),
+            ],
+        ),
     )
 
     assert verdict.label == "opportunistic"
@@ -271,6 +290,7 @@ def test_zero_price_transaction_is_routine():
 
 # --- the RESEARCH_FINDINGS contradictions ----------------------------------
 
+
 def test_large_10b5_1_sale_is_not_demoted_for_being_planned():
     """RESEARCH_FINDINGS: 10b5-1 is not a clean noise filter.
 
@@ -297,16 +317,19 @@ def test_10b5_1_purchase_is_not_routine():
 
 # --- boundaries ------------------------------------------------------------
 
+
 def test_no_sell_fraction_anywhere_changes_the_label():
     """There is no materiality cutoff left to sit either side of. A 1-in-1000
     sale and a near-total liquidation reach the seat with the same label and
     the same weight, differing only in the evidence they carry — which is the
     whole point: the ranking no longer silently deletes one of them."""
     tiny = classify_transaction(
-        _row(direction="sell", shares=100.0, post_shares=99_900.0), InsiderHistory(),
+        _row(direction="sell", shares=100.0, post_shares=99_900.0),
+        InsiderHistory(),
     )
     huge = classify_transaction(
-        _row(direction="sell", shares=99_000.0, post_shares=1_000.0), InsiderHistory(),
+        _row(direction="sell", shares=99_000.0, post_shares=1_000.0),
+        InsiderHistory(),
     )
 
     assert tiny.label == huge.label == "opportunistic"
@@ -317,7 +340,8 @@ def test_no_sell_fraction_anywhere_changes_the_label():
 
 def test_missing_post_transaction_holding_is_indeterminate_not_routine():
     verdict = classify_transaction(
-        _row(direction="sell", post_shares=None), InsiderHistory(),
+        _row(direction="sell", post_shares=None),
+        InsiderHistory(),
     )
 
     assert verdict.label == "indeterminate"
@@ -334,7 +358,8 @@ def test_missing_amounts_are_indeterminate():
 
 def test_congressional_stream_is_out_of_scope():
     verdict = classify_transaction(
-        _row(stream="congressional", code=""), InsiderHistory(),
+        _row(stream="congressional", code=""),
+        InsiderHistory(),
     )
 
     assert verdict.label == "indeterminate"
@@ -355,10 +380,9 @@ def test_history_only_counts_trades_strictly_before_the_transaction():
 
 # --- provider wiring -------------------------------------------------------
 
+
 def _cached(provider, rows):
-    provider.stores.observations_path.write_text(
-        json.dumps([row.model_dump(mode="json") for row in rows])
-    )
+    provider.stores.observations_path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
 
 
 def _provider(tmp_path, **kwargs):
@@ -369,16 +393,16 @@ def test_routine_purchase_never_becomes_admission_eligible(tmp_path):
     today = date.today()
     provider = _provider(tmp_path)
     routine = _row(
-        symbol="ABCD", shares=5_000.0, price=100.0, transaction_date=today,
+        symbol="ABCD",
+        shares=5_000.0,
+        price=100.0,
+        transaction_date=today,
         is_10b5_1=True,
     )
     _cached(provider, [routine])
-    provider.stores.history_path.write_text(json.dumps({
-        "1|ABCD": [
-            f"{today.replace(year=today.year - offset).isoformat()}|buy"
-            for offset in (1, 2, 3)
-        ]
-    }))
+    provider.stores.history_path.write_text(
+        json.dumps({"1|ABCD": [f"{today.replace(year=today.year - offset).isoformat()}|buy" for offset in (1, 2, 3)]})
+    )
 
     observations, error = provider.fetch(["NVDA"])
 
@@ -403,12 +427,14 @@ def test_opportunistic_purchase_still_gets_admission(tmp_path):
 def test_model_validator_refuses_to_mark_a_routine_row_eligible():
     """Belt and braces: the gate holds even if a caller sets the flag by hand."""
     row = _row().model_dump()
-    row.update({
-        "admission_eligible": True,
-        "transient_admission_eligible": True,
-        "signal_class": "routine",
-        "signal_class_reason": "calendar_routine",
-    })
+    row.update(
+        {
+            "admission_eligible": True,
+            "transient_admission_eligible": True,
+            "signal_class": "routine",
+            "signal_class_reason": "calendar_routine",
+        }
+    )
 
     rebuilt = SmartMoneyObservation(**row)
 
@@ -427,19 +453,41 @@ def test_routine_rows_sort_behind_opportunistic_ones(tmp_path):
     unchanged, which is what this test exists to pin."""
     today = date.today()
     provider = _provider(tmp_path)
-    provider._record_history([
-        {"actor_cik": "1", "symbol": "NVDA", "direction": "sell",
-         "transaction_date": today.replace(year=today.year - n).isoformat()}
-        for n in (1, 2, 3)
-    ])
-    _cached(provider, [
-        _row(symbol="NVDA", owner="1", direction="sell", shares=1_000.0,
-             price=900.0, post_shares=999_000.0, transaction_date=today,
-             accession="0000000001-26-000009"),
-        _row(symbol="NVDA", owner="2", direction="buy", shares=200.0,
-             price=100.0, transaction_date=today,
-             accession="0000000001-26-000010"),
-    ])
+    provider._record_history(
+        [
+            {
+                "actor_cik": "1",
+                "symbol": "NVDA",
+                "direction": "sell",
+                "transaction_date": today.replace(year=today.year - n).isoformat(),
+            }
+            for n in (1, 2, 3)
+        ]
+    )
+    _cached(
+        provider,
+        [
+            _row(
+                symbol="NVDA",
+                owner="1",
+                direction="sell",
+                shares=1_000.0,
+                price=900.0,
+                post_shares=999_000.0,
+                transaction_date=today,
+                accession="0000000001-26-000009",
+            ),
+            _row(
+                symbol="NVDA",
+                owner="2",
+                direction="buy",
+                shares=200.0,
+                price=100.0,
+                transaction_date=today,
+                accession="0000000001-26-000010",
+            ),
+        ],
+    )
 
     observations, _ = provider.fetch(["NVDA"])
 
@@ -452,27 +500,31 @@ def test_history_index_survives_the_observation_cache_prune(tmp_path):
     """The lookback prune is exactly why a separate history file exists."""
     provider = _provider(tmp_path)
     old = date.today() - timedelta(days=400)
-    provider._record_history([
-        {"actor_cik": "1", "symbol": "NVDA", "direction": "buy",
-         "transaction_date": old.isoformat()},
-        {"actor_cik": "1", "symbol": "NVDA", "direction": "buy",
-         "transaction_date": "not-a-date"},
-    ])
+    provider._record_history(
+        [
+            {"actor_cik": "1", "symbol": "NVDA", "direction": "buy", "transaction_date": old.isoformat()},
+            {"actor_cik": "1", "symbol": "NVDA", "direction": "buy", "transaction_date": "not-a-date"},
+        ]
+    )
 
     history = provider._load_history()
 
     assert history.prior_trades(
-        "1", "NVDA", direction="buy", before=date.today(),
+        "1",
+        "NVDA",
+        direction="buy",
+        before=date.today(),
     ) == [InsiderPriorTrade(transaction_date=old, direction="buy")]
 
 
 def test_history_index_prunes_beyond_retention(tmp_path):
     provider = _provider(tmp_path)
     ancient = date.today() - timedelta(days=6 * 366)
-    provider._record_history([
-        {"actor_cik": "1", "symbol": "NVDA", "direction": "buy",
-         "transaction_date": ancient.isoformat()},
-    ])
+    provider._record_history(
+        [
+            {"actor_cik": "1", "symbol": "NVDA", "direction": "buy", "transaction_date": ancient.isoformat()},
+        ]
+    )
 
     assert json.loads(provider.stores.history_path.read_text()) == {}
 
@@ -480,10 +532,16 @@ def test_history_index_prunes_beyond_retention(tmp_path):
 def test_history_index_is_append_only_across_refreshes(tmp_path):
     provider = _provider(tmp_path)
     for day in (date(2024, 8, 3), date(2025, 8, 14)):
-        provider._record_history([{
-            "actor_cik": "1", "symbol": "NVDA", "direction": "buy",
-            "transaction_date": day.isoformat(),
-        }])
+        provider._record_history(
+            [
+                {
+                    "actor_cik": "1",
+                    "symbol": "NVDA",
+                    "direction": "buy",
+                    "transaction_date": day.isoformat(),
+                }
+            ]
+        )
 
     assert json.loads(provider.stores.history_path.read_text()) == {
         "1|NVDA": ["2024-08-03|buy", "2025-08-14|buy"],
@@ -500,6 +558,7 @@ def test_history_index_is_append_only_across_refreshes(tmp_path):
 # still clear materiality/cluster gating and appear in the returned
 # observations exactly like an opportunistic one would.
 
+
 def test_indeterminate_filing_is_kept_by_fetch_not_dropped(tmp_path):
     """A sale with no reported post-transaction holding cannot be sized
     against the insider's position (``unknown_holding``), so the classifier
@@ -508,8 +567,12 @@ def test_indeterminate_filing_is_kept_by_fetch_not_dropped(tmp_path):
     matter and nothing else about it is invalid."""
     provider = _provider(tmp_path)
     unclassifiable = _row(
-        symbol="NVDA", direction="sell", shares=2_000.0, price=100.0,
-        post_shares=None, transaction_date=date.today(),
+        symbol="NVDA",
+        direction="sell",
+        shares=2_000.0,
+        price=100.0,
+        post_shares=None,
+        transaction_date=date.today(),
     )
     _cached(provider, [unclassifiable])
 
@@ -559,6 +622,7 @@ def test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine(
 # fix for a number nothing can source, though, is deletion rather than a knob:
 # the first test below guards one that was deleted.
 
+
 def test_there_is_no_sell_fraction_threshold_left_to_configure():
     """Guards the removal, not a value. `min_material_sell_fraction` was a
     cutoff no cited source measures; the fix was to delete it rather than to
@@ -581,7 +645,9 @@ def test_custom_calendar_routine_years_changes_the_verdict():
     assert default_verdict.label == "opportunistic"
 
     lenient_verdict = classify_transaction(
-        row, history, InsiderSignalThresholds(calendar_routine_years=1),
+        row,
+        history,
+        InsiderSignalThresholds(calendar_routine_years=1),
     )
     assert lenient_verdict.label == "routine"
     assert lenient_verdict.reason == "calendar_routine"
@@ -593,8 +659,12 @@ def test_a_proportionally_tiny_sale_survives_the_provider_end_to_end(tmp_path):
     It now arrives with its ratio and band attached and nothing suppressed."""
     provider = _provider(tmp_path)
     row = _row(
-        symbol="NVDA", direction="sell", shares=3_000.0, price=100.0,
-        post_shares=97_000.0, transaction_date=date.today(),
+        symbol="NVDA",
+        direction="sell",
+        shares=3_000.0,
+        price=100.0,
+        post_shares=97_000.0,
+        transaction_date=date.today(),
     )
     _cached(provider, [row])
     observations, _ = provider.fetch(["NVDA"])
@@ -617,11 +687,10 @@ def test_a_proportionally_tiny_sale_survives_the_provider_end_to_end(tmp_path):
 # runtime stability only; item 90 records that applying the borrowed endpoints
 # to one filing's ratio is unsupported.
 
+
 def test_sell_fraction_is_measured_against_the_pre_transaction_holding():
     """Sold 25,000 of a 100,000-share holding is 25%, not 33% of what is left."""
-    fraction, band = holdings_fraction(
-        _row(direction="sell", shares=25_000.0, post_shares=75_000.0)
-    )
+    fraction, band = holdings_fraction(_row(direction="sell", shares=25_000.0, post_shares=75_000.0))
 
     assert fraction == 0.25
     assert band == "10_to_50pct"
@@ -629,9 +698,7 @@ def test_sell_fraction_is_measured_against_the_pre_transaction_holding():
 
 def test_buy_fraction_is_measured_against_what_the_insider_already_held():
     """Bought 20,000 on top of an existing 80,000 is 25% added, not 20%."""
-    fraction, band = holdings_fraction(
-        _row(direction="buy", shares=20_000.0, post_shares=100_000.0)
-    )
+    fraction, band = holdings_fraction(_row(direction="buy", shares=20_000.0, post_shares=100_000.0))
 
     assert fraction == 0.25
     assert band == "10_to_50pct"
@@ -640,18 +707,14 @@ def test_buy_fraction_is_measured_against_what_the_insider_already_held():
 def test_purchase_by_an_insider_holding_nothing_is_a_distinct_band_not_a_gap():
     """An insider who held none beforehand has no denominator; that distinct
     fact must not be reported as missing filing data."""
-    fraction, band = holdings_fraction(
-        _row(direction="buy", shares=5_000.0, post_shares=5_000.0)
-    )
+    fraction, band = holdings_fraction(_row(direction="buy", shares=5_000.0, post_shares=5_000.0))
 
     assert fraction is None
     assert band == "no_prior_holding"
 
 
 def test_missing_post_transaction_shares_reports_no_band_at_all():
-    fraction, band = holdings_fraction(
-        _row(direction="sell", shares=1_000.0, post_shares=None)
-    )
+    fraction, band = holdings_fraction(_row(direction="sell", shares=1_000.0, post_shares=None))
 
     assert fraction is None
     assert band == ""
@@ -660,10 +723,9 @@ def test_missing_post_transaction_shares_reports_no_band_at_all():
 def test_legacy_band_endpoints_remain_stable_while_routed():
     """Preserve the legacy under-10 / 10-50 / over-50 runtime endpoints while
     their unsupported per-filing application remains routed under item 90."""
+
     def band_for(shares, post):
-        return holdings_fraction(
-            _row(direction="sell", shares=shares, post_shares=post)
-        )[1]
+        return holdings_fraction(_row(direction="sell", shares=shares, post_shares=post))[1]
 
     assert band_for(9_999.0, 90_001.0) == "under_10pct"
     assert band_for(10_000.0, 90_000.0) == "10_to_50pct"
@@ -686,19 +748,35 @@ def test_the_ratio_never_admits_or_rejects_a_row(tmp_path):
     it. Two purchases identical in dollars but far apart in holdings share
     must both survive the provider's admission and materiality filters."""
     today = date.today()
-    tiny = _row(symbol="AAPL", owner="1", direction="buy", transaction_date=today,
-                shares=1_000.0, price=100.0, post_shares=1_000_000.0,
-                accession="0000000001-26-000101")
-    huge = _row(symbol="AAPL", owner="2", direction="buy", transaction_date=today,
-                shares=1_000.0, price=100.0, post_shares=1_500.0,
-                accession="0000000001-26-000102", row=1)
+    tiny = _row(
+        symbol="AAPL",
+        owner="1",
+        direction="buy",
+        transaction_date=today,
+        shares=1_000.0,
+        price=100.0,
+        post_shares=1_000_000.0,
+        accession="0000000001-26-000101",
+    )
+    huge = _row(
+        symbol="AAPL",
+        owner="2",
+        direction="buy",
+        transaction_date=today,
+        shares=1_000.0,
+        price=100.0,
+        post_shares=1_500.0,
+        accession="0000000001-26-000102",
+        row=1,
+    )
 
     provider = _provider(tmp_path / "ratio")
     _cached(provider, [tiny, huge])
     observations, _ = provider.fetch(["AAPL"])
 
     assert {obs.accession_number for obs in observations} == {
-        "0000000001-26-000101", "0000000001-26-000102",
+        "0000000001-26-000101",
+        "0000000001-26-000102",
     }
     bands = {obs.accession_number: obs.holdings_fraction_band for obs in observations}
     assert bands["0000000001-26-000101"] == "under_10pct"

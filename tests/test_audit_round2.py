@@ -3,6 +3,7 @@
 The interaction findings cluster: today's entry-protection flow (PR #102)
 left gaps that only show when the pieces run together.
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ def _broker(mock_tc_cls):
 
 # ---------- still-working entries are cancelled before walking away ----------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_entry_protection_cancels_a_still_working_entry(mock_tc_cls):
     """A DAY entry limit alive after the wait could fill hours later with no
@@ -37,7 +39,7 @@ def test_entry_protection_cancels_a_still_working_entry(mock_tc_cls):
     client.cancel_order_by_id.assert_called_once_with("e1")
     assert out is not None
     req = client.submit_order.call_args[0][0]
-    assert float(req.qty) == 4.0            # protect exactly what landed
+    assert float(req.qty) == 4.0  # protect exactly what landed
 
 
 @patch("src.execution.broker.TradingClient")
@@ -51,14 +53,15 @@ def test_entry_protection_terminal_zero_fill_does_not_cancel(mock_tc_cls):
 
 # ---------- full exits cancel the same-day resting entry BUY ----------
 
+
 def test_full_exit_sell_cancels_same_symbol_entry_orders():
     p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
-    p._submit_protected_sell(symbol="VST", qty=31, limit_price=150.0,
-                             reference_price=151.0, position_qty_before_sell=31,
-                             label="SELL")
+    p._submit_protected_sell(
+        symbol="VST", qty=31, limit_price=150.0, reference_price=151.0, position_qty_before_sell=31, label="SELL"
+    )
     p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="VST")
 
 
@@ -67,9 +70,9 @@ def test_partial_trim_keeps_its_entry_orders():
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
-    p._submit_protected_sell(symbol="VST", qty=10, limit_price=150.0,
-                             reference_price=151.0, position_qty_before_sell=31,
-                             label="REDUCE")
+    p._submit_protected_sell(
+        symbol="VST", qty=10, limit_price=150.0, reference_price=151.0, position_qty_before_sell=31, label="REDUCE"
+    )
     p.broker.cancel_open_entry_orders.assert_not_called()
 
 
@@ -77,16 +80,21 @@ def _park_pipeline():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
+
     p = build_pipeline(broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(
-        cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
-                                   min_order_usd=500.0),
-        risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                        max_sector_pct=40,
-                        require_stop_loss=True, allow_margin=False),
+        cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV", min_order_usd=500.0),
+        risk=RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=90,
+            max_sector_pct=40,
+            require_stop_loss=True,
+            allow_margin=False,
+        ),
     )
     p.broker.get_account.return_value = {
-        "cash": 99_000.0, "portfolio_value": 100_000.0,
+        "cash": 99_000.0,
+        "portfolio_value": 100_000.0,
         "last_equity": 104_000.0,
     }
     p.broker.get_positions.return_value = []
@@ -98,9 +106,8 @@ def _park_pipeline():
     return p
 
 
-
-
 # ---------- multi-stop: highest wins; ex-div shifts each ----------
+
 
 def _stop_order(oid, stop, qty=10):
     o = MagicMock()
@@ -120,7 +127,9 @@ def test_get_current_stop_price_reports_the_highest_of_many(mock_tc_cls):
     Alpaca happens to list first."""
     b, client = _broker(mock_tc_cls)
     client.get_orders.return_value = [
-        _stop_order("s1", 340.0), _stop_order("s2", 350.0), _stop_order("s3", 330.0),
+        _stop_order("s1", 340.0),
+        _stop_order("s2", 350.0),
+        _stop_order("s3", 330.0),
     ]
     assert b.get_current_stop_price("GE") == 350.0
 
@@ -128,9 +137,12 @@ def test_get_current_stop_price_reports_the_highest_of_many(mock_tc_cls):
 @patch("src.execution.broker.TradingClient")
 def test_shift_stops_down_preserves_per_lot_levels(mock_tc_cls):
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _stop_order("s1", 340.0, qty=10), _stop_order("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _stop_order("s1", 340.0, qty=10),
+            _stop_order("s2", 350.0, qty=16),
+        ]
+    )
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
@@ -144,43 +156,76 @@ def test_shift_stops_down_preserves_per_lot_levels(mock_tc_cls):
 
 # ---------- coverage repair sees the in-flight BUY ----------
 
+
 def test_repair_reads_the_in_flight_buy_row(tmp_path):
     """A same-session BUY still at fill_status='submitted' is the row whose
     stop the repair wants — the strict executed predicate made the repair
     no-op (or read a months-old prior BUY) in exactly the crash/late-fill
     scenarios the belt exists for."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade(symbol="NVDA", action="BUY", qty=10, price=100.0,
-                    reasoning="old entry", run_id="r0",
-                    stop_loss=80.0, fill_status="filled")
-    db.insert_trade(symbol="NVDA", action="BUY", qty=10, price=150.0,
-                    reasoning="today", run_id="r1",
-                    stop_loss=140.0, broker_order_id="b9",
-                    fill_status="submitted")
+    db.insert_trade(
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="old entry",
+        run_id="r0",
+        stop_loss=80.0,
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="today",
+        run_id="r1",
+        stop_loss=140.0,
+        broker_order_id="b9",
+        fill_status="submitted",
+    )
     strict = db.get_symbol_last_buy("NVDA")
     in_flight = db.get_symbol_last_buy("NVDA", include_in_flight=True)
-    assert strict["stop_loss"] == 80.0          # PM memory keeps executed-only
-    assert in_flight["stop_loss"] == 140.0      # repair reads today's intent
+    assert strict["stop_loss"] == 80.0  # PM memory keeps executed-only
+    assert in_flight["stop_loss"] == 140.0  # repair reads today's intent
 
 
 def test_repair_reads_the_in_flight_short_row(tmp_path):
     """Mirrored belt: a same-session SHORT still at fill_status='submitted'
     is the row whose stop the short-side repair wants."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade(symbol="TSLA", action="SHORT", qty=10, price=200.0,
-                    reasoning="old short", run_id="r0",
-                    stop_loss=220.0, fill_status="filled")
-    db.insert_trade(symbol="TSLA", action="SHORT", qty=10, price=210.0,
-                    reasoning="today", run_id="r1",
-                    stop_loss=232.0, broker_order_id="s9",
-                    fill_status="submitted")
+    db.insert_trade(
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=200.0,
+        reasoning="old short",
+        run_id="r0",
+        stop_loss=220.0,
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=210.0,
+        reasoning="today",
+        run_id="r1",
+        stop_loss=232.0,
+        broker_order_id="s9",
+        fill_status="submitted",
+    )
     strict = db.get_symbol_last_buy("TSLA", action="SHORT")
     in_flight = db.get_symbol_last_buy(
-        "TSLA", include_in_flight=True, action="SHORT",
+        "TSLA",
+        include_in_flight=True,
+        action="SHORT",
     )
     assert strict["stop_loss"] == 220.0
     assert in_flight["stop_loss"] == 232.0
@@ -190,19 +235,36 @@ def test_repair_reads_the_in_flight_short_row(tmp_path):
 
 # ---------- round-2 backlog fixes (pipeline/data/db bucket) ----------
 
+
 def test_pm_parse_failure_is_analysis_error_not_no_trades():
-    """"no_trades" masqueraded a parse failure as a deliberate hold — exit 0,
+    """ "no_trades" masqueraded a parse failure as a deliberate hold — exit 0,
     last-run marker written, trading day silently skipped. analysis_error is
     retryable: the next tick retries (and the checkpoint resumes at RM)."""
     from src import decision_checkpoint as dc
-    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), decision_stage=MagicMock())
+
+    p = build_pipeline(
+        _is_trading_day=lambda: True,
+        _drain_pending_protection_restores=MagicMock(),
+        _reconcile_orphan_pending_submits=MagicMock(),
+        _reconcile_stop_coverage=MagicMock(return_value=[]),
+        _reconcile_fills=MagicMock(),
+        _force_delever=MagicMock(return_value=[]),
+        broker=MagicMock(),
+        risk_engine=MagicMock(),
+        morning_research_stage=MagicMock(),
+        decision_stage=MagicMock(),
+    )
     p.broker.get_account.return_value = {
-        "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+        "cash": 50_000.0,
+        "portfolio_value": 100_000.0,
+        "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
+
     def _research(ctx):
         ctx.analyses = [MagicMock()]
         ctx.data_status = {"tech": "ok"}
+
     p.morning_research_stage.run.side_effect = _research
     p.decision_stage.run.side_effect = lambda ctx: (
         setattr(ctx, "analysis_failure_status", "pm_parse_error"),
@@ -210,9 +272,12 @@ def test_pm_parse_failure_is_analysis_error_not_no_trades():
     )
     p._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
 
-    with patch.object(dc, "load", return_value=None), \
-         patch.object(dc, "write", return_value=None), \
-         patch.object(dc, "write_status"), patch.object(dc, "mark_consumed"):
+    with (
+        patch.object(dc, "load", return_value=None),
+        patch.object(dc, "write", return_value=None),
+        patch.object(dc, "write_status"),
+        patch.object(dc, "mark_consumed"),
+    ):
         result = p.run_morning()
     assert result["status"] == "pm_parse_error"
 
@@ -221,20 +286,29 @@ def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):
     """Windowing BUYs alongside SELLs made a SELL that closed a pre-window
     lot FIFO-match an unrelated newer BUY — wrong entry, wrong hold time."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     old_ts = "2026-05-01 14:00:00"
     db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, fill_status, timestamp) "
-        "VALUES ('NVDA', 'BUY', 100, 150.0, 'filled', ?)", (old_ts,))
+        "VALUES ('NVDA', 'BUY', 100, 150.0, 'filled', ?)",
+        (old_ts,),
+    )
     db.conn.commit()
-    for i, sym in enumerate(("A", "B")):   # filler to clear the >=3 floor
-        db.insert_trade(symbol=sym, action="BUY", qty=1, price=100.0,
-                        reasoning="x", run_id="r", fill_status="filled", stop_loss=90.0)
-        db.insert_trade(symbol=sym, action="SELL", qty=1, price=110.0,
-                        reasoning="x", run_id="r", fill_status="filled")
-    db.insert_trade(symbol="NVDA", action="SELL", qty=100, price=210.0,
-                    reasoning="x", run_id="r", fill_status="filled")
+    for i, sym in enumerate(("A", "B")):  # filler to clear the >=3 floor
+        db.insert_trade(
+            symbol=sym,
+            action="BUY",
+            qty=1,
+            price=100.0,
+            reasoning="x",
+            run_id="r",
+            fill_status="filled",
+            stop_loss=90.0,
+        )
+        db.insert_trade(symbol=sym, action="SELL", qty=1, price=110.0, reasoning="x", run_id="r", fill_status="filled")
+    db.insert_trade(symbol="NVDA", action="SELL", qty=100, price=210.0, reasoning="x", run_id="r", fill_status="filled")
 
     calib = db.compute_trade_calibration(lookback_days=30)
     nvda = [c for c in db.conn.execute("SELECT 1").fetchall()]  # keep db alive
@@ -248,12 +322,18 @@ def test_missed_lessons_one_streak_is_not_recurring():
     """A single >=8% move re-emits on ~5 consecutive evenings via the rolling
     window — one episode, one symbol: NOT a recurring theme."""
     import json
+
     p = build_pipeline(db=MagicMock(), broker=MagicMock())
     rows = [
-        {"date": f"2026-07-{d:02d}", "missed_opportunities_json": json.dumps([
-            {"miss_category": "trend_timing_miss", "symbol": "SNDK",
-             "theme_if_any": "", "lesson": "x"},
-        ])} for d in (13, 14, 15)          # consecutive days = one episode
+        {
+            "date": f"2026-07-{d:02d}",
+            "missed_opportunities_json": json.dumps(
+                [
+                    {"miss_category": "trend_timing_miss", "symbol": "SNDK", "theme_if_any": "", "lesson": "x"},
+                ]
+            ),
+        }
+        for d in (13, 14, 15)  # consecutive days = one episode
     ]
     p.db.get_recent_insights.return_value = rows
     assert p._build_recent_missed_lessons() == ""
@@ -261,14 +341,28 @@ def test_missed_lessons_one_streak_is_not_recurring():
 
 def test_missed_lessons_two_symbols_same_theme_still_recurs():
     import json
+
     p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.db.get_recent_insights.return_value = [
-        {"date": "2026-07-15", "missed_opportunities_json": json.dumps([
-            {"miss_category": "theme_blindspot", "symbol": "VST",
-             "theme_if_any": "nuclear/power", "lesson": "x"}])},
-        {"date": "2026-07-14", "missed_opportunities_json": json.dumps([
-            {"miss_category": "trend_timing_miss", "symbol": "OKLO",
-             "theme_if_any": "nuclear/power", "lesson": "y"}])},
+        {
+            "date": "2026-07-15",
+            "missed_opportunities_json": json.dumps(
+                [{"miss_category": "theme_blindspot", "symbol": "VST", "theme_if_any": "nuclear/power", "lesson": "x"}]
+            ),
+        },
+        {
+            "date": "2026-07-14",
+            "missed_opportunities_json": json.dumps(
+                [
+                    {
+                        "miss_category": "trend_timing_miss",
+                        "symbol": "OKLO",
+                        "theme_if_any": "nuclear/power",
+                        "lesson": "y",
+                    }
+                ]
+            ),
+        },
     ]
     out = p._build_recent_missed_lessons()
     assert "nuclear/power" in out
@@ -279,12 +373,25 @@ def test_nonfinite_cash_blocks_instead_of_failing_open():
     from src.risk.rules import RiskRuleEngine
     from src.models import TradeDecision
     from src.pipeline import HARD_BLOCK_RULES
-    eng = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40, require_stop_loss=True, allow_margin=False))
-    d = TradeDecision(action="BUY", symbol="NVDA", allocation_pct=10,
-                      entry_price=100.0, stop_loss=95.0, take_profit=120.0,
-                      reasoning="x")
+
+    eng = RiskRuleEngine(
+        RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=90,
+            max_sector_pct=40,
+            require_stop_loss=True,
+            allow_margin=False,
+        )
+    )
+    d = TradeDecision(
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        reasoning="x",
+    )
     v = eng.check(decision=d, positions=[], total_value=100_000.0, cash=float("nan"))
     assert v and any(x.rule in HARD_BLOCK_RULES for x in v)
 
@@ -296,13 +403,18 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
+
     p = build_pipeline()
     p.config = SimpleNamespace(
-        cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
-                                   min_order_usd=500.0),
-        risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                        max_sector_pct=40,
-                        require_stop_loss=True, allow_margin=False))
+        cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV", min_order_usd=500.0),
+        risk=RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=90,
+            max_sector_pct=40,
+            require_stop_loss=True,
+            allow_margin=False,
+        ),
+    )
     p.cash_sweeper = CashSweeper(pipeline=p)
     p.broker = MagicMock()
     p.broker.get_account.return_value = {"cash": 10.0, "portfolio_value": 90_000.0}
@@ -312,22 +424,31 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     # cushion). Without this a MagicMock quote float()s to 1.0 and the sizing
     # would ask for one share per dollar of deficit.
     p.broker.get_latest_quote.return_value = {
-        "bid_price": 100.5, "ask_price": 100.7,
+        "bid_price": 100.5,
+        "ask_price": 100.7,
     }
     p.db = MagicMock()
-    p._submit_protected_sell = MagicMock(return_value=(
-        {"id": "s1", "status": "accepted"}, {"symbol": "SGOV"}))
+    p._submit_protected_sell = MagicMock(return_value=({"id": "s1", "status": "accepted"}, {"symbol": "SGOV"}))
     p._finalize_pending_protections = MagicMock()
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -500.0
-    ctx.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
-                              current_price=100.6, market_value=80_480,
-                              unrealized_pnl=80, sector="Unknown")]
+    ctx.positions = [
+        Position(
+            symbol="SGOV",
+            qty=800,
+            avg_entry=100.5,
+            current_price=100.6,
+            market_value=80_480,
+            unrealized_pnl=80,
+            sector="Unknown",
+        )
+    ]
     p._force_delever(ctx)
     kwargs = p._submit_protected_sell.call_args.kwargs
-    assert kwargs["label"] == "SWEEP_SELL"          # ledger isolation held
-    assert kwargs["qty"] <= 7                       # ceil(500/100.5)=5 … not 800
+    assert kwargs["label"] == "SWEEP_SELL"  # ledger isolation held
+    assert kwargs["qty"] <= 7  # ceil(500/100.5)=5 … not 800
 
     # Board item 182: the share count is the deficit divided by the price
     # floor the order carries, so it must be enough to actually clear the
@@ -345,15 +466,21 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p._submit_protected_sell.reset_mock()
     ctx2 = RunContext.start("morning")
     ctx2.cash = -500.0
-    ctx2.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
-                               current_price=100.6, market_value=80_480,
-                               unrealized_pnl=80, sector="Unknown")]
+    ctx2.positions = [
+        Position(
+            symbol="SGOV",
+            qty=800,
+            avg_entry=100.5,
+            current_price=100.6,
+            market_value=80_480,
+            unrealized_pnl=80,
+            sector="Unknown",
+        )
+    ]
     p._force_delever(ctx2)
     no_quote = p._submit_protected_sell.call_args.kwargs
     assert no_quote["limit_price"] is None, "no quote -> MARKET order"
-    assert no_quote["qty"] == 800, (
-        "no price floor means no defensible partial size: sell the position"
-    )
+    assert no_quote["qty"] == 800, "no price floor means no defensible partial size: sell the position"
 
     # The slice is credited at the limit it was sized off, not at the whole
     # park's market value. `market_value` is the FULL position; crediting it
@@ -364,15 +491,24 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     # REPORT to the owner was a phantom, and the masking disappears the
     # moment proceeds are booked from an actual filled quantity.
     p.broker.get_latest_quote.return_value = {
-        "bid_price": 100.5, "ask_price": 100.7,
+        "bid_price": 100.5,
+        "ask_price": 100.7,
     }
     p._submit_protected_sell.reset_mock()
     p._alert_owner_force_delever_incomplete = MagicMock()
     ctx3 = RunContext.start("morning")
     ctx3.cash = -500.0
-    ctx3.positions = [Position(symbol="SGOV", qty=800, avg_entry=100.5,
-                               current_price=100.6, market_value=80_480,
-                               unrealized_pnl=80, sector="Unknown")]
+    ctx3.positions = [
+        Position(
+            symbol="SGOV",
+            qty=800,
+            avg_entry=100.5,
+            current_price=100.6,
+            market_value=80_480,
+            unrealized_pnl=80,
+            sector="Unknown",
+        )
+    ]
     p._force_delever(ctx3)
     slice_qty = p._submit_protected_sell.call_args.kwargs["qty"]
     assert slice_qty < 800, "this assertion is about the PARTIAL path"
@@ -389,23 +525,32 @@ def test_earnings_batch_isolates_one_bad_filing():
     from src.data.earnings import EarningsReport
 
     with _patch("anthropic.Anthropic"):
-        agent = EarningsAnalystAgent(api_key="k", model="claude-opus-4-7",
-                                     max_tokens=1024)
-    good = EarningsReport(symbol="AAPL", form_type="10-Q",
-                          filing_date="2026-07-10", filing_path="/x",
-                          analysis_path="/x/a.md", text_excerpt="",
-                          is_new=False)
-    bad = EarningsReport(symbol="NKE", form_type="10-Q",
-                         filing_date="2026-07-11", filing_path="/y",
-                         analysis_path="/y/a.md", text_excerpt="text",
-                         is_new=True)
-    with _patch.object(agent, "_analyze_one",
-                       side_effect=[RuntimeError("boom"), [{"symbol": "AAPL"}]]):
+        agent = EarningsAnalystAgent(api_key="k", model="claude-opus-4-7", max_tokens=1024)
+    good = EarningsReport(
+        symbol="AAPL",
+        form_type="10-Q",
+        filing_date="2026-07-10",
+        filing_path="/x",
+        analysis_path="/x/a.md",
+        text_excerpt="",
+        is_new=False,
+    )
+    bad = EarningsReport(
+        symbol="NKE",
+        form_type="10-Q",
+        filing_date="2026-07-11",
+        filing_path="/y",
+        analysis_path="/y/a.md",
+        text_excerpt="text",
+        is_new=True,
+    )
+    with _patch.object(agent, "_analyze_one", side_effect=[RuntimeError("boom"), [{"symbol": "AAPL"}]]):
         out = agent.analyze_reports([bad, good])
     assert out == [{"symbol": "AAPL"}], "the good filing must survive the bad one"
 
 
 # ---------- item 201: the ex-dividend shift amends in place ----------
+
 
 def _plain_stop(oid, stop, qty=10):
     """A resting stop-MARKET order of the shape the 2026-09-30 amend
@@ -428,9 +573,12 @@ def test_shift_stops_down_amends_in_place_and_never_cancels(mock_tc_cls):
     """The protective stop must never be absent. A price-only shift is exactly
     the operation the broker amends atomically, so this path must not cancel."""
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("s1", 340.0, qty=10),
+            _plain_stop("s2", 350.0, qty=16),
+        ]
+    )
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
@@ -440,8 +588,7 @@ def test_shift_stops_down_amends_in_place_and_never_cancels(mock_tc_cls):
     b.cancel_snapshotted_stops.assert_not_called()
     client.cancel_order_by_id.assert_not_called()
     b._restore_stop_orders.assert_not_called()
-    amended = {c[0][0]: c[0][1].stop_price
-               for c in client.replace_order_by_id.call_args_list}
+    amended = {c[0][0]: c[0][1].stop_price for c in client.replace_order_by_id.call_args_list}
     assert amended == {"s1": 339.49, "s2": 349.49}
 
 
@@ -451,10 +598,12 @@ def test_shift_stops_down_keeps_the_fractional_hybrid_pair_as_two_stops(mock_tc_
     leg. Amending each leg's price in place cannot collapse them into one stop:
     each keeps its own id and its own qty, and no leg is re-submitted."""
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("gtc-whole", 100.0, qty=12),
-        _plain_stop("day-sliver", 100.0, qty=0.3456),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("gtc-whole", 100.0, qty=12),
+            _plain_stop("day-sliver", 100.0, qty=0.3456),
+        ]
+    )
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
@@ -472,9 +621,12 @@ def test_shift_stops_down_leaves_the_stop_resting_when_the_amend_is_refused(mock
     """A refused amend must NOT fall through to cancel+resubmit — that would
     re-open the very unprotected window this path exists to close."""
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("s1", 340.0, qty=10),
+            _plain_stop("s2", 350.0, qty=16),
+        ]
+    )
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
     client.replace_order_by_id.side_effect = [RuntimeError("422 refused"), MagicMock(id="s2b")]
@@ -516,6 +668,7 @@ def test_shift_stops_down_refuses_to_push_a_stop_to_zero(mock_tc_cls):
 
 
 # ---------- item 201 round 2: the failure branch ----------
+
 
 def _replaced(oid, status="accepted"):
     r = MagicMock()
@@ -565,10 +718,14 @@ def test_a_partial_shift_carries_no_order_id_so_it_cannot_read_as_accepted(mock_
     leg back at the shifted level and files a trade row for a stop that is
     still at the pre-dividend price."""
     from src.execution.stop_records import accepted_stop_order
+
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("s1", 340.0, qty=10),
+            _plain_stop("s2", 350.0, qty=16),
+        ]
+    )
     client.replace_order_by_id.side_effect = [_replaced("s1b"), _ApiErr("no", 422)]
 
     out = b.shift_stops_down("GE", 0.51)
@@ -582,14 +739,16 @@ def test_a_partial_shift_carries_no_order_id_so_it_cannot_read_as_accepted(mock_
 def test_shift_requires_a_confirmed_id_and_a_live_status(mock_tc_cls):
     """'No exception' is request accepted, not stop moved."""
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("s1", 340.0, qty=10),
+            _plain_stop("s2", 350.0, qty=16),
+        ]
+    )
     client.replace_order_by_id.side_effect = [_replaced(None), _replaced("s2b", "rejected")]
     # A dead replacement is NOT evidence the original survived — the book is
     # re-read, and here it still holds the original s2.
-    b._list_open_stop_orders_by_side = MagicMock(
-        return_value=([_plain_stop("s2", 350.0, qty=16)], []))
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_plain_stop("s2", 350.0, qty=16)], []))
 
     out = b.shift_stops_down("GE", 0.51)
 
@@ -601,9 +760,12 @@ def test_shift_requires_a_confirmed_id_and_a_live_status(mock_tc_cls):
 @patch("src.execution.broker.TradingClient")
 def test_a_full_shift_reports_the_new_broker_ids(mock_tc_cls):
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
-    ])
+    b._list_open_sell_stop_orders = MagicMock(
+        return_value=[
+            _plain_stop("s1", 340.0, qty=10),
+            _plain_stop("s2", 350.0, qty=16),
+        ]
+    )
     client.replace_order_by_id.side_effect = [_replaced("s1b"), _replaced("s2b")]
 
     out = b.shift_stops_down("GE", 0.51)
@@ -619,13 +781,18 @@ def test_trailing_amends_both_hybrid_legs_in_place(mock_tc_cls):
     cancelling and resubmitting on most of the book."""
     b, client = _broker(mock_tc_cls)
     orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
-    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
-             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    specs = [
+        {"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+        {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None},
+    ]
     client.replace_order_by_id.side_effect = [_replaced("gtc2"), _replaced("day2")]
 
     out = b._amend_resting_stop_price(
-        symbol="ZZZ", live_orders=orders, stop_specs=specs,
-        new_stop_price=95.0, position_qty=12.3456,
+        symbol="ZZZ",
+        live_orders=orders,
+        stop_specs=specs,
+        new_stop_price=95.0,
+        position_qty=12.3456,
     )
 
     assert out is not None and out["id"] == "gtc2"
@@ -640,13 +807,18 @@ def test_trailing_multi_leg_amend_with_no_answer_does_not_fall_back_to_cancel(mo
     cancel+resubmit fallback — the amend may already have landed."""
     b, client = _broker(mock_tc_cls)
     orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
-    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
-             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    specs = [
+        {"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+        {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None},
+    ]
     client.replace_order_by_id.side_effect = [_replaced("gtc2"), _ApiErr("timeout", 504)]
 
     out = b._amend_resting_stop_price(
-        symbol="ZZZ", live_orders=orders, stop_specs=specs,
-        new_stop_price=95.0, position_qty=12.3456,
+        symbol="ZZZ",
+        live_orders=orders,
+        stop_specs=specs,
+        new_stop_price=95.0,
+        position_qty=12.3456,
     )
 
     # The payload must TRAVEL — a bare None threw away which leg moved, so
@@ -659,20 +831,23 @@ def test_trailing_multi_leg_amend_with_no_answer_does_not_fall_back_to_cancel(mo
 def test_the_shift_leg_record_is_durable_and_names_each_leg(tmp_path):
     from src.execution.exit_path_records import STOP_SHIFT_KIND, record_stop_shift_legs
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    legs = [{"id": "a", "qty": 12, "old_stop": 90.0, "new_stop": 89.5,
-             "new_id": "a2", "outcome": "amended"},
-            {"id": "b", "qty": 0.3456, "old_stop": 90.0, "new_stop": 89.5,
-             "new_id": None, "outcome": "refused"}]
-    assert record_stop_shift_legs(
-        db, symbol="ZZZ", amount=0.5, mode="amend", status="partial",
-        shifted=1, total=2, legs=legs, run_id="r1") is True
-    rows = db.conn.execute(
-        "select evidence_json from specialist_evidence where kind=?",
-        (STOP_SHIFT_KIND,)).fetchall()
+    legs = [
+        {"id": "a", "qty": 12, "old_stop": 90.0, "new_stop": 89.5, "new_id": "a2", "outcome": "amended"},
+        {"id": "b", "qty": 0.3456, "old_stop": 90.0, "new_stop": 89.5, "new_id": None, "outcome": "refused"},
+    ]
+    assert (
+        record_stop_shift_legs(
+            db, symbol="ZZZ", amount=0.5, mode="amend", status="partial", shifted=1, total=2, legs=legs, run_id="r1"
+        )
+        is True
+    )
+    rows = db.conn.execute("select evidence_json from specialist_evidence where kind=?", (STOP_SHIFT_KIND,)).fetchall()
     assert len(rows) == 1
     import json
+
     payload = json.loads(rows[0][0])
     assert payload["status"] == "partial" and payload["shifted"] == 1
     assert [l["outcome"] for l in payload["legs"]] == ["amended", "refused"]
@@ -704,8 +879,7 @@ def test_a_dead_replacement_whose_new_level_is_resting_counts_as_amended(mock_tc
     b, client = _broker(mock_tc_cls)
     b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
     client.replace_order_by_id.return_value = _replaced("s1b", "canceled")
-    b._list_open_stop_orders_by_side = MagicMock(
-        return_value=([_plain_stop("s1c", 339.49, qty=10)], []))
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_plain_stop("s1c", 339.49, qty=10)], []))
 
     out = b.shift_stops_down("GE", 0.51)
 
@@ -730,15 +904,22 @@ def test_a_lagging_leg_is_retried_at_the_proposals_own_level(mock_tc_cls):
     the only level it may be healed to is the one the proposal asked for."""
     b, client = _broker(mock_tc_cls)
     orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
-    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
-             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    specs = [
+        {"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+        {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None},
+    ]
     client.replace_order_by_id.side_effect = [
-        _replaced("gtc2"), _ApiErr("busy", 422), _replaced("day2"),
+        _replaced("gtc2"),
+        _ApiErr("busy", 422),
+        _replaced("day2"),
     ]
 
     out = b._amend_resting_stop_price(
-        symbol="ZZZ", live_orders=orders, stop_specs=specs,
-        new_stop_price=95.0, position_qty=12.3456,
+        symbol="ZZZ",
+        live_orders=orders,
+        stop_specs=specs,
+        new_stop_price=95.0,
+        position_qty=12.3456,
     )
 
     assert out["amend_status"] == "accepted"
@@ -753,15 +934,22 @@ def test_a_leg_that_refuses_twice_is_left_straddled_not_collapsed(mock_tc_cls):
     retry, then record and leave it."""
     b, client = _broker(mock_tc_cls)
     orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
-    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
-             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    specs = [
+        {"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+        {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None},
+    ]
     client.replace_order_by_id.side_effect = [
-        _replaced("gtc2"), _ApiErr("no", 422), _ApiErr("no", 422),
+        _replaced("gtc2"),
+        _ApiErr("no", 422),
+        _ApiErr("no", 422),
     ]
 
     out = b._amend_resting_stop_price(
-        symbol="ZZZ", live_orders=orders, stop_specs=specs,
-        new_stop_price=95.0, position_qty=12.3456,
+        symbol="ZZZ",
+        live_orders=orders,
+        stop_specs=specs,
+        new_stop_price=95.0,
+        position_qty=12.3456,
     )
 
     assert out["amend_status"] == "partial" and out["id"] is None
@@ -775,13 +963,18 @@ def test_an_unknown_leg_is_never_retried(mock_tc_cls):
     move a stop it cannot see."""
     b, client = _broker(mock_tc_cls)
     orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
-    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
-             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    specs = [
+        {"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+        {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None},
+    ]
     client.replace_order_by_id.side_effect = [_replaced("gtc2"), _ApiErr("timeout", 504)]
 
     out = b._amend_resting_stop_price(
-        symbol="ZZZ", live_orders=orders, stop_specs=specs,
-        new_stop_price=95.0, position_qty=12.3456,
+        symbol="ZZZ",
+        live_orders=orders,
+        stop_specs=specs,
+        new_stop_price=95.0,
+        position_qty=12.3456,
     )
 
     assert out["amend_status"] == "unknown"

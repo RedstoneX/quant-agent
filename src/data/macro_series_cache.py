@@ -140,13 +140,9 @@ class MacroSeriesCache:
             "series_id": str(series_id),
             "kwargs": _kwargs_key(kwargs),
             "fetched_at": fetched_at.isoformat(),
-            "expected_next_by": (
-                expected_next_by.isoformat() if expected_next_by is not None else None
-            ),
+            "expected_next_by": (expected_next_by.isoformat() if expected_next_by is not None else None),
             "info": info if isinstance(info, dict) else None,
-            "observations": [
-                [str(d), (None if v is None else float(v))] for d, v in observations
-            ],
+            "observations": [[str(d), (None if v is None else float(v))] for d, v in observations],
         }
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -156,8 +152,9 @@ class MacroSeriesCache:
             os.replace(tmp, path)
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "Could not write FRED series cache for %s: %s — the next "
-                "session will fetch this series live", series_id, e,
+                "Could not write FRED series cache for %s: %s — the next session will fetch this series live",
+                series_id,
+                e,
             )
 
     # -- read ----------------------------------------------------------

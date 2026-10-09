@@ -4,6 +4,7 @@
 thin `TechAnalystAgent.analyze_batch` shim. Here it is constructed from stubs
 alone and exercised without `TechAnalystAgent` ever being imported.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -31,13 +32,25 @@ def test_part_takes_keyword_only_collaborators():
 
 def _verdict(symbol):
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", conviction="high",
-        thesis_invalid_if="loses 99", reasoning="because",
-        entry_price=100.0, stop_loss=95.0, reference_target=120.0,
-        setup_type="range", expected_horizon_sessions=10,
-        support_levels=[95.0], resistance_levels=[120.0],
-        reasoning_chain={"trend": "up", "momentum": "firm",
-                         "volatility": "normal", "support_resistance": "mid", "volume": "average"},
+        symbol=symbol,
+        rating="buy",
+        conviction="high",
+        thesis_invalid_if="loses 99",
+        reasoning="because",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=120.0,
+        setup_type="range",
+        expected_horizon_sessions=10,
+        support_levels=[95.0],
+        resistance_levels=[120.0],
+        reasoning_chain={
+            "trend": "up",
+            "momentum": "firm",
+            "volatility": "normal",
+            "support_resistance": "mid",
+            "volume": "average",
+        },
     )
 
 
@@ -86,20 +99,21 @@ def test_unreadable_stored_verdict_asks_the_seat(monkeypatch):
     monkeypatch.setattr(throttle, "carry_unchanged_tech_reads", lambda fps, prior: {"AAA": {"symbol": "AAA"}})
     spy, state = _Spy(), SimpleNamespace()
     TechReread(ask=lambda: spy, state=state).analyze_batch([{"symbol": "AAA"}], prior_ratings={"AAA": {}})
-    assert spy.calls == [["AAA"]]                            # fails open: never reuse what it cannot rebuild
+    assert spy.calls == [["AAA"]]  # fails open: never reuse what it cannot rebuild
 
 
 def test_ask_is_read_live_per_call_not_snapshotted():
     spies = [_Spy()]
     part = TechReread(ask=lambda: spies[-1], state=SimpleNamespace())
     part.analyze_batch([{"symbol": "AAA"}])
-    spies.append(_Spy())                                     # rebound after construction
+    spies.append(_Spy())  # rebound after construction
     part.analyze_batch([{"symbol": "BBB"}])
     assert spies[0].calls == [["AAA"]] and spies[1].calls == [["BBB"]]
 
 
 def test_witness_never_imports_the_owner_agent():
     import ast
+
     tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
     imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}

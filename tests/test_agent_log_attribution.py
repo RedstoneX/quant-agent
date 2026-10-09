@@ -67,22 +67,33 @@ _CONFIGURED_PRIMARY_MODEL = "gpt-5.5"
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
 def _risk_rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _trc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
@@ -113,13 +124,20 @@ def _evening_rc() -> EveningReasoningChain:
 def _macro_stub() -> MacroAnalysis:
     return MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="medium", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="medium",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=75.0, cash_recommendation_pct=25.0, reasoning="stub",
+            target_invested_pct=75.0,
+            cash_recommendation_pct=25.0,
+            reasoning="stub",
         ),
         summary="stub macro analysis",
     )
@@ -169,9 +187,20 @@ def _mock_config():
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_morning_session_persists_actual_model_for_all_five_agents(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
-    mock_macro_cls, mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, tmp_path,
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    tmp_path,
 ):
     """macro / tech / news / portfolio_manager / risk_manager (audit sites
     pipeline_stages.py:280,328,483,699 and pipeline.py:4704) must each
@@ -181,20 +210,27 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
 
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = (
-        {"SPY": spy_analysis}, _agent_result(_ACTUAL_FAILOVER_MODEL),
+        {"SPY": spy_analysis},
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
     mock_ta_cls.return_value = mock_ta
 
@@ -202,10 +238,15 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_pm.decide.return_value = (
         PortfolioDecision(
             reasoning_chain=_pm_rc(),
-            targets=[TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )],
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
             portfolio_view="Bullish",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -215,7 +256,9 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_rm = MagicMock()
     mock_rm.review.return_value = (
         RiskVerdict(
-            approved=True, modifications=[], reasoning="Approved",
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
             reasoning_chain=_risk_rc(),
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -239,7 +282,9 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
-    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
+    mock_broker.get_intraday_snapshots.return_value = {
+        "SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}
+    }
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -253,11 +298,15 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_na.analyze.return_value = (
         NewsIntelligenceReport(
             macro_narrative=MacroNarrative(
-                last_updated="2026-04-07", era_themes=["AI capex"],
+                last_updated="2026-04-07",
+                era_themes=["AI capex"],
                 current_regime="risk-on, AI-led rally",
             ),
-            state_changes=[], stock_news={},
-            pm_briefing="Bullish news", market_sentiment="bullish", confidence="medium",
+            state_changes=[],
+            stock_news={},
+            pm_briefing="Bullish news",
+            market_sentiment="bullish",
+            confidence="medium",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
@@ -283,8 +332,11 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     by_agent = {row["agent_name"]: row["model"] for row in logs}
 
     for agent_name in (
-        "macro_analyst", "tech_analyst", "news_analyst_morning",
-        "portfolio_manager", "risk_manager",
+        "macro_analyst",
+        "tech_analyst",
+        "news_analyst_morning",
+        "portfolio_manager",
+        "risk_manager",
     ):
         assert agent_name in by_agent, f"expected an agent_logs row for {agent_name}"
         assert by_agent[agent_name] == _ACTUAL_FAILOVER_MODEL, (
@@ -292,8 +344,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
             f"responding model {_ACTUAL_FAILOVER_MODEL!r}, got {by_agent[agent_name]!r}"
         )
         assert by_agent[agent_name] != _CONFIGURED_PRIMARY_MODEL, (
-            f"{agent_name}: agent_logs.model must not record the configured "
-            f"primary model on a failover"
+            f"{agent_name}: agent_logs.model must not record the configured primary model on a failover"
         )
 
 
@@ -311,9 +362,20 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_morning_session_decision_id_correlates_pm_rm_and_trade(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
-    mock_macro_cls, mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, tmp_path,
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    tmp_path,
 ):
     """Stage 1 correlation: the portfolio_manager agent_logs row, the
     risk_manager agent_logs row, and the resulting BUY's trades row must all
@@ -325,20 +387,27 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
 
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = (
-        {"SPY": spy_analysis}, _agent_result(_ACTUAL_FAILOVER_MODEL),
+        {"SPY": spy_analysis},
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
     mock_ta_cls.return_value = mock_ta
 
@@ -346,10 +415,15 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_pm.decide.return_value = (
         PortfolioDecision(
             reasoning_chain=_pm_rc(),
-            targets=[TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )],
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
             portfolio_view="Bullish",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -359,7 +433,9 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_rm = MagicMock()
     mock_rm.review.return_value = (
         RiskVerdict(
-            approved=True, modifications=[], reasoning="Approved",
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
             reasoning_chain=_risk_rc(),
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -383,7 +459,9 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
-    mock_broker.get_intraday_snapshots.return_value = {"SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}}
+    mock_broker.get_intraday_snapshots.return_value = {
+        "SPY": {"last_price": 507.0, "last_trade_at": todays_session_stamp()}
+    }
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
@@ -397,11 +475,15 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_na.analyze.return_value = (
         NewsIntelligenceReport(
             macro_narrative=MacroNarrative(
-                last_updated="2026-04-07", era_themes=["AI capex"],
+                last_updated="2026-04-07",
+                era_themes=["AI capex"],
                 current_regime="risk-on, AI-led rally",
             ),
-            state_changes=[], stock_news={},
-            pm_briefing="Bullish news", market_sentiment="bullish", confidence="medium",
+            state_changes=[],
+            stock_news={},
+            pm_briefing="Bullish news",
+            market_sentiment="bullish",
+            confidence="medium",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
@@ -447,13 +529,20 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
 def test_position_reviewer_persists_actual_model_on_failover():
     """midday/close (audit site pipeline.py:6109) must persist
     AgentResult.model, not config.llm.position_reviewer_model."""
-    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="SPY", qty=10.0, avg_entry=500.0, current_price=505.0,
-            market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
+            symbol="SPY",
+            qty=10.0,
+            avg_entry=500.0,
+            current_price=505.0,
+            market_value=5050.0,
+            unrealized_pnl=50.0,
+            sector="ETF",
         )
     ]
     pipeline.macro.get_macro_summary.return_value = {}
@@ -466,8 +555,10 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline._reconcile_fills = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(
-            reasoning_chain=_review_rc(), actions=[],
-            overall_assessment="stable", risk_level="low",
+            reasoning_chain=_review_rc(),
+            actions=[],
+            overall_assessment="stable",
+            risk_level="low",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
@@ -491,9 +582,13 @@ def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
     pipeline.config = _mock_config()
 
     new_filing = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [new_filing]
@@ -502,11 +597,16 @@ def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
 
     earnings_analyst = MagicMock()
     agent_result = _agent_result(_ACTUAL_FAILOVER_MODEL)
-    earnings_analyst.analyze_reports.return_value = [{
-        "symbol": "NVDA", "is_new": True, "form_type": "10-Q", "filing_date": "2026-04-20",
-        "agent_result": agent_result,
-        "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
-    }]
+    earnings_analyst.analyze_reports.return_value = [
+        {
+            "symbol": "NVDA",
+            "is_new": True,
+            "form_type": "10-Q",
+            "filing_date": "2026-04-20",
+            "agent_result": agent_result,
+            "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
+        }
+    ]
     pipeline.earnings_analyst = earnings_analyst
 
     result = pipeline.run_earnings_preprocess()
@@ -522,7 +622,16 @@ def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
 def test_evening_analyst_persists_actual_model_on_failover():
     """evening (audit site pipeline.py:6668) must persist AgentResult.model,
     not config.llm.evening_analyst_model."""
-    pipeline = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
+    pipeline = build_pipeline(
+        news_provider=MagicMock(),
+        news_analyst=MagicMock(),
+        earnings_provider=MagicMock(),
+        earnings_analyst=MagicMock(),
+        broker=MagicMock(),
+        db=MagicMock(),
+        macro=MagicMock(),
+        evening_analyst=MagicMock(),
+    )
     pipeline.config = _mock_config()
 
     pipeline.broker.is_trading_day.return_value = True
@@ -532,8 +641,11 @@ def test_evening_analyst_persists_actual_model_on_failover():
     pipeline.macro.get_macro_summary.return_value = {}
     pipeline.evening_analyst.analyze.return_value = (
         EveningReport(
-            reasoning_chain=_evening_rc(), daily_summary="Up", lessons="n/a",
-            tomorrow_outlook="Watch", risk_rating="low",
+            reasoning_chain=_evening_rc(),
+            daily_summary="Up",
+            lessons="n/a",
+            tomorrow_outlook="Watch",
+            risk_rating="low",
         ),
         _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
@@ -547,79 +659,82 @@ def test_evening_analyst_persists_actual_model_on_failover():
     assert kwargs["model"] != pipeline.config.llm.evening_analyst_model
 
 
-_VALID_META_REFLECTION_JSON = json.dumps({
-    "period": "2026-Q1",
-    "meta_reasoning_chain": {
-        "performance_vs_benchmark": "Alpha -3.6% over 60 days, DD -5.2%",
-        "secular_theme_audit": "nuclear/power ran 4x in missed_themes; we held 0",
-        "loss_autopsy_audit": "greed_top_chasing 3x -32% alpha leak",
-        "self_portrait_synthesis": (
-            "conviction_calibration: HIGH 38% vs LOW 62% inverted. "
-            "theme_breadth: tech-only, 4 of 6 misses in energy/materials. "
-            "loss_discipline: 3 wrongs rode thesis-break trigger. "
-            "execution_style: 7d avg hold vs medium-long mandate. "
-            "agent_balance: news_analyst 0 HIGH state_changes on energy."
-        ),
-        "portrait_gap_diagnosis": (
-            "Top 2 gaps: (1) theme_breadth owned by news_analyst "
-            "(4 missed themes, 0 HIGH state_changes). (2) "
-            "conviction_calibration owned by PM (24 pp HIGH vs LOW inversion)."
-        ),
-        "existing_prompt_audit": (
-            "Gap 1: news_analyst.md has no energy/materials coverage rule; "
-            "Learnings section empty -> append room. Gap 2: "
-            "portfolio_manager.md Step 5 has sizing scale but no "
-            "calibration feedback; Learnings has 1 entry on rr (different "
-            "axis) -> distinct append ok."
-        ),
-        "prompt_edit_reasoning": (
-            "greed_top_chasing worsened 2->3; news gap is 0 HIGH hits in 46 sessions"
-        ),
-    },
-    "style_self_portrait": (
-        "We are trend-followers more than trend-identifiers. Strong in "
-        "tech / AI themes but blind to energy + materials sectors. "
-        "Losses concentrate in greed-driven entries."
-    ),
-    "persistent_blindspots": ["nuclear/power sector"],
-    "root_cause_hypotheses": ["news prompt skews tech"],
-    "theme_coverage_report": {
-        "themes_caught_early": [],
-        "themes_caught_late": [],
-        "themes_missed_entirely": ["nuclear/power", "rare-earth"],
-        "emerging_themes_to_watch": [],
-        "mispricing_patterns": [],
-    },
-    "loss_pattern_report": {
-        "top_patterns": [{
-            "root_cause": "greed_top_chasing",
-            "occurrences": 3,
-            "total_loss_pct": -36.0,
-            "example_trades": ["MU 2026-01 -15%"],
-            "attributable_agent": "tech_analyst",
-            "proposed_guard": (
-                "Flag entries within 2% of 20-day high without a "
-                "confirming fundamental driver."
+_VALID_META_REFLECTION_JSON = json.dumps(
+    {
+        "period": "2026-Q1",
+        "meta_reasoning_chain": {
+            "performance_vs_benchmark": "Alpha -3.6% over 60 days, DD -5.2%",
+            "secular_theme_audit": "nuclear/power ran 4x in missed_themes; we held 0",
+            "loss_autopsy_audit": "greed_top_chasing 3x -32% alpha leak",
+            "self_portrait_synthesis": (
+                "conviction_calibration: HIGH 38% vs LOW 62% inverted. "
+                "theme_breadth: tech-only, 4 of 6 misses in energy/materials. "
+                "loss_discipline: 3 wrongs rode thesis-break trigger. "
+                "execution_style: 7d avg hold vs medium-long mandate. "
+                "agent_balance: news_analyst 0 HIGH state_changes on energy."
             ),
-        }],
-        "systemic_vs_alpha_split": "72% alpha, 28% systemic",
-        "worst_single_trade": "MU -15% 2026-01",
-        "corrigibility_score": "degrading",
-    },
-    "proposed_learnings": [{
-        "agent_name": "tech_analyst",
-        "operation": "append",
-        "learning_text": (
-            "Flag entries within 2% of 20-day high unless a confirming "
-            "fundamental driver is in reasoning_chain."
+            "portrait_gap_diagnosis": (
+                "Top 2 gaps: (1) theme_breadth owned by news_analyst "
+                "(4 missed themes, 0 HIGH state_changes). (2) "
+                "conviction_calibration owned by PM (24 pp HIGH vs LOW inversion)."
+            ),
+            "existing_prompt_audit": (
+                "Gap 1: news_analyst.md has no energy/materials coverage rule; "
+                "Learnings section empty -> append room. Gap 2: "
+                "portfolio_manager.md Step 5 has sizing scale but no "
+                "calibration feedback; Learnings has 1 entry on rr (different "
+                "axis) -> distinct append ok."
+            ),
+            "prompt_edit_reasoning": ("greed_top_chasing worsened 2->3; news gap is 0 HIGH hits in 46 sessions"),
+        },
+        "style_self_portrait": (
+            "We are trend-followers more than trend-identifiers. Strong in "
+            "tech / AI themes but blind to energy + materials sectors. "
+            "Losses concentrate in greed-driven entries."
         ),
-        "justification": (
-            "Q1 2026 saw 3 of 5 wrongs in greed_top_chasing for -32% "
-            "alpha leak; all entered within 2% of 20-day high."
-        ),
-    }],
-    "confidence": "medium",
-})
+        "persistent_blindspots": ["nuclear/power sector"],
+        "root_cause_hypotheses": ["news prompt skews tech"],
+        "theme_coverage_report": {
+            "themes_caught_early": [],
+            "themes_caught_late": [],
+            "themes_missed_entirely": ["nuclear/power", "rare-earth"],
+            "emerging_themes_to_watch": [],
+            "mispricing_patterns": [],
+        },
+        "loss_pattern_report": {
+            "top_patterns": [
+                {
+                    "root_cause": "greed_top_chasing",
+                    "occurrences": 3,
+                    "total_loss_pct": -36.0,
+                    "example_trades": ["MU 2026-01 -15%"],
+                    "attributable_agent": "tech_analyst",
+                    "proposed_guard": (
+                        "Flag entries within 2% of 20-day high without a confirming fundamental driver."
+                    ),
+                }
+            ],
+            "systemic_vs_alpha_split": "72% alpha, 28% systemic",
+            "worst_single_trade": "MU -15% 2026-01",
+            "corrigibility_score": "degrading",
+        },
+        "proposed_learnings": [
+            {
+                "agent_name": "tech_analyst",
+                "operation": "append",
+                "learning_text": (
+                    "Flag entries within 2% of 20-day high unless a confirming "
+                    "fundamental driver is in reasoning_chain."
+                ),
+                "justification": (
+                    "Q1 2026 saw 3 of 5 wrongs in greed_top_chasing for -32% "
+                    "alpha leak; all entered within 2% of 20-day high."
+                ),
+            }
+        ],
+        "confidence": "medium",
+    }
+)
 
 
 def test_meta_reflector_persists_actual_model_on_failover(tmp_path):
@@ -634,15 +749,16 @@ def test_meta_reflector_persists_actual_model_on_failover(tmp_path):
     pipeline.config = _mock_config()
     pipeline.meta_reflector = MagicMock()
 
-    reflection = QuarterlyMetaReflection.model_validate(
-        json.loads(_VALID_META_REFLECTION_JSON)
-    )
+    reflection = QuarterlyMetaReflection.model_validate(json.loads(_VALID_META_REFLECTION_JSON))
     pipeline.meta_reflector.analyze.return_value = (
-        reflection, _agent_result(_ACTUAL_FAILOVER_MODEL),
+        reflection,
+        _agent_result(_ACTUAL_FAILOVER_MODEL),
     )
 
     result = pipeline.run_quarterly_meta_reflection(
-        force=True, period_end=date(2026, 2, 15), evolution_root=str(tmp_path),
+        force=True,
+        period_end=date(2026, 2, 15),
+        evolution_root=str(tmp_path),
     )
 
     assert result["status"] == "reflected"

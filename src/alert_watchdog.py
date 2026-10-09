@@ -66,6 +66,7 @@ Every public function here swallows its own failures. This runs inside
 session exception and hide the real fault behind a watchdog bug. A watchdog
 that can break the thing it watches is worse than no watchdog.
 """
+
 from __future__ import annotations
 
 import logging
@@ -172,6 +173,7 @@ class AlertChannelHealth:
 # storage
 # ---------------------------------------------------------------------------
 
+
 def _resolve_db_path(db_path: str | Path | None) -> str | None:
     """Accept only a real path. Returns None when there is nothing usable.
 
@@ -250,9 +252,7 @@ def record_check(
         with conn:
             ensure_schema(conn)
             conn.execute(
-                f"INSERT INTO {TABLE} "
-                "(checked_at, ok, stage, detail, residue, source) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {TABLE} (checked_at, ok, stage, detail, residue, source) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     moment.replace(microsecond=0).isoformat(),
                     1 if ok else 0,
@@ -263,8 +263,7 @@ def record_check(
                 ),
             )
             conn.execute(
-                f"DELETE FROM {TABLE} WHERE id NOT IN "
-                f"(SELECT id FROM {TABLE} ORDER BY id DESC LIMIT ?)",
+                f"DELETE FROM {TABLE} WHERE id NOT IN (SELECT id FROM {TABLE} ORDER BY id DESC LIMIT ?)",
                 (ROW_LIMIT,),
             )
         return True
@@ -292,10 +291,7 @@ def read_health(
     except Exception as exc:  # noqa: BLE001
         return AlertChannelHealth("unknown", error=f"database unreadable: {exc}")
     try:
-        rows = conn.execute(
-            f"SELECT checked_at, ok, stage, detail FROM {TABLE} "
-            "ORDER BY id DESC LIMIT 200"
-        ).fetchall()
+        rows = conn.execute(f"SELECT checked_at, ok, stage, detail FROM {TABLE} ORDER BY id DESC LIMIT 200").fetchall()
     except Exception as exc:  # noqa: BLE001
         # Includes "no such table" on a database that predates this feature.
         return AlertChannelHealth("unknown", error=f"no check history: {exc}")
@@ -310,7 +306,8 @@ def read_health(
 
     newest = rows[0]
     last_ok_at = next(
-        (str(r["checked_at"]) for r in rows if int(r["ok"] or 0) == 1), None,
+        (str(r["checked_at"]) for r in rows if int(r["ok"] or 0) == 1),
+        None,
     )
     consecutive_failures = 0
     for row in rows:
@@ -344,6 +341,7 @@ from src.alert_watchdog_age import _age_hours  # noqa: E402,F401 -- lifted verba
 # ---------------------------------------------------------------------------
 # the check itself
 # ---------------------------------------------------------------------------
+
 
 def verify_alert_channel(
     notifier: Any | None = None,
@@ -394,6 +392,7 @@ def verify_alert_channel(
 # ---------------------------------------------------------------------------
 # what the operator sees
 # ---------------------------------------------------------------------------
+
 
 def session_note(before: AlertChannelHealth | None, result: Any | None) -> str | None:
     """The line a session appends to its own status message, or None.

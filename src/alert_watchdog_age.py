@@ -2,6 +2,7 @@
 
 Lifted verbatim out of `src/alert_watchdog.py`, which re-exports it.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

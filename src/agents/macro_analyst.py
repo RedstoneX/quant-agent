@@ -86,34 +86,28 @@ class MacroAnalystAgent(BaseAgent):
             if freshness == "empty":
                 return " (NO DATA returned this run — not a reading of any kind)"
             if freshness == "current":
-                return (
-                    f" (latest published reading{age}; normal {cadence} "
-                    f"release cadence)"
-                )
+                return f" (latest published reading{age}; normal {cadence} release cadence)"
             # None/unknown: freshness could not be established this run.
-            return (
-                f" (latest reading we hold{age}; freshness UNVERIFIED — "
-                f"FRED release metadata unavailable this run)"
-            )
+            return f" (latest reading we hold{age}; freshness UNVERIFIED — FRED release metadata unavailable this run)"
 
         universe_text = ", ".join(universe) if universe else "N/A"
 
         prior_state_section = "## Yesterday's Macro State\nNo prior state on file (first run)."
         if last_state:
             prior_state_section = f"""## Yesterday's Macro State (for shift detection)
-- Date: {last_state.get('date', 'N/A')}
-- Regime: {last_state.get('regime', 'N/A')}
-- Confidence: {last_state.get('confidence', 'N/A')}
-- Equity outlook: {last_state.get('equity_outlook', 'N/A')}
-- Prior summary: {last_state.get('summary', 'N/A')}"""
+- Date: {last_state.get("date", "N/A")}
+- Regime: {last_state.get("regime", "N/A")}
+- Confidence: {last_state.get("confidence", "N/A")}
+- Equity outlook: {last_state.get("equity_outlook", "N/A")}
+- Prior summary: {last_state.get("summary", "N/A")}"""
 
         news_section = "## Yesterday's News Narrative\nNot available."
         if news_narrative:
             tracker = news_narrative.get("key_state_tracker", {}) or {}
             tracker_text = "\n".join(f"  - {k}: {v}" for k, v in tracker.items()) or "  (empty)"
             news_section = f"""## Yesterday's News Narrative (cross-reference)
-- Regime: {news_narrative.get('current_regime', 'N/A')}
-- Era themes: {'; '.join(news_narrative.get('era_themes', []) or []) or 'N/A'}
+- Regime: {news_narrative.get("current_regime", "N/A")}
+- Era themes: {"; ".join(news_narrative.get("era_themes", []) or []) or "N/A"}
 - State tracker:
 {tracker_text}"""
 
@@ -126,9 +120,13 @@ class MacroAnalystAgent(BaseAgent):
         # two seats cannot end up reading differently-worded versions of the
         # same calendar — and so neither of them can be handed silence.
         from src.data.event_calendar import format_macro_events_section
+
         events_section = format_macro_events_section(
-            macro_events, event_coverage, event_horizon_days,
-            fomc_meetings=fomc_meetings, fomc_coverage=fomc_coverage,
+            macro_events,
+            event_coverage,
+            event_horizon_days,
+            fomc_meetings=fomc_meetings,
+            fomc_coverage=fomc_coverage,
             heading=(
                 f"## Scheduled Macro Releases, next {event_horizon_days} "
                 f"calendar days — FETCHED (do NOT answer from memory)"
@@ -142,53 +140,53 @@ class MacroAnalystAgent(BaseAgent):
 ## Current Macro Indicators
 
 ### VIX (CBOE Volatility Index){_stale(vix)}
-- Current: {vix.get('current', 'N/A')}
-- 5-day Average: {vix.get('mean_5d', 'N/A')}
-- Trend: {vix.get('trend', 'N/A')}
+- Current: {vix.get("current", "N/A")}
+- 5-day Average: {vix.get("mean_5d", "N/A")}
+- Trend: {vix.get("trend", "N/A")}
 
 ### Treasury Yields{_stale(treasury)}
-- 3-Month: {treasury.get('us3mo', 'N/A')}%
-- 2-Year: {treasury.get('us2y', 'N/A')}%
-- 10-Year: {treasury.get('us10y', 'N/A')}%
-- 2Y-10Y Spread: {treasury.get('spread_2_10', 'N/A')}%
-- Inverted (2Y/10Y): {treasury.get('inverted', 'N/A')}
-- 3M-10Y Spread: {treasury.get('spread_3m_10y', 'N/A')}%
-- Inverted (3M/10Y): {treasury.get('inverted_3m_10y', 'N/A')}
+- 3-Month: {treasury.get("us3mo", "N/A")}%
+- 2-Year: {treasury.get("us2y", "N/A")}%
+- 10-Year: {treasury.get("us10y", "N/A")}%
+- 2Y-10Y Spread: {treasury.get("spread_2_10", "N/A")}%
+- Inverted (2Y/10Y): {treasury.get("inverted", "N/A")}
+- 3M-10Y Spread: {treasury.get("spread_3m_10y", "N/A")}%
+- Inverted (3M/10Y): {treasury.get("inverted_3m_10y", "N/A")}
 
 ### Fed Funds Rate (DFF, daily){_stale(fed)}
-- Current: {fed.get('current', 'N/A')}%
-- 30-day change: {fed.get('change_30d', 'N/A')}
+- Current: {fed.get("current", "N/A")}%
+- 30-day change: {fed.get("change_30d", "N/A")}
 
 ### Inflation{_stale(infl, monthly=True)}
-- Headline CPI YoY: {infl.get('headline_cpi_yoy', 'N/A')}% (MoM: {infl.get('headline_cpi_mom', 'N/A')}%)
-- Core CPI YoY: {infl.get('core_cpi_yoy', 'N/A')}% (MoM: {infl.get('core_cpi_mom', 'N/A')}%)
-- PCE YoY: {infl.get('pce_yoy', 'N/A')}%
+- Headline CPI YoY: {infl.get("headline_cpi_yoy", "N/A")}% (MoM: {infl.get("headline_cpi_mom", "N/A")}%)
+- Core CPI YoY: {infl.get("core_cpi_yoy", "N/A")}% (MoM: {infl.get("core_cpi_mom", "N/A")}%)
+- PCE YoY: {infl.get("pce_yoy", "N/A")}%
 
 ### Real 10Y Yield & Breakeven Inflation (DFII10, T10YIE){_stale(real_rates)}
-- Real 10Y Yield: {real_rates.get('real_10y', 'N/A')}%
-- 10Y Breakeven Inflation: {real_rates.get('breakeven_10y', 'N/A')}%
+- Real 10Y Yield: {real_rates.get("real_10y", "N/A")}%
+- 10Y Breakeven Inflation: {real_rates.get("breakeven_10y", "N/A")}%
 
 ### Unemployment (UNRATE){_stale(une, monthly=True)}
-- Current: {une.get('current', 'N/A')}%
-- Change 3m: {une.get('change_3m', 'N/A')}pp
-- Change 12m: {une.get('change_12m', 'N/A')}pp
+- Current: {une.get("current", "N/A")}%
+- Change 3m: {une.get("change_3m", "N/A")}pp
+- Change 12m: {une.get("change_12m", "N/A")}pp
 
 ### Initial Jobless Claims (ICSA, weekly){_stale(claims, weekly=True)}
-- Current: {claims.get('current', 'N/A')}
-- 4-week change: {claims.get('change_4w', 'N/A')}
-- Trend: {claims.get('trend', 'N/A')}
+- Current: {claims.get("current", "N/A")}
+- 4-week change: {claims.get("change_4w", "N/A")}
+- Trend: {claims.get("trend", "N/A")}
 
 ### HY Credit Spread (BAMLH0A0HYM2){_stale(hy)}
-- Current: {hy.get('current_bps', 'N/A')}bps
-- 30-day change: {hy.get('change_30d_bps', 'N/A')}bps
+- Current: {hy.get("current_bps", "N/A")}bps
+- 30-day change: {hy.get("change_30d_bps", "N/A")}bps
 
 ### IG Credit Spread (BAMLC0A0CM){_stale(ig)}
-- Current: {ig.get('current_bps', 'N/A')}bps
-- 30-day change: {ig.get('change_30d_bps', 'N/A')}bps
+- Current: {ig.get("current_bps", "N/A")}bps
+- 30-day change: {ig.get("change_30d_bps", "N/A")}bps
 
 ### Dollar Index (DTWEXBGS, Fed Broad Nominal){_stale(dollar, weekly=True)}
-- Current: {dollar.get('current', 'N/A')}
-- 30-day change: {dollar.get('change_30d', 'N/A')}
+- Current: {dollar.get("current", "N/A")}
+- 30-day change: {dollar.get("change_30d", "N/A")}
 
 {prior_state_section}
 
@@ -270,6 +268,7 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         # _sanitize_sector_guidance @model_validator on MacroAnalysis.
         parsed = self._drop_invalid_key_observations(parsed)
         from src.seat_heal import coerce_macro_shape
+
         parsed, _fixes = coerce_macro_shape(parsed)
         try:
             analysis = MacroAnalysis(**parsed)
@@ -281,7 +280,8 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
             # failure — never a loop, never invented reasoning_chain text.
             self._heal_retry_used = True
             logger.warning(
-                "Macro analysis failed validation (%s); one paid heal retry", e,
+                "Macro analysis failed validation (%s); one paid heal retry",
+                e,
             )
             try:
                 return self.analyze(
@@ -349,8 +349,12 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         sanity check fired correctly).
         """
         primary_keys = (
-            "vix", "treasury", "fed_funds_rate",
-            "inflation", "unemployment", "credit_spread",
+            "vix",
+            "treasury",
+            "fed_funds_rate",
+            "inflation",
+            "unemployment",
+            "credit_spread",
         )
         _USABLE = {"current", "unknown"}
         _BLOCKING = {"overdue", "empty"}
@@ -436,8 +440,9 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "Macro analyst: dropping non-dict key_observations entry "
-                    "at index %d: %r", i, item,
+                    "Macro analyst: dropping non-dict key_observations entry at index %d: %r",
+                    i,
+                    item,
                 )
                 continue
             try:
@@ -446,7 +451,8 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
                 indicator = item.get("indicator") or f"<idx {i}>"
                 logger.warning(
                     "Macro analyst: dropping malformed key_observation %r: %s",
-                    indicator, e,
+                    indicator,
+                    e,
                 )
                 continue
             valid.append(item)

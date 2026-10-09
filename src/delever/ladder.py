@@ -35,7 +35,8 @@ class DeleverLadder:
     standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         sweep_symbol=None,
         broker=None,
         config=None,
@@ -47,7 +48,9 @@ class DeleverLadder:
         self.db = db
 
     def _live_delever_price(
-        self, symbol: str, side: str,
+        self,
+        symbol: str,
+        side: str,
     ) -> tuple[float | None, float | None]:
         """Price a MUST-FILL emergency de-lever off the LIVE quote at submit
         time, never off a fixed % of a possibly-stale mark.
@@ -93,8 +96,9 @@ class DeleverLadder:
                 ask = a if math.isfinite(a) and a > 0 else None
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "de-lever: live quote unusable for %s (%s) — falling back to a "
-                "MARKET order, the guaranteed fill", symbol, exc,
+                "de-lever: live quote unusable for %s (%s) — falling back to a MARKET order, the guaranteed fill",
+                symbol,
+                exc,
             )
             bid = ask = None
         if bid is not None and ask is not None:
@@ -126,7 +130,8 @@ class DeleverLadder:
         risk_cfg = getattr(getattr(self, "config", None), "risk", None)
         base_x = _risk_number(getattr(risk_cfg, "max_gross_exposure_x", None), 2.0)
         maintenance_pct = _risk_number(
-            getattr(risk_cfg, "maintenance_margin_pct", None), 25.0,
+            getattr(risk_cfg, "maintenance_margin_pct", None),
+            25.0,
         )
         # Guard 2 (2026-09-02 operational safety guard): a non-finite
         # CURRENT equity read must not fall through to
@@ -169,11 +174,15 @@ class DeleverLadder:
                 "§11.2: current equity read is non-finite (%r) — forcing "
                 "the gross-exposure ceiling to its floor rung (%.1fx) and "
                 "alerting the owner instead of assuming zero drawdown.",
-                total_value, floor_x,
+                total_value,
+                floor_x,
             )
             ceiling = GrossCeiling(
-                ceiling_x=floor_x, base_x=base_x, drawdown_pct=None,
-                alert_owner=True, rung="bad_read",
+                ceiling_x=floor_x,
+                base_x=base_x,
+                drawdown_pct=None,
+                alert_owner=True,
+                rung="bad_read",
                 reason=(
                     f"Current equity read came back non-finite "
                     f"({total_value!r}) — a documented Alpaca market-open "
@@ -197,17 +206,21 @@ class DeleverLadder:
                 try:
                     rows = self.db.get_daily_pnl(limit=252)
                     drawdown_pct = peak_to_trough_pct(
-                        [r.get("total_value") for r in (rows or [])], ctx.total_value,
+                        [r.get("total_value") for r in (rows or [])],
+                        ctx.total_value,
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "§11.2: could not read the equity curve for the drawdown "
                         "ladder — holding the standing %.1fx ceiling and trimming "
-                        "nothing: %s", base_x, e,
+                        "nothing: %s",
+                        base_x,
+                        e,
                     )
             ceiling = resolve_gross_ceiling(drawdown_pct, base_x=base_x)
         gross = gross_exposure(
-            ctx.positions, cash_park_symbol=self._sweep_symbol(),
+            ctx.positions,
+            cash_park_symbol=self._sweep_symbol(),
         )
         equity = ctx.total_value if ctx.total_value else 0.0
         ctx.leverage = {
@@ -223,10 +236,11 @@ class DeleverLadder:
             # the day the sourced threshold moves (board item 182).
             "alert_pct": GROSS_LADDER_ALERT_PCT,
             "reason": ceiling.reason,
-            "distance_to_forced_liquidation_pct":
-                distance_to_forced_liquidation_pct(
-                    gross, equity, maintenance_margin_pct=maintenance_pct,
-                ),
+            "distance_to_forced_liquidation_pct": distance_to_forced_liquidation_pct(
+                gross,
+                equity,
+                maintenance_margin_pct=maintenance_pct,
+            ),
         }
         return ceiling
 
@@ -258,7 +272,9 @@ class DeleverLadder:
             25.0,
         )
         base_distance = distance_to_forced_liquidation_pct(
-            base_x * equity, equity, maintenance_margin_pct=maintenance_pct,
+            base_x * equity,
+            equity,
+            maintenance_margin_pct=maintenance_pct,
         )
         if not isinstance(base_distance, (int, float)):
             return False

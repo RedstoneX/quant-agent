@@ -30,13 +30,21 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    NO_STATED_STRENGTH, SmartMoneyFinding, SmartMoneyObservation,
+    NO_STATED_STRENGTH,
+    SmartMoneyFinding,
+    SmartMoneyObservation,
 )
 
 
 def _obs(
-    *, actor="Example Member", direction="buy", amount_range="$50,001-$100,000",
-    transaction_date=date(2026, 8, 20), lag=2, age=1, freshness="fresh",
+    *,
+    actor="Example Member",
+    direction="buy",
+    amount_range="$50,001-$100,000",
+    transaction_date=date(2026, 8, 20),
+    lag=2,
+    age=1,
+    freshness="fresh",
     economic_role="actionable",
 ):
     # stream="insider" (not the default "congressional") deliberately: a
@@ -47,24 +55,35 @@ def _obs(
     # mapping, not that unrelated eligibility rule, so use the insider
     # stream, which is not subject to it.
     return SmartMoneyObservation(
-        symbol="NVDA", stream="insider", actor=actor, direction=direction,
+        symbol="NVDA",
+        stream="insider",
+        actor=actor,
+        direction=direction,
         amount_range=amount_range,
         transaction_date=transaction_date,
         disclosure_date=transaction_date,
         source_url="https://example.test/filing",
-        lag_days=lag, disclosure_age_days=age, freshness=freshness,
+        lag_days=lag,
+        disclosure_age_days=age,
+        freshness=freshness,
         economic_role=economic_role,
     )
 
 
 def _finding(
-    *, stance="bullish", economic_role="actionable",
-    summary="cluster of insider buys", why_now="fresh Form 4 purchases ahead of earnings",
+    *,
+    stance="bullish",
+    economic_role="actionable",
+    summary="cluster of insider buys",
+    why_now="fresh Form 4 purchases ahead of earnings",
     observations=None,
 ):
     return SmartMoneyFinding(
-        symbol="NVDA", stance=stance, economic_role=economic_role,
-        summary=summary, why_now=why_now,
+        symbol="NVDA",
+        stance=stance,
+        economic_role=economic_role,
+        summary=summary,
+        why_now=why_now,
         observations=observations or [_obs(economic_role=economic_role)],
     )
 
@@ -72,6 +91,7 @@ def _finding(
 # ==========================================================================
 # direction: stance -> AnalystVerdict.direction, "mixed" folds to "neutral"
 # ==========================================================================
+
 
 def test_bullish_stance_maps_to_bullish_direction():
     v = _finding(stance="bullish").to_verdict()
@@ -108,12 +128,16 @@ def test_mixed_stance_folds_onto_neutral_not_a_fifth_direction():
 # conviction: economic_role -> conviction (NEW JUDGMENT)
 # ==========================================================================
 
-@pytest.mark.parametrize("role,expected", [
-    ("actionable", "high"),
-    ("confirmatory", "medium"),
-    ("contradictory", "low"),
-    ("historical", "low"),
-])
+
+@pytest.mark.parametrize(
+    "role,expected",
+    [
+        ("actionable", "high"),
+        ("confirmatory", "medium"),
+        ("contradictory", "low"),
+        ("historical", "low"),
+    ],
+)
 def test_economic_role_maps_to_conviction(role, expected):
     v = _finding(stance="bullish", economic_role=role).to_verdict()
     assert v.conviction == expected
@@ -134,8 +158,10 @@ def test_conviction_mapping_reflects_role_even_for_a_neutral_call():
 # so the role was being counted twice at an unsourced spacing).
 # ==========================================================================
 
+
 @pytest.mark.parametrize(
-    "role", ["actionable", "confirmatory", "contradictory", "historical"],
+    "role",
+    ["actionable", "confirmatory", "contradictory", "historical"],
 )
 def test_directional_magnitude_is_flat_regardless_of_role(role):
     v = _finding(stance="bullish", economic_role=role).to_verdict()
@@ -162,6 +188,7 @@ def test_neutral_magnitude_is_always_absent_regardless_of_role():
 # evidence: summary + why_now + up to 5 most-recent observations
 # ==========================================================================
 
+
 def test_evidence_carries_summary_why_now_and_observations():
     v = _finding(
         stance="bullish",
@@ -177,10 +204,7 @@ def test_evidence_carries_summary_why_now_and_observations():
 
 
 def test_evidence_caps_observations_at_five_most_recent():
-    obs = [
-        _obs(actor=f"Actor {i}", transaction_date=date(2026, 8, 1 + i))
-        for i in range(8)
-    ]
+    obs = [_obs(actor=f"Actor {i}", transaction_date=date(2026, 8, 1 + i)) for i in range(8)]
     v = _finding(stance="bullish", observations=obs).to_verdict()
     obs_items = [e for e in v.evidence if e.label == "observation"]
     assert len(obs_items) == 5
@@ -194,9 +218,11 @@ def test_evidence_caps_observations_at_five_most_recent():
 # invalidation: "" for neutral (allowed); constructed from why_now otherwise
 # ==========================================================================
 
+
 def test_directional_invalidation_is_constructed_from_why_now():
     v = _finding(
-        stance="bullish", why_now="cluster buying ahead of the earnings print",
+        stance="bullish",
+        why_now="cluster buying ahead of the earnings print",
     ).to_verdict()
     assert v.invalidation != ""
     assert "cluster buying ahead of the earnings print" in v.invalidation
@@ -210,6 +236,7 @@ def test_neutral_invalidation_is_blank():
 # ==========================================================================
 # identity + validity
 # ==========================================================================
+
 
 def test_seat_is_smart_money():
     v = _finding(stance="bullish").to_verdict()
@@ -232,7 +259,8 @@ def test_a_directional_verdict_from_this_seat_still_validates_the_shared_shape()
 
 def test_a_bearish_finding_states_no_signed_magnitude():
     v = _finding(
-        stance="bearish", economic_role="actionable",
+        stance="bearish",
+        economic_role="actionable",
         observations=[_obs(direction="sell")],
     ).to_verdict()
     # Item 65, 2026-09-26: smart_money has no strength scale, so there is

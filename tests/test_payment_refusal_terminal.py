@@ -50,6 +50,7 @@ def _err(status=None, message="boom", cls=RuntimeError):
 
 # --- classification: the STATUS CODE decides, never the English ------------
 
+
 def test_402_is_a_payment_refusal_whatever_the_wording():
     assert is_payment_refusal(_err(402, "This request requires more credits"))
     # A provider may reword the message at any time; the answer must not move.
@@ -88,6 +89,7 @@ def test_any_payment_refusal_scans_the_whole_attempt_list():
 
 # --- the loop: one attempt, no failover onto the same dead account ---------
 
+
 def _run_with_402(tmp_path, monkeypatch, *, retries="3"):
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", retries)
     notifier = _Notifier()
@@ -97,7 +99,8 @@ def _run_with_402(tmp_path, monkeypatch, *, retries="3"):
     # No "can only afford N": the provider named no servable allowance, so
     # there is nothing to re-ask at and the refusal is terminal at once.
     client.messages.create.side_effect = _err(
-        402, "This request requires more credits.",
+        402,
+        "This request requires more credits.",
     )
     with patch("anthropic.Anthropic", return_value=client):
         agent = _Agent(api_key="x", model="claude-sonnet-4-6", max_tokens=64)
@@ -116,7 +119,8 @@ def _run_with_402(tmp_path, monkeypatch, *, retries="3"):
 
 
 def test_402_demotes_on_the_first_attempt_without_spending_the_budget(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     circuit, _, client, failover, tertiary = _run_with_402(tmp_path, monkeypatch)
     # ONE provider attempt, with three retries configured and two further
@@ -141,7 +145,8 @@ def test_the_suspension_says_the_account_is_out_of_credit(tmp_path, monkeypatch)
 
 
 def test_a_non_payment_failure_keeps_the_unknown_cost_wording(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The honest-cause rename must not swallow failures whose cost really
     IS unknown."""

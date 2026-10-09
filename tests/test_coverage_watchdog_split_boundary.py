@@ -8,6 +8,7 @@ the once-a-day alert claims and `awaiting_print` the tape-has-not-printed
 marker, all moved verbatim. Clause 5 of tests/boundary_harness.py: each part
 has a test that imports it and never names the pipeline.
 """
+
 from __future__ import annotations
 
 import pytest

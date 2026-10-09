@@ -51,7 +51,9 @@ def _risk_settings() -> dict:
 
 def test_no_third_independent_clamp_in_the_sizing_path():
     """A new upper bound on `allocation_pct` makes the ordering unreadable."""
-    tree = ast.Module(body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[])
+    tree = ast.Module(
+        body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[]
+    )
     seen = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in SIZING_FUNCTIONS):
@@ -66,18 +68,11 @@ def test_no_third_independent_clamp_in_the_sizing_path():
             # Compare made this check blind the moment a guard was added,
             # which is how it missed the risk cap after that cap moved into
             # a shared helper (2026-10-01).
-            tests = (
-                list(inner.test.values)
-                if isinstance(inner.test, ast.BoolOp)
-                else [inner.test]
-            )
+            tests = list(inner.test.values) if isinstance(inner.test, ast.BoolOp) else [inner.test]
             for test in tests:
                 if not isinstance(test, ast.Compare):
                     continue
-                if not (
-                    isinstance(test.left, ast.Name)
-                    and test.left.id == "allocation_pct"
-                ):
+                if not (isinstance(test.left, ast.Name) and test.left.id == "allocation_pct"):
                     continue
                 if not isinstance(test.ops[0], ast.Gt):
                     continue
@@ -103,15 +98,16 @@ def test_no_third_independent_clamp_in_the_sizing_path():
 def test_the_risk_cap_is_the_envelope_in_notional_units():
     """`alloc_cap_by_risk` must stay a unit conversion, not a new bound."""
     source = "\n".join(p.read_text() for p in sorted(CONSTRUCTOR.glob("*_entry.py")))
-    tree = ast.Module(body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[])
+    tree = ast.Module(
+        body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[]
+    )
     found = 0
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in SIZING_FUNCTIONS):
             continue
         for inner in ast.walk(node):
             if isinstance(inner, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "alloc_cap_by_risk"
-                for t in inner.targets
+                isinstance(t, ast.Name) and t.id == "alloc_cap_by_risk" for t in inner.targets
             ):
                 found += 1
                 expr = ast.unparse(inner.value)
@@ -131,9 +127,7 @@ def test_the_risk_cap_is_the_envelope_in_notional_units():
 
     # And the shared helper really is the envelope in notional units, built
     # from the ratified percentage and the trade's own risk per share.
-    helper = (
-        pathlib.Path(__file__).resolve().parents[1] / "src/risk/constants.py"
-    ).read_text()
+    helper = (pathlib.Path(__file__).resolve().parents[1] / "src/risk/constants.py").read_text()
     body = helper.split("def risk_budget_allocation_pct", 1)[1]
     body = body[: body.find("\ndef ")] if "\ndef " in body else body
     assert "risk_dollars_allowed" in body
@@ -186,9 +180,7 @@ def test_all_three_ledger_rows_state_the_same_answer():
 
     risk = _risk_settings()
     ceiling = float(risk["max_position_pct"])
-    crossover = single_name_crossover_stop_pct(
-        float(risk["max_position_risk_pct"]), ceiling
-    )
+    crossover = single_name_crossover_stop_pct(float(risk["max_position_risk_pct"]), ceiling)
     answer_marks = (f"{ceiling:.0f}% of total account equity", f"{crossover:.2f}%")
 
     for ident in (

@@ -37,6 +37,7 @@ NOTHING HERE CAN BREAK A PLACEMENT. The whole body is wrapped: a failure logs
 a full traceback at ERROR and returns, and the stop proceeds unchanged. This
 is observation only -- it changes no order, no stop, no sizing and no buffer.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,9 +65,9 @@ LIMIT_FROM_BUFFER = "buffer"
 LIMIT_FROM_CALLER = "caller"
 
 
-def stop_leg_measurement(*, leg: str, symbol: str, qty, side: str,
-                         stop_price, limit_price, buffer_pct,
-                         limit_source: str) -> dict:
+def stop_leg_measurement(
+    *, leg: str, symbol: str, qty, side: str, stop_price, limit_price, buffer_pct, limit_source: str
+) -> dict:
     """The per-placement facts a later reader needs to judge the buffer's size.
 
     Pure: builds the payload and computes the trigger-to-limit distance. Kept
@@ -93,9 +94,9 @@ def stop_leg_measurement(*, leg: str, symbol: str, qty, side: str,
     }
 
 
-def record_stop_leg(owner, *, leg: str, symbol: str, qty, side: str,
-                    stop_price, limit_price, buffer_pct,
-                    limit_source: str) -> None:
+def record_stop_leg(
+    owner, *, leg: str, symbol: str, qty, side: str, stop_price, limit_price, buffer_pct, limit_source: str
+) -> None:
     """Write ONE row for ONE protective-stop placement. Never raises.
 
     `owner` is whatever the call site already holds; the ledger is found on it
@@ -105,8 +106,13 @@ def record_stop_leg(owner, *, leg: str, symbol: str, qty, side: str,
     """
     try:
         measurement = stop_leg_measurement(
-            leg=leg, symbol=symbol, qty=qty, side=side, stop_price=stop_price,
-            limit_price=limit_price, buffer_pct=buffer_pct,
+            leg=leg,
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            stop_price=stop_price,
+            limit_price=limit_price,
+            buffer_pct=buffer_pct,
             limit_source=limit_source,
         )
         ledger = ledger_in_reach(owner)
@@ -114,22 +120,25 @@ def record_stop_leg(owner, *, leg: str, symbol: str, qty, side: str,
         if conn is None:
             logger.debug(
                 "stop-leg row for %s (%s) not recorded: no ledger in reach",
-                symbol, leg,
+                symbol,
+                leg,
             )
             return
         ReconciliationLog(conn=conn).record(
-            kind=f"{KIND_PREFIX}:{leg}", agreed=True,
+            kind=f"{KIND_PREFIX}:{leg}",
+            agreed=True,
             detail=json.dumps(measurement, default=str),
         )
     except Exception:  # noqa: BLE001 - an observer must never break a stop
         logger.error(
-            "stop-leg row for %s (%s) could not be recorded", symbol, leg,
+            "stop-leg row for %s (%s) could not be recorded",
+            symbol,
+            leg,
             exc_info=True,
         )
 
 
-def record_leg_for(placer, leg, symbol, qty, side, stop_price_q,
-                   limit_price_q, limit_source) -> None:
+def record_leg_for(placer, leg, symbol, qty, side, stop_price_q, limit_price_q, limit_source) -> None:
     """The row for one placement, from the stop placer's own call site.
 
     The buffer in force is read off the placer, so a swapped buffer is
@@ -137,8 +146,13 @@ def record_leg_for(placer, leg, symbol, qty, side, stop_price_q,
     class default. Positional, because the call site may not grow.
     """
     record_stop_leg(
-        placer, leg=leg, symbol=symbol, qty=qty, side=side,
-        stop_price=stop_price_q, limit_price=limit_price_q,
+        placer,
+        leg=leg,
+        symbol=symbol,
+        qty=qty,
+        side=side,
+        stop_price=stop_price_q,
+        limit_price=limit_price_q,
         buffer_pct=getattr(placer, "STOP_LIMIT_BUFFER_PCT", None),
         limit_source=limit_source,
     )

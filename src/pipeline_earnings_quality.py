@@ -74,11 +74,17 @@ def _earnings_analysis_has_real_figures(analysis: dict) -> bool:
     cash_flow = analysis.get("cash_flow") or {}
     balance_sheet = analysis.get("balance_sheet") or {}
     candidate_fields = [
-        revenue.get("total"), revenue.get("yoy_growth"),
-        profitability.get("gross_margin"), profitability.get("operating_margin"),
-        profitability.get("net_income"), profitability.get("eps"),
-        cash_flow.get("operating_cf"), cash_flow.get("free_cf"), cash_flow.get("capex"),
-        balance_sheet.get("cash_and_equivalents"), balance_sheet.get("total_debt"),
+        revenue.get("total"),
+        revenue.get("yoy_growth"),
+        profitability.get("gross_margin"),
+        profitability.get("operating_margin"),
+        profitability.get("net_income"),
+        profitability.get("eps"),
+        cash_flow.get("operating_cf"),
+        cash_flow.get("free_cf"),
+        cash_flow.get("capex"),
+        balance_sheet.get("cash_and_equivalents"),
+        balance_sheet.get("total_debt"),
     ]
     return any(_earnings_field_disclosed(v) for v in candidate_fields)
 
@@ -92,12 +98,24 @@ def _earnings_analysis_has_real_figures(analysis: dict) -> bool:
 # substring match on phrases that mean "I could not actually get this data",
 # not by one hardcoded exact string.
 _EARNINGS_DATA_QUALITY_RED_FLAGS = (
-    "unable to find", "unable to extract", "unable to locate",
-    "could not extract", "could not find", "could not locate",
-    "no figures available", "no financial data", "no data available",
-    "not available in the filing", "filing incomplete", "incomplete filing",
-    "insufficient data", "no meaningful data", "unable to determine",
-    "unable to assess", "data not found", "figures not found",
+    "unable to find",
+    "unable to extract",
+    "unable to locate",
+    "could not extract",
+    "could not find",
+    "could not locate",
+    "no figures available",
+    "no financial data",
+    "no data available",
+    "not available in the filing",
+    "filing incomplete",
+    "incomplete filing",
+    "insufficient data",
+    "no meaningful data",
+    "unable to determine",
+    "unable to assess",
+    "data not found",
+    "figures not found",
 )
 
 
@@ -134,9 +152,14 @@ def _earnings_data_quality_flags_problem(data_quality) -> bool:
 # oversight.
 
 _UNIT_MULTIPLIERS = {
-    "b": 1e9, "bn": 1e9, "billion": 1e9,
-    "m": 1e6, "mm": 1e6, "million": 1e6,
-    "k": 1e3, "thousand": 1e3,
+    "b": 1e9,
+    "bn": 1e9,
+    "billion": 1e9,
+    "m": 1e6,
+    "mm": 1e6,
+    "million": 1e6,
+    "k": 1e3,
+    "thousand": 1e3,
 }
 
 # A number, optionally $-prefixed / comma-separated / %-suffixed / unit-
@@ -288,10 +311,7 @@ def _classify_earnings_status(earnings_results: list) -> str:
       bucket for an ordinary mixed day) would bury exactly the alert this
       exists to raise.
     """
-    analyzed = [
-        item for item in earnings_results
-        if isinstance(item, dict) and isinstance(item.get("analysis"), dict)
-    ]
+    analyzed = [item for item in earnings_results if isinstance(item, dict) and isinstance(item.get("analysis"), dict)]
     if not analyzed:
         return "ok"
 
@@ -299,9 +319,7 @@ def _classify_earnings_status(earnings_results: list) -> str:
     contradicted = []
     for item in analyzed:
         a = item["analysis"]
-        if not _earnings_analysis_has_real_figures(a) or _earnings_data_quality_flags_problem(
-            a.get("data_quality")
-        ):
+        if not _earnings_analysis_has_real_figures(a) or _earnings_data_quality_flags_problem(a.get("data_quality")):
             continue
         mismatches = _earnings_xbrl_mismatch_fields(a, item.get("xbrl_facts") or {})
         if mismatches:
@@ -311,8 +329,7 @@ def _classify_earnings_status(earnings_results: list) -> str:
 
     if contradicted:
         logger.error(
-            "Earnings: %d filing(s) this run reported figures that "
-            "materially contradict SEC XBRL data — %s",
+            "Earnings: %d filing(s) this run reported figures that materially contradict SEC XBRL data — %s",
             len(contradicted),
             "; ".join(f"{sym}: {', '.join(fields)}" for sym, fields in contradicted),
         )

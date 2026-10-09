@@ -67,6 +67,7 @@ maximum price.
 A screen that could not READ something (a data outage) is INCONCLUSIVE: it
 admits nothing and counts neither for nor against an admitted name.
 """
+
 from __future__ import annotations
 
 import json
@@ -117,10 +118,19 @@ _NON_COMMON_NAME = re.compile(
 #: https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/understand-edgarlink-online-submission-types
 #: Spellings checked against EDGAR full-text search on 2026-09-19 (each
 #: returned live filings in 2026-06..09).
-TAKEOVER_FORMS = frozenset({
-    "PREM14A", "DEFM14A", "PREM14C", "DEFM14C",
-    "SC 14D9", "SC14D9C", "SC TO-T", "SC TO-C", "SC 13E3",
-})
+TAKEOVER_FORMS = frozenset(
+    {
+        "PREM14A",
+        "DEFM14A",
+        "PREM14C",
+        "DEFM14C",
+        "SC 14D9",
+        "SC14D9C",
+        "SC TO-T",
+        "SC TO-C",
+        "SC 13E3",
+    }
+)
 
 #: 8-K item "Termination of a Material Definitive Agreement"
 #: (https://www.sec.gov/files/form8-k.pdf). A later 1.02 is read as the deal
@@ -129,10 +139,15 @@ TAKEOVER_FORMS = frozenset({
 TERMINATION_ITEM = "1.02"
 
 #: Failure codes that mean "could not read", never "failed the screen".
-INCONCLUSIVE = frozenset({
-    "asset_lookup_failed", "market_data_unavailable", "profile_unavailable",
-    "takeover_lookup_failed", "screen_deadline",
-})
+INCONCLUSIVE = frozenset(
+    {
+        "asset_lookup_failed",
+        "market_data_unavailable",
+        "profile_unavailable",
+        "takeover_lookup_failed",
+        "screen_deadline",
+    }
+)
 
 #: Failure codes that remove an admitted name immediately.
 PERMANENT = frozenset({"asset_not_found", "asset_inactive", "asset_not_tradable"})
@@ -171,6 +186,7 @@ PLAIN_REASON = {
 # Thresholds
 # --------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ScreenThresholds:
     min_price_usd: float
@@ -199,6 +215,7 @@ class ScreenThresholds:
         """
         from src.data.context import _SLOPE_LOOKBACK
         from src.data.technical import LONGEST_INDICATOR_WINDOW
+
         # Imported here, not at module scope: `portfolio_constructor` is a
         # heavy module and the screen is otherwise independent of it.
         from src.portfolio_constructor import widest_reachable_stop_atr_multiple
@@ -219,7 +236,8 @@ class ScreenThresholds:
             # the guard now reads the instrument, and this ceiling is the
             # arithmetic point where the widest legitimate stop would sit
             # at or below zero.
-            max_atr_fraction=1.0 / (
+            max_atr_fraction=1.0
+            / (
                 widest_reachable_stop_atr_multiple(
                     constructor_cfg.min_stop_atr_multiple,
                     constructor_cfg.stop_atr_setup_scale,
@@ -237,6 +255,7 @@ class ScreenThresholds:
 # --------------------------------------------------------------------------
 # Measures
 # --------------------------------------------------------------------------
+
 
 def corwin_schultz_spread(bars: list) -> float | None:
     """Mean Corwin–Schultz (2012) bid-ask spread estimate, as a fraction.
@@ -272,9 +291,9 @@ def corwin_schultz_spread(bars: list) -> float | None:
             continue
         if min(h1, l1, h2, l2, c1) <= 0 or h1 < l1 or h2 < l2:
             continue
-        if c1 < l2:            # gapped up overnight
+        if c1 < l2:  # gapped up overnight
             h2, l2 = h2 - (l2 - c1), c1
-        elif c1 > h2:          # gapped down overnight
+        elif c1 > h2:  # gapped down overnight
             h2, l2 = c1, l2 + (c1 - h2)
         beta = math.log(h1 / l1) ** 2 + math.log(h2 / l2) ** 2
         gamma = math.log(max(h1, h2) / min(l1, l2)) ** 2
@@ -303,7 +322,7 @@ def _enum_text(value) -> str:
     text = str(getattr(value, "value", value) or "").strip().lower()
     for prefix in ("assetexchange.", "assetclass.", "assetstatus."):
         if text.startswith(prefix):
-            return text[len(prefix):]
+            return text[len(prefix) :]
     return text
 
 
@@ -315,6 +334,7 @@ def is_non_common_security(symbol: str, name: str) -> bool:
 # --------------------------------------------------------------------------
 # The criteria
 # --------------------------------------------------------------------------
+
 
 def check_asset(symbol: str, asset) -> list[str]:
     """Broker asset-directory checks. `asset` None = the broker says it does not exist."""
@@ -424,9 +444,7 @@ def pending_takeover(filings) -> tuple[bool, str | None]:
         day = str(filed or "")[:10]
         if base in TAKEOVER_FORMS:
             latest_deal = max(latest_deal or day, day)
-        elif base == "8-K" and TERMINATION_ITEM in {
-            part.strip() for part in str(items or "").split(",")
-        }:
+        elif base == "8-K" and TERMINATION_ITEM in {part.strip() for part in str(items or "").split(",")}:
             latest_termination = max(latest_termination or day, day)
     if latest_deal is None:
         return False, None
@@ -445,6 +463,7 @@ def check_takeover(filings) -> tuple[list[str], dict]:
 # --------------------------------------------------------------------------
 # One symbol
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class ScreenResult:
@@ -469,8 +488,7 @@ class ScreenResult:
         return self.failures[0] if self.failures else "passed"
 
     def to_dict(self) -> dict:
-        return {"symbol": self.symbol, "failures": list(self.failures),
-                "measured": dict(self.measured)}
+        return {"symbol": self.symbol, "failures": list(self.failures), "measured": dict(self.measured)}
 
 
 @dataclass
@@ -482,6 +500,7 @@ class ScreenSources:
     get_profile(symbol) -> {"market_cap_usd", "sector"} | None
     get_filings(symbol) -> [(form, filing_date, items)] | None (None = no SEC issuer)
     """
+
     get_asset: Callable[[str], Any]
     get_bars: Callable[[str], list]
     get_profile: Callable[[str], dict | None]
@@ -549,18 +568,17 @@ def screen_symbol(
 # Persisted state and the prune state machine
 # --------------------------------------------------------------------------
 
+
 def iso_week(day: date) -> str:
     year, week, _ = day.isocalendar()
     return f"{year}-W{week:02d}"
 
 
 def empty_state() -> dict:
-    return {"admitted": {}, "screened": {}, "removed": {},
-            "events": [], "atr_cross_section": []}
+    return {"admitted": {}, "screened": {}, "removed": {}, "events": [], "atr_cross_section": []}
 
 
-def record_atr_cross_section(state: dict, *, week: str, today: date,
-                             symbol: str, measured: dict) -> None:
+def record_atr_cross_section(state: dict, *, week: str, today: date, symbol: str, measured: dict) -> None:
     """THE RECORDING board item 185 is blocked on.
 
     The volatility ceiling (`max_atr_fraction`, 1 / the widest reachable stop
@@ -645,7 +663,9 @@ def _event(state: dict, action: str, symbol: str, reasons: list[str], today: dat
         event["measured"] = dict(measured)
     state["events"].append(event)
     logger.info(
-        "UNIVERSE_CHANGE %s %s: %s", action.upper(), symbol,
+        "UNIVERSE_CHANGE %s %s: %s",
+        action.upper(),
+        symbol,
         ", ".join(reasons) or "passed",
     )
     return event
@@ -676,10 +696,14 @@ def apply_result(
     if admitted is None:
         if result.passed:
             state["admitted"][symbol] = {
-                "admitted_on": today.isoformat(), "status": "active",
-                "flagged_on": None, "last_screen_week": week,
-                "last_screened_on": today.isoformat(), "failures": [],
-                "measured": dict(result.measured), "last_offered_on": None,
+                "admitted_on": today.isoformat(),
+                "status": "active",
+                "flagged_on": None,
+                "last_screen_week": week,
+                "last_screened_on": today.isoformat(),
+                "failures": [],
+                "measured": dict(result.measured),
+                "last_offered_on": None,
             }
             state["screened"].pop(symbol, None)
             state["removed"].pop(symbol, None)
@@ -691,8 +715,10 @@ def apply_result(
     if already_this_week and not result.permanent:
         return None
     admitted.update(
-        last_screen_week=week, last_screened_on=today.isoformat(),
-        failures=list(result.failures), measured=dict(result.measured),
+        last_screen_week=week,
+        last_screened_on=today.isoformat(),
+        failures=list(result.failures),
+        measured=dict(result.measured),
     )
     if result.passed:
         if admitted.get("status") == "flagged":
@@ -715,6 +741,7 @@ def apply_result(
 # The weekly screen
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class ScreenRun:
     candidates: int = 0
@@ -727,9 +754,12 @@ class ScreenRun:
 
     def summary(self) -> dict:
         return {
-            "candidates": self.candidates, "screened": self.screened,
-            "passed": self.passed, "inconclusive": self.inconclusive,
-            "deadline_hit": self.deadline_hit, "events": list(self.events),
+            "candidates": self.candidates,
+            "screened": self.screened,
+            "passed": self.passed,
+            "inconclusive": self.inconclusive,
+            "deadline_hit": self.deadline_hit,
+            "events": list(self.events),
             "failures_by_reason": dict(sorted(self.failures_by_reason.items())),
         }
 
@@ -773,8 +803,11 @@ def run_screen(
         for code in result.failures[:1]:
             run.failures_by_reason[code] = run.failures_by_reason.get(code, 0) + 1
         record_atr_cross_section(
-            state, week=week, today=today,
-            symbol=result.symbol, measured=result.measured,
+            state,
+            week=week,
+            today=today,
+            symbol=result.symbol,
+            measured=result.measured,
         )
         event = apply_result(state, result, today=today, held=held_set)
         if event is not None:
@@ -801,18 +834,13 @@ def run_screen(
 
     # 2. Who is due this week.
     due_admitted = [
-        s for s in sorted(state["admitted"])
-        if state["admitted"][s].get("last_screen_week") != week and s in by_symbol
+        s for s in sorted(state["admitted"]) if state["admitted"][s].get("last_screen_week") != week and s in by_symbol
     ]
-    candidates = [
-        s for s in sorted(by_symbol)
-        if s not in state["admitted"] and s not in configured_set
-    ]
+    candidates = [s for s in sorted(by_symbol) if s not in state["admitted"] and s not in configured_set]
     run.candidates = len(candidates)
     fresh = [s for s in candidates if s not in state["screened"]]
     stale = sorted(
-        (s for s in candidates if s in state["screened"]
-         and state["screened"][s].get("week") != week),
+        (s for s in candidates if s in state["screened"] and state["screened"][s].get("week") != week),
         key=lambda s: (state["screened"][s].get("week") or "", s),
     )
 
@@ -832,7 +860,7 @@ def run_screen(
         if time.monotonic() >= deadline:
             run.deadline_hit = True
             break
-        chunk = needs_bars[start:start + max(1, int(batch_size))]
+        chunk = needs_bars[start : start + max(1, int(batch_size))]
         try:
             bars_by_symbol = get_bars_batch(chunk) or {}
         except Exception as exc:  # noqa: BLE001
@@ -845,8 +873,11 @@ def run_screen(
                 run.deadline_hit = True
                 break
             result = screen_symbol(
-                symbol, sources, th,
-                asset=by_symbol[symbol], bars=bars_by_symbol.get(symbol) or [],
+                symbol,
+                sources,
+                th,
+                asset=by_symbol[symbol],
+                bars=bars_by_symbol.get(symbol) or [],
             )
             _record(result)
         if run.deadline_hit:
@@ -862,6 +893,7 @@ def run_screen(
 # --------------------------------------------------------------------------
 # Per-run selection (the cap on what reaches the portfolio manager)
 # --------------------------------------------------------------------------
+
 
 def select_for_run(state: dict, *, held: Iterable[str], cap: int, today: date) -> dict[str, dict]:
     """Admitted names that join THIS run's research surface.
@@ -881,7 +913,7 @@ def select_for_run(state: dict, *, held: Iterable[str], cap: int, today: date) -
         (s for s in admitted if s not in held_set),
         key=lambda s: (admitted[s].get("last_offered_on") or "", admitted[s].get("admitted_on") or "", s),
     )
-    for symbol in others[:max(0, int(cap))]:
+    for symbol in others[: max(0, int(cap))]:
         chosen[symbol] = admitted[symbol]
     for symbol in chosen:
         admitted[symbol]["last_offered_on"] = today.isoformat()
@@ -901,6 +933,7 @@ def select_for_run(state: dict, *, held: Iterable[str], cap: int, today: date) -
 # --------------------------------------------------------------------------
 # The owner's words
 # --------------------------------------------------------------------------
+
 
 def plain_reasons(codes: Iterable[str]) -> str:
     return "; ".join(PLAIN_REASON.get(code, code.replace("_", " ")) for code in codes)

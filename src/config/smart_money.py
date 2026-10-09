@@ -185,8 +185,7 @@ class SmartMoneyConfig(BaseModel):
     # this flip.
     congress_enabled: bool = True
     congress_kadoa_url: str = (
-        "https://raw.githubusercontent.com/kadoa-org/"
-        "congress-trading-monitor/main/public/data/trades.json"
+        "https://raw.githubusercontent.com/kadoa-org/congress-trading-monitor/main/public/data/trades.json"
     )
     congress_congresswatch_url: str = "https://congresswatch.us/data/trades.json"
     congress_data_dir: str = "data/smart_money/congressional"

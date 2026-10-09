@@ -22,14 +22,11 @@ def test_run_if_et_window_only_records_successful_runs(tmp_path):
 
     _write_executable(
         timeout_bin,
-        "#!/bin/bash\n"
-        "shift 2\n"
-        "exec \"$@\"\n",
+        '#!/bin/bash\nshift 2\nexec "$@"\n',
     )
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        "exit 1\n",
+        "#!/bin/bash\nexit 1\n",
     )
 
     env = os.environ | {
@@ -56,8 +53,7 @@ def test_run_if_et_window_only_records_successful_runs(tmp_path):
 
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        "exit 0\n",
+        "#!/bin/bash\nexit 0\n",
     )
     succeeded = subprocess.run(
         ["bash", str(script), "earnings_preprocess"],
@@ -67,9 +63,7 @@ def test_run_if_et_window_only_records_successful_runs(tmp_path):
         check=False,
     )
     assert succeeded.returncode == 0
-    assert (
-        last_run_dir / "last-earnings_preprocess"
-    ).read_text().strip() == "2026-04-17 1234567890"
+    assert (last_run_dir / "last-earnings_preprocess").read_text().strip() == "2026-04-17 1234567890"
 
 
 def test_run_if_et_window_fires_once_per_et_session_date(tmp_path):
@@ -85,15 +79,11 @@ def test_run_if_et_window_fires_once_per_et_session_date(tmp_path):
 
     _write_executable(
         timeout_bin,
-        "#!/bin/bash\n"
-        "shift 2\n"
-        "exec \"$@\"\n",
+        '#!/bin/bash\nshift 2\nexec "$@"\n',
     )
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo run >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho run >> "{counter_file}"\nexit 0\n',
     )
 
     base_env = os.environ | {
@@ -107,7 +97,8 @@ def test_run_if_et_window_fires_once_per_et_session_date(tmp_path):
 
     first = subprocess.run(
         ["bash", str(script), "morning"],
-        env=base_env | {
+        env=base_env
+        | {
             "ET_HOUR_OVERRIDE": "09",
             "ET_MIN_OVERRIDE": "30",
             "NOW_UNIX_OVERRIDE": "1234567890",
@@ -120,7 +111,8 @@ def test_run_if_et_window_fires_once_per_et_session_date(tmp_path):
 
     second = subprocess.run(
         ["bash", str(script), "morning"],
-        env=base_env | {
+        env=base_env
+        | {
             "ET_HOUR_OVERRIDE": "11",
             "ET_MIN_OVERRIDE": "00",
             "NOW_UNIX_OVERRIDE": "1234573290",
@@ -144,12 +136,10 @@ def test_operator_rerun_bypasses_only_same_day_morning_guard(tmp_path):
     counter_file = tmp_path / "operator-rerun.txt"
     timeout_bin = tmp_path / "timeout"
     python_bin = tmp_path / "fake-python"
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo \"$@\" >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho "$@" >> "{counter_file}"\nexit 0\n',
     )
     env = os.environ | {
         "PROJECT_ROOT_OVERRIDE": str(project_root),
@@ -165,10 +155,16 @@ def test_operator_rerun_bypasses_only_same_day_morning_guard(tmp_path):
 
     result = subprocess.run(
         [
-            "bash", str(script), "morning", "--operator-rerun",
+            "bash",
+            str(script),
+            "morning",
+            "--operator-rerun",
             "verify consolidated Tech recovery",
         ],
-        env=env, capture_output=True, text=True, check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -184,13 +180,19 @@ def test_operator_rerun_rejects_missing_reason_and_other_modes(tmp_path):
     script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
     missing_reason = subprocess.run(
         ["bash", str(script), "morning", "--operator-rerun"],
-        env=env, capture_output=True, text=True, check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert missing_reason.returncode == 2
 
     other_mode = subprocess.run(
         ["bash", str(script), "evening", "--operator-rerun", "not allowed"],
-        env=env, capture_output=True, text=True, check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert other_mode.returncode == 2
 
@@ -203,7 +205,10 @@ def test_operator_rerun_still_obeys_morning_window(tmp_path):
     script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
     result = subprocess.run(
         ["bash", str(script), "morning", "--operator-rerun", "too late"],
-        env=env, capture_output=True, text=True, check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -226,15 +231,11 @@ def test_run_if_et_window_intra_check_fires_every_tick(tmp_path):
 
     _write_executable(
         timeout_bin,
-        "#!/bin/bash\n"
-        "shift 2\n"
-        "exec \"$@\"\n",
+        '#!/bin/bash\nshift 2\nexec "$@"\n',
     )
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo tick >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho tick >> "{counter_file}"\nexit 0\n',
     )
 
     base_env = os.environ | {
@@ -250,7 +251,8 @@ def test_run_if_et_window_intra_check_fires_every_tick(tmp_path):
     for hh, mm, ts in (("09", "30", "1"), ("11", "30", "2"), ("14", "00", "3"), ("15", "45", "4")):
         result = subprocess.run(
             ["bash", str(script), "intra_check"],
-            env=base_env | {
+            env=base_env
+            | {
                 "ET_HOUR_OVERRIDE": hh,
                 "ET_MIN_OVERRIDE": mm,
                 "NOW_UNIX_OVERRIDE": ts,
@@ -285,17 +287,16 @@ def test_run_if_et_window_serializes_non_intra_modes(tmp_path):
     python_bin = tmp_path / "fake-python"
     counter_file = tmp_path / "blocked-midday.txt"
 
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo fired >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho fired >> "{counter_file}"\nexit 0\n',
     )
 
     result = subprocess.run(
         ["bash", str(script), "midday"],
-        env=os.environ | {
+        env=os.environ
+        | {
             "PROJECT_ROOT_OVERRIDE": str(project_root),
             "PYTHON_OVERRIDE": str(python_bin),
             "TIMEOUT_OVERRIDE": str(timeout_bin),
@@ -337,17 +338,16 @@ def test_run_if_et_window_intra_check_bypasses_session_lock(tmp_path):
     python_bin = tmp_path / "fake-python"
     counter_file = tmp_path / "intra-fired.txt"
 
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo fired >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho fired >> "{counter_file}"\nexit 0\n',
     )
 
     result = subprocess.run(
         ["bash", str(script), "intra_check"],
-        env=os.environ | {
+        env=os.environ
+        | {
             "PROJECT_ROOT_OVERRIDE": str(project_root),
             "PYTHON_OVERRIDE": str(python_bin),
             "TIMEOUT_OVERRIDE": str(timeout_bin),
@@ -372,7 +372,9 @@ def test_run_if_et_window_intra_check_bypasses_session_lock(tmp_path):
 
 @pytest.mark.parametrize("hh,mm", [("10", "15"), ("13", "45")])
 def test_run_if_et_window_intra_check_bypasses_session_lock_at_new_ticks(
-    tmp_path, hh, mm,
+    tmp_path,
+    hh,
+    mm,
 ):
     """Pin for the 2026-09-17 schedule split: quant-agent-intra_check.timer
     now fires at :15/:45 instead of the shared :00/:30 tick (see
@@ -396,17 +398,16 @@ def test_run_if_et_window_intra_check_bypasses_session_lock_at_new_ticks(
     python_bin = tmp_path / "fake-python"
     counter_file = tmp_path / "intra-fired-new-tick.txt"
 
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo fired >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho fired >> "{counter_file}"\nexit 0\n',
     )
 
     result = subprocess.run(
         ["bash", str(script), "intra_check"],
-        env=os.environ | {
+        env=os.environ
+        | {
             "PROJECT_ROOT_OVERRIDE": str(project_root),
             "PYTHON_OVERRIDE": str(python_bin),
             "TIMEOUT_OVERRIDE": str(timeout_bin),
@@ -424,8 +425,7 @@ def test_run_if_et_window_intra_check_bypasses_session_lock_at_new_ticks(
 
     assert result.returncode == 0, result.stderr
     assert counter_file.exists(), (
-        "intra_check must still fire at its new :15/:45 ticks even when "
-        "another session holds the lock"
+        "intra_check must still fire at its new :15/:45 ticks even when another session holds the lock"
     )
     # The held lock must remain untouched — intra_check never takes it.
     assert (lock_dir / "owner").read_text() == "midday 2026-04-20 1000 12345"
@@ -443,12 +443,10 @@ def test_run_if_et_window_intra_check_skips_outside_window(tmp_path):
     python_bin = tmp_path / "fake-python"
     counter_file = tmp_path / "out-of-window.txt"
 
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(
         python_bin,
-        "#!/bin/bash\n"
-        f"echo fired >> \"{counter_file}\"\n"
-        "exit 0\n",
+        f'#!/bin/bash\necho fired >> "{counter_file}"\nexit 0\n',
     )
 
     base_env = os.environ | {
@@ -465,7 +463,9 @@ def test_run_if_et_window_intra_check_skips_outside_window(tmp_path):
     r1 = subprocess.run(
         ["bash", str(script), "intra_check"],
         env=base_env | {"ET_HOUR_OVERRIDE": "08", "ET_MIN_OVERRIDE": "00"},
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert r1.returncode == 0
 
@@ -473,7 +473,9 @@ def test_run_if_et_window_intra_check_skips_outside_window(tmp_path):
     r2 = subprocess.run(
         ["bash", str(script), "intra_check"],
         env=base_env | {"ET_HOUR_OVERRIDE": "16", "ET_MIN_OVERRIDE": "30"},
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert r2.returncode == 0
 
@@ -489,6 +491,7 @@ def test_run_if_et_window_intra_check_skips_outside_window(tmp_path):
 # HEALTHCHECKS_URL so an EXTERNAL monitor sees liveness.
 # ============================================================================
 
+
 def _base_env(tmp_path, python_body: str) -> dict:
     project_root = tmp_path / "project"
     project_root.mkdir(exist_ok=True)
@@ -497,9 +500,9 @@ def _base_env(tmp_path, python_body: str) -> dict:
     python_bin = tmp_path / "fake-python"
     curl_log = tmp_path / "curl.log"
     curl_bin = tmp_path / "curl"
-    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(timeout_bin, '#!/bin/bash\nshift 2\nexec "$@"\n')
     _write_executable(python_bin, f"#!/bin/bash\n{python_body}\n")
-    _write_executable(curl_bin, f"#!/bin/bash\necho \"$@\" >> {curl_log}\nexit 0\n")
+    _write_executable(curl_bin, f'#!/bin/bash\necho "$@" >> {curl_log}\nexit 0\n')
     env = os.environ | {
         "PROJECT_ROOT_OVERRIDE": str(project_root),
         "PYTHON_OVERRIDE": str(python_bin),
@@ -517,8 +520,7 @@ def _base_env(tmp_path, python_body: str) -> dict:
 
 def _run(script_env, mode="earnings_preprocess"):
     script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
-    return subprocess.run(["bash", str(script), mode], env=script_env,
-                          capture_output=True, text=True, check=False)
+    return subprocess.run(["bash", str(script), mode], env=script_env, capture_output=True, text=True, check=False)
 
 
 def test_wrapper_notifies_telegram_on_timeout_kill(tmp_path):
@@ -550,8 +552,7 @@ def test_wrapper_respects_telegram_kill_switch(tmp_path):
         sub = tmp_path / f"case{i}"
         sub.mkdir()
         env = _base_env(sub, "exit 137")
-        env |= {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "42",
-                "TELEGRAM_DISABLED": disabled}
+        env |= {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "42", "TELEGRAM_DISABLED": disabled}
         _run(env)
         log_file = sub / "curl.log"
         assert not log_file.exists() or "sendMessage" not in log_file.read_text(), (

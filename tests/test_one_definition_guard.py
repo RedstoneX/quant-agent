@@ -59,15 +59,14 @@ REPO = Path(__file__).parent.parent
 # AST helpers.
 # ---------------------------------------------------------------------------
 
+
 def _name(node: ast.AST | None) -> str | None:
     """The identifier a Name or Attribute node ends in (`p.market_value` -> ...)."""
     return getattr(node, "id", None) or getattr(node, "attr", None)
 
 
 def _names(node: ast.AST) -> set[str]:
-    return {
-        _name(n) for n in ast.walk(node) if isinstance(n, (ast.Name, ast.Attribute))
-    } - {None}
+    return {_name(n) for n in ast.walk(node) if isinstance(n, (ast.Name, ast.Attribute))} - {None}
 
 
 def _calls(node: ast.AST) -> set[str]:
@@ -268,20 +267,14 @@ def find_atr_definitions(tree: ast.AST, path: Path) -> list[Finding]:
         # name to carry a guard on. `_atr_series` is still matched because it
         # CALLS `_true_ranges`, and any honest re-implementation must either
         # call a true-range helper or name the concept in full.
-        derives_tr = "_true_ranges" in calls or bool(
-            {"true_range", "true_ranges"} & _names(fn)
-        )
+        derives_tr = "_true_ranges" in calls or bool({"true_range", "true_ranges"} & _names(fn))
         averages = bool(calls & {"convolve", "mean", "nanmean", "average", "rolling"})
         wilder = bool(calls & {"AverageTrueRange", "average_true_range", "atr"})
         if wilder:
-            out.append(
-                Finding(_rel(path), fn.lineno, fn.name, "library ATR (Wilder)",
-                        "Wilder smoothing")
-            )
+            out.append(Finding(_rel(path), fn.lineno, fn.name, "library ATR (Wilder)", "Wilder smoothing"))
         elif derives_tr and averages:
             out.append(
-                Finding(_rel(path), fn.lineno, fn.name,
-                        "true ranges averaged in-place", "simple moving average")
+                Finding(_rel(path), fn.lineno, fn.name, "true ranges averaged in-place", "simple moving average")
             )
     return _dedupe(out)
 
@@ -305,10 +298,7 @@ def find_dollar_volume_definitions(tree: ast.AST, path: Path) -> list[Finding]:
                 continue
             names = _names(node)
             if (names & _CLOSE) and (names & _VOLUME):
-                out.append(
-                    Finding(_rel(path), node.lineno, fn.name,
-                            ast.unparse(node)[:72], "dollar volume")
-                )
+                out.append(Finding(_rel(path), node.lineno, fn.name, ast.unparse(node)[:72], "dollar volume"))
     return _dedupe(out)
 
 
@@ -332,16 +322,10 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
             if isinstance(value, ast.Constant):
                 continue  # a literal default, not a definition
             # Exempt ONLY a call to/alias of a NAMED owner; an alias of anything else is a second definition (slipped through twice).
-            owners = {"_compute_deployable_cash", "compute_deployable_cash",
-                      "deployable_cash", "cash_above_reserve"}
-            if _calls(value) & owners or (
-                    isinstance(value, (ast.Name, ast.Attribute))
-                    and _name(value) in owners):
+            owners = {"_compute_deployable_cash", "compute_deployable_cash", "deployable_cash", "cash_above_reserve"}
+            if _calls(value) & owners or (isinstance(value, (ast.Name, ast.Attribute)) and _name(value) in owners):
                 continue  # delegates to / aliases the owner
-            out.append(
-                Finding(_rel(path), node.lineno, fn.name,
-                        ast.unparse(value)[:72], "second definition")
-            )
+            out.append(Finding(_rel(path), node.lineno, fn.name, ast.unparse(value)[:72], "second definition"))
     return _dedupe(out)
 
 
@@ -373,8 +357,7 @@ REGISTRY: dict[str, Quantity] = {
     "percent of book": Quantity(
         name="percent of book",
         cost=(
-            "the PM is told the book is 60% invested while the risk gate "
-            "enforces 100%, both against the same target"
+            "the PM is told the book is 60% invested while the risk gate enforces 100%, both against the same target"
         ),
         # Owner MOVED 2026-09-02: the leverage table and its multipliers were
         # extracted to the pure quantities module so src/api could derive its
@@ -396,8 +379,7 @@ REGISTRY: dict[str, Quantity] = {
     "average true range": Quantity(
         name="average true range",
         cost=(
-            "7-8% mean divergence, 39% on the worst day; ATR sets stop "
-            "distance and stop distance sets position size"
+            "7-8% mean divergence, 39% on the worst day; ATR sets stop distance and stop distance sets position size"
         ),
         # Owner MOVED 2026-09-02 when the fix landed: the shared Wilder
         # implementation was extracted from compute_indicators into
@@ -405,8 +387,7 @@ REGISTRY: dict[str, Quantity] = {
         # Changing an owner is a deliberate, reviewed registry edit — that is
         # the workflow, not a workaround.
         owner="src/data/technical.py::atr_series — Wilder, via `ta`",
-        allow=frozenset({("src/data/technical.py", "atr_series"),
-                         ("src/data/technical.py", "compute_indicators")}),
+        allow=frozenset({("src/data/technical.py", "atr_series"), ("src/data/technical.py", "compute_indicators")}),
     ),
     "average dollar volume": Quantity(
         name="average dollar volume",
@@ -414,8 +395,7 @@ REGISTRY: dict[str, Quantity] = {
         # Owner MOVED 2026-09-02: consolidated into the pure quantities
         # module so the API can use it without importing the risk stack.
         owner="src/quantities.py::avg_dollar_volume",
-        allow=frozenset({("src/quantities.py", "avg_dollar_volume"),
-                         ("src/quantities.py", "dollar_volumes")}),
+        allow=frozenset({("src/quantities.py", "avg_dollar_volume"), ("src/quantities.py", "dollar_volumes")}),
     ),
     "deployable cash": Quantity(
         name="deployable cash",
@@ -423,9 +403,13 @@ REGISTRY: dict[str, Quantity] = {
         # Owner MOVED 2026-09-02: same reason — the dashboard must read the
         # engine's number, and src/api may not import src.pipeline.
         owner="src/quantities.py::deployable_cash",
-        allow=frozenset({("src/quantities.py", "deployable_cash"),
-                         ("src/quantities.py", "cash_above_reserve"),
-                         ("src/quantities.py", "sweep_reserve_usd")}),
+        allow=frozenset(
+            {
+                ("src/quantities.py", "deployable_cash"),
+                ("src/quantities.py", "cash_above_reserve"),
+                ("src/quantities.py", "sweep_reserve_usd"),
+            }
+        ),
     ),
 }
 
@@ -449,8 +433,7 @@ def test_the_package_scan_is_not_silently_empty():
     )
     parsed = sum(1 for p in modules if _safe_parse(p) is not None)
     assert parsed >= len(modules) - 1, (
-        f"only {parsed} of {len(modules)} src/ modules parsed; the guards are "
-        "skipping real code"
+        f"only {parsed} of {len(modules)} src/ modules parsed; the guards are skipping real code"
     )
 
 
@@ -517,8 +500,7 @@ def _report(quantity: Quantity, violations: list[Finding]) -> str:
     plural = "site" if len(violations) == 1 else "sites"
     lines = [
         "",
-        f"  '{quantity.name}' is computed outside its sanctioned owner at "
-        f"{len(violations)} {plural}.",
+        f"  '{quantity.name}' is computed outside its sanctioned owner at {len(violations)} {plural}.",
         "  It must have exactly one definition.",
         f"  Sanctioned owner: {quantity.owner}",
         f"  What a second definition costs: {quantity.cost}",
@@ -540,6 +522,7 @@ def _report(quantity: Quantity, violations: list[Finding]) -> str:
 # ---------------------------------------------------------------------------
 # The guard itself. One test per quantity, so a failure names the quantity.
 # ---------------------------------------------------------------------------
+
 
 def test_percent_of_book_has_exactly_one_definition():
     q = REGISTRY["percent of book"]
@@ -575,6 +558,7 @@ def test_deployable_cash_has_exactly_one_definition():
 # The dashboard. TypeScript, so this one is textual and says so.
 # ---------------------------------------------------------------------------
 
+
 def test_the_dashboard_does_not_compute_its_own_percent_deployed():
     """`HeroBand.tsx` sums market values itself and draws them against the
     engine's ceiling.
@@ -605,14 +589,14 @@ def test_the_dashboard_does_not_compute_its_own_percent_deployed():
             # DEPLOYED when it is divided to make a share. Summing long
             # and short notional for their own tiles is legitimate and
             # must not fire, or this guard gets switched off.
-            divides = ("/ portfolio_value" in stripped
-                       or "/ (portfolio_value" in stripped
-                       or "/ equity" in stripped
-                       or "/ total_value" in stripped)
+            divides = (
+                "/ portfolio_value" in stripped
+                or "/ (portfolio_value" in stripped
+                or "/ equity" in stripped
+                or "/ total_value" in stripped
+            )
             if "reduce" in stripped and "sum" in stripped and divides:
-                offenders.append(
-                    f"{path.relative_to(REPO)}:{i}  {stripped[:80]}"
-                )
+                offenders.append(f"{path.relative_to(REPO)}:{i}  {stripped[:80]}")
 
     assert not offenders, (
         "\n  'percent deployed' is computed in the browser as well as in the "
@@ -622,15 +606,14 @@ def test_the_dashboard_does_not_compute_its_own_percent_deployed():
         "\n  What a second definition costs: the gauge's needle and its redline "
         "come\n  from different definitions (46% engine vs 22% dashboard on one "
         "book).\n"
-        "\n  Computed in the browser at:\n"
-        + "\n".join(f"      {o}" for o in offenders)
-        + "\n"
+        "\n  Computed in the browser at:\n" + "\n".join(f"      {o}" for o in offenders) + "\n"
     )
 
 
 # ---------------------------------------------------------------------------
 # Guards on the guard. These must pass on EVERY branch, including this one.
 # ---------------------------------------------------------------------------
+
 
 def _equity_arithmetic_functions() -> set[tuple[str, str]]:
     """Every function in src that divides by an equity-named quantity, DERIVED.
@@ -651,8 +634,7 @@ def _equity_arithmetic_functions() -> set[tuple[str, str]]:
         rel = str(path.resolve().relative_to(REPO.resolve()))
         for fn in _functions(tree):
             if any(
-                isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)
-                and _names(n.right) & _EQUITY
+                isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div) and _names(n.right) & _EQUITY
                 for n in ast.walk(fn)
             ):
                 out.add((rel, fn.name))
@@ -677,8 +659,7 @@ def test_the_guard_stays_silent_on_code_that_is_already_sound():
     ]
     assert not flagged, (
         "the guard flagged a function that does ordinary equity arithmetic "
-        "and the registry does not sanction it:\n"
-        + "\n".join(f"    {f}" for f in flagged)
+        "and the registry does not sanction it:\n" + "\n".join(f"    {f}" for f in flagged)
     )
 
 
@@ -687,8 +668,7 @@ def test_the_equity_arithmetic_population_is_not_vacuous():
     sound = _equity_arithmetic_functions()
     assert len(sound) >= 3, sorted(sound)
     assert any(func == "check" for _, func in sound), (
-        "RiskRuleEngine.check no longer divides by equity: the scan lost the "
-        "largest false-positive target"
+        "RiskRuleEngine.check no longer divides by equity: the scan lost the largest false-positive target"
     )
 
 
@@ -710,9 +690,7 @@ def test_every_registry_entry_names_a_real_owner():
         elif owner_func:
             tree = ast.parse(owner_path.read_text(), filename=str(owner_path))
             if owner_func not in {f.name for f in _functions(tree)}:
-                missing.append(
-                    f"{q.name}: owner {head}::{owner_func}() does not exist"
-                )
+                missing.append(f"{q.name}: owner {head}::{owner_func}() does not exist")
         for file, func in sorted(_resolved_pairs(q.allow)):
             path = REPO / file
             if not path.exists():
@@ -734,8 +712,7 @@ def test_the_matchers_still_match_something_they_are_meant_to():
     cases = [
         (
             find_percent_of_book,
-            "def f(positions, total_value):\n"
-            "    return sum(p.market_value for p in positions) / total_value * 100\n",
+            "def f(positions, total_value):\n    return sum(p.market_value for p in positions) / total_value * 100\n",
         ),
         (
             find_unsigned_cost_basis,
@@ -747,13 +724,11 @@ def test_the_matchers_still_match_something_they_are_meant_to():
         ),
         (
             find_deployable_cash_definitions,
-            "def f(cash, reserve):\n    deployable_cash = max(cash - reserve, 0)\n"
-            "    return deployable_cash\n",
+            "def f(cash, reserve):\n    deployable_cash = max(cash - reserve, 0)\n    return deployable_cash\n",
         ),
         (
             find_atr_definitions,
-            "def f(bars):\n    tr = _true_ranges(bars)\n"
-            "    return np.convolve(tr, kernel, mode='valid')\n",
+            "def f(bars):\n    tr = _true_ranges(bars)\n    return np.convolve(tr, kernel, mode='valid')\n",
         ),
     ]
     dead = []
@@ -778,8 +753,7 @@ def test_the_matchers_do_not_fire_on_sound_code():
     cases = [
         (
             find_percent_of_book,
-            "def f(p, total_value):\n"
-            "    return p.market_value * _gross_multiplier(p.symbol) / total_value * 100\n",
+            "def f(p, total_value):\n    return p.market_value * _gross_multiplier(p.symbol) / total_value * 100\n",
         ),
         (
             find_percent_of_book,
@@ -793,8 +767,7 @@ def test_the_matchers_do_not_fire_on_sound_code():
         ),
         (
             find_unsigned_cost_basis,
-            "def f(p):\n    cost = abs(p.avg_entry * p.qty)\n"
-            "    return p.unrealized_pnl / cost\n",
+            "def f(p):\n    cost = abs(p.avg_entry * p.qty)\n    return p.unrealized_pnl / cost\n",
         ),
         (
             find_atr_definitions,
@@ -816,6 +789,5 @@ def test_the_matchers_do_not_fire_on_sound_code():
         if found:
             noisy.append(f"{matcher.__name__}: {[str(f) for f in found]}")
     assert not noisy, (
-        "the guard fired on code that is correct — this is how guards get "
-        "switched off:\n    " + "\n    ".join(noisy)
+        "the guard fired on code that is correct — this is how guards get switched off:\n    " + "\n    ".join(noisy)
     )

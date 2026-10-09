@@ -1,4 +1,5 @@
 """The desk-side floor must refuse a session it cannot finish, and be called at start."""
+
 from collections import namedtuple
 from pathlib import Path
 
@@ -9,6 +10,7 @@ GIB = 2**30
 
 
 # --- the desk-side floor and its call site --------------------------------
+
 
 def test_desk_floor_is_the_measured_arithmetic():
     """The floor is two worst-days plus two log ceilings, not a round number."""
@@ -31,6 +33,7 @@ def test_still_breached_after_reclaim_refuses_with_the_numbers(monkeypatch, tmp_
 def test_cannot_measure_refuses(monkeypatch, tmp_path):
     def boom(_p):
         raise OSError("no statfs")
+
     monkeypatch.setattr(dg.shutil, "disk_usage", boom)
     try:
         dg.require_desk_disk(tmp_path)
@@ -43,6 +46,7 @@ def test_cannot_measure_refuses(monkeypatch, tmp_path):
 def test_session_start_calls_the_disk_check_before_anything_reads_or_writes():
     """A guard nobody invokes is reassurance. Fail if the call site goes away."""
     import ast
+
     main_py = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(main_py.read_text())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
@@ -50,8 +54,8 @@ def test_session_start_calls_the_disk_check_before_anything_reads_or_writes():
     for node in ast.walk(fn):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             called.setdefault(node.func.id, node.lineno)
-    assert "require_desk_disk" in called, (
-        "main() no longer calls require_desk_disk at session start")
+    assert "require_desk_disk" in called, "main() no longer calls require_desk_disk at session start"
     assert "load_config" in called, "anchor moved; re-check this test"
     assert called["require_desk_disk"] < called["load_config"], (
-        "the disk check must run before the session reads or writes anything")
+        "the disk check must run before the session reads or writes anything"
+    )

@@ -29,7 +29,9 @@ from src.notifier.sections import (
     _redact_raw_exception_text,
 )
 from src.notifier.category import (
-    SUPPRESSED, filtered_by_category, resolve_risk_only,
+    SUPPRESSED,
+    filtered_by_category,
+    resolve_risk_only,
 )
 from src.notifier.markup import (
     _close_open_markup,
@@ -59,10 +61,15 @@ def send(
     row was written. Never raises.
     """
     delivered, suppressed = deliver_with_outcome(
-        self, text,
-        link_url=link_url, link_label=link_label, symbols=symbols,
+        self,
+        text,
+        link_url=link_url,
+        link_label=link_label,
+        symbols=symbols,
         preserve_structural_markup=preserve_structural_markup,
-        kind=kind, run_id=run_id, category=category,
+        kind=kind,
+        run_id=run_id,
+        category=category,
     )
     if suppressed:
         return SUPPRESSED
@@ -141,10 +148,9 @@ def send_once(
                 run_id=run_id,
                 text=text,
                 detail=(
-                    "suppressed by TELEGRAM_DISABLED; symbols: "
-                    + ", ".join(_dedupe_symbols(symbols or []))
-                    if symbols else
-                    "suppressed by TELEGRAM_DISABLED; not sent"
+                    "suppressed by TELEGRAM_DISABLED; symbols: " + ", ".join(_dedupe_symbols(symbols or []))
+                    if symbols
+                    else "suppressed by TELEGRAM_DISABLED; not sent"
                 ),
             )
             # Deliberate and settled, not a failure: see `SuppressedSend`.
@@ -153,7 +159,12 @@ def send_once(
     if not text:
         return False
     if filtered_by_category(
-        self, kind=kind, category=category, text=text, run_id=run_id, symbols=symbols,
+        self,
+        kind=kind,
+        category=category,
+        text=text,
+        run_id=run_id,
+        symbols=symbols,
     ):
         return SUPPRESSED
     # Single chokepoint for every owner-facing message this notifier
@@ -184,7 +195,8 @@ def send_once(
         # silently dropping.
         logger.info(
             "REHEARSAL: suppressed operator alert (%d chars): %s",
-            len(text), text.splitlines()[0][:120] if text else "",
+            len(text),
+            text.splitlines()[0][:120] if text else "",
         )
         self._safe_record_send(kind=kind, status="suppressed", text=text, run_id=run_id)
         # Settled, not failed: SUPPRESSED stops the funnel retrying a drop
@@ -192,7 +204,10 @@ def send_once(
         return SUPPRESSED
 
     payload = self._build_payload(
-        text, link_url, link_label, symbols,
+        text,
+        link_url,
+        link_label,
+        symbols,
         preserve_structural_markup=preserve_structural_markup,
     )
     # 2026-09-24: `notifier_sends` used to record the ORIGINAL `text`
@@ -207,7 +222,10 @@ def send_once(
     try:
         self._post_payload(payload)
         self._safe_record_send(
-            kind=kind, status="sent", text=delivered_text, run_id=run_id,
+            kind=kind,
+            status="sent",
+            text=delivered_text,
+            run_id=run_id,
         )
         return True
     except Exception as exc:
@@ -217,7 +235,10 @@ def send_once(
         # those should bubble up and crash the trading session.
         logger.warning("Telegram notify failed: %s", self._redact(exc))
         self._safe_record_send(
-            kind=kind, status="failed", text=delivered_text,
-            detail=self._redact(exc), run_id=run_id,
+            kind=kind,
+            status="failed",
+            text=delivered_text,
+            detail=self._redact(exc),
+            run_id=run_id,
         )
         return False

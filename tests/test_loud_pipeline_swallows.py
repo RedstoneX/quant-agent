@@ -1,4 +1,5 @@
 """Swallowed faults on two evening pipeline paths leave a counted row."""
+
 from unittest.mock import MagicMock
 
 from src.sentinel.reconciliation import ReconciliationLog
@@ -19,7 +20,6 @@ def test_failed_quarter_end_check_is_counted_and_returns_none():
 
 def test_failed_earnings_sweep_is_counted_and_returns_empty(monkeypatch):
     pipeline = build_pipeline(_news_held_symbols=lambda positions: ["AAA"])
-    monkeypatch.setattr("src.data.event_calendar.fetch_earnings_proximity",
-                        MagicMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr("src.data.event_calendar.fetch_earnings_proximity", MagicMock(side_effect=RuntimeError("boom")))
     assert pipeline._evening_earnings_proximity([{"symbol": "AAA"}]) == []
     assert _status(pipeline, "evening_earnings_proximity") == "disagreed"

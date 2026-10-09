@@ -25,8 +25,12 @@ __all__ = ["reference_mark", "target_reached", "target_vote"]
 
 
 def target_reached(
-    closes: list[float], bar_dates: list, target: float | None,
-    effective_date, *, is_short: bool = False,
+    closes: list[float],
+    bar_dates: list,
+    target: float | None,
+    effective_date,
+    *,
+    is_short: bool = False,
 ) -> bool | None:
     """Has a COMPLETED close reached the CURRENT target since it took effect?
 
@@ -43,13 +47,19 @@ def target_reached(
     eff = str(effective_date)[:10]
     return any(
         str(d)[:10] >= eff and (c <= t if is_short else c >= t)
-        for d, c in zip(bar_dates, closes) if _finite(c) is not None
+        for d, c in zip(bar_dates, closes)
+        if _finite(c) is not None
     )
 
 
 def target_vote(
-    closes: list[float], bar_dates: list | None, target: float | None,
-    effective_date, version: str, *, is_short: bool = False,
+    closes: list[float],
+    bar_dates: list | None,
+    target: float | None,
+    effective_date,
+    version: str,
+    *,
+    is_short: bool = False,
 ) -> tuple[bool | None, str]:
     """(reached, plain-words account of the vote) for one verdict.
 
@@ -59,16 +69,20 @@ def target_vote(
     (`version` carries the caller's reason in that case).
     """
     reached = target_reached(
-        closes, bar_dates or [], target, effective_date, is_short=is_short,
+        closes,
+        bar_dates or [],
+        target,
+        effective_date,
+        is_short=is_short,
     )
     if reached is None:
         why = (
-            (version or "no current target supplied") if _finite(target) is None
+            (version or "no current target supplied")
+            if _finite(target) is None
             else "no dates to judge the target against"
         )
         return None, (
-            f"target vote: NOT APPLIED, no target to read ({why}) — today's "
-            f"rule, measured from the last lost mark"
+            f"target vote: NOT APPLIED, no target to read ({why}) — today's rule, measured from the last lost mark"
         )
     return reached, (
         f"target vote: {'APPLIED' if reached else 'not applied'} — target "

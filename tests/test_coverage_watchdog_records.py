@@ -1,4 +1,5 @@
 """Coverage-watchdog catch-alls log a traceback and a counted row; clean passes write their own."""
+
 import logging
 from types import SimpleNamespace
 
@@ -47,6 +48,7 @@ def test_broken_positions_read_is_loud_and_behaviour_unchanged(caplog):
     class Broker:
         def get_positions(self):
             raise RuntimeError("down")
+
     with caplog.at_level(logging.ERROR):
         gaps, err = cw.uncovered_positions(Broker())
     assert gaps == [] and err == "get_positions failed: down"

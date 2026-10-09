@@ -20,7 +20,8 @@ class ReviewBlocked:
     """The blocked-proposal record; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
     ) -> None:
         self.db = db
@@ -48,7 +49,9 @@ class ReviewBlocked:
             except (TypeError, ValueError):
                 oldest_age = None
         record_cut_bite(
-            db=self.db, run_id=run_id, site=CUT_SITE,
+            db=self.db,
+            run_id=run_id,
+            site=CUT_SITE,
             cuts={
                 "min_proposals": {"before": len(unfilled), "survived": len(repeats)},
                 "max_lines": {"before": len(repeats), "survived": len(shown)},
@@ -115,6 +118,7 @@ class ReviewBlocked:
         """
         import json as _json
         from datetime import timedelta
+
         try:
             since = (et_today() - timedelta(days=lookback_days)).isoformat()
             raw = self.db.get_proposal_funnel_rows(since)
@@ -122,12 +126,12 @@ class ReviewBlocked:
             logger.warning("blocked_proposals: DB fetch failed: %s", e)
             return ""
 
-        proposals: list[tuple[str, str, str]] = []   # (ts, decision_id, symbol)
-        ordered: set[tuple[str, str]] = set()        # (decision_id, symbol)
-        skips: dict[tuple[str, str], str] = {}       # → verbatim reason
-        verdicts: dict[str, dict] = {}               # decision_id → verdict
+        proposals: list[tuple[str, str, str]] = []  # (ts, decision_id, symbol)
+        ordered: set[tuple[str, str]] = set()  # (decision_id, symbol)
+        skips: dict[tuple[str, str], str] = {}  # → verbatim reason
+        verdicts: dict[str, dict] = {}  # decision_id → verdict
         constructor_drops: dict[tuple[str, str], str] = {}  # → constructor's own reason
-        data_faults: dict[tuple[str, str], str] = {}        # → FAULT_* code (unmeasurable)
+        data_faults: dict[tuple[str, str], str] = {}  # → FAULT_* code (unmeasurable)
         constructor_refusals: dict[tuple[str, str], str] = {}  # → "constructor_refused:<code>"
         for row in raw.get("evidence") or []:
             kind = row.get("kind")
@@ -142,7 +146,9 @@ class ReviewBlocked:
                 # the L3d/L3f builders above.
                 logger.warning(
                     "blocked_proposals: JSON parse failed for %s row %s: %s",
-                    kind, (row.get("timestamp") or "?"), e,
+                    kind,
+                    (row.get("timestamp") or "?"),
+                    e,
                 )
                 continue
             if not isinstance(data, dict):
@@ -162,7 +168,7 @@ class ReviewBlocked:
                     size = data.get("target_weight_pct")
                 try:
                     if size is None or float(size) <= 0.0:
-                        continue        # an exit instruction, not a proposal
+                        continue  # an exit instruction, not a proposal
                 except (TypeError, ValueError):
                     continue
                 proposals.append((row.get("timestamp") or "", did, sym))
@@ -186,15 +192,17 @@ class ReviewBlocked:
                 # — without it, a constructor drop falls through to the
                 # generic `no_order_built` bucket below with no explanation,
                 # even though the real reason was captured at drop time.
-                if (data.get("stage") == "deterministic_gate"
-                        and data.get("outcome") == "blocked"
-                        and data.get("reason") == "constructor_dropped"):
-                    constructor_drops[(did, sym)] = (
-                        data.get("detail") or "constructor_dropped"
-                    )
-                elif (data.get("stage") == "deterministic_gate"
-                        and data.get("outcome") == "unmeasurable"
-                        and data.get("reason") == "data_fault"):
+                if (
+                    data.get("stage") == "deterministic_gate"
+                    and data.get("outcome") == "blocked"
+                    and data.get("reason") == "constructor_dropped"
+                ):
+                    constructor_drops[(did, sym)] = data.get("detail") or "constructor_dropped"
+                elif (
+                    data.get("stage") == "deterministic_gate"
+                    and data.get("outcome") == "unmeasurable"
+                    and data.get("reason") == "data_fault"
+                ):
                     # 2026-09-12: a symbol the constructor could not
                     # MEASURE (no price / ATR / usable bars / analysis).
                     # Its own bucket — not `constructor_dropped`, which is
@@ -212,12 +220,12 @@ class ReviewBlocked:
                 # Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.
-                elif (data.get("stage") == "deterministic_gate"
-                        and data.get("outcome") == "blocked"
-                        and data.get("reason") == "constructor_refused"):
-                    constructor_refusals[(did, sym)] = (
-                        f"constructor_refused:{data.get('refusal') or 'unknown'}"
-                    )
+                elif (
+                    data.get("stage") == "deterministic_gate"
+                    and data.get("outcome") == "blocked"
+                    and data.get("reason") == "constructor_refused"
+                ):
+                    constructor_refusals[(did, sym)] = f"constructor_refused:{data.get('refusal') or 'unknown'}"
 
         if not proposals:
             return ""
@@ -281,7 +289,7 @@ class ReviewBlocked:
                 if verdict.get("approved") is False:
                     cat = (verdict.get("reason_category") or "").strip()
                     return f"rm_rejected:{cat}" if cat else "rm_rejected"
-                for mod in (verdict.get("modifications") or []):
+                for mod in verdict.get("modifications") or []:
                     if not isinstance(mod, dict):
                         continue
                     if (mod.get("symbol") or "").strip().upper() != sym:
@@ -314,28 +322,22 @@ class ReviewBlocked:
             f"({pct:.0f}%) in the last {lookback_days} days.",
         ]
         if top:
-            lines.append(
-                "Top blocks: "
-                + ", ".join(f"{reason} × {n}" for reason, n in top)
-                + "."
-            )
+            lines.append("Top blocks: " + ", ".join(f"{reason} × {n}" for reason, n in top) + ".")
 
         # The pool the `min_proposals` count-cut chooses FROM: every symbol
         # this window saw proposed and never filled. A symbol with a fill was
         # never a candidate for the repeat list at any count, so including it
         # would overstate what the cut removed.
-        unfilled = [
-            (sym, rows) for sym, rows in by_symbol.items()
-            if all(reason is not None for _, reason in rows)
-        ]
-        repeats = [
-            (sym, rows) for sym, rows in unfilled if len(rows) >= min_proposals
-        ]
+        unfilled = [(sym, rows) for sym, rows in by_symbol.items() if all(reason is not None for _, reason in rows)]
+        repeats = [(sym, rows) for sym, rows in unfilled if len(rows) >= min_proposals]
         # Sorted before the record so the rows the record calls "surviving"
         # are exactly the rows the prompt goes on to render.
         repeats.sort(key=lambda item: (-len(item[1]), item[0]))
         self._record_cut_bite(
-            run_id=run_id, unfilled=unfilled, repeats=repeats, max_lines=max_lines,
+            run_id=run_id,
+            unfilled=unfilled,
+            repeats=repeats,
+            max_lines=max_lines,
         )
         if not repeats:
             lines.append(
@@ -344,15 +346,12 @@ class ReviewBlocked:
             )
             return "\n".join(lines)
 
-        lines.append(
-            f"Repeat blocked names ({min_proposals}+ proposals, 0 fills):"
-        )
+        lines.append(f"Repeat blocked names ({min_proposals}+ proposals, 0 fills):")
         for sym, rows in repeats[:max_lines]:
             rows = sorted(rows, key=lambda r: r[0], reverse=True)  # newest first
             sessions = len({ts[:10] for ts, _ in rows if ts})
             recent = ", ".join(str(reason) for _, reason in rows[:3])
             lines.append(
-                f"- {sym}: proposed {len(rows)}× across {sessions} sessions, "
-                f"filled 0 — most recent first: {recent}"
+                f"- {sym}: proposed {len(rows)}× across {sessions} sessions, filled 0 — most recent first: {recent}"
             )
         return "\n".join(lines)

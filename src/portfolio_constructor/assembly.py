@@ -12,6 +12,7 @@ handed the owner's delegate for a body it owns (that would recurse): the
 resolver gets `_widen_stop_past_noise` ONLY when the owner's attribute is not
 the owner class's own shim for it.
 """
+
 from __future__ import annotations
 
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
@@ -22,9 +23,16 @@ from src.portfolio_constructor.stops import StopRules
 
 #: Owner names delegated to the held `StopRules`.
 STOP_DELEGATES = (
-    "_resolve_entry_and_stop", "_stop_atr_multiple", "_level_backing_stop",
-    "_derive_structural_stop_no_atr", "_reward_risk_at", "real_reward_risk_preview",
-    "_widen_stop_past_noise", "shipped_stop_rule", "shipped_stop_level_basis", "_resolve_stop",
+    "_resolve_entry_and_stop",
+    "_stop_atr_multiple",
+    "_level_backing_stop",
+    "_derive_structural_stop_no_atr",
+    "_reward_risk_at",
+    "real_reward_risk_preview",
+    "_widen_stop_past_noise",
+    "shipped_stop_rule",
+    "shipped_stop_level_basis",
+    "_resolve_stop",
 )
 #: Owner names delegated to the held `OrderBuilders`.
 ORDER_DELEGATES = ("_long_entry_builder", "_short_entry_builder", "_build_buy", "_build_short")
@@ -76,6 +84,7 @@ def hold_parts(owner, *, delegate_owner: type) -> None:
 def _delegate(part_attr: str, name: str, where: str):
     def shim(self, *args, **kwargs):
         return getattr(getattr(self, part_attr), name)(*args, **kwargs)
+
     shim.__name__, shim.__qualname__ = name, f"install_delegates.<locals>.{name}"
     shim.__doc__ = f"Thin shim: body lives in {where}."
     return shim
@@ -84,6 +93,7 @@ def _delegate(part_attr: str, name: str, where: str):
 def _static_exit(name: str):
     def shim(*args, **kwargs):
         return getattr(ExitOrderBuilders, name)(*args, **kwargs)
+
     shim.__name__, shim.__qualname__ = name, f"install_delegates.<locals>.{name}"
     shim.__doc__ = "Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."
     return staticmethod(shim)
@@ -101,5 +111,6 @@ def install_delegates(owner_cls: type) -> type:
     def _entry_stop_resolver(self):
         """Thin shim: builds the standalone resolver per call (src/portfolio_constructor/assembly.py)."""
         return build_entry_stop_resolver(self, owner_cls)
+
     owner_cls._entry_stop_resolver = _entry_stop_resolver
     return owner_cls

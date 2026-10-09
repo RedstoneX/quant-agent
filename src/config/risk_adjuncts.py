@@ -16,6 +16,7 @@ class CashSweepConfig(BaseModel):
     force_delever liquidates it FIRST. Deterministic and zero-LLM — the
     LLM never decides to park or unpark; the pipeline bookends do.
     """
+
     enabled: bool = False
     """Master switch. False = the sweeper is inert everywhere (no view
     filtering, no funding sells, no parking buys)."""

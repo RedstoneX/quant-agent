@@ -1,4 +1,5 @@
 """Boundary witness for the modules lifted out of trade_stream.py (second-round split)."""
+
 from __future__ import annotations
 
 from tests.boundary_harness import check_boundary
@@ -22,9 +23,12 @@ def test_split_modules_pass_the_boundary_check():
 
 def test_moved_names_are_the_same_objects_on_trade_stream():
     from src.execution.broker_parts import (
-        trade_stream, trade_stream_auth, trade_stream_reconnect,
+        trade_stream,
+        trade_stream_auth,
+        trade_stream_reconnect,
     )
     from src.execution.broker_parts import trade_stream_bounds
+
     assert trade_stream.TradeStreamAuthRejected is trade_stream_auth.TradeStreamAuthRejected
     assert trade_stream.TradeStreamGaveUp is trade_stream_reconnect.TradeStreamGaveUp
     assert trade_stream._STREAM_ATTEMPT_BUDGET is trade_stream_reconnect._STREAM_ATTEMPT_BUDGET

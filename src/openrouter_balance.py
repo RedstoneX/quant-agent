@@ -7,6 +7,7 @@ the rehearsal wall the socket is refused and that refusal is what
 fetch_openrouter_balance raises, by name. Nothing returns None for "could not
 read".
 """
+
 from __future__ import annotations
 
 import json
@@ -41,21 +42,16 @@ def fetch_openrouter_balance(path: Path = OPENROUTER_BALANCE_PATH) -> dict:
 
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
-        raise OpenRouterBalanceUnavailable(
-            f"OPENROUTER_API_KEY is not set, so {OPENROUTER_CREDITS_URL} was not asked"
-        )
+        raise OpenRouterBalanceUnavailable(f"OPENROUTER_API_KEY is not set, so {OPENROUTER_CREDITS_URL} was not asked")
     try:
         data = http_get_json(OPENROUTER_CREDITS_URL, {"Authorization": f"Bearer {key}"})["data"]
         remaining = float(data["total_credits"]) - float(data["total_usage"])
     except Exception as exc:
         raise OpenRouterBalanceUnavailable(
-            f"{OPENROUTER_CREDITS_URL} gave no usable balance: "
-            f"{type(exc).__name__}: {exc}"
+            f"{OPENROUTER_CREDITS_URL} gave no usable balance: {type(exc).__name__}: {exc}"
         ) from exc
     if not math.isfinite(remaining):
-        raise OpenRouterBalanceUnavailable(
-            f"{OPENROUTER_CREDITS_URL} returned a non-finite balance: {remaining!r}"
-        )
+        raise OpenRouterBalanceUnavailable(f"{OPENROUTER_CREDITS_URL} returned a non-finite balance: {remaining!r}")
     snapshot = {
         "remaining_usd": remaining,
         "as_of_day": et_today().isoformat(),
@@ -67,9 +63,7 @@ def fetch_openrouter_balance(path: Path = OPENROUTER_BALANCE_PATH) -> dict:
         tmp_path.write_text(json.dumps(snapshot))
         os.replace(str(tmp_path), str(path))
     except OSError as exc:
-        raise OpenRouterBalanceUnavailable(
-            f"balance was read but could not be written to {path}: {exc}"
-        ) from exc
+        raise OpenRouterBalanceUnavailable(f"balance was read but could not be written to {path}: {exc}") from exc
     return snapshot
 
 
@@ -82,6 +76,7 @@ def record_openrouter_balance(path: Path = OPENROUTER_BALANCE_PATH) -> dict | st
         logger.error(
             "OpenRouter balance NOT recorded: %s. Until a snapshot is written the "
             "dashboard shows the credit as DERIVED from the last recorded top-up, "
-            "not the provider's own figure.", exc,
+            "not the provider's own figure.",
+            exc,
         )
         return str(exc)

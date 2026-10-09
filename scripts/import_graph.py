@@ -12,6 +12,7 @@ pair fails and a stale pair fails. Nothing here reads origin/main.
 CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph          (report)
       PYTHONPATH=. .venv/bin/python -m scripts.import_graph --check  (guard)
 """
+
 from __future__ import annotations
 
 import ast
@@ -27,9 +28,12 @@ SEAM_PAIRS = ROOT / "config" / "check_allowlists" / "import_seam_pairs.txt"
 # move real money), so no module outside it may GAIN a runtime import of it.
 # Existing importers are the committed pair list; it may only shrink.
 LAYER_RULES = (
-    {"name": "broker-seam", "target_prefix": "src.execution",
-     "allowed_importers": ("src.execution",),
-     "why": "src.execution is the broker seam (it can move real money) and the set of modules reaching it must not widen."},
+    {
+        "name": "broker-seam",
+        "target_prefix": "src.execution",
+        "allowed_importers": ("src.execution",),
+        "why": "src.execution is the broker seam (it can move real money) and the set of modules reaching it must not widen.",
+    },
 )
 
 Edge = tuple[str, str]
@@ -51,6 +55,7 @@ def _is_type_checking(test: ast.expr) -> bool:
 
 def _collect(tree: ast.AST):
     """Yield (node, type_only) for every import statement."""
+
     def walk(node, type_only):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.Import, ast.ImportFrom)):
@@ -74,7 +79,7 @@ def _collect(tree: ast.AST):
 
 def _module_of(rel: str) -> str:
     """``src/pkg/mod.py`` -> ``src.pkg.mod``; a package __init__ names the package."""
-    parts = rel[:-len(".py")].split("/")
+    parts = rel[: -len(".py")].split("/")
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
@@ -82,10 +87,7 @@ def _module_of(rel: str) -> str:
 
 def disk_sources(src_dir: Path = SRC) -> dict[str, str]:
     """Every ``src/**/*.py`` in the working tree, keyed by repo-relative path."""
-    return {
-        f.relative_to(ROOT).as_posix(): f.read_text(encoding="utf-8")
-        for f in sorted(src_dir.rglob("*.py"))
-    }
+    return {f.relative_to(ROOT).as_posix(): f.read_text(encoding="utf-8") for f in sorted(src_dir.rglob("*.py"))}
 
 
 def graph_from_sources(sources: dict[str, str]):
@@ -224,9 +226,9 @@ def _under(mod, prefix):
 def crossing_edges(runtime_edges, rule) -> set[Edge]:
     """Runtime edges that reach the rule's target from outside its allowed importers."""
     return {
-        (a, b) for a, b in runtime_edges
-        if _under(b, rule["target_prefix"])
-        and not any(_under(a, p) for p in rule["allowed_importers"])
+        (a, b)
+        for a, b in runtime_edges
+        if _under(b, rule["target_prefix"]) and not any(_under(a, p) for p in rule["allowed_importers"])
     }
 
 
@@ -249,7 +251,8 @@ def layer_violations(rt=None, rules=LAYER_RULES, pairs=None) -> list[str]:
     for pair in sorted(set(now) - set(listed)):
         out.append(
             f"[{rules[0]['name']}] NEW pair {pair}. {rules[0]['why']} Fix: route it through "
-            f"{list(rules[0]['allowed_importers'])}. The pair list only shrinks.")
+            f"{list(rules[0]['allowed_importers'])}. The pair list only shrinks."
+        )
     for pair in sorted(set(listed) - set(now)):
         out.append(f"[{rules[0]['name']}] STALE pair {pair}: no longer imported; delete the line.")
     return out
@@ -272,8 +275,7 @@ CYCLE_FIX_HINT = (
 def check(argv: list[str] | None = None) -> int:
     lines = cycle_report() + layer_violations()
     if lines:
-        print("Import cycle(s) or seam-pair change(s):\n%s%s"
-              % ("\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
+        print("Import cycle(s) or seam-pair change(s):\n%s%s" % ("\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
         return 1
     print("import guard: zero import cycles; seam pairs match the committed list.")
     return 0
@@ -287,8 +289,10 @@ def report() -> str:
         outb[a] += 1
         inb[b] += 1
     top = lambda d: sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
-    lines = [f"modules={len(nodes)} runtime_edges={len(rt)} type_only_edges={len(to)}",
-             f"cycles(shortest per edge)={len(cyc)}"]
+    lines = [
+        f"modules={len(nodes)} runtime_edges={len(rt)} type_only_edges={len(to)}",
+        f"cycles(shortest per edge)={len(cyc)}",
+    ]
     lines += [f"  {len(c)}: " + " -> ".join(c + [c[0]]) for c in cyc]
     lines.append("hubs(inbound): " + ", ".join(f"{m}={n}" for m, n in top(inb)))
     lines.append("entanglers(outbound): " + ", ".join(f"{m}={n}" for m, n in top(outb)))

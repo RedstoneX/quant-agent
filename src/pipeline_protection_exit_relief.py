@@ -5,6 +5,7 @@ The broker's terminal-status set is injected by the builder in
 ``src.pipeline_protection`` (the one place the broker seam is imported), so no
 new layer crossing or import cycle is made.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,7 +20,8 @@ class ExitRelief:
     """Exit-settlement registration and the open-exit relief read; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         broker=None,
         state=None,
         terminal_states=frozenset(),
@@ -30,11 +32,11 @@ class ExitRelief:
 
     @property
     def _unsettled_exit_orders(self):
-        return self._state.get('_unsettled_exit_orders')
+        return self._state.get("_unsettled_exit_orders")
 
     @_unsettled_exit_orders.setter
     def _unsettled_exit_orders(self, value) -> None:
-        self._state.set('_unsettled_exit_orders', value)
+        self._state.set("_unsettled_exit_orders", value)
 
     def _register_exit_settlement(self, prot: dict) -> None:
         """Record or clear one exit order in the unsettled register."""
@@ -77,10 +79,7 @@ class ExitRelief:
         register = getattr(self, "_unsettled_exit_orders", None) or {}
         if not register:
             return [], False
-        held = {
-            str(getattr(p, "symbol", "") or "").strip().upper(): p
-            for p in (positions or [])
-        }
+        held = {str(getattr(p, "symbol", "") or "").strip().upper(): p for p in (positions or [])}
         relief: list = []
         unmeasurable = False
         for order_id, row in list(register.items()):
@@ -102,8 +101,7 @@ class ExitRelief:
             held_qty = abs(float(getattr(position, "qty", 0.0) or 0.0)) if position else 0.0
             open_qty = max(
                 0.0,
-                float(row.get("submitted_qty") or 0.0)
-                - float(info.get("filled_qty") or 0.0),
+                float(row.get("submitted_qty") or 0.0) - float(info.get("filled_qty") or 0.0),
             )
             if open_qty <= 0:
                 continue
@@ -112,14 +110,19 @@ class ExitRelief:
                 # nothing to net it against, and nothing safe to assume.
                 unmeasurable = True
                 continue
-            relief.append(TradeDecision(
-                action="SELL", symbol=symbol,
-                allocation_pct=min(100.0, open_qty / held_qty * 100.0),
-                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                reasoning=(
-                    f"Exit order {order_id} is still working at the broker "
-                    f"({open_qty:g} of {held_qty:g}); it is netted out of the "
-                    f"gross re-measure so the book is not sold down twice."
-                ),
-            ))
+            relief.append(
+                TradeDecision(
+                    action="SELL",
+                    symbol=symbol,
+                    allocation_pct=min(100.0, open_qty / held_qty * 100.0),
+                    entry_price=0.0,
+                    stop_loss=0.0,
+                    take_profit=0.0,
+                    reasoning=(
+                        f"Exit order {order_id} is still working at the broker "
+                        f"({open_qty:g} of {held_qty:g}); it is netted out of the "
+                        f"gross re-measure so the book is not sold down twice."
+                    ),
+                )
+            )
         return relief, unmeasurable

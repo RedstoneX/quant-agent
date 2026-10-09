@@ -2,6 +2,7 @@
 
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
+
 import json
 import logging
 
@@ -85,14 +86,15 @@ def _response_format_for(model_cls: type) -> dict:
     except Exception:
         if name not in _STRICT_SCHEMA_FALLBACK_LOGGED:
             logger.warning(
-                "response_format: %s schema could not be made strict-"
-                "compatible; sending strict=false instead", name,
+                "response_format: %s schema could not be made strict-compatible; sending strict=false instead",
+                name,
             )
             _STRICT_SCHEMA_FALLBACK_LOGGED.add(name)
         result = {
             "type": "json_schema",
             "json_schema": {
-                "name": name, "strict": False,
+                "name": name,
+                "strict": False,
                 "schema": model_cls.model_json_schema(),
             },
         }

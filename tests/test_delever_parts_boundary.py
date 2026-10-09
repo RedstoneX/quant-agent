@@ -3,6 +3,7 @@
 Every collaborator is an explicit keyword-only constructor argument, so each part is
 built from stubs alone (clause 5 of tests/boundary_harness.py); this file names no owner object.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -43,13 +44,13 @@ def test_every_delever_module_passes_the_boundary_check(module):
     assert verdict.passed, verdict.failures
 
 
-
 def test_margin_floor_breach_runs_against_a_stub_config():
     """Exercised, not just built: a book deeper into margin than the base cap engineers is a breach."""
     config = SimpleNamespace(risk=SimpleNamespace(maintenance_margin_pct=25.0))
     part = _build(DeleverLadder, config=config)
-    ctx = SimpleNamespace(total_value=100_000.0,
-                          leverage={"distance_to_forced_liquidation_pct": 5.0, "base_ceiling_x": 2.0})
+    ctx = SimpleNamespace(
+        total_value=100_000.0, leverage={"distance_to_forced_liquidation_pct": 5.0, "base_ceiling_x": 2.0}
+    )
     assert part._is_margin_floor_breach(ctx) is True
     ctx.leverage["distance_to_forced_liquidation_pct"] = 90.0
     assert part._is_margin_floor_breach(ctx) is False
@@ -81,6 +82,7 @@ def test_deferred_discharge_calls_the_handed_in_enforcer_not_its_own():
 def test_deferred_discharge_never_raises_when_the_enforcer_does():
     def boom(ctx):
         raise RuntimeError("enforcer failed")
+
     part = _build(DeleverTrims, enforce_gross_ceiling=boom)
     part._discharge_deferred_gross_ceiling(SimpleNamespace(gross_ceiling_deferred=True))
 

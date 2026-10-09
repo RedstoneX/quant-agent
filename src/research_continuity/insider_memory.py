@@ -11,6 +11,7 @@ here imports src.pipeline. Storage and the evidence journal (anything with
 `EventJournal.persist_evidence`, src/ports/event_journal.py) are handed in,
 never reached for through a host.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ class InsiderMemory:
     """Remembered Form 4 findings and the freshness probe that decides whether to reuse them."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db,
         smart_money_provider,
         watched_research_symbols: Callable | None = None,
@@ -62,7 +64,7 @@ class InsiderMemory:
             self._carry_forward_insider = carry_forward_insider
 
     def _form4_freshness(self, ctx=None, symbols=None) -> dict:
-        """"Has anything been FILED on a watched name since our last read?"
+        """ "Has anything been FILED on a watched name since our last read?"
 
         The ONLY freshness question the decision tick asks. It is answered
         from each watched issuer's own SEC filing history — O(watched names)
@@ -82,8 +84,11 @@ class InsiderMemory:
             # No probe at all is not a silent pass. The seat's freshness is
             # unknown, and unknown loses the seat at the evidence gate.
             return {
-                "ok": False, "new_filings": [], "read_through": "",
-                "checked": 0, "unchecked": [],
+                "ok": False,
+                "new_filings": [],
+                "read_through": "",
+                "checked": 0,
+                "unchecked": [],
                 "reason": "provider cannot answer Form 4 freshness",
             }
         if symbols is None:
@@ -97,18 +102,30 @@ class InsiderMemory:
             # Logged here, not only returned: the caller logs only when it
             # holds findings, so an empty-seat tick used to lose this.
             logger.warning(
-                "Form 4 freshness probe raised %s: %s", type(exc).__name__, exc,
+                "Form 4 freshness probe raised %s: %s",
+                type(exc).__name__,
+                exc,
             )
             return {
-                "ok": False, "new_filings": [], "read_through": "",
-                "checked": 0, "unchecked": [],
+                "ok": False,
+                "new_filings": [],
+                "read_through": "",
+                "checked": 0,
+                "unchecked": [],
                 "reason": f"freshness probe raised {type(exc).__name__}: {exc}",
             }
-        return result if isinstance(result, dict) else {
-            "ok": False, "new_filings": [], "read_through": "",
-            "checked": 0, "unchecked": [],
-            "reason": "freshness probe returned no verdict",
-        }
+        return (
+            result
+            if isinstance(result, dict)
+            else {
+                "ok": False,
+                "new_filings": [],
+                "read_through": "",
+                "checked": 0,
+                "unchecked": [],
+                "reason": "freshness probe returned no verdict",
+            }
+        )
 
     def _form4_known_accessions(self) -> set[str]:
         """Accessions already processed or cached. No network."""
@@ -130,6 +147,7 @@ class InsiderMemory:
     def _findings_from_specialist_evidence(self) -> list:
         """Most recent smart-money findings from specialist_evidence. [] if none."""
         from src.models import SmartMoneyFinding
+
         db = getattr(self, "db", None)
         execute = getattr(db, "execute", None)
         if not callable(execute):
@@ -142,18 +160,14 @@ class InsiderMemory:
                 ("smart_money_analyst",),
             ).fetchone()
         except Exception:  # noqa: BLE001
-            record_swallowed_here(
-                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
-            )
+            record_swallowed_here("research_continuity.insider_memory._findings_from_specialist_evidence", log=logger)
             return []
         if not row:
             return []
         try:
             run_id = row["run_id"] if hasattr(row, "keys") else row[0]
         except Exception:  # noqa: BLE001
-            record_swallowed_here(
-                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
-            )
+            record_swallowed_here("research_continuity.insider_memory._findings_from_specialist_evidence", log=logger)
             return []
         if not isinstance(run_id, str) or not run_id.strip():
             return []
@@ -165,9 +179,7 @@ class InsiderMemory:
                 (run_id, "smart_money_analyst", "finding"),
             ).fetchall()
         except Exception:  # noqa: BLE001
-            record_swallowed_here(
-                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
-            )
+            record_swallowed_here("research_continuity.insider_memory._findings_from_specialist_evidence", log=logger)
             return []
         findings: list = []
         for item in rows or []:
@@ -241,6 +253,7 @@ class InsiderMemory:
         until a new accession.
         """
         from src.evidence_kind import same_session_from_date
+
         for finding in findings or []:
             raw = finding if isinstance(finding, dict) else None
             for key in ("as_of", "date", "session_date", "analyzed_on"):
@@ -254,6 +267,7 @@ class InsiderMemory:
     def _carry_forward_insider(self, ctx) -> CarryForward:
         """Remembered Form 4 findings; refresh only when a NEW filing appears."""
         from src.evidence_kind import insider_reuse
+
         findings: list = []
         accessions: set[str] = set()
         try:
@@ -282,10 +296,7 @@ class InsiderMemory:
         # exists to prevent and which no later tick can undo.
         freshness = self._form4_freshness(ctx=ctx)
         probe_ok = bool(freshness.get("ok"))
-        incoming = {
-            str(a).strip() for a in (freshness.get("new_filings") or [])
-            if str(a).strip()
-        }
+        incoming = {str(a).strip() for a in (freshness.get("new_filings") or []) if str(a).strip()}
         new_form4 = bool(incoming - set(accessions))
         # Fail closed whenever the probe cannot call the seat current —
         # including when the remembered answer is EMPTY. CORRECTED
@@ -304,8 +315,8 @@ class InsiderMemory:
         has_provider = getattr(self, "smart_money_provider", None) is not None
         if not probe_ok and (findings or has_provider):
             logger.warning(
-                "Intraday scan: insider seat cannot be called current, "
-                "expires this tick — %s", freshness.get("reason") or "no reason",
+                "Intraday scan: insider seat cannot be called current, expires this tick — %s",
+                freshness.get("reason") or "no reason",
             )
             return CarryForward(findings, "expired", same_session=same_session)
         verdict = insider_reuse(

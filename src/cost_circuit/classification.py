@@ -1,4 +1,5 @@
 """src.cost_circuit.classification -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 import logging
 import sqlite3
@@ -25,16 +26,18 @@ _T = TypeVar("_T")
 # runaway-loop backstop (item 14c) and is session-scoped for the same reason.
 _DAY_QUOTA_TRIGGERS = frozenset({"daily_cost_limit"})
 
-_SESSION_QUOTA_TRIGGERS = frozenset({
-    "session_cost_limit",
-    "session_call_count_limit",
-    # Bounds provider attempts WITHIN one logical call (retry/failover),
-    # independent of the item-14c call-count backstop above, which bounds
-    # logical calls across a whole session. Session-scoped, not hard: a
-    # transient provider fault should not need an operator reset (Defect 5,
-    # 2026-08-31 -- see `max_provider_attempts_per_call`).
-    "provider_attempt_limit",
-})
+_SESSION_QUOTA_TRIGGERS = frozenset(
+    {
+        "session_cost_limit",
+        "session_call_count_limit",
+        # Bounds provider attempts WITHIN one logical call (retry/failover),
+        # independent of the item-14c call-count backstop above, which bounds
+        # logical calls across a whole session. Session-scoped, not hard: a
+        # transient provider fault should not need an operator reset (Defect 5,
+        # 2026-08-31 -- see `max_provider_attempts_per_call`).
+        "provider_attempt_limit",
+    }
+)
 
 # === Defect B (2026-09-22): a transient provider fault must not need a human ===
 #
@@ -82,16 +85,18 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
 # still refuses to clear while settled spend is at cap, so the real ceiling
 # is unchanged; what is bounded instead of priced is the COUNT of unproven
 # failed calls a day may forgive.
-_SELF_CLEARING_HARD_TRIGGERS = frozenset({
-    "failed_call_unknown_cost",
-    # Same latch, named honestly when the cause is known (see
-    # OUT_OF_CREDIT_TRIGGER_CODE): a payment refusal is still a failed call
-    # of unproven cost, so it self-clears on exactly the same terms. Renaming
-    # the cause must not quietly turn a self-clearing latch into a permanent
-    # one.
-    "provider_out_of_credit",
-    "legacy_unknown_cost",
-})
+_SELF_CLEARING_HARD_TRIGGERS = frozenset(
+    {
+        "failed_call_unknown_cost",
+        # Same latch, named honestly when the cause is known (see
+        # OUT_OF_CREDIT_TRIGGER_CODE): a payment refusal is still a failed call
+        # of unproven cost, so it self-clears on exactly the same terms. Renaming
+        # the cause must not quietly turn a self-clearing latch into a permanent
+        # one.
+        "provider_out_of_credit",
+        "legacy_unknown_cost",
+    }
+)
 
 # === docs/WORK.md item 147 (2026-09-26): a NULL cost that is not unknown ===
 #
@@ -124,9 +129,8 @@ _SELF_CLEARING_HARD_TRIGGERS = frozenset({
 # `= 0` never matches NULL, so those keep counting as unknown, which is the
 # safe direction: their request count was never recorded, so nothing about
 # them is proven.
-_PROVEN_ZERO_ROW_SQL = (
-    "cost_usd IS NULL AND provider_requests = 0 AND status = 'success'"
-)
+_PROVEN_ZERO_ROW_SQL = "cost_usd IS NULL AND provider_requests = 0 AND status = 'success'"
+
 
 def _unknown_cost_row_expr(conn: sqlite3.Connection) -> str:
     """SQL scoring 1 for an `agent_logs` row of genuinely unknown cost.
@@ -157,11 +161,9 @@ def _unknown_cost_row_expr(conn: sqlite3.Connection) -> str:
     # this word is only written when a request was made), and the clause is
     # dropped entirely on an older `agent_logs` that has no `telemetry`
     # column, where the absence of the proof leaves only the NULL test.
-    no_usage_sql = (
-        "WHEN telemetry = 'no_usage' THEN 1 " if "telemetry" in columns else ""
-    )
-    return f"CASE WHEN ({_PROVEN_ZERO_ROW_SQL}) THEN 0 " \
-           f"{no_usage_sql}WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+    no_usage_sql = "WHEN telemetry = 'no_usage' THEN 1 " if "telemetry" in columns else ""
+    return f"CASE WHEN ({_PROVEN_ZERO_ROW_SQL}) THEN 0 {no_usage_sql}WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+
 
 def _trigger_scope(code: Any) -> str:
     if not isinstance(code, str):
@@ -171,6 +173,7 @@ def _trigger_scope(code: Any) -> str:
     if code in _SESSION_QUOTA_TRIGGERS:
         return "session"
     return "hard"
+
 
 # === Defect 2 (2026-08-28): provider failures that provably cost $0 ===
 #
@@ -257,11 +260,20 @@ _MID_STREAM_EXC_NAMES = frozenset({"LLMStreamErrorChunk"})
 # already sent and are left ambiguous below -- that is the same pre-send/
 # post-send line the design draws between "timeout after send" (ambiguous)
 # and "pre-send transport failure" (zero-cost).
-_PRE_SEND_TRANSPORT_EXC_NAMES = frozenset({
-    "ConnectError", "ConnectTimeout", "ConnectionRefusedError",
-    "gaierror", "SSLError", "SSLCertVerificationError",
-    "SSLZeroReturnError", "SSLWantReadError", "SSLWantWriteError",
-})
+_PRE_SEND_TRANSPORT_EXC_NAMES = frozenset(
+    {
+        "ConnectError",
+        "ConnectTimeout",
+        "ConnectionRefusedError",
+        "gaierror",
+        "SSLError",
+        "SSLCertVerificationError",
+        "SSLZeroReturnError",
+        "SSLWantReadError",
+        "SSLWantWriteError",
+    }
+)
+
 
 def _cause_chain(error: BaseException, limit: int = 6) -> list[BaseException]:
     """`error` plus its wrapped causes, de-duplicated and length-bounded.
@@ -281,6 +293,7 @@ def _cause_chain(error: BaseException, limit: int = 6) -> list[BaseException]:
         node = node.__cause__ or node.__context__
     return chain
 
+
 def _is_mid_stream_failure(error: BaseException) -> bool:
     """True when this failure was reported from inside a started response.
 
@@ -292,10 +305,8 @@ def _is_mid_stream_failure(error: BaseException) -> bool:
     free. That is the conservative side, and it is the side this module
     errs on everywhere else too.
     """
-    return any(
-        type(node).__name__ in _MID_STREAM_EXC_NAMES
-        for node in _cause_chain(error)
-    )
+    return any(type(node).__name__ in _MID_STREAM_EXC_NAMES for node in _cause_chain(error))
+
 
 def _is_known_zero_cost_failure(error: BaseException) -> bool:
     """True only for a provider failure PROVEN to have cost $0.
@@ -325,13 +336,12 @@ def _is_known_zero_cost_failure(error: BaseException) -> bool:
     # exception's cause chain -- the top-level wrapper's own class name
     # ("APIConnectionError") is, by itself, ambiguous about which side of
     # the connection failed.
-    return any(
-        type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES
-        for node in _cause_chain(error)
-    )
+    return any(type(node).__name__ in _PRE_SEND_TRANSPORT_EXC_NAMES for node in _cause_chain(error))
+
 
 def _all_attempts_provably_free(
-    error: BaseException, attempt_errors: list[BaseException] | None,
+    error: BaseException,
+    attempt_errors: list[BaseException] | None,
 ) -> bool:
     """True only when EVERY provider attempt on this call provably cost $0.
 
@@ -362,6 +372,7 @@ def _all_attempts_provably_free(
             "cost-circuit charging a failed call: not every attempt is "
             "provably $0 — [%s]. An attempt marked CHARGED with a status the "
             "zero-cost allow-list does not carry is worth investigating: it "
-            "may have billed nothing in reality.", shapes,
+            "may have billed nothing in reality.",
+            shapes,
         )
     return free

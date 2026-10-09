@@ -9,6 +9,7 @@ while the deployed file says something else is worth nothing.
 See `docs/architecture/MODEL_ROUTING_POLICY.md` for the evidence behind each
 seat assignment.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,10 +25,16 @@ from src.cost_table import _PRICING_OPENROUTER, estimate_cost
 SETTINGS = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
 
 AGENTS = (
-    "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "tech_analyst",
+    "news_analyst",
+    "macro_analyst",
+    "earnings_analyst",
     "smart_money_analyst",
-    "portfolio_manager", "risk_manager", "position_reviewer",
-    "evening_analyst", "meta_reflector",
+    "portfolio_manager",
+    "risk_manager",
+    "position_reviewer",
+    "evening_analyst",
+    "meta_reflector",
 )
 
 # The seats whose output is a trading decision or the gate over one — where
@@ -41,8 +48,13 @@ DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
 # deliberately left on their existing (measured, decision-chain-independent)
 # models and stayed on OpenRouter. GOOGLE_SEATS | OPENROUTER_SEATS == AGENTS.
 GOOGLE_SEATS = (
-    "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
-    "smart_money_analyst", "evening_analyst", "meta_reflector",
+    "tech_analyst",
+    "news_analyst",
+    "macro_analyst",
+    "earnings_analyst",
+    "smart_money_analyst",
+    "evening_analyst",
+    "meta_reflector",
 )
 # position_reviewer is HELD BACK from the Gemini-direct migration on purpose.
 # It is a DECISION SEAT, and the gate directly below
@@ -74,6 +86,7 @@ def _benchmark_pairs() -> dict:
         data = json.loads(path.read_text())
         pairs.update((data.get("aggregate") or {}).get("pairs") or {})
     return pairs
+
 
 # The commissioning baseline. Being back on it for every seat means the cost
 # tranche silently reverted.
@@ -133,10 +146,7 @@ def test_policy_is_cheaper_than_the_commissioning_baseline(llm):
     per_call_in, per_call_out = 40_000, 3_000
 
     def sweep(model_for_agent) -> float:
-        return sum(
-            estimate_cost(model_for_agent(a), per_call_in, per_call_out)
-            for a in AGENTS
-        )
+        return sum(estimate_cost(model_for_agent(a), per_call_in, per_call_out) for a in AGENTS)
 
     policy_cost = sweep(lambda a: llm[f"{a}_model"])
     baseline_cost = sweep(lambda a: BASELINE_MODEL)
@@ -195,8 +205,7 @@ def test_risk_seat_evidence_covers_the_rules_the_audit_gave_it(llm):
         f"two rules it is the only check on"
     )
     assert pair["quality_min"] == 1.0, (
-        f"risk_manager on {model} scored quality_min={pair['quality_min']} on "
-        f"risk_drawdown_discipline"
+        f"risk_manager on {model} scored quality_min={pair['quality_min']} on risk_drawdown_discipline"
     )
 
 
@@ -274,13 +283,17 @@ def test_openrouter_seat_fails_closed_rather_than_substituting_a_model():
     client = MagicMock()
     client.chat.completions.create.side_effect = ConnectionError("openrouter down")
 
-    with patch("openai.OpenAI", return_value=client), \
-            patch("anthropic.Anthropic") as anthropic_cls, \
-            patch("time.sleep", lambda _s: None), \
-            patch.dict("os.environ", {"QUANT_AGENT_MAX_RETRIES": "2"}):
+    with (
+        patch("openai.OpenAI", return_value=client),
+        patch("anthropic.Anthropic") as anthropic_cls,
+        patch("time.sleep", lambda _s: None),
+        patch.dict("os.environ", {"QUANT_AGENT_MAX_RETRIES": "2"}),
+    ):
         agent = RiskManagerAgent(
-            api_key="placeholder", model="openai/gpt-5.5",
-            max_tokens=64, provider="openrouter",
+            api_key="placeholder",
+            model="openai/gpt-5.5",
+            max_tokens=64,
+            provider="openrouter",
         )
         # `_execute` rather than `run`: the retry/failover loop is what is
         # under test, not the prompt builder that would otherwise need a
@@ -301,10 +314,6 @@ def test_every_seat_resolves_to_its_accepted_provider(llm):
     OPENROUTER_SEATS above and docs/WORK.md)."""
     assert set(GOOGLE_SEATS) | set(OPENROUTER_SEATS) == set(AGENTS)
     for agent in GOOGLE_SEATS:
-        assert resolve_provider(
-            llm[f"{agent}_model"], llm[f"{agent}_provider"]
-        ) == "google", agent
+        assert resolve_provider(llm[f"{agent}_model"], llm[f"{agent}_provider"]) == "google", agent
     for agent in OPENROUTER_SEATS:
-        assert resolve_provider(
-            llm[f"{agent}_model"], llm[f"{agent}_provider"]
-        ) == "openrouter", agent
+        assert resolve_provider(llm[f"{agent}_model"], llm[f"{agent}_provider"]) == "openrouter", agent

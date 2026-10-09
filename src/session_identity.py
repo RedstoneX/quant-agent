@@ -181,8 +181,7 @@ def assert_identity_whole(
 
     where = "its own checkout" if not outside else "a sandbox tree"
     return (
-        f"session identity '{identity}' is whole: REST and the fill socket "
-        f"both present {rest_mark}, writing to {where}"
+        f"session identity '{identity}' is whole: REST and the fill socket both present {rest_mark}, writing to {where}"
     )
 
 
@@ -199,5 +198,3 @@ def _credential_fingerprint(credential: str | None) -> str:
         return "absent (empty)"
     text = str(credential)
     return f"length {len(text)}, starts '{text[:2]}'"
-
-

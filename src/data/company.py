@@ -142,9 +142,7 @@ class CompanyProfileStore:
         symbol = str(symbol).strip().upper()
         entry = self._cache.get(symbol)
         if entry and self._fresh(entry):
-            return CompanyProfile(**{
-                k: v for k, v in entry.items() if not k.startswith("_")
-            })
+            return CompanyProfile(**{k: v for k, v in entry.items() if not k.startswith("_")})
         if not allow_fetch:
             return CompanyProfile(symbol=symbol)
         profile = self._fetch(symbol)
@@ -166,9 +164,7 @@ class CompanyProfileStore:
         if not isinstance(entry, dict):
             return CompanyProfile(symbol=symbol)
         try:
-            return CompanyProfile(**{
-                k: v for k, v in entry.items() if not str(k).startswith("_")
-            })
+            return CompanyProfile(**{k: v for k, v in entry.items() if not str(k).startswith("_")})
         except TypeError:
             return CompanyProfile(symbol=symbol)
 
@@ -183,6 +179,7 @@ class CompanyProfileStore:
         def _work() -> dict:
             try:
                 import yfinance as yf
+
                 return yf.Ticker(symbol).info or {}
             except Exception as e:  # noqa: BLE001
                 record_swallowed("data.company._work", e, log=logger)

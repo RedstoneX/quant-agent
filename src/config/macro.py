@@ -1,6 +1,7 @@
 """`MacroConfig`, lifted verbatim out of `src/config/__init__.py` (the file-size
 ratchet). Public import path is unchanged: `from src.config import MacroConfig`.
 """
+
 from pydantic import BaseModel, Field, model_validator
 
 

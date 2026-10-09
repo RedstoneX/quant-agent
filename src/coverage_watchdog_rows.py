@@ -5,6 +5,7 @@ optional `db` handle: a swallowed fault logs a full traceback and writes a
 counted ``disagreed`` row when a ledger handle is in reach (``db=None`` logs
 the traceback and skips the row). Nothing is stored here.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,8 @@ def _scale_in_row_age_seconds(created_at: Any, moment: datetime, db: Any = None)
 
 
 def measured_window_bound_seconds(
-    db_path: str | Path | None, db=None,
+    db_path: str | Path | None,
+    db=None,
 ) -> tuple[float | None, int]:
     """The longest scale-in unprotected window the desk has MEASURED, and how
     many measurements that is drawn from.
@@ -55,6 +57,7 @@ def measured_window_bound_seconds(
         return None, 0
     try:
         import sqlite3
+
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             rows = conn.execute(

@@ -5,6 +5,7 @@ and sits beside a ``board_notes/`` directory of ``item-N.md`` files. Zero or
 several such files is a refusal: a guard that cannot find its subject must not
 pass.
 """
+
 from __future__ import annotations
 
 import re
@@ -40,6 +41,7 @@ def working_board(root: Path | str | None = None) -> tuple[str, str]:
 
     def read(cands):
         return {p: (ROOT / p).read_text(encoding="utf-8", errors="replace") for p in cands}
+
     return locate(working_paths("*.md"), read, "the working tree")
 
 
@@ -54,16 +56,15 @@ def tree_board(tree: Path) -> tuple[str, str]:
     repository locates that repository's board, never this one's. A plain
     directory with no git history is walked instead.
     """
-    out = subprocess.run(["git", "-C", str(tree), "ls-files", "*.md"],
-                         capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", str(tree), "ls-files", "*.md"], capture_output=True, text=True)
     if out.returncode == 0:
         paths = sorted(p for p in out.stdout.splitlines() if (tree / p).is_file())
     else:
-        paths = sorted(str(p.relative_to(tree)) for p in tree.rglob("*.md")
-                       if ".git" not in p.parts and p.is_file())
+        paths = sorted(str(p.relative_to(tree)) for p in tree.rglob("*.md") if ".git" not in p.parts and p.is_file())
 
     def read(cands):
         return {p: (tree / p).read_text(encoding="utf-8", errors="replace") for p in cands}
+
     return locate(paths, read, f"the tree at {tree}")
 
 

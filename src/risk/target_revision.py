@@ -261,6 +261,7 @@ __all__ = [
     "SWEEP_EVIDENCE",
 ]
 
+
 def target_level_broken(
     *,
     target_level: float | None,
@@ -338,7 +339,8 @@ def stale_reach_trigger(
     if entry is None or target is None or vol is None or vol <= 0:
         return ""
     reach = horizon_reach(
-        vol, horizon_sessions,
+        vol,
+        horizon_sessions,
         max_reach_atr_multiple=max_reach_atr_multiple,
         max_horizon_sessions=max_horizon_sessions,
     )
@@ -395,8 +397,11 @@ def raw_trigger_flags(
     vol = _finite(atr)
     close = _finite(close_price)
     broken = target_level_broken(
-        target_level=target_level, close_price=close, atr=vol,
-        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
+        target_level=target_level,
+        close_price=close,
+        atr=vol,
+        is_short=is_short,
+        break_margin_atr_multiple=break_margin_atr_multiple,
     )
     reach: bool | None = None
     wall: bool | None = None
@@ -407,13 +412,17 @@ def raw_trigger_flags(
         except (TypeError, ValueError):
             horizon = None
         if horizon and horizon > 0:
-            reach = bool(stale_reach_trigger(
-                entry_price=entry, stored_target=target, atr=vol,
-                horizon_sessions=horizon,
-                min_target_atr_multiple=min_target_atr_multiple,
-                max_reach_atr_multiple=max_reach_atr_multiple,
-                max_horizon_sessions=max_horizon_sessions,
-            ))
+            reach = bool(
+                stale_reach_trigger(
+                    entry_price=entry,
+                    stored_target=target,
+                    atr=vol,
+                    horizon_sessions=horizon,
+                    min_target_atr_multiple=min_target_atr_multiple,
+                    max_reach_atr_multiple=max_reach_atr_multiple,
+                    max_horizon_sessions=max_horizon_sessions,
+                )
+            )
         # UNASKABLE IS None, AND AN EMPTY LEVEL SET IS UNASKABLE. A
         # degraded bar fetch hands this function `levels=[]`, and
         # `levels_still_in_the_way([])` is `[]`, and `walls_between([])` is
@@ -423,15 +432,20 @@ def raw_trigger_flags(
         # structureless chart is indistinguishable from a failed fetch at
         # this layer, and the safe reading of both is "not measured".
         if close is not None and levels:
-            wall = bool(walls_between(
-                stored_target=target, reference_price=entry,
-                surviving_levels=levels_still_in_the_way(
-                    computed_levels=levels, close_price=close, atr=vol,
+            wall = bool(
+                walls_between(
+                    stored_target=target,
+                    reference_price=entry,
+                    surviving_levels=levels_still_in_the_way(
+                        computed_levels=levels,
+                        close_price=close,
+                        atr=vol,
+                        is_short=is_short,
+                        break_margin_atr_multiple=break_margin_atr_multiple,
+                    ),
                     is_short=is_short,
-                    break_margin_atr_multiple=break_margin_atr_multiple,
-                ),
-                is_short=is_short,
-            ))
+                )
+            )
     return {"raw_broken": broken, "raw_reach": reach, "raw_wall": wall}
 
 
@@ -472,11 +486,11 @@ def assess_target_revision(
     target = _finite(stored_target)
     if target is None or target <= 0:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_STORED_TARGET,
+            symbol=sym,
+            code=REVISION_NO_STORED_TARGET,
             refusal=REVISION_NO_STORED_TARGET,
             detail=(
-                "no usable take-profit is stored on this position's opening "
-                "row, so there is no derivation to revise"
+                "no usable take-profit is stored on this position's opening row, so there is no derivation to revise"
             ),
         )
 
@@ -491,8 +505,10 @@ def assess_target_revision(
         # REFUSAL_NO_HORIZON anyway; refusing here names the real cause
         # instead of reporting a derivation failure.
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_PINNED_HORIZON,
-            refusal=REVISION_NO_PINNED_HORIZON, prior_price=target,
+            symbol=sym,
+            code=REVISION_NO_PINNED_HORIZON,
+            refusal=REVISION_NO_PINNED_HORIZON,
+            prior_price=target,
             detail=(
                 "no expected_horizon_sessions was pinned at entry for this "
                 "position, and the horizon is never recomputed — there is no "
@@ -504,8 +520,10 @@ def assess_target_revision(
     close = _finite(close_price)
     if entry is None or vol is None or vol <= 0 or close is None:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_UNMEASURABLE_INPUTS,
-            fault=REVISION_UNMEASURABLE_INPUTS, prior_price=target,
+            symbol=sym,
+            code=REVISION_UNMEASURABLE_INPUTS,
+            fault=REVISION_UNMEASURABLE_INPUTS,
+            prior_price=target,
             detail=(
                 "DATA FAULT: no usable entry price, ATR reading or completed "
                 "daily close could be obtained, so whether the target's "
@@ -526,42 +544,56 @@ def assess_target_revision(
     # one. The order below is only a tie-break between two CONFIRMED
     # triggers, and it is the old order: narrowest premise first.
     broken = target_level_broken(
-        target_level=target_level, close_price=close, atr=vol,
-        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
+        target_level=target_level,
+        close_price=close,
+        atr=vol,
+        is_short=is_short,
+        break_margin_atr_multiple=break_margin_atr_multiple,
     )
     reach_trigger = stale_reach_trigger(
-        entry_price=entry, stored_target=target, atr=vol,
+        entry_price=entry,
+        stored_target=target,
+        atr=vol,
         horizon_sessions=horizon,
         min_target_atr_multiple=min_target_atr_multiple,
         max_reach_atr_multiple=max_reach_atr_multiple,
         max_horizon_sessions=max_horizon_sessions,
     )
-    walls = walls_between(
-        stored_target=target, reference_price=entry,
-        surviving_levels=levels_still_in_the_way(
-            computed_levels=levels, close_price=close, atr=vol,
+    walls = (
+        walls_between(
+            stored_target=target,
+            reference_price=entry,
+            surviving_levels=levels_still_in_the_way(
+                computed_levels=levels,
+                close_price=close,
+                atr=vol,
+                is_short=is_short,
+                break_margin_atr_multiple=break_margin_atr_multiple,
+            ),
             is_short=is_short,
-            break_margin_atr_multiple=break_margin_atr_multiple,
-        ),
-        is_short=is_short,
-    ) if levels else []
+        )
+        if levels
+        else []
+    )
 
     level_txt = (
-        f"${_finite(target_level):,.2f}"
-        if _finite(target_level) is not None else "the level it was measured against"
+        f"${_finite(target_level):,.2f}" if _finite(target_level) is not None else "the level it was measured against"
     )
     # (fired today, confirmed by the prior close, trigger code, refusal
     # code, refusal words). Narrowest premise first.
     candidates = [
         (
-            bool(broken), break_seen_prior_close, TRIGGER_LEVEL_BROKEN,
+            bool(broken),
+            break_seen_prior_close,
+            TRIGGER_LEVEL_BROKEN,
             REVISION_BREAK_PENDING_CONFIRMATION,
             f"the level this target was measured against ({level_txt}) was "
             f"closed through on today's close but not on the prior trading "
             f"day's — the break is not yet confirmed, so the target stands",
         ),
         (
-            bool(reach_trigger), reach_seen_prior_close,
+            bool(reach_trigger),
+            reach_seen_prior_close,
             reach_trigger or TRIGGER_TARGET_BEYOND_REACH,
             REVISION_REACH_PENDING_CONFIRMATION,
             "today's ATR puts the stored target outside the reach the "
@@ -570,14 +602,18 @@ def assess_target_revision(
             "change, so the target stands",
         ),
         (
-            bool(walls), wall_seen_prior_close, TRIGGER_WALL_IN_FRONT_OF_TARGET,
+            bool(walls),
+            wall_seen_prior_close,
+            TRIGGER_WALL_IN_FRONT_OF_TARGET,
             REVISION_WALL_PENDING_CONFIRMATION,
             (
                 f"a structural level (${walls[0]:,.2f}) stands between the "
                 f"entry and the target on today's close but did not on the "
                 f"prior trading day's — the wall is not yet confirmed, so "
                 f"the target stands"
-            ) if walls else "",
+            )
+            if walls
+            else "",
         ),
     ]
 
@@ -596,15 +632,21 @@ def assess_target_revision(
         for fired, _confirmed, _code, refusal, words in candidates:
             if fired:
                 return TargetRevisionOutcome(
-                    symbol=sym, code=refusal, refusal=refusal,
-                    prior_price=target, level_used=_finite(target_level),
+                    symbol=sym,
+                    code=refusal,
+                    refusal=refusal,
+                    prior_price=target,
+                    level_used=_finite(target_level),
                     detail=words,
                 )
 
     if not trigger:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_TRIGGER, refusal=REVISION_NO_TRIGGER,
-            prior_price=target, level_used=_finite(target_level),
+            symbol=sym,
+            code=REVISION_NO_TRIGGER,
+            refusal=REVISION_NO_TRIGGER,
+            prior_price=target,
+            level_used=_finite(target_level),
             detail=(
                 "no structural event backs this flag: the level the target "
                 "was measured against is intact on the latest close, today's "
@@ -616,16 +658,24 @@ def assess_target_revision(
         )
 
     return _rederive_on_todays_bars(
-        sym=sym, direction=direction, is_short=is_short, entry=entry,
-        target=target, target_level=target_level, horizon=horizon,
-        setup_type=setup_type, levels=levels, vol=vol, close=close,
+        sym=sym,
+        direction=direction,
+        is_short=is_short,
+        entry=entry,
+        target=target,
+        target_level=target_level,
+        horizon=horizon,
+        setup_type=setup_type,
+        levels=levels,
+        vol=vol,
+        close=close,
         levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
-        trigger=trigger, sessions_held=sessions_held, allow_reanchor=True,
+        trigger=trigger,
+        sessions_held=sessions_held,
+        allow_reanchor=True,
         min_target_atr_multiple=min_target_atr_multiple,
         breakout_projection_atr_multiple=breakout_projection_atr_multiple,
         max_reach_atr_multiple=max_reach_atr_multiple,
         max_horizon_sessions=max_horizon_sessions,
         break_margin_atr_multiple=break_margin_atr_multiple,
     )
-
-

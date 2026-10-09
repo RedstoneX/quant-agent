@@ -3,6 +3,7 @@
 (`conn`, `_lock`, `_sqlite_utc_timestamp`, `REALISED_SECTOR_WEIGHT_DENOMINATOR`)
 without building `Database`. RECORDING ONLY; see the function's docstring.
 """
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def record_realised_sector_weights(
-    self, *, decisions, sectors, total_value, run_id: str | None = None,
+    self,
+    *,
+    decisions,
+    sectors,
+    total_value,
+    run_id: str | None = None,
     session_date: str | None = None,
 ) -> bool:
     """Record the REALISED `(sector, side)` weights of one run's orders.
@@ -44,7 +50,7 @@ def record_realised_sector_weights(
     entries: list = []
     reducing = 0
     reducers: list = []
-    for d in (decisions or ()):
+    for d in decisions or ():
         action = getattr(d, "action", None)
         if action in ("BUY", "SHORT"):
             entries.append(d)
@@ -70,8 +76,8 @@ def record_realised_sector_weights(
         side = "short" if getattr(d, "action", None) == "SHORT" else "long"
         key = (sector, side)
         slot = buckets.setdefault(
-            key, {"sector": sector, "side": side, "weight_pct": 0.0,
-                  "orders": 0},
+            key,
+            {"sector": sector, "side": side, "weight_pct": 0.0, "orders": 0},
         )
         slot["orders"] += 1
         w = _num(getattr(d, "allocation_pct", None))
@@ -87,8 +93,7 @@ def record_realised_sector_weights(
         side = "short" if getattr(d, "action", None) == "COVER" else "long"
         slot = buckets.setdefault(
             (sector, side, "reduce"),
-            {"sector": sector, "side": side, "kind": "reduce",
-             "weight_pct": 0.0, "orders": 0},
+            {"sector": sector, "side": side, "kind": "reduce", "weight_pct": 0.0, "orders": 0},
         )
         slot["orders"] += 1
         w = _num(getattr(d, "allocation_pct", None))
@@ -126,6 +131,7 @@ def record_realised_sector_weights(
     except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
         logger.warning(
             "realised sector weights for run %s were not recorded (%s)",
-            run_id, e,
+            run_id,
+            e,
         )
         return False

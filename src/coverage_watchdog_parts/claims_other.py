@@ -22,15 +22,13 @@ def _elected_unfilled_alerted_symbols(state: dict[str, Any], day: str) -> set[st
     raw = state.get("elected_unfilled_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def claim_elected_unfilled_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's elected-but-unfilled alert for `symbols` and return
@@ -43,16 +41,16 @@ def claim_elected_unfilled_alert(
     state = load_state(path)
     already = _elected_unfilled_alerted_symbols(state, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
     if not fresh:
         return []
     merged = already | set(fresh)
     state["elected_unfilled_alerted_symbols"] = {
-        "day": day, "symbols": sorted(merged),
+        "day": day,
+        "symbols": sorted(merged),
     }
     save_state(state, path)
     return fresh
@@ -73,15 +71,13 @@ def _kill_switch_block_alerted_symbols(state: dict[str, Any], day: str) -> set[s
     raw = state.get("kill_switch_block_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def claim_kill_switch_block_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's kill-switch-block alert for `symbols` and return the
@@ -97,16 +93,16 @@ def claim_kill_switch_block_alert(
     state = load_state(path)
     already = _kill_switch_block_alerted_symbols(state, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
     if not fresh:
         return []
     merged = already | set(fresh)
     state["kill_switch_block_alerted_symbols"] = {
-        "day": day, "symbols": sorted(merged),
+        "day": day,
+        "symbols": sorted(merged),
     }
     save_state(state, path)
     return fresh
@@ -126,15 +122,13 @@ def _unreadable_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("unreadable_stop_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def claim_unreadable_stop_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's unreadable-stop alert for `symbols` and return the
@@ -155,16 +149,16 @@ def claim_unreadable_stop_alert(
     state = load_state(path)
     already = _unreadable_alerted_symbols(state, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
     if not fresh:
         return []
     merged = already | set(fresh)
     state["unreadable_stop_alerted_symbols"] = {
-        "day": day, "symbols": sorted(merged),
+        "day": day,
+        "symbols": sorted(merged),
     }
     save_state(state, path)
     return fresh
@@ -184,15 +178,13 @@ def _exit_declined_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("exit_declined_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def claim_exit_declined_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's declined-exit alert for `symbols` and return the ones
@@ -206,15 +198,15 @@ def claim_exit_declined_alert(
     state = load_state(path)
     already = _exit_declined_alerted_symbols(state, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
     if not fresh:
         return []
     state["exit_declined_alerted_symbols"] = {
-        "day": day, "symbols": sorted(already | set(fresh)),
+        "day": day,
+        "symbols": sorted(already | set(fresh)),
     }
     save_state(state, path)
     return fresh
@@ -224,8 +216,4 @@ def _unguarded_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("unguarded_alerted_symbols") or {}
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}

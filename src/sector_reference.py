@@ -8,6 +8,7 @@ module mirror (one __getattr__ / one __setattr__), so tests that patch
 
 Imports nothing from src/execution/ or any adapter.
 """
+
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
@@ -38,17 +39,29 @@ _INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV"}
 # a fact about the product, not something to rediscover per process.
 _ETF_SECTORS = {
     # SPDR sector suite
-    "XLF": "Financial Services", "XLE": "Energy", "XLV": "Healthcare",
-    "XLI": "Industrials", "XLP": "Consumer Defensive", "XLY": "Consumer Cyclical",
-    "XLU": "Utilities", "XLRE": "Real Estate", "XLB": "Basic Materials",
-    "XLK": "Technology", "XLC": "Communication Services",
+    "XLF": "Financial Services",
+    "XLE": "Energy",
+    "XLV": "Healthcare",
+    "XLI": "Industrials",
+    "XLP": "Consumer Defensive",
+    "XLY": "Consumer Cyclical",
+    "XLU": "Utilities",
+    "XLRE": "Real Estate",
+    "XLB": "Basic Materials",
+    "XLK": "Technology",
+    "XLC": "Communication Services",
     # Semiconductor / AI thematics
-    "SMH": "Technology", "SOXX": "Technology", "DRAM": "Technology",
+    "SMH": "Technology",
+    "SOXX": "Technology",
+    "DRAM": "Technology",
     "CHPX": "Technology",
     # Inverse / leveraged index ETFs track a BROAD index — they have no sector
     # of their own. (Their leverage is handled separately by the signed/gross
     # multipliers in risk/rules.py.)
-    "SH": "Broad", "SDS": "Broad", "PSQ": "Broad", "SQQQ": "Broad",
+    "SH": "Broad",
+    "SDS": "Broad",
+    "PSQ": "Broad",
+    "SQQQ": "Broad",
 }
 
 _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _get_sector

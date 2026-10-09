@@ -6,6 +6,7 @@ tests build that shape with a real remote and assert: the phantom is gone after
 the refresh, a REAL growth still reds with and without it, and a dead network
 degrades to the local ref with a loud STALE note rather than hanging or passing.
 """
+
 from __future__ import annotations
 
 import subprocess

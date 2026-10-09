@@ -5,6 +5,7 @@ Each takes any `host` carrying the named attributes, so a SimpleNamespace is
 enough to construct and exercise them without the pipeline. The bodies are
 unchanged; the local imports of the built classes predate this move.
 """
+
 from __future__ import annotations
 
 
@@ -21,6 +22,7 @@ def _collab_of(obj, name: str):
 def _build_owner_alerts(host):
     """Builds the standalone OwnerAlerts from the host pipeline's collaborators (bodies moved to src/protection/owner_alerts.py)."""
     from src.protection.owner_alerts import OwnerAlerts
+
     return OwnerAlerts(
         broker=_collab_of(host, "broker"),
         still_uncovered=_collab_of(host, "_still_uncovered"),
@@ -32,6 +34,7 @@ def _build_owner_alerts(host):
 def _build_sell_finalization(host):
     """Builds the standalone SellFinalization from the host pipeline's collaborators (bodies moved to src/protection/sell_finalization.py)."""
     from src.protection.sell_finalization import SellFinalization
+
     return SellFinalization(
         broker=_collab_of(host, "broker"),
         db=_collab_of(host, "db"),
@@ -50,6 +53,7 @@ def _build_sell_finalization(host):
 def _build_fill_reconciler(host):
     """Builds the standalone FillReconciler from the host pipeline's collaborators (bodies moved to src/protection/fill_reconciler.py)."""
     from src.protection.fill_reconciler import FillReconciler
+
     return FillReconciler(
         broker=_collab_of(host, "broker"),
         db=_collab_of(host, "db"),
@@ -63,6 +67,7 @@ def _build_fill_reconciler(host):
 def _build_repeg_drain(host):
     """Builds the standalone RepegDrain from the host pipeline's collaborators (bodies moved to src/protection/repeg_drain.py)."""
     from src.protection.repeg_drain import RepegDrain
+
     return RepegDrain(
         broker=_collab_of(host, "broker"),
         db=_collab_of(host, "db"),
@@ -73,5 +78,5 @@ def _build_repeg_drain(host):
 def _build_coverage_election(host):
     """Builds the standalone CoverageElection from the host pipeline's collaborators (bodies moved to src/protection/coverage_election.py)."""
     from src.protection.coverage_election import CoverageElection
-    return CoverageElection(
-    )
+
+    return CoverageElection()

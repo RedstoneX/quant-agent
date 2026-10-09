@@ -23,16 +23,26 @@ from src.models import Position, TechAnalysisResult, TechReasoningChain
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
 def _analysis(symbol="NVDA", rating="buy") -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, entry_price=100.0, stop_loss=90.0,
-        reference_target=140.0, reasoning="r",
-        support_levels=[90.0], resistance_levels=[140.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol=symbol,
+        rating=rating,
+        entry_price=100.0,
+        stop_loss=90.0,
+        reference_target=140.0,
+        reasoning="r",
+        support_levels=[90.0],
+        resistance_levels=[140.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -64,16 +74,26 @@ MACRO = {
 # The registry no longer discards what the session already has
 # --------------------------------------------------------------------------
 
+
 def test_macro_reaches_the_evidence_registry_on_an_intraday_tick():
     """The blindfold: this used to return `{"NVDA": {"technical": ...}}` and
     drop the macro row, so the PM could not cite a regime it had been given."""
     registry = PortfolioManagerAgent.build_evidence_registry(
         analyses=[_analysis()],
-        positions=[Position(
-            symbol="NVDA", qty=10, avg_entry=90, current_price=100,
-            market_value=1000, unrealized_pnl=100, sector="Technology",
-        )],
-        news_intel=None, earnings_analyses=[], macro_analysis=MACRO,
+        positions=[
+            Position(
+                symbol="NVDA",
+                qty=10,
+                avg_entry=90,
+                current_price=100,
+                market_value=1000,
+                unrealized_pnl=100,
+                sector="Technology",
+            )
+        ],
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=MACRO,
         symbol_sectors={"NVDA": "Technology"},
     )
     assert registry["NVDA"]["technical"] == "buy"
@@ -95,6 +115,7 @@ def test_the_registry_no_longer_branches_on_the_session():
 # --------------------------------------------------------------------------
 # Carry-forward is date-scoped — the grounding property that mattered
 # --------------------------------------------------------------------------
+
 
 class _Pipeline:
     """Minimal stand-in exposing only the two carry-forward helpers."""
@@ -129,25 +150,13 @@ def _pipeline(macro=None, news=None):
     obj._carry_forward_macro = ResearchContinuityMixin._carry_forward_macro.__get__(obj)
     obj._latest_news_read_today = ResearchContinuityMixin._latest_news_read_today.__get__(obj)
     obj._carry_forward_news = ResearchContinuityMixin._carry_forward_news.__get__(obj)
-    obj._macro_regime_or_print_changed = (
-        ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
-    )
-    obj._macro_history_regime_changed = (
-        ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
-    )
-    obj._macro_series_prints_changed = (
-        ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
-    )
-    obj._live_macro_series_prints = (
-        ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
-    )
-    obj._news_has_newer_material_wire = (
-        ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
-    )
+    obj._macro_regime_or_print_changed = ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
+    obj._macro_history_regime_changed = ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
+    obj._macro_series_prints_changed = ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
+    obj._live_macro_series_prints = ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
+    obj._news_has_newer_material_wire = ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
     obj._peek_news_headlines = ResearchContinuityMixin._peek_news_headlines.__get__(obj)
-    obj._watched_research_symbols = (
-        ResearchContinuityMixin._watched_research_symbols.__get__(obj)
-    )
+    obj._watched_research_symbols = ResearchContinuityMixin._watched_research_symbols.__get__(obj)
     return obj
 
 
@@ -189,6 +198,7 @@ def test_absent_macro_leaves_the_tick_exactly_as_blind_as_before():
 def test_a_macro_store_failure_never_fails_the_tick():
     """The intraday tick's first job is deterministic loss protection. A
     carry-forward problem may cost it context; it must never cost that."""
+
     class _Broken:
         def load_last_state(self):
             raise RuntimeError("disk gone")
@@ -220,11 +230,14 @@ def test_news_round_trips_from_its_stored_dump():
 
     stored = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-08-27", era_themes=["AI capex"],
+            last_updated="2026-08-27",
+            era_themes=["AI capex"],
             current_regime="risk-on, AI-led rally",
         ),
-        state_changes=[], stock_news={},
-        pm_briefing="Bullish news", market_sentiment="bullish",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="Bullish news",
+        market_sentiment="bullish",
         confidence="medium",
     ).model_dump()
     carried = _pipeline(news=stored)._carry_forward_news()
@@ -252,27 +265,44 @@ def test_undated_macro_is_not_same_session():
 # The two shapes of sector_guidance
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("guidance", [
-    # What the live macro agent emits.
-    [{"sector": "Technology", "stance": "bullish", "reason": "capex"}],
-    # What MacroStore PERSISTS — normalized to {sector: direction}, reasons
-    # dropped. Carrying the morning's macro forward is what first put this
-    # shape in front of the registry; iterating it as a list yields bare
-    # strings and `row.get` raises AttributeError, taking the whole PM call
-    # down on every intraday tick.
-    {"Technology": "bullish"},
-    # Degenerate inputs must fall through to the broad outlook, not raise.
-    None, "garbage", 42, [None, "x"],
-])
+
+@pytest.mark.parametrize(
+    "guidance",
+    [
+        # What the live macro agent emits.
+        [{"sector": "Technology", "stance": "bullish", "reason": "capex"}],
+        # What MacroStore PERSISTS — normalized to {sector: direction}, reasons
+        # dropped. Carrying the morning's macro forward is what first put this
+        # shape in front of the registry; iterating it as a list yields bare
+        # strings and `row.get` raises AttributeError, taking the whole PM call
+        # down on every intraday tick.
+        {"Technology": "bullish"},
+        # Degenerate inputs must fall through to the broad outlook, not raise.
+        None,
+        "garbage",
+        42,
+        [None, "x"],
+    ],
+)
 def test_registry_survives_every_sector_guidance_shape(guidance):
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], news_intel=None, earnings_analyses=[],
-        positions=[Position(
-            symbol="NVDA", qty=10, avg_entry=90, current_price=100,
-            market_value=1000, unrealized_pnl=100, sector="Technology",
-        )],
+        analyses=[],
+        news_intel=None,
+        earnings_analyses=[],
+        positions=[
+            Position(
+                symbol="NVDA",
+                qty=10,
+                avg_entry=90,
+                current_price=100,
+                market_value=1000,
+                unrealized_pnl=100,
+                sector="Technology",
+            )
+        ],
         macro_analysis={
-            "regime": "risk-on", "equity_outlook": "bullish",
+            "regime": "risk-on",
+            "equity_outlook": "bullish",
             "sector_guidance": guidance,
         },
         symbol_sectors={"NVDA": "Technology"},
@@ -291,13 +321,21 @@ def test_the_stored_macro_shape_reaches_the_registry_intact():
 
     def macro_stance(guidance):
         return PortfolioManagerAgent.build_evidence_registry(
-            analyses=[], news_intel=None, earnings_analyses=[],
-            positions=[Position(
-                symbol="NVDA", qty=10, avg_entry=90, current_price=100,
-                market_value=1000, unrealized_pnl=100, sector="Technology",
-            )],
-            macro_analysis={"regime": "risk-on", "equity_outlook": "neutral",
-                            "sector_guidance": guidance},
+            analyses=[],
+            news_intel=None,
+            earnings_analyses=[],
+            positions=[
+                Position(
+                    symbol="NVDA",
+                    qty=10,
+                    avg_entry=90,
+                    current_price=100,
+                    market_value=1000,
+                    unrealized_pnl=100,
+                    sector="Technology",
+                )
+            ],
+            macro_analysis={"regime": "risk-on", "equity_outlook": "neutral", "sector_guidance": guidance},
             symbol_sectors={"NVDA": "Technology"},
         )["NVDA"]["macro"]
 
@@ -328,7 +366,9 @@ def test_the_registry_speaks_the_persisted_vocabulary():
     from src.models import SECTOR_STANCE_TO_DIRECTION, normalize_sector_stance
 
     assert set(SECTOR_STANCE_TO_DIRECTION) == {
-        "overweight", "neutral", "underweight",
+        "overweight",
+        "neutral",
+        "underweight",
     }
     for tilt, direction in SECTOR_STANCE_TO_DIRECTION.items():
         assert normalize_sector_stance(tilt) == direction
@@ -343,10 +383,13 @@ def test_the_registry_speaks_the_persisted_vocabulary():
     assert normalize_sector_stance(None) is None
 
 
-@pytest.mark.parametrize("guidance", [
-    [{"sector": "Technology", "stance": "underweight", "reason": "rates"}],
-    {"Technology": "bearish"},
-])
+@pytest.mark.parametrize(
+    "guidance",
+    [
+        [{"sector": "Technology", "stance": "underweight", "reason": "rates"}],
+        {"Technology": "bearish"},
+    ],
+)
 def test_the_prompt_and_the_registry_state_one_stance(guidance):
     """The PM is told to copy the validated stance exactly, so the rendered
     Macro section and the evidence registry must not disagree.
@@ -358,29 +401,39 @@ def test_the_prompt_and_the_registry_state_one_stance(guidance):
     integers` before the model saw anything."""
     agent = PortfolioManagerAgent(api_key="test", model="test-model")
     position = Position(
-        symbol="NVDA", qty=10, avg_entry=90, current_price=100,
-        market_value=1000, unrealized_pnl=100, sector="Technology",
+        symbol="NVDA",
+        qty=10,
+        avg_entry=90,
+        current_price=100,
+        market_value=1000,
+        unrealized_pnl=100,
+        sector="Technology",
     )
     macro = {
-        "regime": "risk-off", "equity_outlook": "bearish",
-        "sector_guidance": guidance, "position_guidance": {},
+        "regime": "risk-off",
+        "equity_outlook": "bearish",
+        "sector_guidance": guidance,
+        "position_guidance": {},
     }
     message = agent.build_user_message(
-        analyses=[], positions=[position], macro_analysis=macro,
-        cash_balance=1000.0, total_value=2000.0,
+        analyses=[],
+        positions=[position],
+        macro_analysis=macro,
+        cash_balance=1000.0,
+        total_value=2000.0,
         symbol_sectors={"NVDA": "Technology"},
     )
-    guidance_lines = [
-        line for line in message.splitlines()
-        if line.startswith("- Technology:")
-    ]
+    guidance_lines = [line for line in message.splitlines() if line.startswith("- Technology:")]
     assert guidance_lines, "sector guidance never reached the prompt"
     assert "bearish" in guidance_lines[0]
     assert "underweight" not in guidance_lines[0]
 
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], news_intel=None, earnings_analyses=[],
-        positions=[position], macro_analysis=macro,
+        analyses=[],
+        news_intel=None,
+        earnings_analyses=[],
+        positions=[position],
+        macro_analysis=macro,
         symbol_sectors={"NVDA": "Technology"},
     )
     assert registry["NVDA"]["macro"] == "bearish"
@@ -392,14 +445,17 @@ def test_the_live_shape_keeps_its_reason_in_the_prompt():
     exists solely in the live shape (MacroStore drops it to stay small)."""
     agent = PortfolioManagerAgent(api_key="test", model="test-model")
     message = agent.build_user_message(
-        analyses=[], positions=[], macro_analysis={
-            "regime": "risk-on", "equity_outlook": "bullish",
+        analyses=[],
+        positions=[],
+        macro_analysis={
+            "regime": "risk-on",
+            "equity_outlook": "bullish",
             "position_guidance": {},
             "sector_guidance": [
-                {"sector": "Technology", "stance": "overweight",
-                 "reason": "AI capex intact"},
+                {"sector": "Technology", "stance": "overweight", "reason": "AI capex intact"},
             ],
         },
-        cash_balance=1000.0, total_value=1000.0,
+        cash_balance=1000.0,
+        total_value=1000.0,
     )
     assert "- Technology: bullish — AI capex intact" in message

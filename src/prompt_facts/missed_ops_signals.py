@@ -5,6 +5,7 @@ item 210 step 10b. Every collaborator is an explicit keyword-only constructor ar
 nothing here imports src.pipeline. Read-only: places no orders, cancels nothing, amends
 no stop. Any prompt text these helpers emit is byte-identical to the pre-move text.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ class MissedOpsSignals:
     """Tech/news/earnings/theme/sector signals for the missed-ops digest and thesis-health review."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db,
         news_store,
         earnings_provider,
@@ -47,9 +49,7 @@ class MissedOpsSignals:
         self.market = market
         self.config = config
 
-    def _missed_ops_held_set(
-        self, lookback_days: int, current_position_symbols: set[str]
-    ) -> set[str]:
+    def _missed_ops_held_set(self, lookback_days: int, current_position_symbols: set[str]) -> set[str]:
         """Symbols we owned (or traded) within the window.
 
         Union of (a) symbols currently open in ctx.positions and (b) symbols
@@ -59,6 +59,7 @@ class MissedOpsSignals:
         stale SELL earlier in the week.
         """
         from datetime import timedelta
+
         held: set[str] = {s.upper() for s in current_position_symbols if s}
         try:
             rows = self.db.get_trades(limit=500, executed_only=True)
@@ -76,9 +77,7 @@ class MissedOpsSignals:
                 held.add(sym)
         return held
 
-    def _missed_ops_tech_signal(
-        self, lookback_days: int
-    ) -> dict[str, tuple[str, str]]:
+    def _missed_ops_tech_signal(self, lookback_days: int) -> dict[str, tuple[str, str]]:
         """Most recent TA rating per symbol in window → {symbol: (rating, date)}.
 
         Walks recent tech_analyst agent_logs, parses the batch-output JSON,
@@ -93,9 +92,11 @@ class MissedOpsSignals:
         """
         from datetime import timedelta
         from src.evolution.quarterly_digest import _tech_analyses_from_data
+
         try:
             rows = self.db.get_recent_agent_outputs(
-                agent_name="tech_analyst", limit=lookback_days * 3,
+                agent_name="tech_analyst",
+                limit=lookback_days * 3,
                 before_date=None,
             )
         except Exception as exc:
@@ -130,6 +131,7 @@ class MissedOpsSignals:
         import json as _json
         from datetime import timedelta
         from pathlib import Path
+
         news_dir = getattr(self.news_store, "data_dir", None)
         if news_dir is None:
             return {}
@@ -178,13 +180,26 @@ class MissedOpsSignals:
         import re
         from datetime import timedelta
         from pathlib import Path
+
         news_dir = getattr(self.news_store, "data_dir", None)
         if news_dir is None:
             return {}
         out: dict[str, list[str]] = {}
         stopwords = {
-            "this", "that", "with", "from", "into", "than", "will", "would",
-            "should", "could", "about", "against", "between", "report",
+            "this",
+            "that",
+            "with",
+            "from",
+            "into",
+            "than",
+            "will",
+            "would",
+            "should",
+            "could",
+            "about",
+            "against",
+            "between",
+            "report",
         }
         today = et_today()
         for days_ago in range(lookback_days + 1):
@@ -198,10 +213,7 @@ class MissedOpsSignals:
                 continue
             for ch in report.get("state_changes", []) or []:
                 event = (ch.get("event") or "").strip()
-                tokens = [
-                    t.lower() for t in re.findall(r"[A-Za-z]{4,}", event)
-                    if t.lower() not in stopwords
-                ]
+                tokens = [t.lower() for t in re.findall(r"[A-Za-z]{4,}", event) if t.lower() not in stopwords]
                 if not tokens:
                     continue
                 tag = "-".join(tokens[:2])
@@ -239,7 +251,7 @@ class MissedOpsSignals:
         #     `"bearish" in head` substring dropped NEUTRAL analyses whose
         #     prose merely mentioned the word ("not bearish", "bearish
         #     scenarios considered").
-        best: dict[str, tuple[str, dict]] = {}   # symbol -> (filing_date, entry)
+        best: dict[str, tuple[str, dict]] = {}  # symbol -> (filing_date, entry)
         for key, entry in manifest.items():
             if not isinstance(entry, dict) or entry.get("abandoned"):
                 continue
@@ -255,7 +267,7 @@ class MissedOpsSignals:
                 if not fd or (today - _date.fromisoformat(fd)).days > 90:
                     continue
             except ValueError:
-                continue   # unparseable date = unknowable age = stale
+                continue  # unparseable date = unknowable age = stale
             analysis_path = entry.get("analysis_path")
             if not analysis_path:
                 continue
@@ -267,13 +279,12 @@ class MissedOpsSignals:
             except OSError:
                 continue
             head = text[:600]
-            m = re.search(r"^\s*-?\s*\*{0,2}Sentiment\*{0,2}\s*:\s*(\w+)",
-                          head, re.MULTILINE | re.IGNORECASE)
-            sentiment = (m.group(1).lower() if m else None)
+            m = re.search(r"^\s*-?\s*\*{0,2}Sentiment\*{0,2}\s*:\s*(\w+)", head, re.MULTILINE | re.IGNORECASE)
+            sentiment = m.group(1).lower() if m else None
             if sentiment == "bearish":
                 continue
             if sentiment is None and "bearish" in head.lower():
-                continue   # no structured line — keep the conservative fallback
+                continue  # no structured line — keep the conservative fallback
             snippet = head.replace("\n", " ").strip()[:140]
             if snippet:
                 out[symbol] = snippet
@@ -298,13 +309,13 @@ class MissedOpsSignals:
             return {}
         out: dict[str, str] = {}
         for sector, stance in guidance.items():
-            if (isinstance(stance, str)
-                    and stance in ("bullish", "neutral", "bearish")):
+            if isinstance(stance, str) and stance in ("bullish", "neutral", "bearish"):
                 out[str(sector)] = stance
         return out
 
     def _thesis_tech_trajectory_map(
-        self, lookback_days: int,
+        self,
+        lookback_days: int,
     ) -> dict[str, list[str]]:
         """For each symbol, extract chronological tech ratings from the last
         `lookback_days` of tech_analyst logs. Returns {sym: ["buy","hold",
@@ -312,6 +323,7 @@ class MissedOpsSignals:
         as the missed_ops digest so bare-list / dict-wrapped / symbol-keyed
         shapes all work. Empty dict on failure."""
         from src.evolution.quarterly_digest import _tech_analyses_from_data
+
         try:
             rows = self.db.get_recent_agent_outputs(
                 agent_name="tech_analyst",
@@ -334,7 +346,8 @@ class MissedOpsSignals:
         return by_sym
 
     def _thesis_news_events_map(
-        self, lookback_days: int,
+        self,
+        lookback_days: int,
     ) -> dict[str, list[dict]]:
         """Per-symbol news events over the lookback window. Returns
         {sym: [{event, conviction, date}, ...]} newest-first.
@@ -347,6 +360,7 @@ class MissedOpsSignals:
         import json as _json
         from datetime import timedelta
         from pathlib import Path
+
         news_dir = getattr(self.news_store, "data_dir", None)
         if news_dir is None:
             return {}
@@ -371,12 +385,15 @@ class MissedOpsSignals:
                     sym_u = str(sym).upper()
                     if not sym_u:
                         continue
-                    out.setdefault(sym_u, []).append({
-                        "event": event[:140],
-                        "conviction": conviction,
-                        "date": str(day),
-                    })
+                    out.setdefault(sym_u, []).append(
+                        {
+                            "event": event[:140],
+                            "conviction": conviction,
+                            "date": str(day),
+                        }
+                    )
         return out
+
     def _build_thesis_health_context(
         self,
         positions,
@@ -409,6 +426,7 @@ class MissedOpsSignals:
             return {}
 
         from datetime import timedelta
+
         lookback_days = lookback_weeks * 7
         tech_map_multi = self._thesis_tech_trajectory_map(lookback_days)
         news_events_map = self._thesis_news_events_map(lookback_days)
@@ -443,10 +461,12 @@ class MissedOpsSignals:
                     entry_date = ts
                     try:
                         from datetime import date as _d
+
                         entry_d = _d.fromisoformat(ts)
                         days_held = max(0, (et_today() - entry_d).days)
                         sessions_held = self.broker.trading_sessions_held(
-                            entry_d, et_today(),
+                            entry_d,
+                            et_today(),
                         )
                     except (ValueError, TypeError):
                         days_held = None
@@ -478,6 +498,7 @@ class MissedOpsSignals:
             sector = ""
             try:
                 from src.sector_reference import _get_sector
+
                 sector = _get_sector(sym) or ""
             except Exception:
                 sector = ""
@@ -485,7 +506,9 @@ class MissedOpsSignals:
 
             # Valuation — bounded per-symbol yfinance call
             valuation = {
-                "trailing_pe": None, "forward_pe": None, "ps_ratio": None,
+                "trailing_pe": None,
+                "forward_pe": None,
+                "ps_ratio": None,
             }
             try:
                 v = self.market.get_valuation_metrics(sym) or {}
@@ -501,6 +524,7 @@ class MissedOpsSignals:
             # surfaced for HELD positions (token-budget reasons); missed_ops
             # still use the 140-char snippet via earnings_map.
             from src.data.earnings_deep_dive import load_earnings_deep_dive
+
             deep_dive = None
             try:
                 manifest = getattr(self.earnings_provider, "manifest", {}) or {}
@@ -508,7 +532,8 @@ class MissedOpsSignals:
             except Exception as exc:
                 logger.debug(
                     "thesis_health earnings deep-dive failed for %s: %s",
-                    sym, exc,
+                    sym,
+                    exc,
                 )
 
             out[sym] = {
@@ -572,10 +597,7 @@ class MissedOpsSignals:
         except Exception as exc:
             logger.warning("missed_ops: get_top_movers failed: %s", exc)
             top_movers = []
-        top_mover_syms = {
-            str(m["symbol"]).upper() for m in top_movers
-            if isinstance(m, dict) and m.get("symbol")
-        }
+        top_mover_syms = {str(m["symbol"]).upper() for m in top_movers if isinstance(m, dict) and m.get("symbol")}
         all_syms = universe_set | top_mover_syms
         if not all_syms:
             return []
@@ -596,7 +618,7 @@ class MissedOpsSignals:
         # Per-symbol window return.
         symbol_moves: dict[str, float] = {}
         for sym, bars in bars_cache.items():
-            window = bars[-(lookback_days + 1):] if len(bars) > lookback_days else bars
+            window = bars[-(lookback_days + 1) :] if len(bars) > lookback_days else bars
             if len(window) < 2:
                 continue
             start_close = getattr(window[0], "close", 0) or 0
@@ -606,18 +628,13 @@ class MissedOpsSignals:
             move_pct = (end_close - start_close) / start_close * 100.0
             symbol_moves[sym] = round(move_pct, 2)
 
-        candidates = {
-            s: m for s, m in symbol_moves.items()
-            if abs(m) >= move_threshold_pct
-        }
+        candidates = {s: m for s, m in symbol_moves.items() if abs(m) >= move_threshold_pct}
         if not candidates:
             return []
 
         # Pre-compute signal maps once (not per-symbol): cheap vs. re-running
         # DB/file scans inside the loop.
-        held_set = self._missed_ops_held_set(
-            lookback_days, current_position_symbols or set()
-        )
+        held_set = self._missed_ops_held_set(lookback_days, current_position_symbols or set())
         tech_map = self._missed_ops_tech_signal(lookback_days)
         news_map = self._missed_ops_news_signal(lookback_days)
         theme_map = self._missed_ops_theme_tags(lookback_days)
@@ -635,17 +652,18 @@ class MissedOpsSignals:
 
             bars = bars_cache.get(sym) or []
             avg_dvol_m, vol_conf_ratio, single_day_conc = _missed_ops_quality_metrics(
-                bars, lookback_days,
+                bars,
+                lookback_days,
             )
 
             # Liquidity pre-filter: thin TOP-MOVER-only symbols drop out here.
             # Universe symbols bypass — they're already curated for quality.
-            if (source == "top_mover"
-                    and avg_dvol_m is not None
-                    and avg_dvol_m < min_top_mover_dollar_volume_m):
+            if source == "top_mover" and avg_dvol_m is not None and avg_dvol_m < min_top_mover_dollar_volume_m:
                 logger.debug(
                     "missed_ops: dropping thin top-mover %s (avg $vol %.1fM < %.1fM)",
-                    sym, avg_dvol_m, min_top_mover_dollar_volume_m,
+                    sym,
+                    avg_dvol_m,
+                    min_top_mover_dollar_volume_m,
                 )
                 continue
 
@@ -657,6 +675,7 @@ class MissedOpsSignals:
             sector_stance = "unknown"
             try:
                 from src.sector_reference import _get_sector
+
                 sector = _get_sector(sym) or ""
             except Exception:
                 sector = ""
@@ -676,7 +695,9 @@ class MissedOpsSignals:
                 ps_ratio = val_info.get("ps_ratio")
             except Exception as exc:
                 logger.debug(
-                    "missed_ops valuation fetch failed for %s: %s", sym, exc,
+                    "missed_ops valuation fetch failed for %s: %s",
+                    sym,
+                    exc,
                 )
             valuation_signal = _valuation_signal_from(forward_pe)
 
@@ -685,37 +706,35 @@ class MissedOpsSignals:
             # medium-long-term investor wants to catch. Flag it at the
             # snapshot level so the evening LLM's value_entry_missed
             # classification is grounded, not just vibes.
-            has_fundamental_signal = (
-                news_headline is not None or earnings_signal is not None
-            )
-            value_entry_candidate = (
-                move_pct <= -8.0 and has_fundamental_signal
-            )
+            has_fundamental_signal = news_headline is not None or earnings_signal is not None
+            value_entry_candidate = move_pct <= -8.0 and has_fundamental_signal
 
-            snapshots.append(MissedOpportunitySnapshot(
-                symbol=sym,
-                move_pct=move_pct,
-                window_days=lookback_days,
-                held_during_window=(sym in held_set),
-                had_ta_signal=had_ta,
-                had_news_signal=(news_headline is not None),
-                had_earnings_signal=(earnings_signal is not None),
-                source=source,
-                last_ta_rating=ta_rating,
-                last_ta_date=ta_date,
-                last_news_headline=news_headline,
-                theme_tags=theme_map.get(sym, [])[:4],
-                recent_earnings_signal=earnings_signal,
-                macro_sector_tailwind=sector_stance,  # type: ignore[arg-type]
-                avg_dollar_volume_20d_m=avg_dvol_m,
-                volume_confirmation_ratio=vol_conf_ratio,
-                single_day_concentration_pct=single_day_conc,
-                trailing_pe=trailing_pe,
-                forward_pe=forward_pe,
-                ps_ratio=ps_ratio,
-                valuation_signal=valuation_signal,  # type: ignore[arg-type]
-                value_entry_candidate=value_entry_candidate,
-            ))
+            snapshots.append(
+                MissedOpportunitySnapshot(
+                    symbol=sym,
+                    move_pct=move_pct,
+                    window_days=lookback_days,
+                    held_during_window=(sym in held_set),
+                    had_ta_signal=had_ta,
+                    had_news_signal=(news_headline is not None),
+                    had_earnings_signal=(earnings_signal is not None),
+                    source=source,
+                    last_ta_rating=ta_rating,
+                    last_ta_date=ta_date,
+                    last_news_headline=news_headline,
+                    theme_tags=theme_map.get(sym, [])[:4],
+                    recent_earnings_signal=earnings_signal,
+                    macro_sector_tailwind=sector_stance,  # type: ignore[arg-type]
+                    avg_dollar_volume_20d_m=avg_dvol_m,
+                    volume_confirmation_ratio=vol_conf_ratio,
+                    single_day_concentration_pct=single_day_conc,
+                    trailing_pe=trailing_pe,
+                    forward_pe=forward_pe,
+                    ps_ratio=ps_ratio,
+                    valuation_signal=valuation_signal,  # type: ignore[arg-type]
+                    value_entry_candidate=value_entry_candidate,
+                )
+            )
 
         # Drop names we actually held during the window before sorting and
         # truncating. The prompt instructs the LLM to recognize HELD rows

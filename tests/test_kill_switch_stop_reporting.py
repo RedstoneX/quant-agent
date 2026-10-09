@@ -19,6 +19,7 @@ Each of the three below proves one of those is now fixed, plus that an
 owner alert fires and is deduped per symbol per day like the desk's other
 stop-side pages.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -43,7 +44,9 @@ def _halted_broker(tmp_path):
         flag = tmp_path / "KILL_SWITCH"
         flag.touch()
         broker = AlpacaBroker(
-            api_key="test", secret_key="test", paper=True,
+            api_key="test",
+            secret_key="test",
+            paper=True,
             kill_switch_path=str(flag),
         )
     return broker
@@ -53,10 +56,15 @@ def _halted_broker(tmp_path):
 # (a) a kill-switch-blocked stop is never reported as placed
 # ---------------------------------------------------------------------------
 
+
 def test_whole_share_kill_switch_block_is_never_reported_as_placed(tmp_path):
     broker = _halted_broker(tmp_path)
     result = broker._submit_protective_stop_retrying(
-        symbol="AAA", qty=10, stop_price=90.0, limit_price=None, side="sell",
+        symbol="AAA",
+        qty=10,
+        stop_price=90.0,
+        limit_price=None,
+        side="sell",
     )
     assert result is None
     broker.client.submit_order.assert_not_called()
@@ -67,7 +75,11 @@ def test_fractional_hybrid_kill_switch_block_is_never_reported_as_placed(tmp_pat
     must not report a partial or full cover from two refusals."""
     broker = _halted_broker(tmp_path)
     result = broker._submit_protective_stop_retrying(
-        symbol="AAA", qty=10.5, stop_price=90.0, limit_price=None, side="sell",
+        symbol="AAA",
+        qty=10.5,
+        stop_price=90.0,
+        limit_price=None,
+        side="sell",
     )
     assert result is None
     broker.client.submit_order.assert_not_called()
@@ -91,7 +103,10 @@ def test_scale_in_rearm_never_treats_a_block_as_covered(tmp_path):
 
     broker = _halted_broker(tmp_path)
     result = rearm_full_position_stop(
-        broker, symbol="AAA", qty=10, stop_price=90.0,
+        broker,
+        symbol="AAA",
+        qty=10,
+        stop_price=90.0,
     )
     assert result is None
 
@@ -100,11 +115,14 @@ def test_scale_in_rearm_never_treats_a_block_as_covered(tmp_path):
 # (b) the recovery row stays open until a real stop exists
 # ---------------------------------------------------------------------------
 
+
 def test_restore_stop_orders_does_not_count_a_block_as_restored(tmp_path):
     broker = _halted_broker(tmp_path)
     specs = [{"qty": 5, "stop_price": 90.0, "limit_price": None}]
     restored, failed = broker._restore_stop_orders(
-        "AAA", specs, check_idempotency=False,
+        "AAA",
+        specs,
+        check_idempotency=False,
     )
     assert restored == 0
     assert failed == specs
@@ -136,9 +154,11 @@ def test_drain_keeps_the_row_open_when_the_kill_switch_blocks_the_restore(tmp_pa
     db = _db(tmp_path)
     specs = [{"id": "s1", "qty": 10, "stop_price": 90.0}]
     row_id = db.insert_pending_protection_restore(
-        symbol="AAA", sell_order_id=_WAL_SELL_SENTINEL,
+        symbol="AAA",
+        sell_order_id=_WAL_SELL_SENTINEL,
         position_qty_before_sell=10.0,
-        specs_json=__import__("json").dumps(specs), side="sell",
+        specs_json=__import__("json").dumps(specs),
+        side="sell",
     )
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker._restore_stop_orders.return_value = (0, specs)
@@ -155,6 +175,7 @@ def test_drain_keeps_the_row_open_when_the_kill_switch_blocks_the_restore(tmp_pa
 # ---------------------------------------------------------------------------
 # (c) an owner alert fires, deduped per symbol per trading day
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def state_path(tmp_path, monkeypatch):
@@ -174,7 +195,10 @@ def test_a_kill_switch_block_pages_the_owner(tmp_path, state_path):
 
     with patch("src.notifier.send_owner_alert") as send:
         broker._submit_stop_limit_order(
-            symbol="AAA", qty=5, stop_price=90.0, side="sell",
+            symbol="AAA",
+            qty=5,
+            stop_price=90.0,
+            side="sell",
         )
 
     send.assert_called_once()
@@ -220,7 +244,10 @@ def test_a_failing_alert_never_breaks_the_kill_switch_refusal(tmp_path, state_pa
 
     with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("down")):
         result = broker._submit_stop_limit_order(
-            symbol="AAA", qty=5, stop_price=90.0, side="sell",
+            symbol="AAA",
+            qty=5,
+            stop_price=90.0,
+            side="sell",
         )
 
     assert result["status"] == "kill_switch_halted" and result["id"] is None

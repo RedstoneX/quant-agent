@@ -8,6 +8,7 @@ reported PASS. Every rehearsal ever run had therefore exercised the stop
 ratchet zero times. Offline: the production broker object runs over the
 stand-in exactly as a rehearsal wires it.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,11 +18,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ops.rehearsal.broker import (
-    BrokerSnapshot, RehearsalDataClient, RehearsalTradingClient,
+    BrokerSnapshot,
+    RehearsalDataClient,
+    RehearsalTradingClient,
     install_rehearsal_broker,
 )
 from ops.rehearsal.stand_in import (
-    AmendRefused, StandInGap, assert_stand_in_answered,
+    AmendRefused,
+    StandInGap,
+    assert_stand_in_answered,
 )
 from src.trading_calendar import ET
 
@@ -31,11 +36,20 @@ SYMBOL = "ZZZ"
 
 def _snapshot(qty=10.0, stop=100.0, price=112.0):
     return BrokerSnapshot(
-        as_of=NOW.date(), cash=5_000.0, portfolio_value=6_120.0,
+        as_of=NOW.date(),
+        cash=5_000.0,
+        portfolio_value=6_120.0,
         last_equity=6_000.0,
-        positions=[{"symbol": SYMBOL, "qty": qty, "avg_entry": 95.0,
-                    "current_price": price, "market_value": qty * price,
-                    "unrealized_pnl": (price - 95.0) * qty}],
+        positions=[
+            {
+                "symbol": SYMBOL,
+                "qty": qty,
+                "avg_entry": 95.0,
+                "current_price": price,
+                "market_value": qty * price,
+                "unrealized_pnl": (price - 95.0) * qty,
+            }
+        ],
         prices={SYMBOL: price},
         standing_stops={SYMBOL: stop},
     )
@@ -45,8 +59,7 @@ def _open_stops(trading):
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
-    orders = trading.get_orders(filter=GetOrdersRequest(
-        status=QueryOrderStatus.OPEN, symbols=[SYMBOL], nested=True))
+    orders = trading.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[SYMBOL], nested=True))
     return [o for o in orders if "stop" in str(o.order_type)]
 
 
@@ -66,9 +79,11 @@ def test_rehearsal_moves_a_stop_by_in_place_amend(_sector, _tc):
     out = broker.replace_stop_loss(SYMBOL, 105.0)
 
     after = _open_stops(trading)
-    print(f"\nSTOP BEFORE: {old_id} @ ${before[0].stop_price:.2f} "
-          f"-> AFTER: {after[0].id} @ ${after[0].stop_price:.2f}; "
-          f"cancelled={trading.cancelled}; amended={trading.amended}")
+    print(
+        f"\nSTOP BEFORE: {old_id} @ ${before[0].stop_price:.2f} "
+        f"-> AFTER: {after[0].id} @ ${after[0].stop_price:.2f}; "
+        f"cancelled={trading.cancelled}; amended={trading.amended}"
+    )
     assert out is not None and out["amend_status"] == "accepted"
     assert len(after) == 1, "exactly one open stop at every instant"
     assert after[0].stop_price == 105.0 and after[0].id != old_id
@@ -96,8 +111,7 @@ def test_open_filter_hides_replaced_orders_but_all_shows_them():
     trading = RehearsalTradingClient(_snapshot(), now=NOW)
     (stop,) = _open_stops(trading)
     trading.replace_order_by_id(stop.id, SimpleNamespace(stop_price=103.0))
-    everything = trading.get_orders(filter=GetOrdersRequest(
-        status=QueryOrderStatus.ALL, symbols=[SYMBOL]))
+    everything = trading.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.ALL, symbols=[SYMBOL]))
     assert sorted(str(o.status) for o in everything) == ["new", "replaced"]
     assert [o.stop_price for o in _open_stops(trading)] == [103.0]
 
@@ -141,12 +155,12 @@ def test_run_cli_exits_2_and_says_void_on_a_stand_in_gap(capsys, tmp_path):
     """Acceptance (b), at the command line: the rehearsal does not carry on."""
     from ops.rehearsal import run as cli
 
-    gap = StandInGap("1 broker call(s) the stand-in could not answer: "
-                     "RehearsalTradingClient.replace_order_by_id")
-    with patch("ops.rehearsal.isolation.Sandbox.prepare", return_value=MagicMock()), \
-         patch("ops.rehearsal.runner.run_rehearsal", side_effect=gap):
-        code = cli.main(["--source-db", str(tmp_path / "x.db"),
-                         "--sandbox", str(tmp_path)])
+    gap = StandInGap("1 broker call(s) the stand-in could not answer: RehearsalTradingClient.replace_order_by_id")
+    with (
+        patch("ops.rehearsal.isolation.Sandbox.prepare", return_value=MagicMock()),
+        patch("ops.rehearsal.runner.run_rehearsal", side_effect=gap),
+    ):
+        code = cli.main(["--source-db", str(tmp_path / "x.db"), "--sandbox", str(tmp_path)])
     out = capsys.readouterr().out
     print(out)
     assert code == 2

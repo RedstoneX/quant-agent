@@ -2,6 +2,7 @@
 
 Re-exported there under the same names.
 """
+
 from __future__ import annotations
 
 
@@ -48,10 +49,17 @@ def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
         return False
     text = str(exc).lower()
     type_terms = (
-        "order type", "order_type", "order class", "order_class",
-        "time_in_force", "time in force",
-        "not supported", "unsupported",
-        "not permitted", "not allowed", "invalid order",
+        "order type",
+        "order_type",
+        "order class",
+        "order_class",
+        "time_in_force",
+        "time in force",
+        "not supported",
+        "unsupported",
+        "not permitted",
+        "not allowed",
+        "invalid order",
     )
     return any(term in text for term in type_terms)
 
@@ -85,5 +93,9 @@ def log_terminal_stop_rejection(log, leg, symbol, exc, attempt, attempts) -> Non
         "rejection (status %s) on attempt %d/%d — this will "
         "not change on retry, escalating now instead of "
         "spending the rest of the budget.",
-        leg, symbol, getattr(exc, "status_code", None), attempt, attempts,
+        leg,
+        symbol,
+        getattr(exc, "status_code", None),
+        attempt,
+        attempts,
     )

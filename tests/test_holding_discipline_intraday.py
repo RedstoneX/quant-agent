@@ -45,11 +45,16 @@ from tests.pipeline_factory import build_pipeline
 # Fixtures — a pipeline double with only what this gate touches
 # ---------------------------------------------------------------------------
 
+
 def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=101.0):
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry, current_price=current_price,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
         market_value=qty * current_price,
-        unrealized_pnl=qty * (current_price - avg_entry), sector="Technology",
+        unrealized_pnl=qty * (current_price - avg_entry),
+        sector="Technology",
     )
 
 
@@ -70,9 +75,17 @@ def _protection(protected: bool):
 
 
 def _pipeline(*, macro_state=None, protected=True, state_changes=None):
-    p = build_pipeline(db=MagicMock(), broker=MagicMock(), market=MagicMock(), tech_store=MagicMock(), macro_store=MagicMock(), news_store=MagicMock())
+    p = build_pipeline(
+        db=MagicMock(),
+        broker=MagicMock(),
+        market=MagicMock(),
+        tech_store=MagicMock(),
+        macro_store=MagicMock(),
+        news_store=MagicMock(),
+    )
     p.db.get_symbol_last_buy.return_value = {
-        "price": 100.0, "stop_loss": 94.0,
+        "price": 100.0,
+        "stop_loss": 94.0,
         "thesis_invalid_if": "loses the 94 shelf on a close",
         "timestamp": f"{et_today().isoformat()} 14:00:00",
     }
@@ -81,42 +94,47 @@ def _pipeline(*, macro_state=None, protected=True, state_changes=None):
     p.macro_store.load_last_state.return_value = macro_state
     p.news_store.recent_state_changes.return_value = state_changes or []
     p._atr_for_symbol = MagicMock(return_value=2.0)
-    p._structural_protection_for_holding = MagicMock(
-        return_value=_protection(protected)
-    )
+    p._structural_protection_for_holding = MagicMock(return_value=_protection(protected))
     return p
 
 
 def _review(action="SELL", symbol="AAA", reason="regime shift to risk-off"):
     return PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="flipped", thesis_progress_check="on track",
-            thesis_integrity_check="intact", winners_discipline_check="n/a",
-            session_disposition_check="intraday", execution_rationale="exit",
+            macro_continuity_check="flipped",
+            thesis_progress_check="on track",
+            thesis_integrity_check="intact",
+            winners_discipline_check="n/a",
+            session_disposition_check="intraday",
+            execution_rationale="exit",
         ),
         actions=[PositionAction(action=action, symbol=symbol, reason=reason)],
-        overall_assessment="de-risking", risk_level="moderate",
+        overall_assessment="de-risking",
+        risk_level="moderate",
     )
 
 
 def _statuses(pipeline):
-    return [
-        call.kwargs.get("status")
-        for call in pipeline.db.record_intraday_evaluation.call_args_list
-    ]
+    return [call.kwargs.get("status") for call in pipeline.db.record_intraday_evaluation.call_args_list]
 
 
 def _execute(pipeline, review, run_id):
     return pipeline._midday_execute_llm_actions(
-        positions=[_position("AAA")], review=review, run_id=run_id,
+        positions=[_position("AAA")],
+        review=review,
+        run_id=run_id,
     )
 
 
 #: Today's macro read, risk-ON. A SELL claiming a flip TO risk-off today is
 #: provably contradicted by it. `_carry_forward_macro` only accepts a state
 #: dated today, which is what makes this a TRUSTED read rather than a stale one.
-def _macro_today(regime):  # read at RUN time, never at import: a collection-time stamp compared to a run-time et_today() reds this file whenever the suite crosses ET midnight between collecting and running it (reproduced 2026-10-02)
+def _macro_today(
+    regime,
+):  # read at RUN time, never at import: a collection-time stamp compared to a run-time et_today() reds this file whenever the suite crosses ET midnight between collecting and running it (reproduced 2026-10-02)
     return {"date": str(et_today()), "regime": regime}
+
+
 #: Nothing stored, or stored from a previous day — no read to check against.
 _MACRO_STALE = {"date": "2020-01-02", "regime": "risk-on"}
 
@@ -124,6 +142,7 @@ _MACRO_STALE = {"date": "2020-01-02", "regime": "risk-on"}
 # ---------------------------------------------------------------------------
 # 1. A PROVABLY FALSE claim is now caught — on BOTH intraday surfaces
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("run_id", ["midday-2026-09-11", "close-2026-09-11"])
 def test_provably_false_regime_claim_blocks_the_intraday_exit(run_id):
@@ -154,12 +173,14 @@ def test_provably_false_bearish_state_change_claim_blocks_the_intraday_exit(run_
     pipeline = _pipeline(
         macro_state=None,
         protected=True,
-        state_changes=[{
-            "first_seen_date": str(et_today()),
-            "event": "upgrade cycle confirmed",
-            "affected_symbols": ["AAA"],
-            "symbol_direction": {"AAA": "bullish"},
-        }],
+        state_changes=[
+            {
+                "first_seen_date": str(et_today()),
+                "event": "upgrade cycle confirmed",
+                "affected_symbols": ["AAA"],
+                "symbol_direction": {"AAA": "bullish"},
+            }
+        ],
     )
 
     orders = _execute(
@@ -188,9 +209,7 @@ def test_the_morning_path_is_not_the_only_importer_any_more():
     source = inspect.getsource(phase_module)
     assert "holding_discipline_claim_check" in source
     assert "self._holding_discipline_check_for_exit(" in source
-    assert "midday_holding_discipline(" in inspect.getsource(
-        ExitEngineMixin._midday_execute_llm_actions
-    )
+    assert "midday_holding_discipline(" in inspect.getsource(ExitEngineMixin._midday_execute_llm_actions)
 
 
 def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
@@ -207,14 +226,19 @@ def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
 
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_midday)
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_close)
-    assert "_run_position_review_body" in inspect.getsource(__import__("src.pipeline_parts.review", fromlist=["review"]).run_position_review)
-    review_src = inspect.getsource(__import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run)
+    assert "_run_position_review_body" in inspect.getsource(
+        __import__("src.pipeline_parts.review", fromlist=["review"]).run_position_review
+    )
+    review_src = inspect.getsource(
+        __import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run
+    )
     assert review_src.count("_midday_execute_llm_actions(") == 1
 
 
 # ---------------------------------------------------------------------------
 # 2. THE REGRESSION THAT WOULD HURT MOST — unverifiable still passes through
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("run_id", ["midday-2026-09-11", "close-2026-09-11"])
 def test_unverifiable_regime_claim_still_passes_through(run_id):
@@ -268,9 +292,7 @@ def test_an_infrastructure_failure_inside_the_check_fails_open():
     itself cannot run, the exit proceeds unverified rather than being blocked
     on an error."""
     pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
-    pipeline._structural_protection_for_holding = MagicMock(
-        side_effect=RuntimeError("bars store down")
-    )
+    pipeline._structural_protection_for_holding = MagicMock(side_effect=RuntimeError("bars store down"))
 
     _execute(pipeline, _review(), "midday-2026-09-11")
 
@@ -280,6 +302,7 @@ def test_an_infrastructure_failure_inside_the_check_fails_open():
 # ---------------------------------------------------------------------------
 # 3. A legitimate, verifiable exit still executes normally
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("run_id", ["midday-2026-09-11", "close-2026-09-11"])
 def test_a_confirmed_regime_flip_executes_normally(run_id):
@@ -298,12 +321,14 @@ def test_a_confirmed_bearish_state_change_executes_normally():
     pipeline = _pipeline(
         macro_state=None,
         protected=True,
-        state_changes=[{
-            "first_seen_date": str(et_today()),
-            "event": "guidance withdrawn",
-            "affected_symbols": ["AAA"],
-            "symbol_direction": {"AAA": "bearish"},
-        }],
+        state_changes=[
+            {
+                "first_seen_date": str(et_today()),
+                "event": "guidance withdrawn",
+                "affected_symbols": ["AAA"],
+                "symbol_direction": {"AAA": "bearish"},
+            }
+        ],
     )
 
     _execute(
@@ -335,6 +360,7 @@ def test_an_unprotected_position_is_not_this_gates_business():
 # 4. The check buys nothing it does not need
 # ---------------------------------------------------------------------------
 
+
 def test_a_thesis_invalidation_exit_now_consults_the_structural_check():
     """THE 2026-09-14 DEFECT (WORK.md item 60), reproduced by inversion.
 
@@ -362,13 +388,8 @@ def test_a_thesis_invalidation_exit_now_consults_the_structural_check():
     # Read-only: filing today's break from this NEW call site would let a
     # break confirm a session early, which lifts `protected` a session
     # early, which can release an exit that is blocked today.
-    assert pipeline._structural_protection_for_holding.call_args.kwargs[
-        "persist"
-    ] is False
-    kinds = [
-        call.kwargs.get("kind")
-        for call in pipeline.db.insert_specialist_evidence.call_args_list
-    ]
+    assert pipeline._structural_protection_for_holding.call_args.kwargs["persist"] is False
+    kinds = [call.kwargs.get("kind") for call in pipeline.db.insert_specialist_evidence.call_args_list]
     assert "thesis_invalidation_structural_check" in kinds
 
 
@@ -381,9 +402,11 @@ def test_the_thesis_invalidation_read_never_blocks_or_releases_an_exit():
         pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=protected)
 
         verdict = pipeline._holding_discipline_check_for_exit(
-            symbol="AAA", action="SELL",
+            symbol="AAA",
+            action="SELL",
             reason="thesis_invalid_if triggered on the close",
-            positions=[_position("AAA")], run_id="midday-2026-09-11",
+            positions=[_position("AAA")],
+            run_id="midday-2026-09-11",
             position_history={"AAA": {}},
         )
 
@@ -400,8 +423,11 @@ def test_a_reason_making_no_recognised_claim_at_all_still_short_circuits():
     pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     pipeline._holding_discipline_check_for_exit(
-        symbol="AAA", action="SELL", reason="stopped out at the broker",
-        positions=[_position("AAA")], run_id="midday-2026-09-11",
+        symbol="AAA",
+        action="SELL",
+        reason="stopped out at the broker",
+        positions=[_position("AAA")],
+        run_id="midday-2026-09-11",
         position_history={"AAA": {}},
     )
 
@@ -416,9 +442,7 @@ def test_a_denied_thesis_invalidation_is_not_a_claim():
     assert claims_thesis_invalidation("thesis_invalid_if triggered") is True
     assert claims_thesis_invalidation("thesis invalidated on the close") is True
     assert claims_thesis_invalidation("broken thesis") is True
-    assert claims_thesis_invalidation(
-        "no thesis invalidation has occurred"
-    ) is False
+    assert claims_thesis_invalidation("no thesis invalidation has occurred") is False
     assert claims_thesis_invalidation("trimming into strength") is False
 
 
@@ -436,6 +460,7 @@ def test_a_hold_only_review_buys_no_entry_context_reads():
 # 5. The morning path is untouched
 # ---------------------------------------------------------------------------
 
+
 def test_the_checker_itself_is_unchanged_on_the_split_that_matters():
     """Guards the one semantic this change must not have moved: `.blocks` is
     true for a proven-false verdict and for nothing else."""
@@ -450,13 +475,14 @@ def test_the_intraday_assembler_passes_no_macro_status_when_none_is_stored():
     value that would let a stale or absent read call a claim false."""
     pipeline = _pipeline(macro_state=None, protected=True)
 
-    with patch(
-        "src.risk.exit_guard.holding_discipline_claim_check"
-    ) as spy:
+    with patch("src.risk.exit_guard.holding_discipline_claim_check") as spy:
         spy.return_value = HoldingDisciplineClaimCheck("ok")
         pipeline._holding_discipline_check_for_exit(
-            symbol="AAA", action="SELL", reason="regime shift to risk-off",
-            positions=[_position("AAA")], run_id="midday-2026-09-11",
+            symbol="AAA",
+            action="SELL",
+            reason="regime shift to risk-off",
+            positions=[_position("AAA")],
+            run_id="midday-2026-09-11",
             position_history={"AAA": {}},
         )
 
@@ -470,13 +496,14 @@ def test_the_intraday_assembler_labels_a_same_day_carry_forward_honestly():
     `TRUSTED_MACRO_STATUSES` accepts — rather than a second invented one."""
     pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
-    with patch(
-        "src.risk.exit_guard.holding_discipline_claim_check"
-    ) as spy:
+    with patch("src.risk.exit_guard.holding_discipline_claim_check") as spy:
         spy.return_value = HoldingDisciplineClaimCheck("ok")
         pipeline._holding_discipline_check_for_exit(
-            symbol="AAA", action="SELL", reason="regime shift to risk-off",
-            positions=[_position("AAA")], run_id="midday-2026-09-11",
+            symbol="AAA",
+            action="SELL",
+            reason="regime shift to risk-off",
+            positions=[_position("AAA")],
+            run_id="midday-2026-09-11",
             position_history={"AAA": {}},
         )
 

@@ -9,6 +9,7 @@ else is held to the limit.
 
 Runs inside the required ``pytest`` check rather than as a separate status.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -22,6 +23,19 @@ def test_ruff_reports_nothing():
     # ruff ships in the `dev` extra; a missing ruff fails here rather than skipping.
     out = subprocess.run(
         [sys.executable, "-m", "ruff", "check", "--no-cache", "src", "scripts", "tests"],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_ruff_format_reports_nothing():
+    # The standard formatter, so squeezed code cannot hide from the size limits.
+    out = subprocess.run(
+        [sys.executable, "-m", "ruff", "format", "--check", "src", "scripts", "tests"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
     assert out.returncode == 0, out.stdout + out.stderr

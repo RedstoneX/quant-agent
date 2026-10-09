@@ -6,7 +6,9 @@ Never imports `src.data.earnings` or `src.data.sec_client`; no network.
 import json
 
 from src.data.xbrl_facts import (
-    fetch_xbrl_raw, format_xbrl_text, xbrl_comparable_values,
+    fetch_xbrl_raw,
+    format_xbrl_text,
+    xbrl_comparable_values,
 )
 
 
@@ -21,11 +23,15 @@ def _companyfacts(concept_entries: dict) -> bytes:
 
 def test_xbrl_facts_picks_the_period_matching_the_filing():
     """Basic case: one concept, one value, matching period."""
-    sec_get = lambda url: _companyfacts({
-            "NetIncomeLoss": {"USD": [
-                {"end": "2026-03-31", "val": 8584000000, "form": "10-Q"},
-            ]},
-        })
+    sec_get = lambda url: _companyfacts(
+        {
+            "NetIncomeLoss": {
+                "USD": [
+                    {"end": "2026-03-31", "val": 8584000000, "form": "10-Q"},
+                ]
+            },
+        }
+    )
 
     out = format_xbrl_text(fetch_xbrl_raw(sec_get, "70858", "BAC", "2026-04-25"))
 
@@ -40,14 +46,20 @@ def test_xbrl_facts_prefers_the_fresher_concept_over_a_stale_one():
     `RevenueFromContractWithCustomerExcludingAssessedTax`. Trying concepts
     in order and stopping at the first with ANY data picked the decade-old
     number. Must pick the freshest value across ALL given concept names."""
-    sec_get = lambda url: _companyfacts({
-            "Revenues": {"USD": [
-                {"end": "2010-12-31", "val": 19953000000, "form": "10-Q"},
-            ]},
-            "RevenueFromContractWithCustomerExcludingAssessedTax": {"USD": [
-                {"end": "2026-03-31", "val": 82886000000, "form": "10-Q"},
-            ]},
-        })
+    sec_get = lambda url: _companyfacts(
+        {
+            "Revenues": {
+                "USD": [
+                    {"end": "2010-12-31", "val": 19953000000, "form": "10-Q"},
+                ]
+            },
+            "RevenueFromContractWithCustomerExcludingAssessedTax": {
+                "USD": [
+                    {"end": "2026-03-31", "val": 82886000000, "form": "10-Q"},
+                ]
+            },
+        }
+    )
 
     out = format_xbrl_text(fetch_xbrl_raw(sec_get, "789019", "MSFT", "2026-04-30"))
 
@@ -63,14 +75,20 @@ def test_xbrl_facts_drops_a_field_stale_beyond_the_staleness_window():
     than no number — it's the exact 'PM sizes off an ungrounded field'
     failure this whole fix exists to close, just relocated from text
     extraction into XBRL. Must be omitted entirely, not shown as current."""
-    sec_get = lambda url: _companyfacts({
-            "NetIncomeLoss": {"USD": [
-                {"end": "2026-03-31", "val": 2210000000, "form": "10-Q"},
-            ]},
-            "LongTermDebtNoncurrent": {"USD": [
-                {"end": "2018-09-30", "val": 29854000000, "form": "10-K"},
-            ]},
-        })
+    sec_get = lambda url: _companyfacts(
+        {
+            "NetIncomeLoss": {
+                "USD": [
+                    {"end": "2026-03-31", "val": 2210000000, "form": "10-Q"},
+                ]
+            },
+            "LongTermDebtNoncurrent": {
+                "USD": [
+                    {"end": "2018-09-30", "val": 29854000000, "form": "10-K"},
+                ]
+            },
+        }
+    )
 
     out = format_xbrl_text(fetch_xbrl_raw(sec_get, "93410", "CVX", "2026-04-25"))
 
@@ -86,6 +104,7 @@ def test_xbrl_facts_fails_open_on_network_error():
 
     def boom(url):
         raise TimeoutError("SEC is down")
+
     sec_get = boom
 
     out = format_xbrl_text(fetch_xbrl_raw(sec_get, "789019", "MSFT", "2026-04-30"))

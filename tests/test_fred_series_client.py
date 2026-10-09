@@ -1,4 +1,5 @@
 """The FRED transport: per-request timeout, fredapi-shaped results, no global state."""
+
 import io
 import json
 import socket
@@ -81,8 +82,10 @@ def test_series_info_fields_survive():
 
 def test_timed_out_request_yields_the_named_failure_and_leaves_socket_alone():
     before = socket.getdefaulttimeout()
-    with patch.object(client_mod._transport, "urlopen", side_effect=TimeoutError("timed out")), \
-            patch("src.data.macro.time.sleep"):
+    with (
+        patch.object(client_mod._transport, "urlopen", side_effect=TimeoutError("timed out")),
+        patch("src.data.macro.time.sleep"),
+    ):
         provider = MacroDataProvider(api_key="k", max_retries=0)
         s = provider._safe_get_series("VIXCLS", observation_start=date(2026, 1, 1))
     assert len(s) == 0

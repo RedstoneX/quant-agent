@@ -24,8 +24,15 @@ class ScanOutcome:
 
 
 def scan_existing_stops(
-    self, *, symbol, residual_qty, existing, cancelled_ids, identity_unprovable,
-    best_stop, side,
+    self,
+    *,
+    symbol,
+    residual_qty,
+    existing,
+    cancelled_ids,
+    identity_unprovable,
+    best_stop,
+    side,
 ) -> ScanOutcome:
     """Run the existing-open-stops loop for `self` (a ReprotectResidual); see the module docstring."""
     from src.execution.broker import (
@@ -33,6 +40,7 @@ def scan_existing_stops(
         PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES as _IN_FLIGHT_STATUSES,
         real_broker_order_id as _real_order_id,
     )
+
     for o in existing or []:
         try:
             existing_sp = float(getattr(o, "stop_price", 0) or 0)
@@ -72,15 +80,14 @@ def scan_existing_stops(
         # is actually needed, which is the write-back below.
         order_id = _real_order_id(getattr(o, "id", None))
         status_attr = getattr(o, "status", None)
-        status = str(
-            getattr(status_attr, "value", status_attr) or ""
-        ).lower()
+        status = str(getattr(status_attr, "value", status_attr) or "").lower()
         if not order_id:
             logger.warning(
                 "Reprotect for %s will SUBMIT: an open stop at $%.2f "
                 "carries no readable order id, so it cannot be "
                 "distinguished from the stop this run just cancelled.",
-                symbol, existing_sp,
+                symbol,
+                existing_sp,
             )
             continue
         if order_id in cancelled_ids:
@@ -89,7 +96,9 @@ def scan_existing_stops(
                 "(order %s) is one THIS run just cancelled and is still "
                 "being listed as open — not a prior successful attempt. "
                 "Skipping here is what leaves the position naked.",
-                symbol, existing_sp, order_id,
+                symbol,
+                existing_sp,
+                order_id,
             )
             continue
         # QUANTITY, not just existence. The coverage sweep compares
@@ -109,7 +118,9 @@ def scan_existing_stops(
                 "covers only %s of the %s residual shares, so it is "
                 "not this position's protection and does not make "
                 "this run idempotent.",
-                symbol, order_id, existing_sp,
+                symbol,
+                order_id,
+                existing_sp,
                 self._format_qty(existing_qty),
                 self._format_qty(residual_qty),
             )
@@ -137,7 +148,11 @@ def scan_existing_stops(
                 "protection and not placing a second stop over it; "
                 "the recovery intent stays alive so the next pass "
                 "re-reads it.",
-                symbol, order_id, status, existing_sp, status,
+                symbol,
+                order_id,
+                status,
+                existing_sp,
+                status,
             )
             self._record_reprotect_identity_gap(
                 symbol,
@@ -156,8 +171,11 @@ def scan_existing_stops(
             # It now has its own message, saying what is actually true,
             # under its own claim key.
             self._alert_owner_stop_pending_acceptance(
-                symbol, self._format_qty(residual_qty), order_id,
-                status or "unknown", existing_sp,
+                symbol,
+                self._format_qty(residual_qty),
+                order_id,
+                status or "unknown",
+                existing_sp,
             )
             return ScanOutcome(done=True, value=False)
         if status not in _ACTIVE_STATUSES:
@@ -165,7 +183,10 @@ def scan_existing_stops(
                 "Reprotect for %s will SUBMIT: the open stop at $%.2f "
                 "(order %s) is in status %r, not a live protective "
                 "state — a dying order is not coverage.",
-                symbol, existing_sp, order_id, status or "unknown",
+                symbol,
+                existing_sp,
+                order_id,
+                status or "unknown",
             )
             continue
         # DEFECT 1, second half. The order is identity-proven, live and
@@ -183,7 +204,10 @@ def scan_existing_stops(
                 "submitting a second stop over a live one, and not "
                 "recording a trigger this desk cannot read. The "
                 "recovery intent stays alive.",
-                symbol, order_id, status or "unknown", existing_sp,
+                symbol,
+                order_id,
+                status or "unknown",
+                existing_sp,
             )
             self._record_reprotect_identity_gap(
                 symbol,
@@ -191,14 +215,19 @@ def scan_existing_stops(
                 f"residual but its trigger price was unreadable; "
                 f"nothing was banked and the recovery intent was kept.",
             )
-            self._alert_owner_unreadable_stop([{
-                "symbol": symbol, "held_qty": residual_qty,
-                "read_error": (
-                    f"a live protective stop (order {order_id}, status "
-                    f"{status or 'unknown'}) rests at the broker but its "
-                    f"trigger price could not be read"
-                ),
-            }])
+            self._alert_owner_unreadable_stop(
+                [
+                    {
+                        "symbol": symbol,
+                        "held_qty": residual_qty,
+                        "read_error": (
+                            f"a live protective stop (order {order_id}, status "
+                            f"{status or 'unknown'}) rests at the broker but its "
+                            f"trigger price could not be read"
+                        ),
+                    }
+                ]
+            )
             return ScanOutcome(done=True, value=False)
         # FAULT 5 (adversary round 4). This bail-out used to run
         # BEFORE the unreadable-price branch below, so an open stop that
@@ -215,7 +244,10 @@ def scan_existing_stops(
                 "prove the stop is not one it just cancelled, so it "
                 "may not be banked as protection. The ambiguity is on "
                 "the per-symbol refusal record.",
-                symbol, order_id, status or "unknown", existing_sp,
+                symbol,
+                order_id,
+                status or "unknown",
+                existing_sp,
             )
             continue
         # DEFECT 2 (adversary round 3) -- CONSCIOUSLY LEFT OPEN, not
@@ -258,8 +290,11 @@ def scan_existing_stops(
                 "the price -- it compares quantity only and never "
                 "reads stop_price -- so a wider-than-wanted stop "
                 "persists until the trail moves it.",
-                symbol, order_id, status or "unknown",
-                existing_sp, best_stop,
+                symbol,
+                order_id,
+                status or "unknown",
+                existing_sp,
+                best_stop,
             )
         else:
             logger.info(
@@ -267,11 +302,17 @@ def scan_existing_stops(
                 "status %s) placed by a PREVIOUS attempt is live at the "
                 "broker and is not one this run cancelled (idempotent "
                 "re-run)",
-                symbol, existing_sp, order_id, status,
+                symbol,
+                existing_sp,
+                order_id,
+                status,
             )
         from src.execution.stop_records import write_back_stop_loss
+
         write_back_stop_loss(
-            getattr(self, "db", None), symbol, existing_sp,
+            getattr(self, "db", None),
+            symbol,
+            existing_sp,
             is_short=(side == "buy"),
         )
         return ScanOutcome(done=True, value=True)

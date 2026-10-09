@@ -34,10 +34,12 @@ from tests.desk_output_guard import PROJECT_ROOT, Finding, allow_list, read_text
 SCAN_BYTE_CAP = 4_000_000
 
 LARGE_BLOBS: dict[str, str] = {
-    "ops/model_policy/fixtures/sec_10q10k_pm_public_day_2026-09-14.json.gz":
-        "SEC 10-Q/10-K HTML corpus fetched from data.sec.gov; public filings, not desk output",
-    "ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz":
-        "Yahoo daily OHLCV bars for the screen universe; public market data, not desk output",
+    "ops/model_policy/fixtures/sec_10q10k_pm_public_day_2026-09-14.json.gz": (
+        "SEC 10-Q/10-K HTML corpus fetched from data.sec.gov; public filings, not desk output"
+    ),
+    "ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz": (
+        "Yahoo daily OHLCV bars for the screen universe; public market data, not desk output"
+    ),
 }
 
 
@@ -53,14 +55,19 @@ LARGE_BLOBS: dict[str, str] = {
 # `test_the_specimen_exclusion_is_exactly_this_one_file` pins the set below to
 # exactly this path, so it cannot quietly grow into a hiding place. A new file
 # dropped anywhere else, including beside this one, is scanned like any other.
-SPECIMEN_FILES = frozenset({
-    "tests/test_no_real_desk_output.py",
-})
+SPECIMEN_FILES = frozenset(
+    {
+        "tests/test_no_real_desk_output.py",
+    }
+)
 
 
 def tracked_files(root: Path = PROJECT_ROOT) -> list[str]:
     out = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
+        ["git", "ls-files", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=True,
     ).stdout.decode("utf-8", "replace")
     return [p for p in out.split("\0") if p and p not in SPECIMEN_FILES]
 
@@ -82,10 +89,7 @@ class Audit:
     oversize_unlisted: list[str]
 
     def ok(self) -> bool:
-        return not (
-            self.new_files or self.grown
-            or self.stale_entries or self.oversize_unlisted
-        )
+        return not (self.new_files or self.grown or self.stale_entries or self.oversize_unlisted)
 
 
 def finding_key(f: Finding) -> str:

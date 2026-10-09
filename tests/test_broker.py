@@ -15,8 +15,7 @@ def _make_mock_position(symbol, qty, avg_entry, current_price, market_value, unr
     return pos
 
 
-def _make_mock_account(cash="5000.0", portfolio_value="10000.0",
-                        non_marginable_buying_power="5000.0"):
+def _make_mock_account(cash="5000.0", portfolio_value="10000.0", non_marginable_buying_power="5000.0"):
     acct = MagicMock()
     acct.cash = cash
     acct.portfolio_value = portfolio_value
@@ -44,7 +43,8 @@ def test_get_account_reads_non_marginable_buying_power(mock_tc_cls):
     `cash`, which can include same-day unsettled sale proceeds."""
     mock_client = MagicMock()
     mock_client.get_account.return_value = _make_mock_account(
-        cash="10145.0", non_marginable_buying_power="145.0",
+        cash="10145.0",
+        non_marginable_buying_power="145.0",
     )
     mock_tc_cls.return_value = mock_client
 
@@ -67,7 +67,9 @@ def test_get_account_falls_back_to_cash_when_nmbp_field_absent(mock_tc_cls):
     # AttributeError instead of auto-vivifying — the case getattr's
     # default argument exists to handle.
     mock_client.get_account.return_value = SimpleNamespace(
-        cash="250.0", portfolio_value="10000.0", last_equity="9800.0",
+        cash="250.0",
+        portfolio_value="10000.0",
+        last_equity="9800.0",
     )
     mock_tc_cls.return_value = mock_client
 
@@ -83,8 +85,11 @@ def test_transient_equity_eligibility_accepts_active_tradable_common_stock(mock_
 
     mock_client = MagicMock()
     mock_client.get_asset.return_value = SimpleNamespace(
-        status="active", asset_class="us_equity", exchange="NASDAQ",
-        tradable=True, name="Example Corp Class A Common Stock",
+        status="active",
+        asset_class="us_equity",
+        exchange="NASDAQ",
+        tradable=True,
+        name="Example Corp Class A Common Stock",
     )
     mock_tc_cls.return_value = mock_client
 
@@ -95,17 +100,25 @@ def test_transient_equity_eligibility_accepts_active_tradable_common_stock(mock_
 
 
 @patch("src.execution.broker.TradingClient")
-@pytest.mark.parametrize("name", [
-    "Example Preferred Stock", "Example ETF", "Example Depositary Shares",
-    "Example Warrants",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Example Preferred Stock",
+        "Example ETF",
+        "Example Depositary Shares",
+        "Example Warrants",
+    ],
+)
 def test_transient_equity_eligibility_rejects_non_common_security(mock_tc_cls, name):
     from types import SimpleNamespace
 
     mock_client = MagicMock()
     mock_client.get_asset.return_value = SimpleNamespace(
-        status="active", asset_class="us_equity", exchange="NYSE",
-        tradable=True, name=name,
+        status="active",
+        asset_class="us_equity",
+        exchange="NYSE",
+        tradable=True,
+        name=name,
     )
     mock_tc_cls.return_value = mock_client
 
@@ -172,8 +185,12 @@ def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
 
     entry = broker.submit_order(
-        symbol="BRK-B", qty=2, side="buy", limit_price=500.0,
-        stop_loss_price=475.0, reference_price=500.0,
+        symbol="BRK-B",
+        qty=2,
+        side="buy",
+        limit_price=500.0,
+        stop_loss_price=475.0,
+        reference_price=500.0,
     )
     entry_req = mock_client.submit_order.call_args_list[0].args[0]
     assert isinstance(entry_req, LimitOrderRequest)
@@ -182,14 +199,21 @@ def test_class_share_entry_and_protection_use_alpaca_symbol_but_return_internal(
     assert entry["pending_stop_price"] == 475.0
 
     broker.wait_for_order_terminal = MagicMock(return_value="filled")
-    broker.get_order_fill_info = MagicMock(return_value={
-        "status": "filled", "filled_qty": 2.0, "filled_avg_price": 500.0,
-    })
+    broker.get_order_fill_info = MagicMock(
+        return_value={
+            "status": "filled",
+            "filled_qty": 2.0,
+            "filled_avg_price": 500.0,
+        }
+    )
     protection = broker.place_entry_protection(
-        "BRK-B", entry["id"], entry["pending_stop_price"], requested_qty=2,
+        "BRK-B",
+        entry["id"],
+        entry["pending_stop_price"],
+        requested_qty=2,
     )
     stop_req = mock_client.submit_order.call_args_list[1].args[0]
-    assert isinstance(stop_req, StopOrderRequest)   # primary protective = stop-MARKET
+    assert isinstance(stop_req, StopOrderRequest)  # primary protective = stop-MARKET
     assert stop_req.symbol == "BRK.B"
     assert protection["symbol"] == "BRK-B"
 
@@ -218,22 +242,38 @@ def test_class_share_positions_cancels_and_reconciliation_preserve_internal_symb
     mock_client.cancel_order_by_id.assert_called_once_with("entry-1")
 
     recent = SimpleNamespace(
-        id="entry-1", side="buy", symbol="BRK.B", qty="2", status="filled",
+        id="entry-1",
+        side="buy",
+        symbol="BRK.B",
+        qty="2",
+        status="filled",
     )
     mock_client.get_orders.return_value = [recent]
     rows = broker.list_recent_orders(
-        "BRK-B", "buy", datetime.now(timezone.utc),
+        "BRK-B",
+        "buy",
+        datetime.now(timezone.utc),
     )
     reconcile_filter = mock_client.get_orders.call_args.kwargs["filter"]
     assert reconcile_filter.symbols == ["BRK.B"]
-    assert rows == [{
-        "id": "entry-1", "symbol": "BRK-B", "side": "buy",
-        "qty": 2.0, "status": "filled",
-    }]
+    assert rows == [
+        {
+            "id": "entry-1",
+            "symbol": "BRK-B",
+            "side": "buy",
+            "qty": 2.0,
+            "status": "filled",
+        }
+    ]
 
     live_stop = SimpleNamespace(
-        id="stop-1", order_type="stop_limit", side="sell", symbol="BRK.B",
-        qty="2", stop_price="475", limit_price="460.75",
+        id="stop-1",
+        order_type="stop_limit",
+        side="sell",
+        symbol="BRK.B",
+        qty="2",
+        stop_price="475",
+        limit_price="460.75",
     )
     mock_client.get_orders.return_value = [live_stop]
     ok, specs = broker.snapshot_protective_stops("BRK-B")
@@ -244,7 +284,8 @@ def test_class_share_positions_cancels_and_reconciliation_preserve_internal_symb
     assert mock_client.cancel_order_by_id.call_args_list[-1].args == ("stop-1",)
 
     mock_client.close_position.return_value = SimpleNamespace(
-        id="close-1", status="accepted",
+        id="close-1",
+        status="accepted",
     )
     broker.close_position("BRK-B")
     mock_client.close_position.assert_called_once_with("BRK.B")
@@ -294,7 +335,7 @@ def test_trading_sessions_held_excludes_market_holiday(mock_tc_cls):
     from src.trading_calendar import trading_sessions_held as weekday_sessions_held
 
     start = _date(2026, 11, 22)  # Sunday before Thanksgiving week
-    end = _date(2026, 11, 27)    # Friday (early close) after the holiday
+    end = _date(2026, 11, 27)  # Friday (early close) after the holiday
 
     # Real calendar for that week has no entry for Thu 2026-11-26.
     open_days = [
@@ -323,6 +364,7 @@ def test_trading_sessions_held_excludes_market_holiday(mock_tc_cls):
 @patch("src.execution.broker.TradingClient")
 def test_trading_sessions_held_zero_when_end_not_after_start(mock_tc_cls):
     from datetime import date as _date
+
     mock_client = MagicMock()
     mock_tc_cls.return_value = mock_client
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
@@ -514,7 +556,7 @@ def test_get_top_movers_returns_normalized_gainer_dicts(mock_tc_cls, mock_screen
     out = broker.get_top_movers(n=15)
 
     assert len(out) == 2
-    assert out[0]["symbol"] == "VST"          # lowercase normalized
+    assert out[0]["symbol"] == "VST"  # lowercase normalized
     assert out[0]["percent_change"] == 22.3
     assert out[1]["symbol"] == "OKLO"
     mock_screener.get_market_movers.assert_called_once()
@@ -577,6 +619,7 @@ def test_is_last_trading_day_of_quarter_false_when_later_sessions_exist(mock_tc_
 def test_is_last_trading_day_of_quarter_short_circuits_non_quarter_month(mock_tc_cls):
     """Non-Mar/Jun/Sep/Dec months skip the API call entirely."""
     from datetime import date as _date
+
     mock_client = MagicMock()
     mock_tc_cls.return_value = mock_client
 
@@ -590,6 +633,7 @@ def test_is_last_trading_day_of_quarter_false_on_api_error(mock_tc_cls):
     """Calendar API failure → False (fail-safe: don't trigger the heavy
     meta-reflection on an incorrect guess)."""
     from datetime import date as _date
+
     mock_client = MagicMock()
     mock_client.get_calendar.side_effect = RuntimeError("calendar 500")
     mock_tc_cls.return_value = mock_client
@@ -627,13 +671,13 @@ def test_get_top_movers_filters_warrants_units_and_rights(mock_tc_cls, mock_scre
         return m
 
     movers = [
-        _mover("DSX.WS", pct=80),   # warrant — filter
-        _mover("VST",    pct=22),   # equity — keep
+        _mover("DSX.WS", pct=80),  # warrant — filter
+        _mover("VST", pct=22),  # equity — keep
         _mover("JOBY.WS", pct=50),  # warrant — filter
-        _mover("OKLO",   pct=18),   # equity — keep
-        _mover("ACME.U", pct=12),   # unit — filter
-        _mover("MP",     pct=9),    # equity — keep
-        _mover("XYZ.RT", pct=8),    # right — filter
+        _mover("OKLO", pct=18),  # equity — keep
+        _mover("ACME.U", pct=12),  # unit — filter
+        _mover("MP", pct=9),  # equity — keep
+        _mover("XYZ.RT", pct=8),  # right — filter
     ]
     movers_response = MagicMock()
     movers_response.gainers = movers
@@ -644,9 +688,7 @@ def test_get_top_movers_filters_warrants_units_and_rights(mock_tc_cls, mock_scre
     broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
     out = broker.get_top_movers(n=3)
     syms = [m["symbol"] for m in out]
-    assert syms == ["VST", "OKLO", "MP"], (
-        f"top_movers must drop .WS / .U / .RT non-equity; got {syms}"
-    )
+    assert syms == ["VST", "OKLO", "MP"], f"top_movers must drop .WS / .U / .RT non-equity; got {syms}"
 
 
 @patch("src.execution.broker.TradingClient")
@@ -715,7 +757,10 @@ def test_cancel_open_entry_orders_cancels_a_resting_short_entry_order(mock_tc_cl
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
-        buy_entry, sell_entry, sell_stop, buy_stop,
+        buy_entry,
+        sell_entry,
+        sell_stop,
+        buy_stop,
     ]
     mock_tc_cls.return_value = mock_client
 
@@ -941,7 +986,9 @@ def test_submit_order_quantizes_sub_penny_limit_price(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="UPS", qty=5, side="buy",
+        symbol="UPS",
+        qty=5,
+        side="buy",
         limit_price=106.515,
         stop_loss_price=98.127,  # stop too — same tick rule applies
     )
@@ -966,13 +1013,17 @@ def test_submit_order_buy_without_stop_loss_uses_plain_limit_not_oto(mock_tc_cls
 
     mock_client = MagicMock()
     mock_client.submit_order.return_value = MagicMock(
-        id="ord-no-stop", status="accepted", symbol="ILLIQ",
+        id="ord-no-stop",
+        status="accepted",
+        symbol="ILLIQ",
     )
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="ILLIQ", qty=10, side="buy",
+        symbol="ILLIQ",
+        qty=10,
+        side="buy",
         limit_price=50.0,
         stop_loss_price=None,
     )
@@ -999,13 +1050,17 @@ def test_submit_order_returns_structured_rejection_on_terminal_broker_error(
     exception propagate and crash the caller."""
     mock_client = MagicMock()
     mock_client.submit_order.side_effect = _FakeAPIError(
-        "notional amount must be at least $1", 422,
+        "notional amount must be at least $1",
+        422,
     )
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="NVDA", qty=0.001, side="buy", limit_price=0.50,
+        symbol="NVDA",
+        qty=0.001,
+        side="buy",
+        limit_price=0.50,
     )
     assert result["id"] is None
     assert result["status"] == "rejected_by_broker"
@@ -1039,18 +1094,21 @@ def test_submit_order_does_not_swallow_a_404_from_the_create_endpoint(
 
     for code in (400, 404):
         mock_tc_cls.return_value.submit_order.side_effect = _FakeAPIError(
-            f"status {code}", code,
+            f"status {code}",
+            code,
         )
         try:
             broker.submit_order(
-                symbol="NVDA", qty=1, side="buy", limit_price=100.0,
+                symbol="NVDA",
+                qty=1,
+                side="buy",
+                limit_price=100.0,
             )
         except Exception as exc:  # noqa: BLE001
             assert getattr(exc, "status_code", None) == code
         else:
             assert False, (
-                f"a {code} was swallowed as a broker rejection; Alpaca does "
-                f"not document it as a create-order rejection"
+                f"a {code} was swallowed as a broker rejection; Alpaca does not document it as a create-order rejection"
             )
 
 
@@ -1086,7 +1144,9 @@ def test_submit_order_buy_with_zero_stop_loss_is_refused(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="X", qty=5, side="buy",
+        symbol="X",
+        qty=5,
+        side="buy",
         limit_price=100.0,
         stop_loss_price=0.0,
     )
@@ -1179,14 +1239,19 @@ def test_submit_order_sell_ignores_stop_loss_price(mock_tc_cls):
 
     mock_client = MagicMock()
     mock_client.submit_order.return_value = MagicMock(
-        id="ord-sell", status="accepted", symbol="NVDA",
+        id="ord-sell",
+        status="accepted",
+        symbol="NVDA",
     )
     mock_client.get_all_positions.return_value = [MagicMock(symbol="NVDA", qty="10")]  # sell gate
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     broker.submit_order(
-        symbol="NVDA", qty=10, side="sell", limit_price=420.0,
+        symbol="NVDA",
+        qty=10,
+        side="sell",
+        limit_price=420.0,
         stop_loss_price=400.0,  # accidentally provided
     )
     req = mock_client.submit_order.call_args[0][0]
@@ -1216,6 +1281,7 @@ def test_broker_injects_http_timeout_on_session(mock_tc_cls):
     # Simulate the SDK's internal session; the patched broker will wrap its
     # .request method to set a default timeout.
     import requests
+
     mock_session = MagicMock(spec=requests.Session)
     original_request = MagicMock(return_value=MagicMock(status_code=200))
     mock_session.request = original_request
@@ -1339,7 +1405,7 @@ def test_replace_stop_loss_restores_when_only_pending_cancel_visible(mock_tc_cls
     mock_client.get_orders.side_effect = [[old_stop], [old_stop]]
     mock_client.submit_order.side_effect = [
         RuntimeError("submit failed"),  # the new-stop attempt
-        restored_order,                  # the restore call
+        restored_order,  # the restore call
     ]
     mock_client.get_all_positions.return_value = [
         _make_mock_position("NVDA", 10, 180.0, 200.0, 2000.0, 200.0),
@@ -1664,6 +1730,7 @@ def test_replace_stop_loss_restores_partially_cancelled_stops_when_one_cancel_fa
     cancelled, even if some stops are still live at the broker. The
     'leave broker state alone if anything is still open' optimization
     was wrong for this exact case (partial failure inside the loop)."""
+
     def _stop(id_, stop_price, qty=10):
         s = MagicMock()
         s.id = id_
@@ -1777,7 +1844,10 @@ def test_wait_for_order_terminal_polls_until_filled(mock_tc_cls):
     # specifically (2026-09-10 — see test_order_fill_stream.py for the
     # real-time stream path, now the default).
     status = broker.wait_for_order_terminal(
-        "order-1", timeout_seconds=2.0, poll_interval=0.0, use_stream=False,
+        "order-1",
+        timeout_seconds=2.0,
+        poll_interval=0.0,
+        use_stream=False,
     )
 
     assert status == "filled"
@@ -1793,8 +1863,11 @@ def test_submit_order_rejects_outlier_limit_price(mock_tc_cls):
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     # Reference says $300 but LLM or data glitch produced a $50 limit — 83% deviation
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="buy",
-        limit_price=50.0, reference_price=300.0,
+        symbol="NVDA",
+        qty=10,
+        side="buy",
+        limit_price=50.0,
+        reference_price=300.0,
     )
     assert result["status"] == "rejected_outlier"
     assert result["id"] is None
@@ -1824,7 +1897,11 @@ def test_a_market_order_skips_the_fat_finger_guard(mock_tc_cls):
     # A stale $300 reference against a name that has gapped to ~$80 (73% away):
     # a LIMIT there would be rejected as an outlier, but a MARKET order submits.
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="sell", limit_price=None, reference_price=300.0,
+        symbol="NVDA",
+        qty=10,
+        side="sell",
+        limit_price=None,
+        reference_price=300.0,
     )
     assert result["status"] == "accepted"
     assert result["id"] == "order-mkt"
@@ -1871,8 +1948,11 @@ def test_submit_order_deviation_band_no_longer_applies_to_the_stop(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="buy",
-        limit_price=300.0, stop_loss_price=0.01,
+        symbol="NVDA",
+        qty=10,
+        side="buy",
+        limit_price=300.0,
+        stop_loss_price=0.01,
         reference_price=300.0,
     )
     assert result["status"] == "accepted"
@@ -1902,9 +1982,13 @@ def test_flnc_wide_stop_on_a_volatile_name_is_not_refused(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="FLNC", qty=65, side="sell_short",
-        limit_price=7.75, stop_loss_price=9.66,
-        reference_price=7.785, atr=0.75,
+        symbol="FLNC",
+        qty=65,
+        side="sell_short",
+        limit_price=7.75,
+        stop_loss_price=9.66,
+        reference_price=7.785,
+        atr=0.75,
     )
     assert result["status"] == "accepted"
     mock_client.submit_order.assert_called_once()
@@ -1922,8 +2006,11 @@ def test_submit_order_still_rejects_a_fat_finger_entry_price(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="buy",
-        limit_price=0.01, stop_loss_price=285.0,
+        symbol="NVDA",
+        qty=10,
+        side="buy",
+        limit_price=0.01,
+        stop_loss_price=285.0,
         reference_price=300.0,
     )
     assert result["status"] == "rejected_outlier"
@@ -1946,16 +2033,24 @@ def test_submit_order_rejects_a_wrong_side_stop(mock_tc_cls):
 
     # A long whose stop sits ABOVE its entry.
     long_result = broker.submit_order(
-        symbol="NVDA", qty=10, side="buy",
-        limit_price=300.0, stop_loss_price=305.0, reference_price=300.0,
+        symbol="NVDA",
+        qty=10,
+        side="buy",
+        limit_price=300.0,
+        stop_loss_price=305.0,
+        reference_price=300.0,
     )
     assert long_result["status"] == "rejected_bad_stop"
     assert long_result["id"] is None
 
     # A short whose stop sits BELOW its entry.
     short_result = broker.submit_order(
-        symbol="FLNC", qty=65, side="sell_short",
-        limit_price=7.75, stop_loss_price=7.00, reference_price=7.785,
+        symbol="FLNC",
+        qty=65,
+        side="sell_short",
+        limit_price=7.75,
+        stop_loss_price=7.00,
+        reference_price=7.785,
     )
     assert short_result["status"] == "rejected_bad_stop"
     assert short_result["id"] is None
@@ -1978,8 +2073,12 @@ def test_submit_order_rejects_a_non_finite_stop(mock_tc_cls):
 
     for bad in (float("nan"), float("inf"), float("-inf")):
         result = broker.submit_order(
-            symbol="NVDA", qty=10, side="buy",
-            limit_price=300.0, stop_loss_price=bad, reference_price=300.0,
+            symbol="NVDA",
+            qty=10,
+            side="buy",
+            limit_price=300.0,
+            stop_loss_price=bad,
+            reference_price=300.0,
         )
         assert result["status"] == "rejected_bad_stop", bad
         assert result["id"] is None
@@ -2001,15 +2100,16 @@ def test_fat_finger_refusal_message_carries_the_names_own_range(mock_tc_cls):
 
     # FLNC's real measured session values: price $7.785, ATR(14) $0.75.
     result = broker.submit_order(
-        symbol="FLNC", qty=65, side="sell_short",
-        limit_price=4.96, reference_price=7.785, atr=0.75,
+        symbol="FLNC",
+        qty=65,
+        side="sell_short",
+        limit_price=4.96,
+        reference_price=7.785,
+        atr=0.75,
     )
     assert result["status"] == "rejected_outlier"
     detail = result["detail"]
-    assert detail == (
-        "limit price $4.96 is 36% from price $7.79 — FLNC normally moves "
-        "about $0.75 (10%) in a day"
-    )
+    assert detail == ("limit price $4.96 is 36% from price $7.79 — FLNC normally moves about $0.75 (10%) in a day")
     # Plain words only: no field names, no jargon, no "ATR".
     for jargon in ("atr", "limit_price", "deviat", "reference"):
         assert jargon not in detail.lower()
@@ -2017,8 +2117,11 @@ def test_fat_finger_refusal_message_carries_the_names_own_range(mock_tc_cls):
     # No ATR on hand (resume/sweep lanes carry no analysis) — the range
     # clause is OMITTED, never filled with an invented number.
     bare = broker.submit_order(
-        symbol="FLNC", qty=65, side="sell_short",
-        limit_price=4.96, reference_price=7.785,
+        symbol="FLNC",
+        qty=65,
+        side="sell_short",
+        limit_price=4.96,
+        reference_price=7.785,
     )
     assert bare["detail"] == "limit price $4.96 is 36% from price $7.79"
 
@@ -2036,8 +2139,11 @@ def test_submit_order_allows_prices_within_20pct(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="buy",
-        limit_price=310.0, stop_loss_price=285.0,
+        symbol="NVDA",
+        qty=10,
+        side="buy",
+        limit_price=310.0,
+        stop_loss_price=285.0,
         reference_price=300.0,  # 3.3% / 5% deviations — well within 20% guard
     )
     assert result["status"] == "accepted"
@@ -2068,6 +2174,7 @@ def test_submit_order_without_reference_price_skips_outlier_check(mock_tc_cls):
 # defend at the broker level: skip re-submit when the spec already
 # matches an alive open stop.
 # ===========================================================================
+
 
 def _make_broker_for_restore(mock_tc_cls, alive_stops: list[dict]):
     """Builds an AlpacaBroker whose _list_open_sell_stop_orders returns
@@ -2128,9 +2235,7 @@ def test_restore_stop_orders_matches_within_one_cent_tolerance(mock_tc_cls):
     restored, failed = broker._restore_stop_orders("NVDA", specs, check_idempotency=True)
 
     assert restored == 1
-    assert broker._submit_stop_limit_order.call_count == 0, (
-        "spec within 1¢ of alive stop must NOT be re-submitted"
-    )
+    assert broker._submit_stop_limit_order.call_count == 0, "spec within 1¢ of alive stop must NOT be re-submitted"
 
 
 @patch("src.execution.broker.TradingClient")
@@ -2184,21 +2289,18 @@ def test_submit_order_unwraps_orderstatus_enum_value(mock_tc_cls, caplog):
     mock_tc_cls.return_value = mock_client
 
     import logging
+
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     with caplog.at_level(logging.INFO, logger="src.execution.broker"):
         order = broker.submit_order(symbol="AAPL", qty=10, side="buy")
 
     assert order["status"] == "rejected", (
-        f"status must be the enum value 'rejected', not its repr; "
-        f"got {order['status']!r}"
+        f"status must be the enum value 'rejected', not its repr; got {order['status']!r}"
     )
     # The "Order submitted" info log must ALSO unwrap the enum value —
     # str(OrderStatus.REJECTED) would otherwise pollute logs with the
     # 'OrderStatus.REJECTED' repr (audit re-scan).
-    submit_lines = [
-        r.getMessage() for r in caplog.records
-        if "Order submitted" in r.getMessage()
-    ]
+    submit_lines = [r.getMessage() for r in caplog.records if "Order submitted" in r.getMessage()]
     assert submit_lines, "expected an 'Order submitted' log line"
     assert "OrderStatus." not in submit_lines[0], submit_lines[0]
     assert "rejected" in submit_lines[0]
@@ -2239,6 +2341,7 @@ def test_submit_stop_limit_order_unwraps_orderstatus_enum_value(mock_tc_cls):
 class _FakeAPIError(Exception):
     """Stand-in for alpaca's APIError: the classifiers only read
     `status_code` and `str(exc)`, exactly what this carries."""
+
     def __init__(self, message, status_code):
         super().__init__(message)
         self.status_code = status_code
@@ -2268,12 +2371,12 @@ def test_protective_stop_is_market_and_falls_back_to_stop_limit_on_unsupported_c
 
     reqs = [c.args[0] for c in mock_client.submit_order.call_args_list]
     assert len(reqs) == 2
-    assert isinstance(reqs[0], StopOrderRequest)         # primary: stop-MARKET
+    assert isinstance(reqs[0], StopOrderRequest)  # primary: stop-MARKET
     assert getattr(reqs[0], "limit_price", None) is None
-    assert isinstance(reqs[1], StopLimitOrderRequest)    # fallback: stop-LIMIT
+    assert isinstance(reqs[1], StopLimitOrderRequest)  # fallback: stop-LIMIT
     assert float(reqs[1].stop_price) == 150.0
-    assert float(reqs[1].limit_price) == 145.5           # 3% below the trigger
-    assert out["id"] == "sl-1"                            # the fallback's order
+    assert float(reqs[1].limit_price) == 145.5  # 3% below the trigger
+    assert out["id"] == "sl-1"  # the fallback's order
 
 
 @patch("src.execution.broker.TradingClient")
@@ -2284,14 +2387,15 @@ def test_protective_stop_does_not_swallow_a_non_combo_rejection(mock_tc_cls):
     the exception surfaces, never a silent stop-limit."""
     mock_client = MagicMock()
     mock_client.submit_order.side_effect = _FakeAPIError(
-        "insufficient qty available (held_for_orders)", 403,
+        "insufficient qty available (held_for_orders)",
+        403,
     )
     mock_tc_cls.return_value = mock_client
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
 
     with pytest.raises(Exception):
         broker._submit_stop_limit_order(symbol="AAPL", qty=5, stop_price=150.0)
-    assert mock_client.submit_order.call_count == 1      # no fallback attempted
+    assert mock_client.submit_order.call_count == 1  # no fallback attempted
 
 
 @patch("src.execution.broker.TradingClient")
@@ -2327,7 +2431,8 @@ def test_get_recent_daily_closes_maps_et_dates_and_equity(mock_tc_cls):
     ts2 = int(datetime(2026, 5, 28, 20, 0, tzinfo=timezone.utc).timestamp())
     mock_client = MagicMock()
     mock_client.get_portfolio_history.return_value = SimpleNamespace(
-        timestamp=[ts1, ts2], equity=[101000.0, 100500.0],
+        timestamp=[ts1, ts2],
+        equity=[101000.0, 100500.0],
     )
     mock_tc_cls.return_value = mock_client
 
@@ -2342,7 +2447,7 @@ def test_get_recent_daily_closes_swallows_errors(mock_tc_cls):
     mock_client.get_portfolio_history.side_effect = RuntimeError("api down")
     mock_tc_cls.return_value = mock_client
     broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
-    assert broker.get_recent_daily_closes() == []   # best-effort, never raises
+    assert broker.get_recent_daily_closes() == []  # best-effort, never raises
 
 
 # ============================================================================
@@ -2354,6 +2459,7 @@ def test_get_recent_daily_closes_swallows_errors(mock_tc_cls):
 # alpaca-py's StopLossRequest has no TIF field of its own, so the only fix is
 # to place the stop as a separate GTC order after the entry fills.
 # ============================================================================
+
 
 @patch("src.execution.broker.TradingClient")
 def test_buy_entry_carries_no_oto_leg(mock_tc_cls):
@@ -2367,15 +2473,14 @@ def test_buy_entry_carries_no_oto_leg(mock_tc_cls):
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    result = broker.submit_order(symbol="NVDA", qty=10, side="buy",
-                                 limit_price=100.0, stop_loss_price=90.0)
+    result = broker.submit_order(symbol="NVDA", qty=10, side="buy", limit_price=100.0, stop_loss_price=90.0)
 
     req = mock_client.submit_order.call_args[0][0]
     assert isinstance(req, LimitOrderRequest)
     assert getattr(req, "order_class", None) is None
     assert getattr(req, "stop_loss", None) is None
-    assert req.time_in_force == TimeInForce.DAY   # entry still dies at the close
-    assert result["pending_stop_price"] == 90.0   # caller owes the stop
+    assert req.time_in_force == TimeInForce.DAY  # entry still dies at the close
+    assert result["pending_stop_price"] == 90.0  # caller owes the stop
 
 
 @patch("src.execution.broker.TradingClient")
@@ -2392,19 +2497,26 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     broker.wait_for_order_terminal = MagicMock(return_value="filled")
-    broker.get_order_fill_info = MagicMock(return_value={
-        "status": "filled", "filled_qty": 7.0, "filled_avg_price": 100.0,
-    })
+    broker.get_order_fill_info = MagicMock(
+        return_value={
+            "status": "filled",
+            "filled_qty": 7.0,
+            "filled_avg_price": 100.0,
+        }
+    )
 
     out = broker.place_entry_protection(
-        symbol="NVDA", order_id="e1", stop_price=90.0, requested_qty=10,
+        symbol="NVDA",
+        order_id="e1",
+        stop_price=90.0,
+        requested_qty=10,
     )
 
     assert out is not None
     req = mock_client.submit_order.call_args[0][0]
-    assert isinstance(req, StopOrderRequest)        # primary protective = stop-MARKET
-    assert req.time_in_force == TimeInForce.GTC     # THE fix — survives 16:00 ET
-    assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
+    assert isinstance(req, StopOrderRequest)  # primary protective = stop-MARKET
+    assert req.time_in_force == TimeInForce.GTC  # THE fix — survives 16:00 ET
+    assert float(req.qty) == 7.0  # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
     # A stop-MARKET has no limit — the buffer governs only the stop-limit fallback.
     assert getattr(req, "limit_price", None) is None
@@ -2412,7 +2524,8 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     # `wait_for_order_terminal` watches the real-time fill stream first —
     # see tests/test_order_fill_stream.py.
     broker.wait_for_order_terminal.assert_called_once_with(
-        "e1", timeout_seconds=90.0,
+        "e1",
+        timeout_seconds=90.0,
     )
 
 
@@ -2454,6 +2567,7 @@ def test_place_entry_protection_swallows_stop_submit_failure(mock_tc_cls):
 # into a ledger row.
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_list_filled_sell_orders_maps_real_stop_fill(mock_tc_cls):
     """Field mapping against the ACTUAL ONDS broker order (verified via a
@@ -2481,14 +2595,16 @@ def test_list_filled_sell_orders_maps_real_stop_fill(mock_tc_cls):
     after = datetime(2026, 8, 23, tzinfo=timezone.utc)
     out = broker.list_filled_sell_orders("ONDS", after)
 
-    assert out == [{
-        "id": "865a3187-af9d-4752-be45-f121dcb9a390",
-        "symbol": "ONDS",
-        "qty": 17.0,
-        "price": 7.93,
-        "filled_at": "2026-08-28T16:16:07.476647+00:00",
-        "order_type": "stop_limit",
-    }]
+    assert out == [
+        {
+            "id": "865a3187-af9d-4752-be45-f121dcb9a390",
+            "symbol": "ONDS",
+            "qty": 17.0,
+            "price": 7.93,
+            "filled_at": "2026-08-28T16:16:07.476647+00:00",
+            "order_type": "stop_limit",
+        }
+    ]
     used_filter = mock_client.get_orders.call_args.kwargs["filter"]
     assert used_filter.symbols == ["ONDS"]
     # `after` is NOT forwarded to Alpaca's own query parameter — see
@@ -2508,21 +2624,38 @@ def test_list_filled_sell_orders_excludes_non_filled_and_zero_fills(mock_tc_cls)
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
-        SimpleNamespace(id="a", status="canceled", symbol="NVDA",
-                        filled_qty="0", filled_avg_price="0", filled_at=None,
-                        type="stop_limit"),
-        SimpleNamespace(id="b", status="new", symbol="NVDA",
-                        filled_qty="0", filled_avg_price="0", filled_at=None,
-                        type="limit"),
+        SimpleNamespace(
+            id="a",
+            status="canceled",
+            symbol="NVDA",
+            filled_qty="0",
+            filled_avg_price="0",
+            filled_at=None,
+            type="stop_limit",
+        ),
+        SimpleNamespace(
+            id="b", status="new", symbol="NVDA", filled_qty="0", filled_avg_price="0", filled_at=None, type="limit"
+        ),
         # Status says filled but no real fill data — malformed/edge case,
         # must not be treated as a real exit.
-        SimpleNamespace(id="c", status="filled", symbol="NVDA",
-                        filled_qty="0", filled_avg_price="0", filled_at=None,
-                        type="stop_limit"),
-        SimpleNamespace(id="d", status="filled", symbol="NVDA",
-                        filled_qty="5", filled_avg_price="101.5",
-                        filled_at=datetime(2026, 8, 28, 15, 0, 0, tzinfo=timezone.utc),
-                        type="stop_limit"),
+        SimpleNamespace(
+            id="c",
+            status="filled",
+            symbol="NVDA",
+            filled_qty="0",
+            filled_avg_price="0",
+            filled_at=None,
+            type="stop_limit",
+        ),
+        SimpleNamespace(
+            id="d",
+            status="filled",
+            symbol="NVDA",
+            filled_qty="5",
+            filled_avg_price="101.5",
+            filled_at=datetime(2026, 8, 28, 15, 0, 0, tzinfo=timezone.utc),
+            type="stop_limit",
+        ),
     ]
     mock_tc_cls.return_value = mock_client
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
@@ -2553,9 +2686,12 @@ def test_list_filled_sell_orders_includes_stale_submitted_recent_fill(mock_tc_cl
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
         SimpleNamespace(
-            id="6f5a4781-1690-4bf1-8a3c-cd9c63a33652", status="filled",
-            symbol="MRVL", type="stop_limit",
-            filled_qty="2", filled_avg_price="224.60",
+            id="00000000-0000-4000-8000-0000000000a1",
+            status="filled",
+            symbol="MRVL",
+            type="stop_limit",
+            filled_qty="2",
+            filled_avg_price="224.60",
             submitted_at=datetime(2026, 8, 21, 13, 35, 14, tzinfo=timezone.utc),
             filled_at=datetime(2026, 8, 24, 13, 48, 2, tzinfo=timezone.utc),
         ),
@@ -2569,7 +2705,7 @@ def test_list_filled_sell_orders_includes_stale_submitted_recent_fill(mock_tc_cl
     after = datetime(2026, 8, 21, 20, 48, tzinfo=timezone.utc)
     out = broker.list_filled_sell_orders("MRVL", after)
 
-    assert [o["id"] for o in out] == ["6f5a4781-1690-4bf1-8a3c-cd9c63a33652"]
+    assert [o["id"] for o in out] == ["00000000-0000-4000-8000-0000000000a1"]
     assert out[0]["qty"] == 2.0
     assert out[0]["price"] == 224.6
     # The broker call itself must be unbounded on date — no after= passed.
@@ -2587,9 +2723,15 @@ def test_list_filled_sell_orders_excludes_fills_before_cutoff(mock_tc_cls):
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
-        SimpleNamespace(id="old-1", status="filled", symbol="NVDA",
-                        type="stop_limit", filled_qty="3", filled_avg_price="90.0",
-                        filled_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        SimpleNamespace(
+            id="old-1",
+            status="filled",
+            symbol="NVDA",
+            type="stop_limit",
+            filled_qty="3",
+            filled_avg_price="90.0",
+            filled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
     ]
     mock_tc_cls.return_value = mock_client
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
@@ -2692,6 +2834,7 @@ def test_replace_stop_loss_refused_amend_leaves_original_resting(mock_tc_cls):
     # could be told. It now returns a payload that carries no order id, so
     # `accepted_stop_order` still rejects it and no stop level is written back.
     from src.execution.stop_records import accepted_stop_order
+
     assert accepted_stop_order(result) is False
     assert result["id"] is None and result["amend_status"] == "refused"
     assert [leg["outcome"] for leg in result["legs"]] == ["refused"]

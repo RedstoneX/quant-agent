@@ -13,6 +13,7 @@ processes finding the same condition at the same moment cannot both send;
 declined is dropped silently: `_record_suppressed_alert` keeps the count and
 the last events in the same state file, which `src/api/db_reads.py` reads.
 """
+
 from __future__ import annotations
 
 import json
@@ -95,16 +96,14 @@ def repair_failure_alert_day(now: datetime | None = None) -> str:
 
 
 def _typed_alerted_symbols(
-    state: dict[str, Any], day: str, kind: str,
+    state: dict[str, Any],
+    day: str,
+    kind: str,
 ) -> set[str]:
     raw = state.get(f"typed_alerted_symbols::{kind}")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 #: How many suppression records to retain per alert type. Bounds the state
@@ -113,7 +112,10 @@ _SUPPRESSION_LOG_LIMIT = 50
 
 
 def _record_suppressed_alert(
-    state: dict[str, Any], kind: str, day: str, keys: Iterable[str],
+    state: dict[str, Any],
+    kind: str,
+    day: str,
+    keys: Iterable[str],
 ) -> None:
     """Durably note an alert this helper declined to resend (item 211).
 
@@ -139,7 +141,10 @@ def _record_suppressed_alert(
 
 
 def claim_typed_alert(
-    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    kind: str,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's `kind` alert for `symbols`; return those NOT yet
@@ -154,14 +159,13 @@ def claim_typed_alert(
     state = load_state(path)
     already = _typed_alerted_symbols(state, day, key)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
-    stale = [sym for sym in dict.fromkeys(
-        str(raw).strip().upper() for raw in symbols if str(raw).strip()
-    ) if sym in already]
+    stale = [
+        sym for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip()) if sym in already
+    ]
     if stale:
         _record_suppressed_alert(state, key, day, stale)
     if not fresh:
@@ -169,14 +173,18 @@ def claim_typed_alert(
             save_state(state, path)
         return []
     state[f"typed_alerted_symbols::{key}"] = {
-        "day": day, "symbols": sorted(already | set(fresh)),
+        "day": day,
+        "symbols": sorted(already | set(fresh)),
     }
     save_state(state, path)
     return fresh
 
 
 def release_typed_alert(
-    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    kind: str,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> None:
     """Give back today's `kind` claim for `symbols`.
@@ -197,19 +205,20 @@ def release_typed_alert(
         day = repair_failure_alert_day(now)
         state = load_state(path)
         already = _typed_alerted_symbols(state, day, key)
-        giving_back = {
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        }
+        giving_back = {str(raw).strip().upper() for raw in symbols if str(raw).strip()}
         remaining = already - giving_back
         if remaining == already:
             return
         state[f"typed_alerted_symbols::{key}"] = {
-            "day": day, "symbols": sorted(remaining),
+            "day": day,
+            "symbols": sorted(remaining),
         }
         save_state(state, path)
     except Exception as exc:  # noqa: BLE001
         record_watchdog_pass("release_typed_alert", exc)
         logger.warning(
             "release_typed_alert(%s) failed: %s — the claim stays held and "
-            "today's page for those symbols will not be retried", key, exc,
+            "today's page for those symbols will not be retried",
+            key,
+            exc,
         )

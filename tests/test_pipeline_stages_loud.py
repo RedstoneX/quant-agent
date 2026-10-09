@@ -1,4 +1,5 @@
 """Converted stage catch-alls: swallowed fault, clean pass, and an unreached site stay distinct."""
+
 import logging
 from types import SimpleNamespace
 

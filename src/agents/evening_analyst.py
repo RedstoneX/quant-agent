@@ -23,8 +23,13 @@ from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
 from src.models import (
-    BuyGrade, EveningReport, MissedOpportunity, NewsIntelligenceReport,
-    Position, SellGrade, parse_telemetry,
+    BuyGrade,
+    EveningReport,
+    MissedOpportunity,
+    NewsIntelligenceReport,
+    Position,
+    SellGrade,
+    parse_telemetry,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,8 +41,7 @@ def _fmt_news_for_evening(news_intel: NewsIntelligenceReport | None) -> str:
     if news_intel is None:
         return "(no news report today)"
     state_lines = [
-        f"- [{c.conviction.upper()}] {c.event}: impact {c.market_impact}"
-        for c in (news_intel.state_changes or [])[:5]
+        f"- [{c.conviction.upper()}] {c.event}: impact {c.market_impact}" for c in (news_intel.state_changes or [])[:5]
     ]
     state_text = "\n".join(state_lines) or "No major state changes."
     return (
@@ -55,15 +59,15 @@ def _fmt_earnings_for_evening(earnings_analyses: list[dict]) -> str:
         sym = ea.get("symbol", "?")
         if ea.get("queued"):
             lines.append(
-                f"- {sym}: JUST FILED {ea.get('form_type','?')} ({ea.get('filing_date','?')}) "
+                f"- {sym}: JUST FILED {ea.get('form_type', '?')} ({ea.get('filing_date', '?')}) "
                 f"— analysis still running"
             )
             continue
         analysis = ea.get("analysis") or {}
         impl = analysis.get("investment_implications") or {}
         lines.append(
-            f"- {sym}: {impl.get('sentiment','?')} ({impl.get('conviction','?')}) — "
-            f"{impl.get('key_thesis','')[:120]}"
+            f"- {sym}: {impl.get('sentiment', '?')} ({impl.get('conviction', '?')}) — "
+            f"{impl.get('key_thesis', '')[:120]}"
         )
     return "\n".join(lines)
 
@@ -109,16 +113,14 @@ def _fmt_thesis_health(context: dict) -> str:
         news_count = c.get("news_count_8w", 0)
         news_hls = c.get("latest_news_headlines") or []
         if news_hls:
-            news_str = f"{news_count} events; latest: \"{news_hls[0]}\""
+            news_str = f'{news_count} events; latest: "{news_hls[0]}"'
             if len(news_hls) > 1:
-                news_str += f"; prior: \"{news_hls[1]}\""
+                news_str += f'; prior: "{news_hls[1]}"'
         else:
             news_str = f"{news_count} news events in 8w (no headlines captured)"
 
         earnings = c.get("recent_earnings_signal")
-        earnings_str = (
-            earnings[:140] if earnings else "no recent earnings analysis"
-        )
+        earnings_str = earnings[:140] if earnings else "no recent earnings analysis"
         macro = c.get("macro_sector_stance", "unknown")
 
         val = c.get("valuation") or {}
@@ -147,9 +149,9 @@ def _fmt_thesis_health(context: dict) -> str:
             sr = (deep.get("strategic_risks") or "").strip()
             me = (deep.get("management_execution") or "").strip()
             deep_lines = [
-                f"  --- Earnings deep-dive ({deep.get('form_type','?')} "
-                f"{deep.get('filing_date','?')}, "
-                f"{deep.get('sentiment','?')}/{deep.get('conviction','?')}) ---",
+                f"  --- Earnings deep-dive ({deep.get('form_type', '?')} "
+                f"{deep.get('filing_date', '?')}, "
+                f"{deep.get('sentiment', '?')}/{deep.get('conviction', '?')}) ---",
             ]
             if hl:
                 deep_lines.append(f"    Metrics: {hl}")
@@ -197,24 +199,14 @@ def _fmt_missed_opportunities(snapshots: list) -> str:
     `missed_opportunities: []` in that case.
     """
     if not snapshots:
-        return (
-            "(no symbols crossed the ±8% move threshold in the 5-day window — "
-            "emit `missed_opportunities: []`)"
-        )
+        return "(no symbols crossed the ±8% move threshold in the 5-day window — emit `missed_opportunities: []`)"
     lines: list[str] = []
     for s in snapshots:
         tags = ", ".join(s.theme_tags) if s.theme_tags else "—"
-        ta_bit = (
-            f"TA {s.last_ta_rating} ({s.last_ta_date})"
-            if s.last_ta_rating else "TA: no rating in window"
-        )
-        news_bit = (
-            f"News: \"{s.last_news_headline}\""
-            if s.last_news_headline else "News: no coverage in window"
-        )
+        ta_bit = f"TA {s.last_ta_rating} ({s.last_ta_date})" if s.last_ta_rating else "TA: no rating in window"
+        news_bit = f'News: "{s.last_news_headline}"' if s.last_news_headline else "News: no coverage in window"
         earn_bit = (
-            f"Earnings: {s.recent_earnings_signal[:100]}"
-            if s.recent_earnings_signal else "Earnings: no recent filing"
+            f"Earnings: {s.recent_earnings_signal[:100]}" if s.recent_earnings_signal else "Earnings: no recent filing"
         )
         held_bit = "HELD" if s.held_during_window else "not held"
 
@@ -230,18 +222,13 @@ def _fmt_missed_opportunities(snapshots: list) -> str:
             )
         if s.single_day_concentration_pct is not None:
             tag = (
-                "single-day gap" if s.single_day_concentration_pct >= 70
-                else ("distributed" if s.single_day_concentration_pct < 50
-                      else "mixed")
+                "single-day gap"
+                if s.single_day_concentration_pct >= 70
+                else ("distributed" if s.single_day_concentration_pct < 50 else "mixed")
             )
-            qual_bits.append(
-                f"1d concentration {s.single_day_concentration_pct:.0f}% "
-                f"({tag})"
-            )
+            qual_bits.append(f"1d concentration {s.single_day_concentration_pct:.0f}% ({tag})")
         qual_line = (
-            f"    Quality: {' · '.join(qual_bits)}"
-            if qual_bits else
-            "    Quality: (insufficient bars for metrics)"
+            f"    Quality: {' · '.join(qual_bits)}" if qual_bits else "    Quality: (insufficient bars for metrics)"
         )
 
         # Valuation line — cue for value-lens classification. Don't chase
@@ -262,7 +249,8 @@ def _fmt_missed_opportunities(snapshots: list) -> str:
         value_flag = (
             "    ⚠ VALUE_ENTRY_CANDIDATE: move is DOWN and fundamentals "
             "signal intact — check for value_entry_missed classification"
-            if s.value_entry_candidate else ""
+            if s.value_entry_candidate
+            else ""
         )
 
         row_parts = [
@@ -291,12 +279,11 @@ def _fmt_outlook_calibration(calib: dict) -> str:
     samples = calib.get("samples") or []
     n = calib.get("n", 0)
     if not samples or n < 3:
-        return (
-            "(insufficient history yet — self-calibration kicks in once we have "
-            "3+ completed bias-vs-outcome pairs)"
-        )
+        return "(insufficient history yet — self-calibration kicks in once we have 3+ completed bias-vs-outcome pairs)"
+
     def _pct(v):
         return f"{v:.0f}%" if isinstance(v, (int, float)) else "n/a"
+
     header = (
         f"NEXT-DAY hit rate (NOISE — not a directional verdict): "
         f"{_pct(calib.get('overall_hit_rate_pct'))} over {n} sessions. "
@@ -362,15 +349,23 @@ class EveningAnalystAgent(BaseAgent):
         # weakening / broken — the missing medium-long-term reflection step.
         thesis_health_context: dict = kwargs.get("thesis_health_context") or {}
 
-        positions_text = "\n".join(
-            f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | Close: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} | Sector: {p.sector}"
-            for p in positions
-        ) if positions else "No open positions."
+        positions_text = (
+            "\n".join(
+                f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | Close: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f} | Sector: {p.sector}"
+                for p in positions
+            )
+            if positions
+            else "No open positions."
+        )
 
-        trades_text = "\n".join(
-            f"- {t['action']} {t['symbol']}: {t['qty']} shares @ ${t['price']:.2f} — {t.get('reasoning', '')}"
-            for t in today_trades
-        ) if today_trades else "No trades today."
+        trades_text = (
+            "\n".join(
+                f"- {t['action']} {t['symbol']}: {t['qty']} shares @ ${t['price']:.2f} — {t.get('reasoning', '')}"
+                for t in today_trades
+            )
+            if today_trades
+            else "No trades today."
+        )
 
         vix = macro_summary.get("vix", {}) or {}
 
@@ -386,7 +381,7 @@ class EveningAnalystAgent(BaseAgent):
                 reason = (s.get("reasoning") or "").strip()[:140]
                 sells_lines.append(
                     f"- {sell_date} {sym}: sold @ ${sell_price:.2f}, now ${curr:.2f} ({pct:+.2f}%) — "
-                    f"reason at sell: \"{reason}\""
+                    f'reason at sell: "{reason}"'
                 )
             sells_section = "\n".join(sells_lines)
         else:
@@ -416,7 +411,7 @@ class EveningAnalystAgent(BaseAgent):
                     mkt_rel_bit = ""
                 buys_lines.append(
                     f"- {buy_date} {sym}: bought @ ${buy_price:.2f}, now ${curr:.2f} ({pct:+.2f}%){mkt_rel_bit} — "
-                    f"reason at entry: \"{reason}\""
+                    f'reason at entry: "{reason}"'
                 )
             buys_section = "\n".join(buys_lines)
         else:
@@ -449,11 +444,13 @@ class EveningAnalystAgent(BaseAgent):
         # Memory layers — same narratives PM sees.
         narrative_section = (
             f"## Rolling Portfolio Narrative (last 7 evenings — don't drift from it)\n{weekly_narrative}\n"
-            if weekly_narrative.strip() else ""
+            if weekly_narrative.strip()
+            else ""
         )
         state_changes_section = (
             f"## Active HIGH-conviction State Changes (14 days)\n{active_state_changes}\n"
-            if active_state_changes.strip() else ""
+            if active_state_changes.strip()
+            else ""
         )
 
         missed_ops_section = _fmt_missed_opportunities(missed_ops_snapshots)
@@ -472,7 +469,7 @@ class EveningAnalystAgent(BaseAgent):
 {positions_text}
 
 ### Macro
-- VIX: {vix.get('current', 'N/A')} (trend: {vix.get('trend', 'N/A')})
+- VIX: {vix.get("current", "N/A")} (trend: {vix.get("trend", "N/A")})
 
 ## Recent SELL decisions to grade (last 2 days)
 {sells_section}
@@ -510,20 +507,25 @@ evidence in `lesson`. Populate `this_week_thesis_catalysts` with concrete
 upcoming events that bear on held theses. Respond as JSON matching
 `EveningReport`."""
 
-    def analyze(self, positions: list[Position], macro_summary: dict,
-                total_value: float, daily_pnl: float, daily_return_pct: float,
-                today_trades: list[dict] | None = None,
-                prior_outlook: dict | None = None,
-                recent_sells: list[dict] | None = None,
-                recent_buys: list[dict] | None = None,
-                news_intel: NewsIntelligenceReport | None = None,
-                earnings_analyses: list[dict] | None = None,
-                weekly_narrative: str = "",
-                active_state_changes: str = "",
-                outlook_calibration: dict | None = None,
-                missed_ops_snapshots: list | None = None,
-                thesis_health_context: dict | None = None,
-                ) -> tuple[EveningReport | None, "AgentResult"]:
+    def analyze(
+        self,
+        positions: list[Position],
+        macro_summary: dict,
+        total_value: float,
+        daily_pnl: float,
+        daily_return_pct: float,
+        today_trades: list[dict] | None = None,
+        prior_outlook: dict | None = None,
+        recent_sells: list[dict] | None = None,
+        recent_buys: list[dict] | None = None,
+        news_intel: NewsIntelligenceReport | None = None,
+        earnings_analyses: list[dict] | None = None,
+        weekly_narrative: str = "",
+        active_state_changes: str = "",
+        outlook_calibration: dict | None = None,
+        missed_ops_snapshots: list | None = None,
+        thesis_health_context: dict | None = None,
+    ) -> tuple[EveningReport | None, "AgentResult"]:
         result = self.run(
             positions=positions,
             macro_summary=macro_summary,
@@ -598,19 +600,27 @@ upcoming events that bear on held theses. Respond as JSON matching
         # itself a bug: it made every caller that omits these kwargs (e.g.
         # existing unit tests) silently drop legitimate entries too, since
         # an empty set matches nothing.
-        recent_sell_symbols = None if recent_sells is None else {
-            str(s.get("symbol")).upper()
-            for s in recent_sells if isinstance(s, dict) and s.get("symbol")
-        }
-        recent_buy_symbols = None if recent_buys is None else {
-            str(b.get("symbol")).upper()
-            for b in recent_buys if isinstance(b, dict) and b.get("symbol")
-        }
-        parsed = self._drop_invalid_entries(
-            parsed, "sell_grades", SellGrade, allowed_symbols=recent_sell_symbols,
+        recent_sell_symbols = (
+            None
+            if recent_sells is None
+            else {str(s.get("symbol")).upper() for s in recent_sells if isinstance(s, dict) and s.get("symbol")}
+        )
+        recent_buy_symbols = (
+            None
+            if recent_buys is None
+            else {str(b.get("symbol")).upper() for b in recent_buys if isinstance(b, dict) and b.get("symbol")}
         )
         parsed = self._drop_invalid_entries(
-            parsed, "buy_grades", BuyGrade, allowed_symbols=recent_buy_symbols,
+            parsed,
+            "sell_grades",
+            SellGrade,
+            allowed_symbols=recent_sell_symbols,
+        )
+        parsed = self._drop_invalid_entries(
+            parsed,
+            "buy_grades",
+            BuyGrade,
+            allowed_symbols=recent_buy_symbols,
         )
         try:
             report = EveningReport(**parsed)
@@ -621,7 +631,10 @@ upcoming events that bear on held theses. Respond as JSON matching
 
     @staticmethod
     def _drop_invalid_entries(
-        parsed: dict, key: str, model_cls, allowed_symbols: set | None = None,
+        parsed: dict,
+        key: str,
+        model_cls,
+        allowed_symbols: set | None = None,
     ) -> dict:
         """Per-entry pre-validation for a list-of-models field (audit
         round 2 #53). Validates each item individually against
@@ -647,8 +660,9 @@ upcoming events that bear on held theses. Respond as JSON matching
             return parsed
         if not isinstance(raw, list):
             logger.warning(
-                "Evening analyst: %s is %s, not list — replacing with "
-                "empty list", key, type(raw).__name__,
+                "Evening analyst: %s is %s, not list — replacing with empty list",
+                key,
+                type(raw).__name__,
             )
             parsed[key] = []
             return parsed
@@ -656,8 +670,10 @@ upcoming events that bear on held theses. Respond as JSON matching
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "Evening analyst: dropping non-dict %s entry at "
-                    "index %d: %r", key, i, item,
+                    "Evening analyst: dropping non-dict %s entry at index %d: %r",
+                    key,
+                    i,
+                    item,
                 )
                 continue
             if allowed_symbols is not None:
@@ -668,7 +684,8 @@ upcoming events that bear on held theses. Respond as JSON matching
                         "evening: %s entry for %s is out of scope (not in "
                         "this run's recent_buys/recent_sells candidates) — "
                         "likely Thesis Health Review confusion, dropping",
-                        key, sym or f"<idx {i}>",
+                        key,
+                        sym or f"<idx {i}>",
                     )
                     continue
             try:
@@ -680,8 +697,10 @@ upcoming events that bear on held theses. Respond as JSON matching
                 sym = item.get("symbol") or f"<idx {i}>"
                 parse_telemetry.record_dropped_item(model_cls.__name__, str(sym))
                 logger.warning(
-                    "Evening analyst: dropping malformed %s entry for "
-                    "%s: %s", key, sym, e,
+                    "Evening analyst: dropping malformed %s entry for %s: %s",
+                    key,
+                    sym,
+                    e,
                 )
                 continue
             valid.append(item)
@@ -704,8 +723,8 @@ upcoming events that bear on held theses. Respond as JSON matching
             return parsed
         if not isinstance(raw, list):
             logger.warning(
-                "Evening analyst: missed_opportunities is %s, not list — "
-                "replacing with empty list", type(raw).__name__,
+                "Evening analyst: missed_opportunities is %s, not list — replacing with empty list",
+                type(raw).__name__,
             )
             parsed["missed_opportunities"] = []
             return parsed
@@ -713,19 +732,21 @@ upcoming events that bear on held theses. Respond as JSON matching
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "Evening analyst: dropping non-dict missed_opportunities "
-                    "entry at index %d: %r", i, item,
+                    "Evening analyst: dropping non-dict missed_opportunities entry at index %d: %r",
+                    i,
+                    item,
                 )
                 continue
             try:
-                with parse_telemetry.suspended():   # dry run — see above
+                with parse_telemetry.suspended():  # dry run — see above
                     MissedOpportunity(**item)
             except ValidationError as e:
                 sym = item.get("symbol") or f"<idx {i}>"
                 parse_telemetry.record_dropped_item("MissedOpportunity", str(sym))
                 logger.warning(
-                    "Evening analyst: dropping malformed missed_opportunities "
-                    "entry for %s: %s", sym, e,
+                    "Evening analyst: dropping malformed missed_opportunities entry for %s: %s",
+                    sym,
+                    e,
                 )
                 continue
             valid.append(item)

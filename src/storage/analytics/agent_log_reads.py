@@ -17,6 +17,7 @@ ledger exists to remove. Counting separately also cannot move the surviving
 set, because the read beside it is unchanged; a fetch with a different
 ``LIMIT`` could reorder rows that tie on ``timestamp``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,8 +30,7 @@ logger = logging.getLogger(__name__)
 _COLUMNS = "agent_name, timestamp, full_response, output_summary"
 
 
-def candidate_predicate(agent_name: str,
-                        before_date: str | None = None) -> tuple[str, list]:
+def candidate_predicate(agent_name: str, before_date: str | None = None) -> tuple[str, list]:
     """The WHERE clause and params shared by the limited read and its count.
 
     `before_date` is an ET trading-day key converted to the UTC instant for
@@ -44,9 +44,7 @@ def candidate_predicate(agent_name: str,
     if before_date:
         try:
             et_midnight = _dt.fromisoformat(before_date).replace(tzinfo=ET)
-            utc_cutoff = et_midnight.astimezone(_tz.utc).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            utc_cutoff = et_midnight.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
             conditions.append("timestamp < ?")
             params.append(utc_cutoff)
         except (ValueError, TypeError) as exc:
@@ -57,26 +55,24 @@ def candidate_predicate(agent_name: str,
                 "get_recent_agent_outputs: unparseable before_date=%r (%s); "
                 "skipping the date filter (returning most-recent rows "
                 "unfiltered) to avoid a UTC-vs-ET mismatch",
-                before_date, exc,
+                before_date,
+                exc,
             )
     return "WHERE " + " AND ".join(conditions), params
 
 
-def recent_agent_outputs(*, conn, lock, agent_name: str, limit: int = 5,
-                         before_date: str | None = None) -> list[dict]:
+def recent_agent_outputs(*, conn, lock, agent_name: str, limit: int = 5, before_date: str | None = None) -> list[dict]:
     """Last `limit` agent_logs rows for `agent_name`, newest first."""
     where, params = candidate_predicate(agent_name, before_date)
     with lock:
         rows = conn.execute(
-            f"SELECT {_COLUMNS} FROM agent_logs {where} "
-            f"ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT {_COLUMNS} FROM agent_logs {where} ORDER BY timestamp DESC LIMIT ?",
             (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def count_recent_agent_outputs(*, conn, lock, agent_name: str,
-                               before_date: str | None = None) -> int:
+def count_recent_agent_outputs(*, conn, lock, agent_name: str, before_date: str | None = None) -> int:
     """How many candidates `recent_agent_outputs` had to choose from.
 
     The number the `LIMIT` used to hide. Returned, never stored: the caller
@@ -85,6 +81,7 @@ def count_recent_agent_outputs(*, conn, lock, agent_name: str,
     where, params = candidate_predicate(agent_name, before_date)
     with lock:
         row = conn.execute(
-            f"SELECT COUNT(*) FROM agent_logs {where}", params,
+            f"SELECT COUNT(*) FROM agent_logs {where}",
+            params,
         ).fetchone()
     return int(row[0])

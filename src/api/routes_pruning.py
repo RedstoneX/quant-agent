@@ -8,6 +8,7 @@ the durable `rotation`/`precheck` rows through the API's `mode=ro` connection
 and registers only a GET, so it cannot write anything. No threshold, limit or
 lookback is introduced - the window is "the newest day that has a record".
 """
+
 from __future__ import annotations
 
 import json
@@ -26,10 +27,7 @@ from src.rotation_unrecorded import examined_count_of
 
 router = APIRouter()
 
-_UNREADABLE = (
-    "The pruning record could not be read, which is not the same as no "
-    "pass having run."
-)
+_UNREADABLE = "The pruning record could not be read, which is not the same as no pass having run."
 
 
 class PruningVerdict(BaseModel):
@@ -90,30 +88,38 @@ def verdicts_for(
     out: list[PruningVerdict] = []
     for sym in examined:
         if cut_tier and sym == cut:
-            out.append(PruningVerdict(
-                symbol=sym, verdict="cut",
-                reason=reasons or "it no longer clears the desk's own entry bar",
-            ))
+            out.append(
+                PruningVerdict(
+                    symbol=sym,
+                    verdict="cut",
+                    reason=reasons or "it no longer clears the desk's own entry bar",
+                )
+            )
         elif sym in below:
             held_back = (
-                f"refused: {skips[sym]}" if sym in skips
+                f"refused: {skips[sym]}"
+                if sym in skips
                 else not_reached.get(sym)
-                or "not reached: this run was recorded before the pass "
-                   "stored why a below-bar name was kept"
+                or "not reached: this run was recorded before the pass stored why a below-bar name was kept"
             )
             fails = fail_on.get(sym)
-            out.append(PruningVerdict(
-                symbol=sym, verdict="below_bar_not_cut",
-                reason="below the desk's own entry bar"
-                + (f" ({fails})" if fails else "")
-                + f"; kept because {held_back}",
-            ))
+            out.append(
+                PruningVerdict(
+                    symbol=sym,
+                    verdict="below_bar_not_cut",
+                    reason="below the desk's own entry bar"
+                    + (f" ({fails})" if fails else "")
+                    + f"; kept because {held_back}",
+                )
+            )
         else:
-            out.append(PruningVerdict(
-                symbol=sym, verdict="kept",
-                reason="still clears the bar it was bought on, so the case "
-                       "for holding it stands",
-            ))
+            out.append(
+                PruningVerdict(
+                    symbol=sym,
+                    verdict="kept",
+                    reason="still clears the bar it was bought on, so the case for holding it stands",
+                )
+            )
     return out
 
 
@@ -127,14 +133,16 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
     day = day_row["d"] if day_row else None
     if not day:
         return PruningPassesResponse(
-            day=None, passes=[],
+            day=None,
+            passes=[],
             note="No pruning pass has been recorded yet, which is not the "
-                 "same as a pass having run and kept everything.",
+            "same as a pass having run and kept everything.",
         )
     rows = conn.execute(
         "SELECT run_id, symbol, timestamp, evidence_json FROM specialist_evidence "
         "WHERE agent_name = 'pipeline' AND kind = 'pipeline_event' "
-        "AND date(timestamp) = ? ORDER BY id DESC", (day,),
+        "AND date(timestamp) = ? ORDER BY id DESC",
+        (day,),
     ).fetchall()
     passes: list[PruningPass] = []
     seen: set[str] = set()
@@ -150,9 +158,7 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
         elif data.get("stage") == "rotation" and data.get("outcome") == "skipped":
             sym = str(row["symbol"] or "").upper()
             if sym:
-                skips.setdefault(row["run_id"], {}).setdefault(
-                    sym, str(data.get("reason") or "no reason recorded")
-                )
+                skips.setdefault(row["run_id"], {}).setdefault(sym, str(data.get("reason") or "no reason recorded"))
     for row in rows:
         try:
             data = json.loads(row["evidence_json"] or "{}")
@@ -166,17 +172,22 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
         if record["outcome"] == ROTATION_TELEMETRY_UNAVAILABLE:
             continue
         seen.add(row["run_id"])
-        passes.append(PruningPass(
-            run_id=row["run_id"], recorded_at=row["timestamp"],
-            examined_count=examined_count_of(record),
-            verdicts=verdicts_for(
-                record, dispositions.get(row["run_id"]), skips.get(row["run_id"]),
-            ),
-            lines=list(owner_precheck_lines(record))
-            + list(pruning_pass_lines(record)),
-        ))
+        passes.append(
+            PruningPass(
+                run_id=row["run_id"],
+                recorded_at=row["timestamp"],
+                examined_count=examined_count_of(record),
+                verdicts=verdicts_for(
+                    record,
+                    dispositions.get(row["run_id"]),
+                    skips.get(row["run_id"]),
+                ),
+                lines=list(owner_precheck_lines(record)) + list(pruning_pass_lines(record)),
+            )
+        )
     return PruningPassesResponse(
-        day=day, passes=passes,
+        day=day,
+        passes=passes,
         note="Every pass recorded on the newest day that has one, newest first.",
     )
 

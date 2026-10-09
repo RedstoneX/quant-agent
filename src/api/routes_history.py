@@ -103,9 +103,7 @@ def get_run_detail(run_id: str) -> RunDetailResponse:
     # is present — see RunDetailResponse.hard_risk_block_recorded docstring
     # in src/api/schemas.py. Computed from the already-fetched agent_logs,
     # never fabricated.
-    hard_risk_block_recorded = any(
-        row.get("agent_name") == "risk_gate" for row in detail["agent_logs"]
-    )
+    hard_risk_block_recorded = any(row.get("agent_name") == "risk_gate" for row in detail["agent_logs"])
     return RunDetailResponse(
         run_id=run_id,
         agent_logs=[AgentLogItem(**row) for row in detail["agent_logs"]],
@@ -129,9 +127,7 @@ def _rotation_lines(run_id: str) -> list[str]:
         from src.trader_feed import _read_run
 
         record = (_read_run(run_id) or {}).get("rotation")
-        return list(owner_precheck_lines(record)) + list(
-            pruning_pass_lines(record)
-        )
+        return list(owner_precheck_lines(record)) + list(pruning_pass_lines(record))
     except Exception:  # noqa: BLE001
         return []
 
@@ -149,20 +145,10 @@ def get_decision_detail(decision_id: str) -> DecisionDetailResponse:
     return DecisionDetailResponse(
         decision_id=decision_id,
         portfolio_manager=(
-            AgentLogItem(**detail["portfolio_manager"])
-            if detail["portfolio_manager"] is not None
-            else None
+            AgentLogItem(**detail["portfolio_manager"]) if detail["portfolio_manager"] is not None else None
         ),
-        risk_manager=(
-            AgentLogItem(**detail["risk_manager"])
-            if detail["risk_manager"] is not None
-            else None
-        ),
-        hard_risk_block=(
-            AgentLogItem(**detail["hard_risk_block"])
-            if detail["hard_risk_block"] is not None
-            else None
-        ),
+        risk_manager=(AgentLogItem(**detail["risk_manager"]) if detail["risk_manager"] is not None else None),
+        hard_risk_block=(AgentLogItem(**detail["hard_risk_block"]) if detail["hard_risk_block"] is not None else None),
         trades=[TradeItem(**row) for row in detail["trades"]],
     )
 
@@ -211,7 +197,7 @@ def get_reflections(limit: int = 7) -> ReflectionsResponse:
 
 @router.get("/holdings/{symbol}/why", response_model=HoldingWhyResponse)
 def get_holding_why(symbol: str) -> HoldingWhyResponse:
-    """"Why do we hold this" for one symbol, in plain English.
+    """ "Why do we hold this" for one symbol, in plain English.
 
     Read-only, assembled entirely from what the desk already stored: the
     entry trade row, that run's specialist evidence, later position
@@ -229,6 +215,8 @@ def get_holding_why(symbol: str) -> HoldingWhyResponse:
         raise HTTPException(404, "no recorded entry for this symbol")
     return HoldingWhyResponse(
         **build_holding_why(
-            bundle["entry"], bundle["evidence"], bundle["interim"],
+            bundle["entry"],
+            bundle["evidence"],
+            bundle["interim"],
         )
     )

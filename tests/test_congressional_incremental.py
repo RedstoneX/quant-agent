@@ -5,6 +5,7 @@ Owner direction 2026-09-19, before the feed is switched on: set it up like the
 insider feed — a cache, proper logs the desk's monitoring reads, and no logic
 that re-reads everything every day. Each test below pins one of those.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,13 +27,18 @@ from src.util.time import et_now, et_today
 
 def _kadoa(i: int, *, filed_days_ago: int = 3, traded_days_ago: int = 50, ticker="NVDA"):
     return {
-        "id": f"house_{i}", "ticker": ticker, "filer_name": f"Member {i}",
-        "filer_id": f"house_member_{i}", "transaction_type": "Purchase",
-        "amount_range_low": 15001, "amount_range_high": 50000,
+        "id": f"house_{i}",
+        "ticker": ticker,
+        "filer_name": f"Member {i}",
+        "filer_id": f"house_member_{i}",
+        "transaction_type": "Purchase",
+        "amount_range_low": 15001,
+        "amount_range_high": 50000,
         "amount_range_label": "$15,001 - $50,000",
         "transaction_date": (et_today() - timedelta(days=traded_days_ago)).isoformat(),
         "filing_date": (et_today() - timedelta(days=filed_days_ago)).isoformat(),
-        "doc_url": f"https://disclosures-clerk.house.gov/{i}.pdf", "chamber": "house",
+        "doc_url": f"https://disclosures-clerk.house.gov/{i}.pdf",
+        "chamber": "house",
         # Recomputed by the source every day; must not make a row look new.
         "ret_since": 0.01 * i,
     }
@@ -41,11 +47,19 @@ def _kadoa(i: int, *, filed_days_ago: int = 3, traded_days_ago: int = 50, ticker
 def _cw(i: int, *, traded_days_ago: int = 50, ticker="MSFT"):
     return {
         "transaction_date": (et_today() - timedelta(days=traded_days_ago)).isoformat(),
-        "owner": "Self", "ticker": ticker, "asset_description": f"{ticker} stock",
-        "asset_type": "Stock", "type": "Sale (Full)", "amount": "$1,001 - $15,000",
-        "comment": "--", "ptr_link": f"https://efdsearch.senate.gov/{i}/",
-        "bioguide_id": f"S{i:06d}", "member_name": f"Senator {i}",
-        "party": "X", "state": "Y", "chamber": "Senate",
+        "owner": "Self",
+        "ticker": ticker,
+        "asset_description": f"{ticker} stock",
+        "asset_type": "Stock",
+        "type": "Sale (Full)",
+        "amount": "$1,001 - $15,000",
+        "comment": "--",
+        "ptr_link": f"https://efdsearch.senate.gov/{i}/",
+        "bioguide_id": f"S{i:06d}",
+        "member_name": f"Senator {i}",
+        "party": "X",
+        "state": "Y",
+        "chamber": "Senate",
     }
 
 
@@ -86,8 +100,10 @@ def _provider(tmp_path, server, **kwargs):
     session = Mock()
     session.get = Mock(side_effect=server.get)
     return CongressionalTradingProvider(
-        data_dir=str(tmp_path / "congress"), session=session,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path / "congress"),
+        session=session,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
         **kwargs,
     )
 
@@ -98,8 +114,7 @@ def _provider(tmp_path, server, **kwargs):
 def test_second_refresh_processes_zero_already_seen_disclosures(tmp_path):
     """Even when the source ignores the "has it changed?" question and sends
     the whole file again, not one row already processed is parsed again."""
-    server = _Server([_kadoa(i) for i in range(5)], [_cw(i) for i in range(4)],
-                     honour_etag=False)
+    server = _Server([_kadoa(i) for i in range(5)], [_cw(i) for i in range(4)], honour_etag=False)
     provider = _provider(tmp_path, server)
 
     first = provider.refresh()
@@ -144,9 +159,7 @@ def test_only_the_new_disclosure_is_processed_and_old_ones_are_untouched(tmp_pat
     before = {r["group_key"]: r for r in json.loads(provider.observations_path.read_text())}
 
     # The source recomputes its return columns daily and adds one filing.
-    server.files["kadoa"] = [
-        {**row, "ret_since": 9.9} for row in server.files["kadoa"]
-    ] + [_kadoa(7, filed_days_ago=1)]
+    server.files["kadoa"] = [{**row, "ret_since": 9.9} for row in server.files["kadoa"]] + [_kadoa(7, filed_days_ago=1)]
     second = provider.refresh()
 
     counts = second["congressional_sources"]["kadoa"]
@@ -192,9 +205,7 @@ def test_watermark_advances_to_the_newest_filing_processed(tmp_path):
 
     assert second["kadoa"]["watermark_before"] == (et_today() - timedelta(days=10)).isoformat()
     assert second["kadoa"]["watermark_after"] == (et_today() - timedelta(days=2)).isoformat()
-    assert second["congresswatch"]["watermark_after"] == (
-        et_today() - timedelta(days=44)
-    ).isoformat()
+    assert second["congresswatch"]["watermark_after"] == (et_today() - timedelta(days=44)).isoformat()
     manifest = json.loads(provider.manifest_path.read_text())
     assert manifest["sources"]["kadoa"]["watermark"] == second["kadoa"]["watermark_after"]
 
@@ -311,8 +322,7 @@ def test_a_current_copy_carries_no_label(tmp_path):
 
 def test_the_seat_is_told_how_old_the_newest_disclosure_and_trade_are(tmp_path):
     server = _Server(
-        [_kadoa(1, filed_days_ago=2, traded_days_ago=60),
-         _kadoa(2, filed_days_ago=9, traded_days_ago=52)],
+        [_kadoa(1, filed_days_ago=2, traded_days_ago=60), _kadoa(2, filed_days_ago=9, traded_days_ago=52)],
         [_cw(3, traded_days_ago=40)],
     )
     provider = _provider(tmp_path, server)
@@ -357,9 +367,17 @@ def test_the_counts_are_recorded_where_the_desk_records_its_status(tmp_path):
     assert rows[0]["kind"] == "congressional_refresh"
     payload = json.loads(rows[0]["evidence_json"])
     kadoa = payload["congressional_sources"]["kadoa"]
-    for key in ("fetched", "already_seen", "processed", "new", "dropped",
-                "dropped_by_reason", "watermark_before", "watermark_after",
-                "duration_s"):
+    for key in (
+        "fetched",
+        "already_seen",
+        "processed",
+        "new",
+        "dropped",
+        "dropped_by_reason",
+        "watermark_before",
+        "watermark_after",
+        "duration_s",
+    ):
         assert key in kadoa
     assert payload["congressional_freshness"]["newest_disclosure_age_days"] == 3
 
@@ -370,28 +388,27 @@ def _emitted_lines(caplog) -> list[L.LogRecord]:
     out = []
     for i, rec in enumerate(caplog.records):
         line = (
-            f"{(stamp + timedelta(seconds=i)):%Y-%m-%d %H:%M:%S},000 "
-            f"[{rec.levelname}] {rec.name}: {rec.getMessage()}"
+            f"{(stamp + timedelta(seconds=i)):%Y-%m-%d %H:%M:%S},000 [{rec.levelname}] {rec.name}: {rec.getMessage()}"
         )
         match = L._LINE_RE.match(line)
         assert match, line
-        out.append(L.LogRecord(
-            timestamp=(stamp + timedelta(seconds=i)).replace(tzinfo=L.LOG_TZ),
-            level=match.group("level"), source=match.group("logger"),
-            message=match.group("msg"),
-        ))
+        out.append(
+            L.LogRecord(
+                timestamp=(stamp + timedelta(seconds=i)).replace(tzinfo=L.LOG_TZ),
+                level=match.group("level"),
+                source=match.group("logger"),
+                message=match.group("msg"),
+            )
+        )
     return out
 
 
 @pytest.mark.parametrize(
     ("break_it", "family"),
     [
-        (lambda s: s.down.__setitem__("kadoa", ConnectionError("refused")),
-         "congress_source_unreachable"),
-        (lambda s: s.files.__setitem__("kadoa", {"not": "a list"}),
-         "congress_source_unreadable"),
-        (lambda s: s.files.__setitem__("kadoa", ValueError("Expecting value")),
-         "congress_source_unreadable"),
+        (lambda s: s.down.__setitem__("kadoa", ConnectionError("refused")), "congress_source_unreachable"),
+        (lambda s: s.files.__setitem__("kadoa", {"not": "a list"}), "congress_source_unreadable"),
+        (lambda s: s.files.__setitem__("kadoa", ValueError("Expecting value")), "congress_source_unreadable"),
     ],
 )
 def test_each_failure_line_is_classified_by_the_health_report(tmp_path, caplog, break_it, family):
@@ -404,15 +421,14 @@ def test_each_failure_line_is_classified_by_the_health_report(tmp_path, caplog, 
         provider.refresh()
         provider.fetch(["NVDA"])
 
-    found = {
-        f.key for r in _emitted_lines(caplog)
-        if (f := L.classify(r.message, r.level)) is not None
-    }
+    found = {f.key for r in _emitted_lines(caplog) if (f := L.classify(r.message, r.level)) is not None}
     assert family in found
     assert "congress_cache_stale" in found
     report = L.analyse(
-        _emitted_lines(caplog), datetime(2026, 9, 19, tzinfo=L.LOG_TZ),
-        datetime(2026, 9, 20, tzinfo=L.LOG_TZ), log_dir=tmp_path / "no-logs",
+        _emitted_lines(caplog),
+        datetime(2026, 9, 19, tzinfo=L.LOG_TZ),
+        datetime(2026, 9, 20, tzinfo=L.LOG_TZ),
+        log_dir=tmp_path / "no-logs",
     )
     reported = {f.family.key for f in report.reported}
     assert {family, "congress_cache_stale"} <= reported
@@ -430,12 +446,12 @@ def test_a_source_that_answers_again_clears_its_earlier_failure(tmp_path, caplog
         provider.refresh()
     records = _emitted_lines(caplog)
     failure = [r for r in records if r.message.startswith("Congressional source unreachable")]
-    assert failure and L.classify(failure[0].message, failure[0].level).key == (
-        "congress_source_unreachable"
-    )
+    assert failure and L.classify(failure[0].message, failure[0].level).key == ("congress_source_unreachable")
     report = L.analyse(
-        records, datetime(2026, 9, 19, tzinfo=L.LOG_TZ),
-        datetime(2026, 9, 20, tzinfo=L.LOG_TZ), log_dir=tmp_path / "no-logs",
+        records,
+        datetime(2026, 9, 19, tzinfo=L.LOG_TZ),
+        datetime(2026, 9, 20, tzinfo=L.LOG_TZ),
+        log_dir=tmp_path / "no-logs",
     )
     assert "congress_source_unreachable" not in {f.family.key for f in report.reported}
 

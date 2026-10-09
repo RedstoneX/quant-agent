@@ -25,6 +25,7 @@ from src.notifier.parts import (
     describe_target_revisions,
 )
 
+
 def _append_trade_session_body(lines: list[str], result: dict) -> None:
     # audit round 2: "analysis_error" from a trading session means the PM
     # decision was never produced (LLM output unparseable / analysis step
@@ -80,17 +81,21 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         # section) rather than gapped off, since it's an annotation of
         # exactly those orders, not a separate topic.
         forced = [
-            o for o in orders
-            if isinstance(o, dict) and str(o.get("action", "")).upper() in (
-                "FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
+            o
+            for o in orders
+            if isinstance(o, dict)
+            and str(o.get("action", "")).upper()
+            in (
+                "FORCE_DELEVER",
+                "EMERGENCY_SELL",
+                "EMERGENCY_COVER",
             )
         ]
         if forced:
             actions = sorted({str(o.get("action", "")).upper() for o in forced})
             symbols = sorted({str(o.get("symbol", "?")) for o in forced})
             lines.append(
-                f"🚨 AUTONOMOUS INTERVENTION ({', '.join(actions)}): "
-                f"{len(forced)} order(s) on {', '.join(symbols)}"
+                f"🚨 AUTONOMOUS INTERVENTION ({', '.join(actions)}): {len(forced)} order(s) on {', '.join(symbols)}"
             )
 
         if orders:
@@ -125,7 +130,8 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
             if omitted:
                 lines.append(f"  (+{omitted} more — see audit log)")
             _append_company_identities(
-                lines, [o.get("symbol") for o in orders if isinstance(o, dict)],
+                lines,
+                [o.get("symbol") for o in orders if isinstance(o, dict)],
             )
         else:
             lines.append("orders: 0")
@@ -138,10 +144,8 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     _new_block(lines, _render_target_revisions)
 
     from src import evidence_gate
+
     data_status = result.get("data_status") or {}
-    degraded = [
-        k for k, v in data_status.items()
-        if evidence_gate.counts_as_degraded(v)
-    ]
+    degraded = [k for k, v in data_status.items() if evidence_gate.counts_as_degraded(v)]
     if degraded:
         _new_section(lines, f"⚠️ degraded: {', '.join(sorted(degraded))}")

@@ -51,6 +51,7 @@ Exit codes:
     1  it did not -- `main` is red and a person must look
     2  the check could not run (no `gh`, no auth, API failure, no run found)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -75,17 +76,17 @@ class GhError(RuntimeError):
 def _gh_json(args: list[str]) -> object:
     try:
         proc = subprocess.run(
-            ["gh", *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S,
+            ["gh", *args],
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_S,
         )
     except FileNotFoundError as exc:  # pragma: no cover - environment
         raise GhError("the `gh` CLI is not installed") from exc
     except subprocess.TimeoutExpired as exc:
         raise GhError(f"`gh {' '.join(args)}` timed out") from exc
     if proc.returncode != 0:
-        raise GhError(
-            f"`gh {' '.join(args)}` failed: "
-            f"{proc.stderr.strip() or proc.returncode}"
-        )
+        raise GhError(f"`gh {' '.join(args)}` failed: {proc.stderr.strip() or proc.returncode}")
     try:
         return json.loads(proc.stdout)
     except ValueError as exc:
@@ -93,9 +94,16 @@ def _gh_json(args: list[str]) -> object:
 
 
 def branch_runs(branch: str, repo: str | None) -> list[dict]:
-    args = ["run", "list", "--branch", branch, "--limit", str(RUN_LOOKBACK),
-            "--json", "workflowName,status,conclusion,databaseId,headSha,"
-                      "createdAt,event,displayTitle,url"]
+    args = [
+        "run",
+        "list",
+        "--branch",
+        branch,
+        "--limit",
+        str(RUN_LOOKBACK),
+        "--json",
+        "workflowName,status,conclusion,databaseId,headSha,createdAt,event,displayTitle,url",
+    ]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
@@ -113,7 +121,8 @@ def settled_push_runs(runs: list[dict]) -> list[dict]:
     everything healthy.
     """
     return [
-        run for run in runs
+        run
+        for run in runs
         if str(run.get("workflowName", "")).strip().lower() == WORKFLOW_NAME
         and str(run.get("event", "")).strip() == "push"
         and str(run.get("status", "")).strip() == "completed"
@@ -143,8 +152,7 @@ def record_lines(branch: str, streak: list[dict]) -> list[str]:
     newest = streak[0]
     oldest = streak[-1]
     lines = [
-        f"{branch} is RED: its newest completed push run of the "
-        f"`{WORKFLOW_NAME}` workflow did not succeed.",
+        f"{branch} is RED: its newest completed push run of the `{WORKFLOW_NAME}` workflow did not succeed.",
         f"  commit     : {newest.get('headSha')}",
         f"  subject    : {newest.get('displayTitle')}",
         f"  conclusion : {newest.get('conclusion')}",
@@ -157,10 +165,7 @@ def record_lines(branch: str, streak: list[dict]) -> list[str]:
             f"({len(streak)} consecutive non-passing push runs, oldest "
             f"commit {oldest.get('headSha')})"
         )
-    lines.append(
-        "  nothing re-runs this automatically: a red main is an answer, "
-        "not a flake to retry."
-    )
+    lines.append("  nothing re-runs this automatically: a red main is an answer, not a flake to retry.")
     return lines
 
 
@@ -172,22 +177,19 @@ def _write_summary(lines: list[str]) -> None:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write("## main is red\n\n```\n" + "\n".join(lines) + "\n```\n")
     except OSError as exc:  # pragma: no cover - runner filesystem
-        print(f"check_main_red: could not write the run summary — {exc}",
-              file=sys.stderr)
+        print(f"check_main_red: could not write the run summary — {exc}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=None, help="owner/name")
-    parser.add_argument("--branch", default="main",
-                        help="the protected branch to watch")
+    parser.add_argument("--branch", default="main", help="the protected branch to watch")
     args = parser.parse_args(argv)
 
     try:
         runs = branch_runs(args.branch, args.repo)
     except GhError as exc:
-        print(f"check_main_red: could not read the branch's runs — {exc}",
-              file=sys.stderr)
+        print(f"check_main_red: could not read the branch's runs — {exc}", file=sys.stderr)
         return 2
 
     state = verdict(runs)
@@ -200,8 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     if state == "green":
-        print(f"check_main_red: {args.branch}'s newest completed push run "
-              f"passed.")
+        print(f"check_main_red: {args.branch}'s newest completed push run passed.")
         return 0
 
     streak = red_streak(runs)

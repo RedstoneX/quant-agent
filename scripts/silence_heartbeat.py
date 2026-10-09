@@ -33,6 +33,7 @@ EXIT CODES
     1  silent AND a new alert was (attempted to be) sent this run
     2  bad arguments
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,20 +64,14 @@ def run_paused_notice() -> tuple[int, str]:
     status = check_paused_desk()
 
     if not status.is_weekday:
-        return 0, (
-            f"silence_heartbeat: desk paused on {status.et_date} (not a "
-            "weekday); nothing to remind about"
-        )
+        return 0, (f"silence_heartbeat: desk paused on {status.et_date} (not a weekday); nothing to remind about")
     if status.elapsed_windows_today == 0:
         return 0, (
             f"silence_heartbeat: desk paused; no scheduled window has "
             f"closed yet on {status.et_date}; too early to say anything"
         )
     if status.already_notified_today:
-        return 0, (
-            f"silence_heartbeat: desk paused; already reminded once for "
-            f"{status.et_date}; not re-sending"
-        )
+        return 0, (f"silence_heartbeat: desk paused; already reminded once for {status.et_date}; not re-sending")
 
     from src.notifier import send_owner_alert
 
@@ -126,8 +121,7 @@ def run_status() -> tuple[int, str]:
         f"  last known session: {state.get('last_known_session_at') or 'never'}",
         f"  alerted for baseline: {state.get('alerted_for_baseline') or 'no'}",
         f"  updated at: {state.get('updated_at') or 'never'}",
-        f"  default threshold (owner-ratified 2026-09-03): "
-        f"{DEFAULT_SILENT_WINDOW_THRESHOLD} scheduled windows",
+        f"  default threshold (owner-ratified 2026-09-03): {DEFAULT_SILENT_WINDOW_THRESHOLD} scheduled windows",
     ]
     return 0, "\n".join(lines)
 
@@ -138,11 +132,13 @@ def main(argv: list[str] | None = None) -> int:
         "in N consecutive scheduled windows, across all modes.",
     )
     parser.add_argument(
-        "--status", action="store_true",
+        "--status",
+        action="store_true",
         help="print the record and exit; sends nothing, checks nothing fresh",
     )
     parser.add_argument(
-        "--desk-paused", action="store_true",
+        "--desk-paused",
+        action="store_true",
         help=(
             "the caller has established that no trading-mode timer is "
             "running; send the once-per-weekday paused-desk reminder "
@@ -150,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--threshold", type=int, default=DEFAULT_SILENT_WINDOW_THRESHOLD,
+        "--threshold",
+        type=int,
+        default=DEFAULT_SILENT_WINDOW_THRESHOLD,
         help=(
             "consecutive scheduled windows with no completed session before "
             f"alerting (default {DEFAULT_SILENT_WINDOW_THRESHOLD}, "

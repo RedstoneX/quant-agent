@@ -19,6 +19,7 @@ Existing offenders are pinned by identity in the committed, shrink-only file
 not in the list and on a listed entry that no longer occurs; it reads no git
 ref, so an unrelated merge cannot redden it.
 """
+
 from __future__ import annotations
 
 import ast

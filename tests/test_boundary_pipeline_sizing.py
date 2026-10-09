@@ -1,4 +1,5 @@
 """Clause-5 witness for src.pipeline_sizing: exercised with stand-ins, no trading pipeline built."""
+
 from types import SimpleNamespace
 
 from src.pipeline_sizing import _fmt_shares, _size_shares
@@ -9,8 +10,7 @@ def test_size_shares_whole_mode_floors_without_any_pipeline():
 
 
 def test_size_shares_fractional_uses_explicit_config_stand_in():
-    stand_in = SimpleNamespace(config=SimpleNamespace(
-        execution=SimpleNamespace(fractional_share_decimals=2)))
+    stand_in = SimpleNamespace(config=SimpleNamespace(execution=SimpleNamespace(fractional_share_decimals=2)))
     assert _size_shares(stand_in, 1.239, fractional=True) == 1.23
 
 

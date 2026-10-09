@@ -43,27 +43,38 @@ from tests.pipeline_factory import build_pipeline
 # Shared fixtures
 # ==========================================================================
 
-def _pos(symbol: str, qty: float, entry: float, price: float,
-         sector: str = "Technology") -> Position:
+
+def _pos(symbol: str, qty: float, entry: float, price: float, sector: str = "Technology") -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=entry, current_price=price,
-        market_value=qty * price, unrealized_pnl=qty * (price - entry),
+        symbol=symbol,
+        qty=qty,
+        avg_entry=entry,
+        current_price=price,
+        market_value=qty * price,
+        unrealized_pnl=qty * (price - entry),
         sector=sector,
     )
 
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x",
-        volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -73,25 +84,38 @@ def _pm_rc() -> ReasoningChain:
 # missing them is not a state the pipeline can reach. The default ATR sits
 # just inside the noise band, leaving the structural stop alone: these are
 # short-plumbing tests, not stop-widening tests.
-def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
-                    atr_14=None, horizon=60) -> TechAnalysisResult:
+def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0, atr_14=None, horizon=60) -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test",
-        support_levels=[stop], resistance_levels=[target],
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target],
         computed_levels=[stop, target],
         computed_level_touches={stop: 5, target: 5},
         computed_level_bars={stop: [(stop, stop)], target: [(target, target)]},
-        setup_type="range", expected_horizon_sessions=horizon,
+        setup_type="range",
+        expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
         thesis_invalid_if="closes below support",
     )
 
 
-def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
-                     atr_14=None, horizon=60, computed=None,
-                     touches=None, bars=None) -> TechAnalysisResult:
+def _short_analysis(
+    symbol="TSLA",
+    entry=250.0,
+    stop=262.5,
+    target=200.0,
+    atr_14=None,
+    horizon=60,
+    computed=None,
+    touches=None,
+    bars=None,
+) -> TechAnalysisResult:
     """`computed_levels` deliberately carries the TARGET and not the stop.
 
     Since spec §12.1 that field also decides whether the ATR noise band
@@ -123,13 +147,19 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
     if bars:
         default_bars.update(bars)
     return TechAnalysisResult(
-        symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test",
-        support_levels=[target], resistance_levels=[stop],
+        symbol=symbol,
+        rating="sell",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[target],
+        resistance_levels=[stop],
         computed_levels=levels,
         computed_level_touches=default_touches if touches is None else touches,
         computed_level_bars=default_bars,
-        setup_type="range", expected_horizon_sessions=horizon,
+        setup_type="range",
+        expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
         thesis_invalid_if="closes below support",
@@ -138,16 +168,23 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
 
 def _short_target(symbol="TSLA", weight=5.0, suggested_stop=None) -> TargetPosition:
     return TargetPosition(
-        symbol=symbol, direction="short", target_weight_pct=weight,
-        conviction="high", thesis="overvalued",
+        symbol=symbol,
+        direction="short",
+        target_weight_pct=weight,
+        conviction="high",
+        thesis="overvalued",
         suggested_stop_price=suggested_stop,
     )
 
 
 def _cfg(**kw) -> RiskConfig:
-    base = dict(max_position_pct=20.0, max_total_position_pct=90.0,
-                max_sector_pct=40.0,
-                require_stop_loss=True, allow_margin=False)
+    base = dict(
+        max_position_pct=20.0,
+        max_total_position_pct=90.0,
+        max_sector_pct=40.0,
+        require_stop_loss=True,
+        allow_margin=False,
+    )
     base.update(kw)
     return RiskConfig(**base)
 
@@ -163,11 +200,15 @@ def _exec_pipeline() -> MagicMock:
     pipeline._full_sell_qty = TradingPipeline._full_sell_qty
     pipeline._reduce_sell_qty = TradingPipeline._reduce_sell_qty
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
+        "shortable": True,
+        "easy_to_borrow": True,
+        "reason": "eligible",
     }
     return pipeline
 
@@ -179,7 +220,9 @@ def _ctx(decisions, positions=None, cash=50_000.0, total_value=100_000.0) -> Run
     ctx.last_equity = total_value
     ctx.positions = positions or []
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
     ctx.symbols_bars = {}
     return ctx
@@ -189,6 +232,7 @@ def _ctx(decisions, positions=None, cash=50_000.0, total_value=100_000.0) -> Run
 # 1. Opening a short end to end (constructor + execution)
 # ==========================================================================
 
+
 def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entry():
     """The headline Stage 3 property. The constructor builds a SHORT
     decision; ExecutionStage submits it with side='sell_short' and places
@@ -196,8 +240,11 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
     `place_entry_protection` mirrors it to a BUY stop ABOVE entry)."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[], analyses=[_short_analysis()],
-        total_value=100_000, price_map={"TSLA": 250.0},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[_short_analysis()],
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     assert len(decisions) == 1
     decision = decisions[0]
@@ -207,8 +254,11 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
     pipeline = _exec_pipeline()
     pipeline.broker.get_latest_price.return_value = 250.0
     pipeline.broker.submit_order.return_value = {
-        "id": "short-order-1", "status": "accepted", "symbol": "TSLA",
-        "side": "sell_short", "pending_stop_price": decision.stop_loss,
+        "id": "short-order-1",
+        "status": "accepted",
+        "symbol": "TSLA",
+        "side": "sell_short",
+        "pending_stop_price": decision.stop_loss,
     }
     pipeline.broker.get_order_fill_info.return_value = {"filled_qty": 20.0}
     pipeline.broker.place_entry_protection.return_value = {"id": "stop-1"}
@@ -225,31 +275,41 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
     protect_kwargs = pipeline.broker.place_entry_protection.call_args.kwargs
     assert protect_kwargs["side"] == "sell_short"
     assert protect_kwargs["stop_price"] == decision.stop_loss
-    assert protect_kwargs["stop_price"] > decision.entry_price, (
-        "the protective stop for a short must sit ABOVE entry"
-    )
+    assert protect_kwargs["stop_price"] > decision.entry_price, "the protective stop for a short must sit ABOVE entry"
 
 
 # ==========================================================================
 # 2. Covering a short — partial and full
 # ==========================================================================
 
+
 def test_cover_short_partial_buys_back_a_fraction():
     position = _pos("TSLA", qty=-40, entry=250, price=240)
     decision = TradeDecision(
-        action="COVER", symbol="TSLA", allocation_pct=50.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action="COVER",
+        symbol="TSLA",
+        allocation_pct=50.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="trim the short",
     )
     pipeline = _exec_pipeline()
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [position], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [position],
+        {},
     )
     pipeline._submit_protected_sell.return_value = (
         {"id": "cover-1", "status": "accepted", "symbol": "TSLA", "side": "buy"},
-        {"order_id": "cover-1", "symbol": "TSLA",
-         "position_qty_before_sell": 40.0, "specs": [], "wal_row_id": None,
-         "side": "buy"},
+        {
+            "order_id": "cover-1",
+            "symbol": "TSLA",
+            "position_qty_before_sell": 40.0,
+            "specs": [],
+            "wal_row_id": None,
+            "side": "buy",
+        },
     )
 
     ctx = _ctx([decision], positions=[position])
@@ -258,7 +318,7 @@ def test_cover_short_partial_buys_back_a_fraction():
     assert len(orders) == 1
     call_kwargs = pipeline._submit_protected_sell.call_args.kwargs
     assert call_kwargs["side"] == "buy"
-    assert call_kwargs["qty"] == 20.0            # 50% of the 40-share short
+    assert call_kwargs["qty"] == 20.0  # 50% of the 40-share short
     assert call_kwargs["position_qty_before_sell"] == 40.0
     assert call_kwargs["label"] == "PARTIAL_COVER(50%)"
 
@@ -266,19 +326,30 @@ def test_cover_short_partial_buys_back_a_fraction():
 def test_cover_short_full_buys_back_everything():
     position = _pos("TSLA", qty=-40, entry=250, price=240)
     decision = TradeDecision(
-        action="COVER", symbol="TSLA", allocation_pct=100.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action="COVER",
+        symbol="TSLA",
+        allocation_pct=100.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="close the short",
     )
     pipeline = _exec_pipeline()
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [position], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [position],
+        {},
     )
     pipeline._submit_protected_sell.return_value = (
         {"id": "cover-2", "status": "accepted", "symbol": "TSLA", "side": "buy"},
-        {"order_id": "cover-2", "symbol": "TSLA",
-         "position_qty_before_sell": 40.0, "specs": [], "wal_row_id": None,
-         "side": "buy"},
+        {
+            "order_id": "cover-2",
+            "symbol": "TSLA",
+            "position_qty_before_sell": 40.0,
+            "specs": [],
+            "wal_row_id": None,
+            "side": "buy",
+        },
     )
 
     ctx = _ctx([decision], positions=[position])
@@ -298,17 +369,21 @@ def test_cover_short_full_buys_back_everything():
 # 3. D3 — sign-crossing is refused; only the closing leg is emitted
 # ==========================================================================
 
+
 def test_long_to_short_target_emits_only_the_flattening_sell():
     """A held LONG with a SHORT target must not flip in one order. The
     constructor emits ONLY a full-close SELL this session."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", direction="short",
-                                target_weight_pct=5.0, conviction="high",
-                                thesis="reversal")],
+        targets=[
+            TargetPosition(
+                symbol="NVDA", direction="short", target_weight_pct=5.0, conviction="high", thesis="reversal"
+            )
+        ],
         positions=[_pos("NVDA", qty=150, entry=100, price=100)],  # +15% long
         analyses=[_short_analysis(symbol="NVDA")],
-        total_value=100_000, price_map={"NVDA": 100.0},
+        total_value=100_000,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert decisions[0].action == "SELL"
@@ -319,12 +394,13 @@ def test_short_to_long_target_emits_only_the_flattening_cover():
     """The mirror: a held SHORT with a LONG target emits ONLY a full COVER."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="TSLA", direction="long",
-                                target_weight_pct=5.0, conviction="high",
-                                thesis="reversal")],
+        targets=[
+            TargetPosition(symbol="TSLA", direction="long", target_weight_pct=5.0, conviction="high", thesis="reversal")
+        ],
         positions=[_pos("TSLA", qty=-40, entry=250, price=250)],  # -10% short
         analyses=[_long_analysis(symbol="TSLA")],
-        total_value=100_000, price_map={"TSLA": 250.0},
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     assert len(decisions) == 1
     assert decisions[0].action == "COVER"
@@ -335,14 +411,17 @@ def test_short_to_long_target_emits_only_the_flattening_cover():
 # 4. D4 / D5 — direction-aware stop geometry and widening
 # ==========================================================================
 
+
 def test_short_stop_at_or_below_entry_is_rejected():
     """D4: a short's stop must sit strictly ABOVE entry. A PM-suggested
     stop below entry is refused, not silently accepted."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_short_target(suggested_stop=240.0)],  # BELOW entry $250
-        positions=[], analyses=[_short_analysis()],
-        total_value=100_000, price_map={"TSLA": 250.0},
+        positions=[],
+        analyses=[_short_analysis()],
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     assert decisions == []
 
@@ -386,14 +465,20 @@ def test_long_stop_breached_by_live_price_since_analysis_is_rejected():
     constructor = PortfolioConstructor()
     analysis = _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0)
     target = TargetPosition(
-        symbol="NVDA", direction="long", target_weight_pct=5.0,
-        conviction="high", thesis="breakout",
+        symbol="NVDA",
+        direction="long",
+        target_weight_pct=5.0,
+        conviction="high",
+        thesis="breakout",
     )
     # Live quote fetched at construction time has already fallen THROUGH
     # the analyst's stop (237.5) — the level the setup depended on is gone.
     decisions = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000, price_map={"NVDA": 230.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000,
+        price_map={"NVDA": 230.0},
     )
     assert decisions == []
 
@@ -414,7 +499,9 @@ def test_short_stop_inside_noise_band_is_widened_upward():
     widened = constructor._widen_stop_past_noise(
         "TSLA",
         _short_analysis(entry=250.0, stop=252.0, target=200.0, atr_14=5.0),
-        entry_price=250.0, stop_loss=252.0, direction="short",
+        entry_price=250.0,
+        stop_loss=252.0,
+        direction="short",
     )
     assert widened == 261.25
     assert widened > 252.0
@@ -436,7 +523,9 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
     widened = constructor._widen_stop_past_noise(
         "TSLA",
         _short_analysis(entry=250.0, stop=252.0, target=241.0, atr_14=5.0),
-        entry_price=250.0, stop_loss=252.0, direction="short",
+        entry_price=250.0,
+        stop_loss=252.0,
+        direction="short",
     )
     assert widened == 261.25
 
@@ -483,10 +572,10 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
 
 _S_ENTRY = 250.0
 _S_ATR = 5.0
-_S_BAND_EDGE = 261.25     # 2.25 x ATR above entry — the unconditional stop
-_S_HARD_FLOOR = 255.0     # 1.00 x ATR above entry — the deterministic floor
-_S_TIGHT_STOP = 260.0     # 2.00 x ATR out — inside the band, outside the floor
-_S_TARGET_LEVEL = 220.0   # computed support below entry; the derived target
+_S_BAND_EDGE = 261.25  # 2.25 x ATR above entry — the unconditional stop
+_S_HARD_FLOOR = 255.0  # 1.00 x ATR above entry — the deterministic floor
+_S_TIGHT_STOP = 260.0  # 2.00 x ATR out — inside the band, outside the floor
+_S_TARGET_LEVEL = 220.0  # computed support below entry; the derived target
 
 
 def test_short_level_backed_tight_stop_is_honoured_not_widened():
@@ -498,13 +587,19 @@ def test_short_level_backed_tight_stop_is_honoured_not_widened():
     220.00 = $30.00, so R/R 3.00 — comfortably over the 1.5 floor."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[],
-        analyses=[_short_analysis(
-            entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL,
-            atr_14=_S_ATR,
-            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
-        )],
-        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=_S_TIGHT_STOP,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
+            )
+        ],
+        total_value=100_000,
+        price_map={"TSLA": _S_ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _S_TIGHT_STOP
@@ -520,13 +615,19 @@ def test_short_unbacked_tight_stop_is_still_widened_to_the_band():
     being refused — the assertion is on the stop price, not on survival."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[],
-        analyses=[_short_analysis(
-            entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL,
-            atr_14=_S_ATR,
-            computed=[_S_TARGET_LEVEL],     # the stop is NOT a computed level
-        )],
-        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=_S_TIGHT_STOP,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL],  # the stop is NOT a computed level
+            )
+        ],
+        total_value=100_000,
+        price_map={"TSLA": _S_ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _S_BAND_EDGE
@@ -549,10 +650,12 @@ def test_short_reward_risk_is_measured_against_the_stop_that_will_ship():
     def stop_for(computed):
         return constructor._widen_stop_past_noise(
             "TSLA",
-            _short_analysis(entry=_S_ENTRY, stop=_S_TIGHT_STOP,
-                            target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-                            computed=computed),
-            entry_price=_S_ENTRY, stop_loss=_S_TIGHT_STOP, direction="short",
+            _short_analysis(
+                entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR, computed=computed
+            ),
+            entry_price=_S_ENTRY,
+            stop_loss=_S_TIGHT_STOP,
+            direction="short",
             target_price=_S_TARGET_LEVEL,
         )
 
@@ -575,12 +678,19 @@ def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
     floor moved 3.0 -> 1.5 -> 2.5, but the destination rule is unchanged.)"""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[],
-        analyses=[_short_analysis(
-            entry=_S_ENTRY, stop=252.0, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-            computed=[_S_TARGET_LEVEL, 252.0],
-        )],
-        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=252.0,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL, 252.0],
+            )
+        ],
+        total_value=100_000,
+        price_map={"TSLA": _S_ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _S_HARD_FLOOR
@@ -615,16 +725,22 @@ def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
     def stop_for(stop):
         return constructor._widen_stop_past_noise(
             "TSLA",
-            _short_analysis(entry=_S_ENTRY, stop=stop,
-                            target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-                            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
-                            bars={_S_TIGHT_STOP: [(258.0, _S_TIGHT_STOP)]}),
-            entry_price=_S_ENTRY, stop_loss=stop, direction="short",
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=stop,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
+                bars={_S_TIGHT_STOP: [(258.0, _S_TIGHT_STOP)]},
+            ),
+            entry_price=_S_ENTRY,
+            stop_loss=stop,
+            direction="short",
             target_price=_S_TARGET_LEVEL,
         )
 
-    assert stop_for(258.0) == 258.0              # gap $2.00, inside the zone
-    assert stop_for(257.0) == _S_BAND_EDGE       # gap $3.00, outside it
+    assert stop_for(258.0) == 258.0  # gap $2.00, inside the zone
+    assert stop_for(257.0) == _S_BAND_EDGE  # gap $3.00, outside it
 
 
 def test_short_level_the_model_asserted_does_not_earn_the_exemption():
@@ -634,15 +750,25 @@ def test_short_level_the_model_asserted_does_not_earn_the_exemption():
     floor by asserting a level beside its stop."""
     constructor = PortfolioConstructor()
     analysis = _short_analysis(
-        entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+        entry=_S_ENTRY,
+        stop=_S_TIGHT_STOP,
+        target=_S_TARGET_LEVEL,
+        atr_14=_S_ATR,
         computed=[_S_TARGET_LEVEL],
     )
-    assert analysis.resistance_levels == [_S_TIGHT_STOP]       # the model said so
-    assert _S_TIGHT_STOP not in analysis.computed_levels       # the chart did not
-    assert constructor._widen_stop_past_noise(
-        "TSLA", analysis, entry_price=_S_ENTRY, stop_loss=_S_TIGHT_STOP,
-        direction="short", target_price=_S_TARGET_LEVEL,
-    ) == _S_BAND_EDGE
+    assert analysis.resistance_levels == [_S_TIGHT_STOP]  # the model said so
+    assert _S_TIGHT_STOP not in analysis.computed_levels  # the chart did not
+    assert (
+        constructor._widen_stop_past_noise(
+            "TSLA",
+            analysis,
+            entry_price=_S_ENTRY,
+            stop_loss=_S_TIGHT_STOP,
+            direction="short",
+            target_price=_S_TARGET_LEVEL,
+        )
+        == _S_BAND_EDGE
+    )
 
 
 def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
@@ -653,13 +779,20 @@ def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
     an unbacked short stop does."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[],
-        analyses=[_short_analysis(
-            entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
-            touches={_S_TARGET_LEVEL: 5, _S_TIGHT_STOP: 4},
-        )],
-        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=_S_TIGHT_STOP,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
+                touches={_S_TARGET_LEVEL: 5, _S_TIGHT_STOP: 4},
+            )
+        ],
+        total_value=100_000,
+        price_map={"TSLA": _S_ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _S_BAND_EDGE
@@ -668,13 +801,20 @@ def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
 def test_short_a_level_at_the_touch_bar_earns_the_exemption():
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[],
-        analyses=[_short_analysis(
-            entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
-            touches={_S_TARGET_LEVEL: 5, _S_TIGHT_STOP: 5},
-        )],
-        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[
+            _short_analysis(
+                entry=_S_ENTRY,
+                stop=_S_TIGHT_STOP,
+                target=_S_TARGET_LEVEL,
+                atr_14=_S_ATR,
+                computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
+                touches={_S_TARGET_LEVEL: 5, _S_TIGHT_STOP: 5},
+            )
+        ],
+        total_value=100_000,
+        price_map={"TSLA": _S_ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _S_TIGHT_STOP
@@ -686,27 +826,46 @@ def test_short_a_level_below_entry_cannot_back_a_shorts_stop():
     support is a target, not a backstop."""
     constructor = PortfolioConstructor()
     analysis = _short_analysis(
-        entry=_S_ENTRY, stop=_S_TIGHT_STOP, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+        entry=_S_ENTRY,
+        stop=_S_TIGHT_STOP,
+        target=_S_TARGET_LEVEL,
+        atr_14=_S_ATR,
         computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
     )
-    assert constructor._level_backing_stop(
-        analysis, _S_ENTRY, _S_TIGHT_STOP, is_short=True,
-    ) == _S_TIGHT_STOP
+    assert (
+        constructor._level_backing_stop(
+            analysis,
+            _S_ENTRY,
+            _S_TIGHT_STOP,
+            is_short=True,
+        )
+        == _S_TIGHT_STOP
+    )
     # The support below entry is never eligible, at any distance.
-    assert constructor._level_backing_stop(
-        analysis, _S_ENTRY, _S_TARGET_LEVEL, is_short=True,
-    ) is None
+    assert (
+        constructor._level_backing_stop(
+            analysis,
+            _S_ENTRY,
+            _S_TARGET_LEVEL,
+            is_short=True,
+        )
+        is None
+    )
 
 
 # ==========================================================================
 # 5. D6 — the borrow gate: three distinct refusals
 # ==========================================================================
 
+
 def _borrow_gated_ctx_and_pipeline(borrow_result_or_exc):
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[], analyses=[_short_analysis()],
-        total_value=100_000, price_map={"TSLA": 250.0},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[_short_analysis()],
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     assert len(decisions) == 1
 
@@ -756,22 +915,31 @@ def test_borrow_gate_refuses_when_flags_are_unreadable():
 # 6. D7 — protective-stop failure on a short escalates to a market cover
 # ==========================================================================
 
+
 def test_protective_stop_failure_on_a_short_triggers_immediate_market_cover():
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_short_target()], positions=[], analyses=[_short_analysis()],
-        total_value=100_000, price_map={"TSLA": 250.0},
+        targets=[_short_target()],
+        positions=[],
+        analyses=[_short_analysis()],
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     decision = decisions[0]
 
     pipeline = _exec_pipeline()
     pipeline.broker.get_latest_price.return_value = 250.0
     entry_order = {
-        "id": "short-order-1", "status": "accepted", "symbol": "TSLA",
-        "side": "sell_short", "pending_stop_price": decision.stop_loss,
+        "id": "short-order-1",
+        "status": "accepted",
+        "symbol": "TSLA",
+        "side": "sell_short",
+        "pending_stop_price": decision.stop_loss,
     }
     cover_order = {
-        "id": "cover-emergency-1", "status": "accepted", "symbol": "TSLA",
+        "id": "cover-emergency-1",
+        "status": "accepted",
+        "symbol": "TSLA",
         "side": "buy",
     }
     pipeline.broker.submit_order.side_effect = [entry_order, cover_order]
@@ -795,6 +963,7 @@ def test_protective_stop_failure_on_a_short_triggers_immediate_market_cover():
 # 7. D8 — short/long sizing PARITY (the gap haircut was deleted)
 # ==========================================================================
 
+
 def test_short_and_long_are_sized_identically_at_equal_risk_and_geometry():
     """Same risk allocation (0.5%), same $12.50/share stop distance, same
     entry $250 and gross multiplier (1x) for both a long and a short. Owner
@@ -803,20 +972,26 @@ def test_short_and_long_are_sized_identically_at_equal_risk_and_geometry():
     constructor = PortfolioConstructor()
 
     long_decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="LONGX", direction="long",
-                                risk_allocation_pct=0.5, conviction="high",
-                                thesis="breakout")],
-        positions=[], analyses=[_long_analysis(symbol="LONGX", entry=250.0,
-                                                stop=237.5, target=300.0)],
-        total_value=100_000, price_map={"LONGX": 250.0},
+        targets=[
+            TargetPosition(
+                symbol="LONGX", direction="long", risk_allocation_pct=0.5, conviction="high", thesis="breakout"
+            )
+        ],
+        positions=[],
+        analyses=[_long_analysis(symbol="LONGX", entry=250.0, stop=237.5, target=300.0)],
+        total_value=100_000,
+        price_map={"LONGX": 250.0},
     )
     short_decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="SHORTX", direction="short",
-                                risk_allocation_pct=0.5, conviction="high",
-                                thesis="breakdown")],
-        positions=[], analyses=[_short_analysis(symbol="SHORTX", entry=250.0,
-                                                 stop=262.5, target=200.0)],
-        total_value=100_000, price_map={"SHORTX": 250.0},
+        targets=[
+            TargetPosition(
+                symbol="SHORTX", direction="short", risk_allocation_pct=0.5, conviction="high", thesis="breakdown"
+            )
+        ],
+        positions=[],
+        analyses=[_short_analysis(symbol="SHORTX", entry=250.0, stop=262.5, target=200.0)],
+        total_value=100_000,
+        price_map={"SHORTX": 250.0},
     )
     assert len(long_decisions) == 1 and long_decisions[0].action == "BUY"
     assert len(short_decisions) == 1 and short_decisions[0].action == "SHORT"
@@ -837,14 +1012,23 @@ def test_short_and_long_are_sized_identically_at_equal_risk_and_geometry():
 # 8. Shorts carry the SAME limits as longs (owner decision 2026-09-17)
 # ==========================================================================
 
+
 def test_single_short_cap_hard_blocks_opening_too_large_a_short():
     engine = RiskRuleEngine(_cfg(max_position_pct=10.0))
     decision = TradeDecision(
-        action="SHORT", symbol="XYZ", allocation_pct=15.0,  # 15% > 10% cap
-        entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
+        action="SHORT",
+        symbol="XYZ",
+        allocation_pct=15.0,  # 15% > 10% cap
+        entry_price=100.0,
+        stop_loss=110.0,
+        take_profit=80.0,
+        reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000,)
+        decision=decision,
+        positions=[],
+        total_value=100_000,
+    )
     rules = {v.rule for v in violations}
     assert "max_position_pct" in rules
 
@@ -858,14 +1042,22 @@ def test_a_short_is_capped_exactly_where_an_equivalent_long_is():
 
     def _rules(action, held_qty, alloc):
         d = TradeDecision(
-            action=action, symbol="XYZ", allocation_pct=alloc,
+            action=action,
+            symbol="XYZ",
+            allocation_pct=alloc,
             entry_price=100.0,
             stop_loss=110.0 if action == "SHORT" else 90.0,
-            take_profit=80.0 if action == "SHORT" else 120.0, reasoning="t",
+            take_profit=80.0 if action == "SHORT" else 120.0,
+            reasoning="t",
         )
-        return {v.rule for v in engine.check(
-            decision=d, positions=[_pos("XYZ", qty=held_qty, entry=100, price=100)],
-            total_value=100_000,)}
+        return {
+            v.rule
+            for v in engine.check(
+                decision=d,
+                positions=[_pos("XYZ", qty=held_qty, entry=100, price=100)],
+                total_value=100_000,
+            )
+        }
 
     # 20% held + 13% new = exactly the cap: both pass.
     assert "max_position_pct" not in _rules("BUY", 200, 13.0)
@@ -878,20 +1070,31 @@ def test_a_short_is_capped_exactly_where_an_equivalent_long_is():
 def test_many_shorts_are_not_blocked_by_a_separate_bearish_book_cap():
     """The former 20% gross-bearish cap is gone: a book already 60% short
     may add another short within the long-side limits."""
-    engine = RiskRuleEngine(_cfg(
-        max_position_pct=33.0, max_total_position_pct=100.0,
-        max_sector_pct=100.0,  # sector crowding is a separate control
-    ))
+    engine = RiskRuleEngine(
+        _cfg(
+            max_position_pct=33.0,
+            max_total_position_pct=100.0,
+            max_sector_pct=100.0,  # sector crowding is a separate control
+        )
+    )
     positions = [
-        _pos("AAA", qty=-300, entry=100, price=100),   # -30%
-        _pos("BBB", qty=-300, entry=100, price=100),   # -30%
+        _pos("AAA", qty=-300, entry=100, price=100),  # -30%
+        _pos("BBB", qty=-300, entry=100, price=100),  # -30%
     ]
     decision = TradeDecision(
-        action="SHORT", symbol="CCC", allocation_pct=10.0,
-        entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
+        action="SHORT",
+        symbol="CCC",
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=110.0,
+        take_profit=80.0,
+        reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=positions, total_value=100_000,)
+        decision=decision,
+        positions=positions,
+        total_value=100_000,
+    )
     assert violations == []
 
 
@@ -901,21 +1104,35 @@ def test_no_cap_blocks_a_cover():
     engine = RiskRuleEngine(_cfg(max_position_pct=10.0))
     positions = [_pos("XYZ", qty=-250, entry=100, price=100)]  # -$25,000 = 25%
     decision = TradeDecision(
-        action="COVER", symbol="XYZ", allocation_pct=50.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0, reasoning="reduce",
+        action="COVER",
+        symbol="XYZ",
+        allocation_pct=50.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
+        reasoning="reduce",
     )
     violations = engine.check(
-        decision=decision, positions=positions, total_value=100_000,)
+        decision=decision,
+        positions=positions,
+        total_value=100_000,
+    )
     assert violations == []
 
 
-@pytest.mark.parametrize("key", [
-    "max_single_short_pct", "max_gross_bearish_pct", "max_short_gross_pct",
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "max_single_short_pct",
+        "max_gross_bearish_pct",
+        "max_short_gross_pct",
+    ],
+)
 def test_removed_short_cap_keys_raise_a_clear_error(key):
     """A settings file still carrying a removed short cap must fail loudly,
     not load silently with the operator believing the cap is in force."""
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError) as exc_info:
         _cfg(**{key: 10.0})
     message = str(exc_info.value)
@@ -927,15 +1144,24 @@ def test_removed_short_cap_keys_raise_a_clear_error(key):
 # 9. D10 — a cover can never be blocked by the cash rule
 # ==========================================================================
 
+
 def test_cover_not_blocked_by_negative_cash_when_margin_disallowed():
     engine = RiskRuleEngine(_cfg(allow_margin=False))
     decision = TradeDecision(
-        action="COVER", symbol="XYZ", allocation_pct=100.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0, reasoning="close",
+        action="COVER",
+        symbol="XYZ",
+        allocation_pct=100.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
+        reasoning="close",
     )
     violations = engine.check(
-        decision=decision, positions=[_pos("XYZ", qty=-40, entry=100, price=100)],
-        total_value=100_000, cash=-5_000.0,)
+        decision=decision,
+        positions=[_pos("XYZ", qty=-40, entry=100, price=100)],
+        total_value=100_000,
+        cash=-5_000.0,
+    )
     assert violations == []
 
 
@@ -945,12 +1171,20 @@ def test_buy_is_still_blocked_by_negative_cash_when_margin_disallowed():
     conditions is still hard-blocked exactly as before."""
     engine = RiskRuleEngine(_cfg(allow_margin=False))
     decision = TradeDecision(
-        action="BUY", symbol="XYZ", allocation_pct=10.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
+        action="BUY",
+        symbol="XYZ",
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000,
-        cash=-5_000.0,)
+        decision=decision,
+        positions=[],
+        total_value=100_000,
+        cash=-5_000.0,
+    )
     rules = {v.rule for v in violations}
     assert "cash_only" in rules
 
@@ -959,6 +1193,7 @@ def test_buy_is_still_blocked_by_negative_cash_when_margin_disallowed():
 # 10. Long-only regression proof
 # ==========================================================================
 
+
 def test_constructor_long_only_output_unchanged_with_no_shorts_anywhere():
     """No-op proof, literal-for-literal — same idiom as
     tests/test_shorts_countable.py's `*_long_only_unchanged` tests. A
@@ -966,18 +1201,17 @@ def test_constructor_long_only_output_unchanged_with_no_shorts_anywhere():
     produces exactly the pre-Stage-3 BUY."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=15.0,
-                                conviction="high", thesis="add")],
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=15.0, conviction="high", thesis="add")],
         positions=[_pos("NVDA", qty=50, entry=100, price=100)],  # 5% held
-        analyses=[_long_analysis(symbol="NVDA", entry=100.0, stop=95.0,
-                                  target=115.0)],
-        total_value=100_000, price_map={"NVDA": 100.0},
+        analyses=[_long_analysis(symbol="NVDA", entry=100.0, stop=95.0, target=115.0)],
+        total_value=100_000,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     d = decisions[0]
     assert d.action == "BUY"
     assert d.symbol == "NVDA"
-    assert d.allocation_pct == 10.0    # 15% target - 5% held
+    assert d.allocation_pct == 10.0  # 15% target - 5% held
     assert d.entry_price == 100.0
     assert d.stop_loss == 95.0
     assert d.take_profit == 115.0
@@ -990,11 +1224,19 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
     violation it always did."""
     engine = RiskRuleEngine(_cfg(max_position_pct=20.0))
     decision = TradeDecision(
-        action="BUY", symbol="XYZ", allocation_pct=25.0,  # 25% > 20% cap
-        entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
+        action="BUY",
+        symbol="XYZ",
+        allocation_pct=25.0,  # 25% > 20% cap
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        reasoning="t",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000,)
+        decision=decision,
+        positions=[],
+        total_value=100_000,
+    )
     assert len(violations) == 1
     v = violations[0]
     assert v.rule == "max_position_pct"
@@ -1003,11 +1245,22 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
 
     # And the clean case: well under every cap, zero violations.
     clean = TradeDecision(
-        action="BUY", symbol="XYZ", allocation_pct=5.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=120.0, reasoning="t",
+        action="BUY",
+        symbol="XYZ",
+        allocation_pct=5.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        reasoning="t",
     )
-    assert engine.check(
-        decision=clean, positions=[], total_value=100_000,) == []
+    assert (
+        engine.check(
+            decision=clean,
+            positions=[],
+            total_value=100_000,
+        )
+        == []
+    )
 
 
 # ==========================================================================
@@ -1020,6 +1273,7 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
 #    pipeline actually invokes it identically on both sides.
 # ==========================================================================
 
+
 def test_emergency_cover_cancels_the_symbols_resting_short_entry_order():
     """EMERGENCY_COVER must cancel that symbol's own resting entry order
     exactly as EMERGENCY_SELL does for a long."""
@@ -1028,8 +1282,13 @@ def test_emergency_cover_cancels_the_symbols_resting_short_entry_order():
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
     p._submit_protected_sell(
-        symbol="TSLA", qty=40, limit_price=252.5, reference_price=250.0,
-        position_qty_before_sell=40, label="EMERGENCY_COVER", side="buy",
+        symbol="TSLA",
+        qty=40,
+        limit_price=252.5,
+        reference_price=250.0,
+        position_qty_before_sell=40,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="TSLA")
 
@@ -1044,8 +1303,12 @@ def test_emergency_sell_still_cancels_the_symbols_resting_long_entry_order():
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
     p._submit_protected_sell(
-        symbol="VST", qty=31, limit_price=150.0, reference_price=151.0,
-        position_qty_before_sell=31, label="EMERGENCY_SELL",
+        symbol="VST",
+        qty=31,
+        limit_price=150.0,
+        reference_price=151.0,
+        position_qty_before_sell=31,
+        label="EMERGENCY_SELL",
     )
     p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="VST")
 
@@ -1054,13 +1317,20 @@ def test_emergency_sell_still_cancels_the_symbols_resting_long_entry_order():
 # 12. Gap fix — the midday/close reviewer can COVER a short
 # ==========================================================================
 
+
 def _mk_review_with_action(symbol: str, action: str, reason: str):
     """Minimal review-shaped object _midday_execute_llm_actions accepts —
     same helper shape as tests/test_position_reviewer.py's
     _mk_review_with_action, kept local so this file stands alone."""
-    return MagicMock(actions=[PositionAction(
-        action=action, symbol=symbol, reason=reason,
-    )])
+    return MagicMock(
+        actions=[
+            PositionAction(
+                action=action,
+                symbol=symbol,
+                reason=reason,
+            )
+        ]
+    )
 
 
 def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
@@ -1072,12 +1342,15 @@ def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
     pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.submit_order.return_value = {
-        "id": "cover-order", "status": "accepted", "symbol": symbol,
+        "id": "cover-order",
+        "status": "accepted",
+        "symbol": symbol,
     }
     pipeline.broker.get_latest_price.return_value = current_price
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": str(qty),
+        "status": "filled",
+        "filled_qty": str(qty),
         "filled_avg_price": str(current_price),
     }
     pipeline.db.has_pending_action_for_symbol.return_value = False
@@ -1093,7 +1366,8 @@ def test_midday_reviewer_covers_a_short_end_to_end():
     position = _pos("TSLA", qty=-40, entry=250.0, price=240.0)
     pipeline = _midday_pipeline_with_short("TSLA", 40.0, 240.0)
     review = _mk_review_with_action(
-        "TSLA", "COVER",
+        "TSLA",
+        "COVER",
         "thesis_invalid_if condition satisfied — guidance cut reversed the "
         "setup, bullish reversal confirmed above the defended level.",
     )
@@ -1116,7 +1390,9 @@ def test_midday_cover_refused_without_named_trigger():
     position = _pos("TSLA", qty=-40, entry=250.0, price=240.0)
     pipeline = _midday_pipeline_with_short("TSLA", 40.0, 240.0)
     review = _mk_review_with_action(
-        "TSLA", "COVER", "price fell a lot, prudent to lock in the gain.",
+        "TSLA",
+        "COVER",
+        "price fell a lot, prudent to lock in the gain.",
     )
 
     orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
@@ -1138,7 +1414,8 @@ def test_midday_cover_not_blocked_by_negative_cash():
     pipeline.config.risk.allow_margin = False
     pipeline.cash = -5_000.0  # not read anywhere on this path — that's the point
     review = _mk_review_with_action(
-        "TSLA", "COVER",
+        "TSLA",
+        "COVER",
         "thesis_invalid_if condition satisfied — guidance cut reversed the setup.",
     )
 
@@ -1151,6 +1428,7 @@ def test_midday_cover_not_blocked_by_negative_cash():
 # ==========================================================================
 # 13. Gap fix — a short position reaching the reviewer carries its side
 # ==========================================================================
+
 
 def test_short_position_reaches_reviewer_payload_with_its_side():
     """The reviewer payload must state a held short's side explicitly so it
@@ -1179,13 +1457,15 @@ def test_short_position_reaches_reviewer_payload_with_its_side():
 #    behaving exactly as before
 # ==========================================================================
 
+
 def test_long_only_midday_actions_unchanged_with_no_shorts_anywhere():
     """No COVER, no short position anywhere: SELL still executes exactly as
     pre-Stage-3 (side='sell', full qty, limit 0.5% below reference)."""
     position = _pos("VST", qty=31, entry=100.0, price=150.0)
     pipeline = _midday_pipeline_with_short("VST", 31.0, 150.0)
     review = _mk_review_with_action(
-        "VST", "SELL",
+        "VST",
+        "SELL",
         "thesis_invalid_if condition satisfied — thesis broken on filing.",
     )
 
@@ -1207,7 +1487,11 @@ def test_cancel_open_entry_orders_long_only_book_cancels_only_the_buy():
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
     p._submit_protected_sell(
-        symbol="VST", qty=31, limit_price=150.0, reference_price=151.0,
-        position_qty_before_sell=31, label="SELL",
+        symbol="VST",
+        qty=31,
+        limit_price=150.0,
+        reference_price=151.0,
+        position_qty_before_sell=31,
+        label="SELL",
     )
     p.broker.cancel_open_entry_orders.assert_called_once_with(symbol="VST")

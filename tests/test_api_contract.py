@@ -63,34 +63,63 @@ def seeded_db(tmp_path, monkeypatch):
     db.initialize()
 
     db.insert_agent_log(
-        agent_name="tech_analyst", run_id=RUN_ID,
-        input_summary="tech input", output_summary="tech output",
-        full_response="{}", model="claude-opus-4-7", tokens_used=200,
-        input_message="tech prompt", cost_usd=0.01,
+        agent_name="tech_analyst",
+        run_id=RUN_ID,
+        input_summary="tech input",
+        output_summary="tech output",
+        full_response="{}",
+        model="claude-opus-4-7",
+        tokens_used=200,
+        input_message="tech prompt",
+        cost_usd=0.01,
     )
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=RUN_ID,
-        input_summary="pm input", output_summary="pm output",
-        full_response='{"targets": []}', model="gpt-5.5", tokens_used=500,
-        input_message="pm prompt", cost_usd=0.05, decision_id=DECISION_ID,
-        requested_provider="openai", requested_model="gpt-5.5",
+        agent_name="portfolio_manager",
+        run_id=RUN_ID,
+        input_summary="pm input",
+        output_summary="pm output",
+        full_response='{"targets": []}',
+        model="gpt-5.5",
+        tokens_used=500,
+        input_message="pm prompt",
+        cost_usd=0.05,
+        decision_id=DECISION_ID,
+        requested_provider="openai",
+        requested_model="gpt-5.5",
         actual_provider="openai",
     )
     db.insert_agent_log(
-        agent_name="risk_manager", run_id=RUN_ID,
-        input_summary="rm input", output_summary="Approved: True",
-        full_response='{"approved": true}', model="gpt-5.5", tokens_used=300,
-        input_message="rm prompt", cost_usd=0.03, decision_id=DECISION_ID,
+        agent_name="risk_manager",
+        run_id=RUN_ID,
+        input_summary="rm input",
+        output_summary="Approved: True",
+        full_response='{"approved": true}',
+        model="gpt-5.5",
+        tokens_used=300,
+        input_message="rm prompt",
+        cost_usd=0.03,
+        decision_id=DECISION_ID,
     )
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10, price=150.0,
-        reasoning="test buy", run_id=RUN_ID, stop_loss=140.0, take_profit=170.0,
-        broker_order_id="ord-1", fill_status="filled", decision_id=DECISION_ID,
+        symbol="AAPL",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="test buy",
+        run_id=RUN_ID,
+        stop_loss=140.0,
+        take_profit=170.0,
+        broker_order_id="ord-1",
+        fill_status="filled",
+        decision_id=DECISION_ID,
     )
     db.insert_daily_pnl(date="2026-08-08", total_value=100_000.0, daily_pnl=500.0, daily_return_pct=0.5)
     db.save_insights(
-        date="2026-08-08", tomorrow_outlook="cautiously bullish", lessons="none yet",
-        suggested_actions="hold", risk_rating="low",
+        date="2026-08-08",
+        tomorrow_outlook="cautiously bullish",
+        lessons="none yet",
+        suggested_actions="hold",
+        risk_rating="low",
     )
     db.close()
 
@@ -112,31 +141,67 @@ def stub_broker(monkeypatch):
     """Patches the broker-read functions at routes_live's own namespace
     (it imported them by name), returning deterministic fixtures instead
     of hitting a real Alpaca connection."""
-    monkeypatch.setattr(routes_live, "read_account", lambda: {
-        "cash": 5000.0, "portfolio_value": 105_000.0, "last_equity": 100_000.0, "error": None,
-    })
-    monkeypatch.setattr(routes_live, "read_positions", lambda: {
-        "positions": [{
-            "symbol": "AAPL", "qty": 10, "avg_entry": 150.0, "current_price": 155.0,
-            "position_mark": {
-                "value": 155.0, "price_kind": "broker_position_mark",
-                "provider": "alpaca", "feed": None, "market_as_of": None,
-                "retrieved_at": "2026-08-08T14:30:00+00:00", "freshness": "unknown",
-            },
-            "market_value": 1550.0, "unrealized_pnl": 50.0,
-            "unrealized_intraday_pnl": 5.0, "sector": "Technology",
-        }],
-        "error": None,
-    })
-    monkeypatch.setattr(routes_live, "read_orders", lambda status="open", limit=50: {
-        "orders": [{
-            "id": "ord-1", "symbol": "AAPL", "side": "buy", "qty": 10.0,
-            "order_type": "limit", "status": "open", "limit_price": 150.0,
-            "stop_price": None, "filled_qty": 0.0, "filled_avg_price": None,
-            "submitted_at": "2026-08-08T14:30:00Z", "filled_at": None,
-        }],
-        "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_account",
+        lambda: {
+            "cash": 5000.0,
+            "portfolio_value": 105_000.0,
+            "last_equity": 100_000.0,
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        routes_live,
+        "read_positions",
+        lambda: {
+            "positions": [
+                {
+                    "symbol": "AAPL",
+                    "qty": 10,
+                    "avg_entry": 150.0,
+                    "current_price": 155.0,
+                    "position_mark": {
+                        "value": 155.0,
+                        "price_kind": "broker_position_mark",
+                        "provider": "alpaca",
+                        "feed": None,
+                        "market_as_of": None,
+                        "retrieved_at": "2026-08-08T14:30:00+00:00",
+                        "freshness": "unknown",
+                    },
+                    "market_value": 1550.0,
+                    "unrealized_pnl": 50.0,
+                    "unrealized_intraday_pnl": 5.0,
+                    "sector": "Technology",
+                }
+            ],
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        routes_live,
+        "read_orders",
+        lambda status="open", limit=50: {
+            "orders": [
+                {
+                    "id": "ord-1",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "qty": 10.0,
+                    "order_type": "limit",
+                    "status": "open",
+                    "limit_price": 150.0,
+                    "stop_price": None,
+                    "filled_qty": 0.0,
+                    "filled_avg_price": None,
+                    "submitted_at": "2026-08-08T14:30:00Z",
+                    "filled_at": None,
+                }
+            ],
+            "error": None,
+        },
+    )
     monkeypatch.setattr(routes_live, "check_broker_reachable", lambda: True)
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
 
@@ -144,6 +209,7 @@ def stub_broker(monkeypatch):
 # ---------------------------------------------------------------------------
 # /trades
 # ---------------------------------------------------------------------------
+
 
 def test_trades_returns_seeded_row(client, seeded_db):
     r = client.get("/trades")
@@ -176,10 +242,18 @@ def test_trades_serves_conviction_ledger_fields(client, seeded_db):
     db = Database(str(seeded_db))
     db.initialize()
     db.insert_trade(
-        symbol="MSFT", action="BUY", qty=5, price=300.0,
-        reasoning="high-conviction breakout", run_id=RUN_ID, stop_loss=280.0,
-        take_profit=330.0, decision_id=DECISION_ID,
-        conviction="high", requested_risk_pct=1.5, allocated_risk_pct=1.2,
+        symbol="MSFT",
+        action="BUY",
+        qty=5,
+        price=300.0,
+        reasoning="high-conviction breakout",
+        run_id=RUN_ID,
+        stop_loss=280.0,
+        take_profit=330.0,
+        decision_id=DECISION_ID,
+        conviction="high",
+        requested_risk_pct=1.5,
+        allocated_risk_pct=1.2,
         decision_model="gpt-5.5",
     )
     db.close()
@@ -210,6 +284,7 @@ def test_trades_conviction_ledger_fields_absent_render_as_none(client, seeded_db
 # /positions/{position_id}/history (Phase 6, §6.2b)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def position_chain_db(tmp_path, monkeypatch):
     """A dedicated DB (not `seeded_db`, which only writes one bare BUY row)
@@ -221,23 +296,40 @@ def position_chain_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10, price=150.0,
-        reasoning="tech breakout, high conviction", run_id="run-a",
+        symbol="AAPL",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="tech breakout, high conviction",
+        run_id="run-a",
         stop_loss=140.0,
     )
     db.insert_trade(
-        symbol="AAPL", action="REDUCE", qty=3, price=160.0,
-        reasoning="macro regime flip to risk-off, trimming", run_id="run-b",
+        symbol="AAPL",
+        action="REDUCE",
+        qty=3,
+        price=160.0,
+        reasoning="macro regime flip to risk-off, trimming",
+        run_id="run-b",
     )
     db.insert_trade(
-        symbol="AAPL", action="SELL", qty=7, price=165.0,
-        reasoning="stopped out", run_id="run-c",
+        symbol="AAPL",
+        action="SELL",
+        qty=7,
+        price=165.0,
+        reasoning="stopped out",
+        run_id="run-c",
     )
     closed_position_id = db.get_trades(symbol="AAPL")[0]["position_id"]
 
     db.insert_trade(
-        symbol="MSFT", action="BUY", qty=5, price=300.0,
-        reasoning="still open", run_id="run-d", stop_loss=280.0,
+        symbol="MSFT",
+        action="BUY",
+        qty=5,
+        price=300.0,
+        reasoning="still open",
+        run_id="run-d",
+        stop_loss=280.0,
     )
     open_position_id = db.get_trades(symbol="MSFT")[0]["position_id"]
     db.close()
@@ -288,6 +380,7 @@ def test_position_history_open_chain_has_no_exit(client, position_chain_db):
 # /runs, /runs/{run_id}
 # ---------------------------------------------------------------------------
 
+
 def test_runs_lists_seeded_run(client, seeded_db):
     r = client.get("/runs")
     assert r.status_code == 200
@@ -307,7 +400,9 @@ def test_run_detail_reconstructs_full_chain(client, seeded_db):
     assert body["run_id"] == RUN_ID
     assert body["decision_id"] == DECISION_ID
     assert {log["agent_name"] for log in body["agent_logs"]} == {
-        "tech_analyst", "portfolio_manager", "risk_manager",
+        "tech_analyst",
+        "portfolio_manager",
+        "risk_manager",
     }
     assert len(body["trades"]) == 1
     assert body["trades"][0]["symbol"] == "AAPL"
@@ -351,19 +446,31 @@ def hard_risk_block_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=HARD_BLOCK_RUN_ID,
-        input_summary="pm input", output_summary="pm output",
-        full_response='{"targets": []}', model="gpt-5.5", tokens_used=500,
-        input_message="pm prompt", cost_usd=0.05, decision_id=HARD_BLOCK_DECISION_ID,
+        agent_name="portfolio_manager",
+        run_id=HARD_BLOCK_RUN_ID,
+        input_summary="pm input",
+        output_summary="pm output",
+        full_response='{"targets": []}',
+        model="gpt-5.5",
+        tokens_used=500,
+        input_message="pm prompt",
+        cost_usd=0.05,
+        decision_id=HARD_BLOCK_DECISION_ID,
     )
     db.insert_agent_log(
-        agent_name="risk_gate", run_id=HARD_BLOCK_RUN_ID,
+        agent_name="risk_gate",
+        run_id=HARD_BLOCK_RUN_ID,
         input_summary="deterministic hard-risk gate blocked all candidates (pre_rm)",
         input_message="",
         output_summary="HARD_RISK_BLOCK: AAPL position would be 25.0% and exceed max 20%",
         full_response="AAPL position would be 25.0% and exceed max 20%",
-        model="deterministic", tokens_used=0, input_tokens=0, output_tokens=0,
-        cost_usd=0.0, decision_id=HARD_BLOCK_DECISION_ID, status="hard_risk_block",
+        model="deterministic",
+        tokens_used=0,
+        input_tokens=0,
+        output_tokens=0,
+        cost_usd=0.0,
+        decision_id=HARD_BLOCK_DECISION_ID,
+        status="hard_risk_block",
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -376,7 +483,8 @@ def test_run_detail_records_hard_risk_block(client, hard_risk_block_db):
     body = r.json()
     assert body["hard_risk_block_recorded"] is True
     assert {log["agent_name"] for log in body["agent_logs"]} == {
-        "portfolio_manager", "risk_gate",
+        "portfolio_manager",
+        "risk_gate",
     }
     gate_log = next(l for l in body["agent_logs"] if l["agent_name"] == "risk_gate")
     assert gate_log["status"] == "hard_risk_block"
@@ -409,14 +517,24 @@ def test_total_cost_is_none_when_any_call_has_unknown_cost(client, tmp_path, mon
     db = Database(str(db_path))
     db.initialize()
     db.insert_agent_log(
-        agent_name="tech_analyst", run_id="run-partial01",
-        input_summary="x", output_summary="x", full_response="{}",
-        model="claude-opus-4-7", tokens_used=100, cost_usd=0.02,
+        agent_name="tech_analyst",
+        run_id="run-partial01",
+        input_summary="x",
+        output_summary="x",
+        full_response="{}",
+        model="claude-opus-4-7",
+        tokens_used=100,
+        cost_usd=0.02,
     )
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="run-partial01",
-        input_summary="x", output_summary="x", full_response="{}",
-        model="some-unpriced-model", tokens_used=100, cost_usd=None,
+        agent_name="portfolio_manager",
+        run_id="run-partial01",
+        input_summary="x",
+        output_summary="x",
+        full_response="{}",
+        model="some-unpriced-model",
+        tokens_used=100,
+        cost_usd=None,
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -430,23 +548,28 @@ def test_total_cost_is_none_when_any_call_has_unknown_cost(client, tmp_path, mon
 
 
 def test_run_cost_prefers_exact_circuit_ledger_over_partial_agent_logs(
-    client, tmp_path, monkeypatch,
+    client,
+    tmp_path,
+    monkeypatch,
 ):
     """Settled paid calls remain visible even if the stage log never writes."""
     db_path = tmp_path / "circuit_cost.db"
     db = Database(str(db_path))
     db.initialize()
     db.insert_agent_log(
-        agent_name="macro_analyst", run_id="run-circuit01",
-        input_summary="x", output_summary="x", full_response="{}",
-        model="test", tokens_used=100, cost_usd=0.0058333,
+        agent_name="macro_analyst",
+        run_id="run-circuit01",
+        input_summary="x",
+        output_summary="x",
+        full_response="{}",
+        model="test",
+        tokens_used=100,
+        cost_usd=0.0058333,
     )
     db.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "INSERT INTO llm_budget_sessions "
-            "(run_id, day, mode, actual_cost_usd, costs_exact) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO llm_budget_sessions (run_id, day, mode, actual_cost_usd, costs_exact) VALUES (?, ?, ?, ?, ?)",
             ("run-circuit01", "2026-08-26", "morning", 0.0382979, 1),
         )
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -459,22 +582,27 @@ def test_run_cost_prefers_exact_circuit_ledger_over_partial_agent_logs(
 
 
 def test_run_cost_is_unknown_when_circuit_ledger_is_inexact(
-    client, tmp_path, monkeypatch,
+    client,
+    tmp_path,
+    monkeypatch,
 ):
     db_path = tmp_path / "inexact_circuit_cost.db"
     db = Database(str(db_path))
     db.initialize()
     db.insert_agent_log(
-        agent_name="macro_analyst", run_id="run-inexact01",
-        input_summary="x", output_summary="x", full_response="{}",
-        model="test", tokens_used=100, cost_usd=0.01,
+        agent_name="macro_analyst",
+        run_id="run-inexact01",
+        input_summary="x",
+        output_summary="x",
+        full_response="{}",
+        model="test",
+        tokens_used=100,
+        cost_usd=0.01,
     )
     db.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "INSERT INTO llm_budget_sessions "
-            "(run_id, day, mode, actual_cost_usd, costs_exact) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO llm_budget_sessions (run_id, day, mode, actual_cost_usd, costs_exact) VALUES (?, ?, ?, ?, ?)",
             ("run-inexact01", "2026-08-26", "morning", 0.04, 0),
         )
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -486,6 +614,7 @@ def test_run_cost_is_unknown_when_circuit_ledger_is_inexact(
 # ---------------------------------------------------------------------------
 # /decisions/{decision_id}
 # ---------------------------------------------------------------------------
+
 
 def test_decision_detail_returns_pm_rm_and_trades(client, seeded_db):
     r = client.get(f"/decisions/{DECISION_ID}")
@@ -504,14 +633,22 @@ def test_decision_detail_404_for_unknown_decision(client, seeded_db):
 # /agents, /agents/{agent_name}
 # ---------------------------------------------------------------------------
 
+
 def test_agents_roster_lists_all_ten(client, stub_roster):
     r = client.get("/agents")
     assert r.status_code == 200
     names = {a["agent_name"] for a in r.json()["agents"]}
     assert names == {
-        "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
-        "portfolio_manager", "risk_manager", "position_reviewer",
-        "evening_analyst", "meta_reflector", "smart_money_analyst",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "portfolio_manager",
+        "risk_manager",
+        "position_reviewer",
+        "evening_analyst",
+        "meta_reflector",
+        "smart_money_analyst",
     }
 
 
@@ -532,6 +669,7 @@ def test_agent_detail_404_for_unknown_agent(client, stub_roster):
 # /reflections
 # ---------------------------------------------------------------------------
 
+
 def test_reflections_returns_seeded_insight(client, seeded_db):
     r = client.get("/reflections")
     assert r.status_code == 200
@@ -550,33 +688,56 @@ def test_reflections_returns_seeded_insight(client, seeded_db):
 # aggregator in `src.watchlist_candidates` — never imports TradingPipeline.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def candidates_db(tmp_path, monkeypatch):
     db_path = tmp_path / "candidates.db"
     db = Database(str(db_path))
     db.initialize()
     db.save_evening_snapshot(
-        date="2026-08-08", total_value=100_000.0, daily_pnl=500.0, daily_return_pct=0.5,
-        tomorrow_outlook="x", lessons="x", suggested_actions="x", risk_rating="low",
+        date="2026-08-08",
+        total_value=100_000.0,
+        daily_pnl=500.0,
+        daily_return_pct=0.5,
+        tomorrow_outlook="x",
+        lessons="x",
+        suggested_actions="x",
+        risk_rating="low",
         missed_opportunities=[
-            {"symbol": "VST", "miss_category": "theme_blindspot",
-             "theme_if_any": "nuclear/power",
-             "universe_addition_recommendation": "add",
-             "universe_addition_reason": "20d $vol $180M; vol_conf 2.1x",
-             "lesson": "x"},
-            {"symbol": "NOISE", "miss_category": "noise_rally",
-             "universe_addition_recommendation": "no", "lesson": "thin volume"},
+            {
+                "symbol": "VST",
+                "miss_category": "theme_blindspot",
+                "theme_if_any": "nuclear/power",
+                "universe_addition_recommendation": "add",
+                "universe_addition_reason": "20d $vol $180M; vol_conf 2.1x",
+                "lesson": "x",
+            },
+            {
+                "symbol": "NOISE",
+                "miss_category": "noise_rally",
+                "universe_addition_recommendation": "no",
+                "lesson": "thin volume",
+            },
         ],
     )
     db.save_evening_snapshot(
-        date="2026-08-07", total_value=99_500.0, daily_pnl=-200.0, daily_return_pct=-0.2,
-        tomorrow_outlook="x", lessons="x", suggested_actions="x", risk_rating="low",
+        date="2026-08-07",
+        total_value=99_500.0,
+        daily_pnl=-200.0,
+        daily_return_pct=-0.2,
+        tomorrow_outlook="x",
+        lessons="x",
+        suggested_actions="x",
+        risk_rating="low",
         missed_opportunities=[
-            {"symbol": "VST", "miss_category": "theme_blindspot",
-             "theme_if_any": "nuclear/power",
-             "universe_addition_recommendation": "watch",
-             "universe_addition_reason": "vol_conf 1.6x; 1d conc 45%",
-             "lesson": "x"},
+            {
+                "symbol": "VST",
+                "miss_category": "theme_blindspot",
+                "theme_if_any": "nuclear/power",
+                "universe_addition_recommendation": "watch",
+                "universe_addition_reason": "vol_conf 1.6x; 1d conc 45%",
+                "lesson": "x",
+            },
         ],
     )
     db.close()
@@ -627,6 +788,7 @@ def test_candidates_respects_lookback_days_query_param(client, candidates_db):
 # /account, /positions, /orders (broker-live, stubbed)
 # ---------------------------------------------------------------------------
 
+
 def test_account_computes_daily_pnl(client, stub_broker, seeded_db):
     r = client.get("/account")
     assert r.status_code == 200
@@ -651,11 +813,15 @@ def test_account_computes_daily_pnl(client, stub_broker, seeded_db):
 
 
 def test_account_total_pnl_is_none_not_fabricated_without_a_readable_baseline(
-    client, stub_broker, tmp_path, monkeypatch,
+    client,
+    stub_broker,
+    tmp_path,
+    monkeypatch,
 ):
     # An empty (or unreadable) daily_pnl table must degrade `total_pnl` to
     # `None`, never a fabricated 0 or a total computed against no baseline.
     from src.storage.db import Database
+
     db_path = tmp_path / "no_daily_pnl.db"
     db = Database(str(db_path))
     db.initialize()
@@ -671,10 +837,16 @@ def test_account_total_pnl_is_none_not_fabricated_without_a_readable_baseline(
 
 
 def test_account_surfaces_broker_error_without_crashing(client, seeded_db, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_account", lambda: {
-        "cash": None, "portfolio_value": None, "last_equity": None,
-        "error": "connection refused",
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_account",
+        lambda: {
+            "cash": None,
+            "portfolio_value": None,
+            "last_equity": None,
+            "error": "connection refused",
+        },
+    )
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
     r = client.get("/account")  # noqa: F821 (client fixture not used here on purpose)
     assert r.status_code == 200
@@ -686,32 +858,56 @@ def test_account_surfaces_broker_error_without_crashing(client, seeded_db, monke
 
 
 def test_account_liquidity_breakdown_separates_raw_cash_from_sweep_parked(
-    client, seeded_db, monkeypatch,
+    client,
+    seeded_db,
+    monkeypatch,
 ):
     """2026-08-18 soak finding: SGOV must never read like an ordinary
     position or an invented risk posture — /account must separate raw
     cash, sweep-parked value, the reserve floor, and deployable cash."""
-    monkeypatch.setattr(routes_live, "read_account", lambda: {
-        "cash": 10_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
-        "error": None,
-    })
-    monkeypatch.setattr(routes_live, "read_positions", lambda: {
-        "positions": [
-            {
-                "symbol": "SGOV", "qty": 5000, "avg_entry": 100.0, "current_price": 100.0,
-                "market_value": 50_000.0, "unrealized_pnl": 0.0,
-                "unrealized_intraday_pnl": 0.0, "sector": None,
-                "is_cash_equivalent": True, "direction": "cash_equivalent",
-            },
-            {
-                "symbol": "AAPL", "qty": 10, "avg_entry": 150.0, "current_price": 155.0,
-                "market_value": 1550.0, "unrealized_pnl": 50.0,
-                "unrealized_intraday_pnl": 5.0, "sector": "Technology",
-                "is_cash_equivalent": False, "direction": "long",
-            },
-        ],
-        "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_account",
+        lambda: {
+            "cash": 10_000.0,
+            "portfolio_value": 100_000.0,
+            "last_equity": 100_000.0,
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        routes_live,
+        "read_positions",
+        lambda: {
+            "positions": [
+                {
+                    "symbol": "SGOV",
+                    "qty": 5000,
+                    "avg_entry": 100.0,
+                    "current_price": 100.0,
+                    "market_value": 50_000.0,
+                    "unrealized_pnl": 0.0,
+                    "unrealized_intraday_pnl": 0.0,
+                    "sector": None,
+                    "is_cash_equivalent": True,
+                    "direction": "cash_equivalent",
+                },
+                {
+                    "symbol": "AAPL",
+                    "qty": 10,
+                    "avg_entry": 150.0,
+                    "current_price": 155.0,
+                    "market_value": 1550.0,
+                    "unrealized_pnl": 50.0,
+                    "unrealized_intraday_pnl": 5.0,
+                    "sector": "Technology",
+                    "is_cash_equivalent": False,
+                    "direction": "long",
+                },
+            ],
+            "error": None,
+        },
+    )
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: "SGOV")
@@ -763,14 +959,19 @@ def test_orders_rejects_invalid_status(client, stub_broker):
 # /prices/{symbol}
 # ---------------------------------------------------------------------------
 
+
 def test_prices_returns_seeded_bars(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120, timeframe="1d": {
-        "bars": [
-            {"date": "2026-08-17", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume": 1_000_000},
-            {"date": "2026-08-18", "open": 104.0, "high": 106.0, "low": 103.0, "close": 105.5, "volume": 900_000},
-        ],
-        "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_price_bars",
+        lambda symbol, lookback_days=120, timeframe="1d": {
+            "bars": [
+                {"date": "2026-08-17", "open": 100.0, "high": 105.0, "low": 99.0, "close": 104.0, "volume": 1_000_000},
+                {"date": "2026-08-18", "open": 104.0, "high": 106.0, "low": 103.0, "close": 105.5, "volume": 900_000},
+            ],
+            "error": None,
+        },
+    )
     r = client.get("/prices/aapl")
     assert r.status_code == 200
     body = r.json()
@@ -782,9 +983,14 @@ def test_prices_returns_seeded_bars(client, monkeypatch):
 
 
 def test_prices_degrades_to_error_without_crashing(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_price_bars", lambda symbol, lookback_days=120, timeframe="1d": {
-        "bars": [], "error": "data client unreachable",
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_price_bars",
+        lambda symbol, lookback_days=120, timeframe="1d": {
+            "bars": [],
+            "error": "data client unreachable",
+        },
+    )
     r = client.get("/prices/NVDA")
     assert r.status_code == 200
     body = r.json()
@@ -798,19 +1004,22 @@ def test_prices_returns_intraday_timestamps(client, monkeypatch):
     def _bars(symbol, lookback_days=120, timeframe="1d"):
         seen.append((symbol, lookback_days, timeframe))
         return {
-            "bars": [{
-                "date": "2026-08-21",
-                "timestamp": "2026-08-21T13:30:00+00:00",
-                "open": 100.0, "high": 101.0, "low": 99.5,
-                "close": 100.5, "volume": 5000,
-            }],
+            "bars": [
+                {
+                    "date": "2026-08-21",
+                    "timestamp": "2026-08-21T13:30:00+00:00",
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.5,
+                    "close": 100.5,
+                    "volume": 5000,
+                }
+            ],
             "error": None,
         }
 
     monkeypatch.setattr(routes_live, "read_price_bars", _bars)
-    r = client.get(
-        "/prices/MRVL", params={"timeframe": "5m", "lookback_days": 1}
-    )
+    r = client.get("/prices/MRVL", params={"timeframe": "5m", "lookback_days": 1})
     assert r.status_code == 200
     assert seen == [("MRVL", 1, "5m")]
     assert r.json()["timeframe"] == "5m"
@@ -824,6 +1033,7 @@ def test_prices_rejects_unknown_timeframe(client):
 # ---------------------------------------------------------------------------
 # /health
 # ---------------------------------------------------------------------------
+
 
 def test_health_reports_ok_with_seeded_run_today(client, seeded_db, stub_broker, monkeypatch):
     from datetime import datetime, timezone
@@ -859,6 +1069,7 @@ def test_health_never_crashes_when_db_path_is_bogus(client, monkeypatch):
 # `check_broker_reachable: lambda: True`) was previously exercised.
 # ---------------------------------------------------------------------------
 
+
 def test_check_broker_reachable_returns_none_when_credentials_missing(monkeypatch):
     monkeypatch.setattr(broker_reads, "get_alpaca_credentials", lambda: ("", ""))
     assert broker_reads.check_broker_reachable() is None
@@ -879,6 +1090,7 @@ def test_health_never_crashes_when_broker_check_raises_unexpectedly(client, seed
     raise (see broker_reads.py's module docstring), but /health's outermost
     guard should still hold even if that invariant is ever violated by a
     future change — proving `broker_reachable: None` beats a 500."""
+
     def _boom():
         raise RuntimeError("should never happen, but /health must survive it anyway")
 
@@ -896,6 +1108,7 @@ def test_health_never_crashes_when_broker_check_raises_unexpectedly(client, seed
 # to guess which of five sub-fields caused it), and a deliberate operator
 # mute being recorded and rendered as a BROKEN alert channel.
 # ---------------------------------------------------------------------------
+
 
 def test_health_ok_carries_no_reason(client, seeded_db, stub_broker):
     body = client.get("/health").json()
@@ -915,11 +1128,16 @@ def test_health_degraded_names_the_field_that_caused_it(client, seeded_db, stub_
 
 def test_health_reason_names_a_broken_alert_channel(client, seeded_db, stub_broker, monkeypatch):
     monkeypatch.setattr(
-        routes_live, "check_broker_reachable", lambda: True, raising=False,
+        routes_live,
+        "check_broker_reachable",
+        lambda: True,
+        raising=False,
     )
     import src.api.db_reads as _db_reads
+
     monkeypatch.setattr(
-        _db_reads, "get_alert_channel_health",
+        _db_reads,
+        "get_alert_channel_health",
         lambda: {"status": "broken", "last_stage": "credentials"},
     )
     body = client.get("/health").json()
@@ -953,8 +1171,7 @@ def test_muted_check_history_reads_as_muted_and_is_still_degraded(tmp_path):
     from src.alert_watchdog import read_health, record_check
 
     db = str(tmp_path / "muted.db")
-    record_check(ok=False, stage="muted", detail="TELEGRAM_DISABLED is set",
-                 residue=False, source="test", db_path=db)
+    record_check(ok=False, stage="muted", detail="TELEGRAM_DISABLED is set", residue=False, source="test", db_path=db)
     health = read_health(db)
     assert health.status == "muted"
     # Nothing is broken, but no alarm reaches the operator either.
@@ -965,8 +1182,7 @@ def test_broken_check_history_still_reads_as_broken(tmp_path):
     from src.alert_watchdog import read_health, record_check
 
     db = str(tmp_path / "broken.db")
-    record_check(ok=False, stage="credentials", detail="no token", residue=False,
-                 source="test", db_path=db)
+    record_check(ok=False, stage="credentials", detail="no token", residue=False, source="test", db_path=db)
     health = read_health(db)
     assert health.status == "broken"
     assert health.degraded is True

@@ -16,6 +16,7 @@ to `_budgeted_sections`, same guarantee `test_pnl_leads_every_message.py`
 already pins for the P&L block), and a broker-read failure degrades to a
 line rather than being silently dropped.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -44,7 +45,8 @@ RESULT = {
 
 def test_morning_message_carries_the_margin_interest_line(monkeypatch):
     monkeypatch.setattr(
-        trader_feed, "_margin_interest_lines",
+        trader_feed,
+        "_margin_interest_lines",
         lambda: ["\U0001f4b3 margin interest: $0.99/day (ESTIMATE) on $5.7k borrowed"],
     )
     msg = trader_feed._format_decision_session("morning", dict(RESULT), 10.0)
@@ -57,7 +59,8 @@ def test_margin_interest_line_precedes_the_budgeted_candidate_list(monkeypatch):
     # one a length clip eats. `_append_rotation` renders the candidate list
     # that block is built to protect.
     monkeypatch.setattr(
-        trader_feed, "_margin_interest_lines",
+        trader_feed,
+        "_margin_interest_lines",
         lambda: ["\U0001f4b3 margin interest: $0.99/day (ESTIMATE) on $5.7k borrowed"],
     )
     msg = trader_feed._format_decision_session("morning", dict(RESULT), 10.0)
@@ -74,7 +77,8 @@ def test_zero_debit_balance_still_shows_an_explicit_line_never_silence(monkeypat
     # know it's still working." `_margin_interest_lines` already enforces
     # this; this test only pins that trader_feed does not swallow it.
     monkeypatch.setattr(
-        trader_feed, "_margin_interest_lines",
+        trader_feed,
+        "_margin_interest_lines",
         lambda: ["\U0001f4b3 margin interest: $0.00/day — nothing borrowed overnight"],
     )
     msg = trader_feed._format_decision_session("morning", dict(RESULT), 10.0)
@@ -87,7 +91,8 @@ def test_a_broker_read_failure_degrades_to_a_line_not_to_silence(monkeypatch):
     # mode by, say, wrapping the call in something that swallows a
     # non-empty-but-degraded return.
     monkeypatch.setattr(
-        trader_feed, "_margin_interest_lines",
+        trader_feed,
+        "_margin_interest_lines",
         lambda: ["\U0001f4b3 margin interest: not available — no borrowing rate is configured"],
     )
     msg = trader_feed._format_decision_session("morning", dict(RESULT), 10.0)

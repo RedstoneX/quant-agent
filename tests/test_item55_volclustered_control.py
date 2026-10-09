@@ -1,5 +1,6 @@
 """Item 55 follow-up: the fair control must keep volatility clustering, and the
 measurement must be able to return a different answer when levels are real."""
+
 from __future__ import annotations
 
 import math
@@ -34,6 +35,7 @@ def _clustered_bars(n: int = 900, seed: int = 11) -> list[dict]:
 def test_signflip_keeps_clustering_that_the_plain_shuffle_destroys():
     """Measured on the committed real panel, not on a synthetic stand-in."""
     from item55_volclustered_control import load_panel
+
     panel = load_panel()
     bars = max(
         (b for b in panel.values() if len(b) > 800),

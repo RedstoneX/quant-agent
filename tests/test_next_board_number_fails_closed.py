@@ -12,6 +12,7 @@ The desk's rule behind this: everything mechanically enforced holds,
 everything relying on somebody noticing a warning slips. The old output
 relied on somebody noticing a warning.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,16 +39,13 @@ def work_md(tmp_path):
 
 
 def _run(work_md, monkeypatch, claims, *extra):
-    monkeypatch.setattr(next_board_number, "read_open_pr_claims",
-                        lambda *_a, **_k: claims)
+    monkeypatch.setattr(next_board_number, "read_open_pr_claims", lambda *_a, **_k: claims)
     return next_board_number.main(["--work-md", str(work_md), *extra])
 
 
-def test_an_unreadable_pr_list_exits_nonzero_and_prints_no_number(
-        work_md, monkeypatch, capsys):
+def test_an_unreadable_pr_list_exits_nonzero_and_prints_no_number(work_md, monkeypatch, capsys):
     """The exact 2026-09-30 failure: the read fails, so nothing is offered."""
-    code = _run(work_md, monkeypatch,
-                OpenPrClaims(problem="API rate limit exceeded"))
+    code = _run(work_md, monkeypatch, OpenPrClaims(problem="API rate limit exceeded"))
     assert code != 0
     out = capsys.readouterr()
     assert "Next free board item number" not in out.out
@@ -57,13 +55,15 @@ def test_an_unreadable_pr_list_exits_nonzero_and_prints_no_number(
     assert "API rate limit exceeded" in out.err
 
 
-@pytest.mark.parametrize("problem", [
-    "API rate limit exceeded",
-    "connection refused",
-    "HTTP 401 Bad credentials",
-])
-def test_it_fails_closed_for_every_kind_of_read_failure(
-        work_md, monkeypatch, capsys, problem):
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "API rate limit exceeded",
+        "connection refused",
+        "HTTP 401 Bad credentials",
+    ],
+)
+def test_it_fails_closed_for_every_kind_of_read_failure(work_md, monkeypatch, capsys, problem):
     """Rate limit, network, auth — the caller's exposure is identical."""
     assert _run(work_md, monkeypatch, OpenPrClaims(problem=problem)) != 0
     assert problem in capsys.readouterr().err
@@ -79,18 +79,15 @@ def test_a_successful_read_still_prints_a_number(work_md, monkeypatch, capsys):
     assert "UNCHECKED" not in out
 
 
-def test_the_opt_out_prints_the_number_labelled_unchecked(
-        work_md, monkeypatch, capsys):
+def test_the_opt_out_prints_the_number_labelled_unchecked(work_md, monkeypatch, capsys):
     """The offline escape hatch exists, and it says what it handed over.
 
     The label sits on the number's own line so it survives being pasted
     somewhere else — a caveat in a later paragraph does not.
     """
     called = []
-    monkeypatch.setattr(next_board_number, "read_open_pr_claims",
-                        lambda *_a, **_k: called.append(1))
-    code = next_board_number.main(
-        ["--work-md", str(work_md), "--accept-unchecked-number"])
+    monkeypatch.setattr(next_board_number, "read_open_pr_claims", lambda *_a, **_k: called.append(1))
+    code = next_board_number.main(["--work-md", str(work_md), "--accept-unchecked-number"])
     assert code == 0
     out = capsys.readouterr().out
     assert "Next free board item number (UNCHECKED): 8" in out

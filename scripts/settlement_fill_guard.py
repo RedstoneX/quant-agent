@@ -49,6 +49,7 @@ longer occurs. It reads no git ref, so unrelated merges cannot redden it.
 Run it directly:
 ``PYTHONPATH=. .venv/bin/python -m scripts.settlement_fill_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -163,9 +164,7 @@ def _working_subject_paths() -> list[str]:
 ALLOWLIST = ALLOWLIST_DIR / "code_settlement_fill.txt"
 
 
-def check(
-    blobs: dict[str, str], fields: set[str], allowlist: Path = ALLOWLIST
-) -> tuple[list[str], list[str]]:
+def check(blobs: dict[str, str], fields: set[str], allowlist: Path = ALLOWLIST) -> tuple[list[str], list[str]]:
     """``(unlisted, stale)``: silent suppliers missing from the fixed list, and listed ones now gone."""
     return compare(scan(blobs, fields), allowlist)
 

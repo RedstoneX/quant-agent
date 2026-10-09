@@ -67,14 +67,24 @@ _SNAPSHOT_PER_AGENT_CHAR_BUDGET = 3_000
 # Regex: section headers (## or ###) that are interesting for meta-
 # reflection. Keyword match is lowercase / word-boundary-ish.
 _INTERESTING_HEADING_KEYWORDS = (
-    "rule", "rules",
-    "discipline", "mandate",
-    "priority", "priorities",
-    "budget", "cap", "limit",
-    "output", "required output",
-    "memory", "layer",
-    "framework", "step-by-step", "decision framework",
-    "cheat sheet", "cheatsheet",
+    "rule",
+    "rules",
+    "discipline",
+    "mandate",
+    "priority",
+    "priorities",
+    "budget",
+    "cap",
+    "limit",
+    "output",
+    "required output",
+    "memory",
+    "layer",
+    "framework",
+    "step-by-step",
+    "decision framework",
+    "cheat sheet",
+    "cheatsheet",
     "learnings",  # The system-evolved section — critical to surface
     "auto-evolved",
 )
@@ -83,6 +93,7 @@ _INTERESTING_HEADING_KEYWORDS = (
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_quarterly_digest(
     db: "Database",
@@ -124,20 +135,31 @@ def build_quarterly_digest(
     }
 
     digest["period_performance"] = _period_performance(
-        db, market, period_start, period_end,
+        db,
+        market,
+        period_start,
+        period_end,
     )
     digest["calibration_by_size"] = _calibration_by_size(db, lookback_days)
     digest["missed_themes"] = _missed_themes_aggregated(
-        db, period_start, period_end,
+        db,
+        period_start,
+        period_end,
     )
     digest["loss_patterns"] = _loss_patterns_aggregated(
-        db, period_start, period_end,
+        db,
+        period_start,
+        period_end,
     )
     digest["agent_signal_activity"] = _agent_signal_activity(
-        db, period_start, period_end,
+        db,
+        period_start,
+        period_end,
     )
     digest["watchlist_candidates"] = _watchlist_candidates_aggregated(
-        db, period_start, period_end,
+        db,
+        period_start,
+        period_end,
     )
     digest["agent_prompts_snapshot"] = _build_agent_prompts_snapshot(
         prompts_dir=prompts_dir,
@@ -205,6 +227,7 @@ def load_previous_digest(
 # Section: period_performance
 # ---------------------------------------------------------------------------
 
+
 def _period_performance(
     db: "Database",
     market: "MarketDataProvider" | None,
@@ -241,10 +264,7 @@ def _period_performance(
 
     start_value = float(window[0].get("total_value") or 0)
     end_value = float(window[-1].get("total_value") or 0)
-    total_return_pct = (
-        round((end_value / start_value - 1) * 100, 2)
-        if start_value > 0 else None
-    )
+    total_return_pct = round((end_value / start_value - 1) * 100, 2) if start_value > 0 else None
 
     # SPY baseline (optional).
     spy_return_pct: float | None = None
@@ -256,10 +276,7 @@ def _period_performance(
             bars = []
         if bars and len(bars) >= 2:
             # Match bars to [period_start, period_end] window.
-            in_window = [
-                b for b in bars
-                if period_start <= getattr(b, "date", period_start) <= period_end
-            ]
+            in_window = [b for b in bars if period_start <= getattr(b, "date", period_start) <= period_end]
             if len(in_window) >= 2:
                 try:
                     sc_start = float(in_window[0].close)
@@ -289,10 +306,7 @@ def _period_performance(
     winning_days = sum(1 for r in window if float(r.get("daily_pnl") or 0) > 0)
     losing_days = sum(1 for r in window if float(r.get("daily_pnl") or 0) < 0)
 
-    returns = [
-        float(r.get("daily_return_pct") or 0) for r in window
-        if r.get("daily_return_pct") is not None
-    ]
+    returns = [float(r.get("daily_return_pct") or 0) for r in window if r.get("daily_return_pct") is not None]
     best = round(max(returns), 2) if returns else None
     worst = round(min(returns), 2) if returns else None
 
@@ -313,6 +327,7 @@ def _period_performance(
 # Section: calibration_by_size
 # ---------------------------------------------------------------------------
 
+
 def _calibration_by_size(db: "Database", lookback_days: int) -> dict:
     """Wrapper around db.compute_trade_calibration — realized win rate /
     avg return on closed BUY→SELL trades, bucketed by entry $ size.
@@ -332,7 +347,9 @@ _ESCAPE_HATCH_MISS_CATEGORIES = {"noise_rally", "risk_disciplined"}
 
 
 def _insights_in_window(
-    db: "Database", period_start: date, period_end: date,
+    db: "Database",
+    period_start: date,
+    period_end: date,
 ) -> list[dict]:
     """Fetch insights rows whose ET trading-day `date` falls in
     [period_start, period_end] (inclusive both ends).
@@ -371,7 +388,9 @@ def _insights_in_window(
 
 
 def _missed_themes_aggregated(
-    db: "Database", period_start: date, period_end: date,
+    db: "Database",
+    period_start: date,
+    period_end: date,
 ) -> dict:
     """Aggregate daily `missed_opportunities` into per-theme / per-category
     counts over the quarter.
@@ -411,12 +430,15 @@ def _missed_themes_aggregated(
             theme = (m.get("theme_if_any") or "").strip()
             if not theme:
                 continue
-            bucket = by_theme.setdefault(theme, {
-                "occurrences": 0,
-                "symbols_seen": set(),
-                "categories_seen": set(),
-                "example_lessons": [],
-            })
+            bucket = by_theme.setdefault(
+                theme,
+                {
+                    "occurrences": 0,
+                    "symbols_seen": set(),
+                    "categories_seen": set(),
+                    "example_lessons": [],
+                },
+            )
             bucket["occurrences"] += 1
             sym = (m.get("symbol") or "").strip().upper()
             if sym:
@@ -438,18 +460,17 @@ def _missed_themes_aggregated(
         }
 
     # Sort themes by frequency for LLM readability.
-    by_theme_sorted = dict(sorted(
-        by_theme_out.items(),
-        key=lambda kv: (-kv[1]["occurrences"], kv[0]),
-    ))
+    by_theme_sorted = dict(
+        sorted(
+            by_theme_out.items(),
+            key=lambda kv: (-kv[1]["occurrences"], kv[0]),
+        )
+    )
 
     return {
         "by_theme": by_theme_sorted,
         "by_category": dict(by_category),
-        "total_real_misses": sum(
-            n for c, n in by_category.items()
-            if c not in _ESCAPE_HATCH_MISS_CATEGORIES
-        ),
+        "total_real_misses": sum(n for c, n in by_category.items() if c not in _ESCAPE_HATCH_MISS_CATEGORIES),
     }
 
 
@@ -457,8 +478,11 @@ def _missed_themes_aggregated(
 # Section: loss_patterns (aggregated over quarter's wrong-BUY grades)
 # ---------------------------------------------------------------------------
 
+
 def _loss_patterns_aggregated(
-    db: "Database", period_start: date, period_end: date,
+    db: "Database",
+    period_start: date,
+    period_end: date,
 ) -> dict:
     """Aggregate `buy_grades` with grade='wrong' by `loss_root_cause`.
 
@@ -516,13 +540,16 @@ def _loss_patterns_aggregated(
             if not cause:
                 continue
             total_wrong += 1
-            bucket = by_cause.setdefault(cause, {
-                "count": 0,
-                "symbols": [],
-                "losses": [],         # raw pct_move_since_buy
-                "rel_losses": [],     # market_relative_move_pct
-                "example_warnings": [],
-            })
+            bucket = by_cause.setdefault(
+                cause,
+                {
+                    "count": 0,
+                    "symbols": [],
+                    "losses": [],  # raw pct_move_since_buy
+                    "rel_losses": [],  # market_relative_move_pct
+                    "example_warnings": [],
+                },
+            )
             bucket["count"] += 1
             sym = (g.get("symbol") or "").strip().upper()
             if sym:
@@ -553,14 +580,14 @@ def _loss_patterns_aggregated(
         }
 
     # Sort by count desc for LLM readability.
-    by_cause_sorted = dict(sorted(
-        by_cause_out.items(),
-        key=lambda kv: (-kv[1]["count"], kv[0]),
-    ))
-
-    alpha_destruction_pct = (
-        round(alpha_destruction_sum, 2) if alpha_destruction_n > 0 else None
+    by_cause_sorted = dict(
+        sorted(
+            by_cause_out.items(),
+            key=lambda kv: (-kv[1]["count"], kv[0]),
+        )
     )
+
+    alpha_destruction_pct = round(alpha_destruction_sum, 2) if alpha_destruction_n > 0 else None
 
     return {
         "by_cause": by_cause_sorted,
@@ -573,8 +600,11 @@ def _loss_patterns_aggregated(
 # Section: watchlist_candidates
 # ---------------------------------------------------------------------------
 
+
 def _watchlist_candidates_aggregated(
-    db: "Database", period_start: date, period_end: date,
+    db: "Database",
+    period_start: date,
+    period_end: date,
 ) -> dict:
     """Symbols the evening analyst has repeatedly flagged as `add` / `watch`
     over the quarter — candidates for universe expansion, surfaced for
@@ -623,15 +653,18 @@ def _watchlist_candidates_aggregated(
             sym = (m.get("symbol") or "").strip().upper()
             if not sym:
                 continue
-            bucket = by_symbol.setdefault(sym, {
-                "symbol": sym,
-                "add_count": 0,
-                "watch_count": 0,
-                "dates": [],
-                "themes": set(),
-                "latest_reason": "",
-                "latest_miss_category": "",
-            })
+            bucket = by_symbol.setdefault(
+                sym,
+                {
+                    "symbol": sym,
+                    "add_count": 0,
+                    "watch_count": 0,
+                    "dates": [],
+                    "themes": set(),
+                    "latest_reason": "",
+                    "latest_miss_category": "",
+                },
+            )
             if rec == "add":
                 bucket["add_count"] += 1
             else:
@@ -656,7 +689,9 @@ def _watchlist_candidates_aggregated(
         candidates.append(bucket)
     candidates.sort(
         key=lambda b: (
-            -b["add_count"], -b["watch_count"], -b["total_flags"],
+            -b["add_count"],
+            -b["watch_count"],
+            -b["total_flags"],
             b["symbol"],
         ),
     )
@@ -674,6 +709,7 @@ def _watchlist_candidates_aggregated(
 # ---------------------------------------------------------------------------
 # Section: agent_signal_activity
 # ---------------------------------------------------------------------------
+
 
 def _agent_signal_activity(
     db: "Database",
@@ -696,28 +732,32 @@ def _agent_signal_activity(
       - risk_manager:    n_approved, n_rejected, n_scale_down
     """
     return {
-        "tech_analyst":    _count_tech_signals(db, period_start, period_end),
-        "news_analyst":    _count_news_signals(db, period_start, period_end),
-        "macro_analyst":   _count_macro_signals(db, period_start, period_end),
-        "earnings_analyst":_count_earnings_signals(db, period_start, period_end),
+        "tech_analyst": _count_tech_signals(db, period_start, period_end),
+        "news_analyst": _count_news_signals(db, period_start, period_end),
+        "macro_analyst": _count_macro_signals(db, period_start, period_end),
+        "earnings_analyst": _count_earnings_signals(db, period_start, period_end),
         "portfolio_manager": _count_pm_signals(db, period_start, period_end),
-        "risk_manager":    _count_rm_signals(db, period_start, period_end),
+        "risk_manager": _count_rm_signals(db, period_start, period_end),
     }
 
 
 def _iter_agent_logs_in_window(
-    db: "Database", agent_name: str, period_start: date, period_end: date,
+    db: "Database",
+    agent_name: str,
+    period_start: date,
+    period_end: date,
     limit_hint: int = 500,
 ):
     """Yield parsed full_response dicts for `agent_name` logs within the
     [period_start, period_end] window. Skips rows that fail to parse."""
     try:
         rows = db.get_recent_agent_outputs(
-            agent_name=agent_name, limit=limit_hint, before_date=None,
+            agent_name=agent_name,
+            limit=limit_hint,
+            before_date=None,
         )
     except Exception as exc:
-        logger.warning("agent_signal_activity: logs fetch failed for %s: %s",
-                       agent_name, exc)
+        logger.warning("agent_signal_activity: logs fetch failed for %s: %s", agent_name, exc)
         return
     start_str = period_start.isoformat()
     end_str = (period_end + timedelta(days=1)).isoformat()
@@ -762,13 +802,15 @@ def _tech_analyses_from_data(data) -> list[dict]:
     return []
 
 
-def _count_tech_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_tech_signals(db: "Database", period_start: date, period_end: date) -> dict:
     counts: Counter = Counter()
     distinct_syms_buy: set[str] = set()
     for _, data in _iter_agent_logs_in_window(
-        db, "tech_analyst", period_start, period_end, limit_hint=500,
+        db,
+        "tech_analyst",
+        period_start,
+        period_end,
+        limit_hint=500,
     ):
         for a in _tech_analyses_from_data(data):
             rating = (a.get("rating") or "").strip()
@@ -787,16 +829,17 @@ def _count_tech_signals(
     }
 
 
-def _count_news_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_news_signals(db: "Database", period_start: date, period_end: date) -> dict:
     n_state_changes = 0
     n_high_conv = 0
     n_bullish = 0
     n_bearish = 0
     n_neutral = 0
     for _, data in _iter_agent_logs_in_window(
-        db, "news_analyst", period_start, period_end,
+        db,
+        "news_analyst",
+        period_start,
+        period_end,
     ):
         if not isinstance(data, dict):
             continue
@@ -807,7 +850,7 @@ def _count_news_signals(
             n_bearish += 1
         elif sentiment == "neutral":
             n_neutral += 1
-        for ch in (data.get("state_changes") or []):
+        for ch in data.get("state_changes") or []:
             if not isinstance(ch, dict):
                 continue
             n_state_changes += 1
@@ -823,15 +866,16 @@ def _count_news_signals(
     }
 
 
-def _count_macro_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_macro_signals(db: "Database", period_start: date, period_end: date) -> dict:
     regime_counts: Counter = Counter()
     outlook_counts: Counter = Counter()
     n_regime_shifts = 0
     prev_regime: str | None = None
     for _, data in _iter_agent_logs_in_window(
-        db, "macro_analyst", period_start, period_end,
+        db,
+        "macro_analyst",
+        period_start,
+        period_end,
     ):
         if not isinstance(data, dict):
             continue
@@ -852,12 +896,14 @@ def _count_macro_signals(
     }
 
 
-def _count_earnings_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_earnings_signals(db: "Database", period_start: date, period_end: date) -> dict:
     sentiment_counts: Counter = Counter()
     for _, data in _iter_agent_logs_in_window(
-        db, "earnings_analyst", period_start, period_end, limit_hint=200,
+        db,
+        "earnings_analyst",
+        period_start,
+        period_end,
+        limit_hint=200,
     ):
         if not isinstance(data, dict):
             continue
@@ -875,15 +921,16 @@ def _count_earnings_signals(
     }
 
 
-def _count_pm_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_pm_signals(db: "Database", period_start: date, period_end: date) -> dict:
     n_sessions = 0
     n_targets_total = 0
     n_decisions_total = 0
     n_buy_decisions = 0
     for _, data in _iter_agent_logs_in_window(
-        db, "portfolio_manager", period_start, period_end,
+        db,
+        "portfolio_manager",
+        period_start,
+        period_end,
     ):
         if not isinstance(data, dict):
             continue
@@ -894,10 +941,7 @@ def _count_pm_signals(
             n_targets_total += len(targets)
         if isinstance(decisions, list):
             n_decisions_total += len(decisions)
-            n_buy_decisions += sum(
-                1 for d in decisions
-                if isinstance(d, dict) and d.get("action") == "BUY"
-            )
+            n_buy_decisions += sum(1 for d in decisions if isinstance(d, dict) and d.get("action") == "BUY")
     return {
         "n_sessions": n_sessions,
         "n_targets_total": n_targets_total,
@@ -906,16 +950,17 @@ def _count_pm_signals(
     }
 
 
-def _count_rm_signals(
-    db: "Database", period_start: date, period_end: date
-) -> dict:
+def _count_rm_signals(db: "Database", period_start: date, period_end: date) -> dict:
     n_approved = 0
     n_rejected = 0
     n_scale_down = 0
     n_mods = 0
     cat_counts: Counter = Counter()
     for _, data in _iter_agent_logs_in_window(
-        db, "risk_manager", period_start, period_end,
+        db,
+        "risk_manager",
+        period_start,
+        period_end,
     ):
         if not isinstance(data, dict):
             continue
@@ -949,6 +994,7 @@ def _count_rm_signals(
 # Section: corrigibility_trend (requires prev_digest)
 # ---------------------------------------------------------------------------
 
+
 def _corrigibility_trend(digest: dict, prev: dict) -> dict:
     """Compare current vs previous quarter on loss patterns + missed themes.
 
@@ -979,11 +1025,10 @@ def _corrigibility_trend(digest: dict, prev: dict) -> dict:
 
     cur_themes = (digest.get("missed_themes") or {}).get("by_theme") or {}
     prev_themes = (prev.get("missed_themes") or {}).get("by_theme") or {}
+
     def _recurring(theme_map: dict) -> set[str]:
-        return {
-            t for t, v in theme_map.items()
-            if (v or {}).get("occurrences", 0) >= 2
-        }
+        return {t for t, v in theme_map.items() if (v or {}).get("occurrences", 0) >= 2}
+
     cur_recur = _recurring(cur_themes)
     prev_recur = _recurring(prev_themes)
     themes_resolved = sorted(prev_recur - cur_recur)
@@ -996,14 +1041,13 @@ def _corrigibility_trend(digest: dict, prev: dict) -> dict:
     if loss_worsened:
         summary_parts.append(f"{len(loss_worsened)} worsened")
     if themes_persistent:
-        summary_parts.append(
-            f"{len(themes_persistent)} theme(s) STILL unresolved: "
-            f"{', '.join(themes_persistent[:3])}"
-        )
+        summary_parts.append(f"{len(themes_persistent)} theme(s) STILL unresolved: {', '.join(themes_persistent[:3])}")
     if themes_newly_emerging:
         summary_parts.append(f"{len(themes_newly_emerging)} new theme(s) emerging")
-    summary = " · ".join(summary_parts) if summary_parts else (
-        "no comparable trends — either fresh quarter or both quarters empty"
+    summary = (
+        " · ".join(summary_parts)
+        if summary_parts
+        else ("no comparable trends — either fresh quarter or both quarters empty")
     )
 
     return {
@@ -1079,9 +1123,7 @@ def _iter_sections(text: str) -> list[tuple[str, str, str]]:
         level = m.group(1)
         heading = m.group(2).strip()
         body_start = m.end()
-        body_end = (
-            matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        )
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         body = text[body_start:body_end].strip()
         out.append((level, heading, body))
     return out
@@ -1097,10 +1139,7 @@ def _extract_intro(text: str, max_chars: int = 600) -> str:
     if lines and lines[0].startswith("# ") and not lines[0].startswith("## "):
         start = 1
     first_h2 = _HEADING_RE.search("\n".join(lines[start:]))
-    intro_text = (
-        "\n".join(lines[start:]) if first_h2 is None
-        else "\n".join(lines[start:])[: first_h2.start()]
-    )
+    intro_text = "\n".join(lines[start:]) if first_h2 is None else "\n".join(lines[start:])[: first_h2.start()]
     intro_text = intro_text.strip()
     if len(intro_text) <= max_chars:
         return intro_text
@@ -1170,8 +1209,7 @@ def _extract_agent_prompt_snapshot(
             while j < len(sections) and sections[j][0] == "###":
                 sub_level, sub_heading, sub_body = sections[j]
                 tail_parts.append(
-                    f"{sub_level} {sub_heading}\n\n{sub_body}"
-                    if sub_body else f"{sub_level} {sub_heading}"
+                    f"{sub_level} {sub_heading}\n\n{sub_body}" if sub_body else f"{sub_level} {sub_heading}"
                 )
                 j += 1
             combined_body = "\n\n".join(p for p in tail_parts if p).strip()
@@ -1189,7 +1227,8 @@ def _extract_agent_prompt_snapshot(
         h_lower = heading.lower()
         # Learnings gets its own slot, separately surfaced to the LLM.
         if "learnings" in h_lower and (
-            "system-evolved" in h_lower or "auto-evolved" in h_lower
+            "system-evolved" in h_lower
+            or "auto-evolved" in h_lower
             or h_lower.strip() in {"learnings", "learnings (system-evolved)"}
         ):
             learnings_body = body
@@ -1210,11 +1249,13 @@ def _extract_agent_prompt_snapshot(
             # prior auto-evolutions (it then re-proposes paraphrase
             # duplicates that FIFO-evict genuine learnings).
             continue
-        key_sections.append({
-            "heading": heading,
-            "body": body,
-            "level": "##",
-        })
+        key_sections.append(
+            {
+                "heading": heading,
+                "body": body,
+                "level": "##",
+            }
+        )
         running_chars += len(candidate_chunk)
 
     # Learnings is high-priority — reserve space even if budget tight,
@@ -1252,7 +1293,8 @@ def _build_agent_prompts_snapshot(
         if not path.exists():
             logger.warning(
                 "agent_prompts_snapshot: prompt file missing for %s (%s)",
-                agent, path,
+                agent,
+                path,
             )
             out[agent] = {
                 "intro": "",
@@ -1267,7 +1309,9 @@ def _build_agent_prompts_snapshot(
             text = path.read_text()
         except OSError as exc:
             logger.warning(
-                "agent_prompts_snapshot: read failed for %s: %s", path, exc,
+                "agent_prompts_snapshot: read failed for %s: %s",
+                path,
+                exc,
             )
             out[agent] = {
                 "intro": "",

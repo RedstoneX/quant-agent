@@ -96,8 +96,7 @@ class MovePlan:
 
     def describe(self) -> str:
         lines = [
-            f"{len(self.id_rewrites)} ledger id(s) move "
-            f"{self.spec.old_prefix}* -> {self.spec.new_prefix}*",
+            f"{len(self.id_rewrites)} ledger id(s) move {self.spec.old_prefix}* -> {self.spec.new_prefix}*",
         ]
         lines += [f"  {old}  ->  {new}" for old, new in sorted(self.id_rewrites.items())]
         if self.scoped_path_already_present:
@@ -167,9 +166,7 @@ def apply_move(
                 f"cannot anchor the SCOPED_PATHS insertion: {old_site!r} is not listed "
                 "in the form this helper edits; add the new path by hand and re-verify"
             )
-        new_scoped = scoped_text.replace(
-            anchor, anchor + f'    "{plan.scoped_path_added}",\n', 1
-        )
+        new_scoped = scoped_text.replace(anchor, anchor + f'    "{plan.scoped_path_added}",\n', 1)
     return new_ledger, new_scoped
 
 
@@ -205,10 +202,7 @@ def verify_move(
 
     new_site = plan.new_site
     if f'"{new_site}"' not in scoped_text and f"'{new_site}'" not in scoped_text:
-        problems.append(
-            f"{new_site} is not in SCOPED_PATHS -- its numbers would drop out of "
-            "the ledger guard silently"
-        )
+        problems.append(f"{new_site} is not in SCOPED_PATHS -- its numbers would drop out of the ledger guard silently")
     return problems
 
 

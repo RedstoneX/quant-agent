@@ -61,6 +61,7 @@ Exit codes:
     1  stale/gone scratch worktrees found (report), or some survived --prune
     3  could not run (not a git repo, git error)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -205,9 +206,7 @@ def classify(
             continue
 
         if age < age_floor:
-            result.kept.append(
-                (wt, f"too recent ({age / 86400.0:.1f}d < {min_age_days}d)")
-            )
+            result.kept.append((wt, f"too recent ({age / 86400.0:.1f}d < {min_age_days}d)"))
             continue
         if not is_clean(wt):
             result.kept.append((wt, "working tree not clean"))
@@ -216,9 +215,7 @@ def classify(
             result.kept.append((wt, "branch not merged into base"))
             continue
 
-        result.stale.append(
-            (wt, f"merged, clean, idle {age / 86400.0:.1f}d")
-        )
+        result.stale.append((wt, f"merged, clean, idle {age / 86400.0:.1f}d"))
 
     return result
 
@@ -227,6 +224,7 @@ def classify(
 # git interaction (not exercised by the pure-classifier unit test; covered by
 # the real-git integration test)
 # ---------------------------------------------------------------------------
+
 
 def _git(args: list[str], cwd: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -290,6 +288,7 @@ def do_prune(repo_root: str, classified: Classified) -> list[tuple[Worktree, str
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _describe(wt: Worktree) -> str:
     name = os.path.basename(wt.path.rstrip("/")) or wt.path
     branch = wt.branch.replace("refs/heads/", "") if wt.branch else "(detached)"
@@ -331,11 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"prune_worktrees: cannot list worktrees for {repo_root}: {exc}", file=sys.stderr)
         return 3
 
-    prefixes = (
-        [_norm(p) for p in args.scratch_prefix]
-        if args.scratch_prefix
-        else default_scratch_prefixes(repo_root)
-    )
+    prefixes = [_norm(p) for p in args.scratch_prefix] if args.scratch_prefix else default_scratch_prefixes(repo_root)
 
     classified = classify(
         entries,

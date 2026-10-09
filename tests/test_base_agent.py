@@ -8,6 +8,7 @@ from src.agents.base import BaseAgent
 
 class ConcreteAgent(BaseAgent):
     """Test subclass of BaseAgent."""
+
     @property
     def name(self) -> str:
         return "test_agent"
@@ -140,12 +141,10 @@ def test_retry_backoff_is_aws_full_jitter():
     from src.agents.base import _retry_backoff_seconds, _BACKOFF_CAP_S
 
     for attempt in range(9):
-        bound = min(_BACKOFF_CAP_S, float(2 ** attempt))
+        bound = min(_BACKOFF_CAP_S, float(2**attempt))
         for _ in range(200):
             wait = _retry_backoff_seconds(attempt)
-            assert 0.0 <= wait < bound or bound == 0.0, (
-                f"attempt={attempt}: expected wait in [0, {bound}), got {wait}"
-            )
+            assert 0.0 <= wait < bound or bound == 0.0, f"attempt={attempt}: expected wait in [0, {bound}), got {wait}"
     # The cap must actually bind, or "full jitter" is unbounded in attempt.
     assert all(_retry_backoff_seconds(20) <= _BACKOFF_CAP_S for _ in range(200))
 
@@ -164,8 +163,7 @@ def test_retry_backoff_decorrelates_across_calls():
     # values; require at least 30 to allow for some collisions but
     # rule out a constant function.
     assert len(waits) >= 30, (
-        f"jitter must produce variability across calls; got "
-        f"{len(waits)} unique values from 50 samples"
+        f"jitter must produce variability across calls; got {len(waits)} unique values from 50 samples"
     )
 
 
@@ -201,8 +199,7 @@ def test_openai_client_gets_explicit_http_timeout():
         ConcreteAgent(api_key="k", model="gpt-5.4", max_tokens=1024)
         # base_url defaults to None (api.openai.com) unless OPENAI_BASE_URL is set
         # for relay routing — see test_openai_base_url_routes_through_relay.
-        mock_cls.assert_called_once_with(api_key="k", base_url=None,
-                                         timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+        mock_cls.assert_called_once_with(api_key="k", base_url=None, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
 
 
 def test_parse_json_prefers_agent_shape_over_larger_fragment():
@@ -234,7 +231,8 @@ def test_parse_json_full_text_still_wins_when_clean():
 
     result = AgentResult(
         raw_text='{"decisions": [], "portfolio_view": "flat"}',
-        tokens_used=0, model="test",
+        tokens_used=0,
+        model="test",
     )
     parsed = result.parse_json()
     assert parsed == {"decisions": [], "portfolio_view": "flat"}
@@ -256,9 +254,9 @@ def test_parse_json_prefers_later_agent_shaped_correction_over_larger_draft():
     from src.agents.base import AgentResult
 
     raw = (
-        'Draft:\n'
+        "Draft:\n"
         '{"approved": true, "reasoning": "this is a much longer draft explanation that should not outrank the corrected answer just because it is larger"}\n'
-        'Final:\n'
+        "Final:\n"
         '{"approved": false}'
     )
     result = AgentResult(raw_text=raw, tokens_used=0, model="test")
@@ -276,6 +274,7 @@ def test_parse_json_prefers_later_agent_shaped_correction_over_larger_draft():
 # inner sub-object lacking all 4 required fields. These tests reproduce the
 # same STRUCTURE (not the verbatim production text) to keep the fix's
 # behavior pinned. ===
+
 
 def test_parse_json_repairs_missing_opening_quote_on_a_key():
     """A pretty-printed object with one key missing its opening quote must
@@ -346,6 +345,7 @@ def test_repair_unquoted_keys_leaves_string_values_alone():
 
 # === Cost tracking edge cases (R7 self-audit) ===
 
+
 def test_run_records_cost_for_known_model(monkeypatch):
     """Happy path: tokens land, model is in PRICING, AgentResult carries cost.
 
@@ -357,8 +357,10 @@ def test_run_records_cost_for_known_model(monkeypatch):
     """
     # monkeypatch auto-reverts the PRICING entry at test exit.
     from src import cost_table
+
     monkeypatch.setitem(
-        cost_table.PRICING, "claude-opus-4-7",
+        cost_table.PRICING,
+        "claude-opus-4-7",
         {"input": 10.0, "output": 50.0},
     )
 
@@ -454,8 +456,10 @@ def test_run_with_anthropic_caching_sums_input_correctly():
 
 # === retry classification / truncation / prompt-cache (audit re-scan) ===
 
+
 class _FakeStatusError(Exception):
     """Mimics an SDK APIStatusError carrying an HTTP status_code."""
+
     def __init__(self, status_code, msg="boom"):
         super().__init__(msg)
         self.status_code = status_code
@@ -531,6 +535,7 @@ def test_anthropic_system_prompt_uses_uncached_pricing_shape(mock_anthropic):
 
 # === cross-provider failover (OpenAI primary -> Anthropic fallback) ===
 
+
 def _good_anthropic_response(text='{"result": "ok"}'):
     r = MagicMock()
     r.content = [MagicMock(text=text)]
@@ -553,12 +558,18 @@ def test_failover_openai_exhausted_then_anthropic_succeeds(monkeypatch):
     anth = MagicMock()
     anth.messages.create.return_value = _good_anthropic_response()
     with patch("openai.OpenAI", return_value=oai), patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="k",
+            model="gpt-5.5",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
-    assert result.model == "claude-opus-4-7"      # actual model used → correct pricing
-    anth.messages.create.assert_called_once()       # single-shot failover (no retry)
+    assert result.model == "claude-opus-4-7"  # actual model used → correct pricing
+    anth.messages.create.assert_called_once()  # single-shot failover (no retry)
 
 
 def test_no_failover_when_fallback_key_empty(monkeypatch):
@@ -585,12 +596,18 @@ def test_no_failover_when_fallback_pair_identical_to_primary(monkeypatch):
     anth = MagicMock()
     anth.messages.create.side_effect = ConnectionError("anthropic down")
     with patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="k",
+            model="claude-opus-4-7",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         assert agent._failover_reachable is False
         with pytest.raises(ConnectionError):
             agent.run(data="x")
-    assert anth.messages.create.call_count == 2     # 2 primary retries, no extra failover call
+    assert anth.messages.create.call_count == 2  # 2 primary retries, no extra failover call
 
 
 def test_failover_fires_for_a_claude_primary_when_fallback_pair_differs(monkeypatch):
@@ -610,7 +627,7 @@ def test_failover_fires_for_a_claude_primary_when_fallback_pair_differs(monkeypa
         result = agent.run(data="x")
     assert result.model == "google/gemini-3.5-flash-lite"
     assert result.actual_provider == "openrouter"
-    assert anth.messages.create.call_count == 2      # both primary retries burned
+    assert anth.messages.create.call_count == 2  # both primary retries burned
     ork.chat.completions.create.assert_called_once()  # single-shot failover
 
 
@@ -631,14 +648,21 @@ def test_failover_both_fail_reraises_original_openai_error(monkeypatch):
     anth = MagicMock()
     anth.messages.create.side_effect = AnthropicDown("anthropic")
     with patch("openai.OpenAI", return_value=oai), patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="k",
+            model="gpt-5.5",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         with pytest.raises(OpenAIDown):
             agent.run(data="x")
     anth.messages.create.assert_called_once()
 
 
 # === DeepSeek provider (OpenAI-compatible API, distinct routing) ===
+
 
 def _deepseek_oai_mock(content='{"result": "ok"}', finish_reason="stop", reasoning=None):
     """Build a mock OpenAI client whose chat.completions.create returns a
@@ -663,6 +687,7 @@ def test_deepseek_routes_to_openai_sdk_with_base_url():
     """A deepseek-* model uses the OpenAI SDK pointed at the DeepSeek base_url,
     NOT Anthropic; _use_deepseek True and _use_openai False."""
     from src.agents.base import _DEEPSEEK_BASE_URL
+
     with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
         oai_cls.return_value = _deepseek_oai_mock()
         agent = ConcreteAgent(api_key="dk", model="deepseek-v4-flash", max_tokens=4096)
@@ -704,6 +729,7 @@ def test_deepseek_clamps_max_tokens_to_model_ceiling():
     not clamp, an over-ceiling value). v4-flash (384000) passes 128000 through;
     an unknown deepseek-* id clamps to the conservative 8192 default."""
     from src.agents.base import _DEEPSEEK_DEFAULT_CEILING
+
     # under ceiling → unchanged
     with patch("openai.OpenAI") as oai_cls:
         client = _deepseek_oai_mock()
@@ -744,9 +770,10 @@ def test_deepseek_empty_content_with_reasoning_returns_empty():
 
 def test_is_deepseek_model_prefix_routing():
     from src.agents.base import _is_deepseek_model, _is_openai_model
+
     assert _is_deepseek_model("deepseek-v4-flash") is True
     assert _is_deepseek_model("deepseek-chat") is True
-    assert _is_openai_model("deepseek-v4-flash") is False   # must NOT be OpenAI
+    assert _is_openai_model("deepseek-v4-flash") is False  # must NOT be OpenAI
     assert _is_deepseek_model("gpt-5.5") is False
     assert _is_deepseek_model("claude-opus-4-7") is False
 
@@ -768,6 +795,7 @@ def test_is_retryable_402_insufficient_balance_fast_fails():
     class Err(Exception):
         def __init__(self, status):
             self.status_code = status
+
     assert _is_retryable(Err(402)) is False
     assert _is_retryable(Err(429)) is True
     assert _is_retryable(Err(503)) is True
@@ -785,8 +813,14 @@ def test_deepseek_primary_fails_over_to_anthropic(monkeypatch):
     anth = MagicMock()
     anth.messages.create.return_value = _good_anthropic_response()
     with patch("openai.OpenAI", return_value=ds), patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="dk", model="deepseek-v4-flash", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="dk",
+            model="deepseek-v4-flash",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
     assert result.model == "claude-opus-4-7"
@@ -806,6 +840,7 @@ def test_deepseek_primary_no_failover_without_key(monkeypatch):
 
 
 # === OPENAI_BASE_URL relay routing (中转站) ===
+
 
 def test_openai_base_url_routes_through_relay(monkeypatch):
     """When OPENAI_BASE_URL is set, the OpenAI client is built pointing at the
@@ -836,6 +871,7 @@ def test_openai_base_url_defaults_none_when_unset(monkeypatch):
 def test_deepseek_base_url_unaffected_by_openai_base_url(monkeypatch):
     """A deepseek-* model keeps its own base_url even if OPENAI_BASE_URL is set."""
     from src.agents.base import _DEEPSEEK_BASE_URL
+
     monkeypatch.setenv("OPENAI_BASE_URL", "http://relay/v1")
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = MagicMock()
@@ -844,6 +880,7 @@ def test_deepseek_base_url_unaffected_by_openai_base_url(monkeypatch):
 
 
 # === OPENAI_CA_BUNDLE — trust a private relay CA (Caddy-internal etc.) ===
+
 
 def test_openai_ca_bundle_trusts_relay_ca(monkeypatch, tmp_path):
     """With OPENAI_CA_BUNDLE set, the OpenAI client is built with an httpx
@@ -876,6 +913,7 @@ def test_openai_no_ca_bundle_uses_default_trust(monkeypatch):
 
 
 # === streamed OpenAI path + relay hardening (CF-524 / 429 storms / degenerate 200s) ===
+
 
 def _stream_chunk(piece=None, finish_reason=None, usage=None, error=None, chunk_id=None):
     """One streamed chunk. A usage-only chunk (include_usage's final extra
@@ -911,8 +949,7 @@ def _stream_usage(prompt=100, completion=50):
     return u
 
 
-def _openai_stream_mock(pieces=('{"result"', ': "ok"}'), finish_reason="stop", usage="default",
-                        gen_id=None):
+def _openai_stream_mock(pieces=('{"result"', ': "ok"}'), finish_reason="stop", usage="default", gen_id=None):
     """Mock OpenAI client whose chat.completions.create returns a streamed
     (iterable-of-chunks) response — the shape _call_openai consumes.
     finish_reason=None simulates a connection cut mid-generation (no final
@@ -966,6 +1003,7 @@ def test_openai_stream_interrupted_discards_partial_and_retries(monkeypatch):
     text must be DISCARDED (a half-emitted PM decision parses like 'no
     trades') and the error must be retryable."""
     from src.agents.base import LLMStreamInterruptedError, _is_retryable
+
     monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
     with patch("openai.OpenAI") as oai_cls:
@@ -984,6 +1022,7 @@ def test_openai_empty_content_raises_retryable_not_silent_success(monkeypatch):
     masquerading as a deliberate no-signal and burning the agent's one shot
     for the session."""
     from src.agents.base import LLMEmptyResponseError, _is_retryable
+
     monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
     with patch("openai.OpenAI") as oai_cls:
@@ -1013,10 +1052,18 @@ def test_openai_empty_content_fails_over_to_anthropic(monkeypatch):
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
     anth = MagicMock()
     anth.messages.create.return_value = _good_anthropic_response()
-    with patch("openai.OpenAI", return_value=_openai_stream_mock(pieces=(), finish_reason="stop")), \
-         patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+    with (
+        patch("openai.OpenAI", return_value=_openai_stream_mock(pieces=(), finish_reason="stop")),
+        patch("anthropic.Anthropic", return_value=anth),
+    ):
+        agent = ConcreteAgent(
+            api_key="k",
+            model="gpt-5.5",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
     assert result.model == "claude-opus-4-7"
@@ -1027,6 +1074,7 @@ def test_anthropic_empty_content_raises_unless_truncation(monkeypatch):
     (degenerate 200); max_tokens + empty content is a legit whole-budget
     truncation and returns '' flagged truncated."""
     from src.agents.base import LLMEmptyResponseError
+
     monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "1")
     with patch("anthropic.Anthropic") as anth_cls:
@@ -1042,6 +1090,7 @@ def test_anthropic_empty_content_raises_unless_truncation(monkeypatch):
     # This test's second half is a separate scenario, not a second call in
     # the same outage, so the breaker is cleared between them.
     from src.agents.base import _reset_route_breakers_for_tests
+
     _reset_route_breakers_for_tests()
     with patch("anthropic.Anthropic") as anth_cls:
         r = _good_anthropic_response()
@@ -1057,6 +1106,7 @@ def test_deepseek_empty_content_nontruncation_raises(monkeypatch):
     """DeepSeek mirror of the degenerate-200 guard (the truncation-family
     empty case is covered by test_deepseek_empty_content_with_reasoning...)."""
     from src.agents.base import LLMEmptyResponseError
+
     monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "1")
     with patch("openai.OpenAI") as oai_cls:
@@ -1076,8 +1126,7 @@ def test_retry_deadline_abandons_primary_for_failover(monkeypatch):
     # monotonic: loop_start=0; attempt 1 fails at 200s (<480 → retry);
     # attempt 2 fails at 600s (>=480 → abandon primary, fail over).
     ticks = [0.0, 200.0, 600.0]
-    monkeypatch.setattr("src.agents.base.time.monotonic",
-                        lambda: ticks.pop(0) if ticks else 600.0)
+    monkeypatch.setattr("src.agents.base.time.monotonic", lambda: ticks.pop(0) if ticks else 600.0)
     # Pin the budget: the assertion below counts attempts, so an ambient
     # QUANT_AGENT_MAX_RETRIES override must not change the arithmetic.
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "7")
@@ -1086,8 +1135,14 @@ def test_retry_deadline_abandons_primary_for_failover(monkeypatch):
     anth = MagicMock()
     anth.messages.create.return_value = _good_anthropic_response()
     with patch("openai.OpenAI", return_value=oai), patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="k",
+            model="gpt-5.5",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         result = agent.run(data="x")
     assert oai.chat.completions.create.call_count == 2  # NOT the full 7-attempt budget
     assert result.model == "claude-opus-4-7"
@@ -1095,6 +1150,7 @@ def test_retry_deadline_abandons_primary_for_failover(monkeypatch):
 
 def test_retry_deadline_env_override(monkeypatch):
     from src.agents.base import _retry_deadline_s, _DEFAULT_RETRY_DEADLINE_S
+
     monkeypatch.delenv("QUANT_AGENT_RETRY_DEADLINE_S", raising=False)
     assert _retry_deadline_s() == _DEFAULT_RETRY_DEADLINE_S
     monkeypatch.setenv("QUANT_AGENT_RETRY_DEADLINE_S", "60")
@@ -1110,6 +1166,7 @@ def test_retry_after_hint_extraction():
 
     class HeaderErr(Exception):
         pass
+
     e = HeaderErr("429")
     resp = MagicMock()
     resp.headers = {"retry-after": "37"}
@@ -1118,6 +1175,7 @@ def test_retry_after_hint_extraction():
 
     class BodyErr(Exception):
         pass
+
     b = BodyErr("429")
     b.body = {"retry_after": 15}
     assert _retry_after_hint_seconds(b) == 15.0
@@ -1143,8 +1201,7 @@ def test_retry_sleeps_at_least_the_server_hint(monkeypatch):
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "2")
 
     oai = MagicMock()
-    oai.chat.completions.create.side_effect = ConnectionError(
-        'Concurrency limit exceeded {"retry_after": 90}')
+    oai.chat.completions.create.side_effect = ConnectionError('Concurrency limit exceeded {"retry_after": 90}')
     with patch("openai.OpenAI", return_value=oai):
         agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64)
         with pytest.raises(ConnectionError):
@@ -1155,11 +1212,11 @@ def test_retry_sleeps_at_least_the_server_hint(monkeypatch):
     # primary and demoted the provider process-wide. The second scenario is a
     # fresh outage, not a continuation.
     from src.agents.base import _reset_route_breakers_for_tests
+
     _reset_route_breakers_for_tests()
     sleeps.clear()
     oai2 = MagicMock()
-    oai2.chat.completions.create.side_effect = ConnectionError(
-        'slow down {"retry_after": 6000}')
+    oai2.chat.completions.create.side_effect = ConnectionError('slow down {"retry_after": 6000}')
     with patch("openai.OpenAI", return_value=oai2):
         agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64)
         with pytest.raises(ConnectionError):
@@ -1188,8 +1245,14 @@ def test_failover_client_disables_sdk_internal_retries(monkeypatch):
     oai.chat.completions.create.side_effect = ConnectionError("down")
     with patch("openai.OpenAI", return_value=oai), patch("anthropic.Anthropic") as anth_cls:
         anth_cls.return_value.messages.create.return_value = _good_anthropic_response()
-        agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, fallback_api_key="fk",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="k",
+            model="gpt-5.5",
+            max_tokens=64,
+            fallback_api_key="fk",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         agent.run(data="x")
         assert anth_cls.call_args.kwargs.get("max_retries") == 0
 
@@ -1198,6 +1261,7 @@ def test_llm_semaphore_released_after_success_and_failure(monkeypatch):
     """The per-provider in-flight caps must never leak a slot — a leaked slot
     would permanently shrink OpenAI concurrency for the whole process."""
     from src.agents import base as base_mod
+
     monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "1")
     start = base_mod._OPENAI_LLM_SEMAPHORE._value
@@ -1215,14 +1279,17 @@ def test_llm_semaphore_released_after_success_and_failure(monkeypatch):
 # === Stage 1 (QAMC provider/model/correlation plumbing) ===
 # OpenRouter provider seam + AgentResult attribution fields.
 
+
 def test_openrouter_routes_to_openai_sdk_with_base_url():
     """provider='openrouter' uses the OpenAI SDK pointed at OpenRouter's
     base_url, NOT Anthropic — same shape as the DeepSeek routing test above."""
     from src.agents.base import _OPENROUTER_BASE_URL
+
     with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
         oai_cls.return_value = _openai_stream_mock()
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=4096, provider="openrouter")
+        agent = ConcreteAgent(
+            api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=4096, provider="openrouter"
+        )
         assert agent._use_openrouter is True
         assert agent._use_openai is False
         assert agent._use_deepseek is False
@@ -1234,6 +1301,7 @@ def test_openrouter_routes_to_openai_sdk_with_base_url():
 
 # === Google AI Studio direct (2026-08-31 owner decision) ===
 
+
 def test_google_routes_to_openai_sdk_with_base_url():
     """provider='google' — a bare 'gemini-*' id, no 'google/' vendor prefix —
     uses the OpenAI SDK pointed at Google's OpenAI-compatible compat
@@ -1241,10 +1309,10 @@ def test_google_routes_to_openai_sdk_with_base_url():
     tests above: Google is reached through the shared OpenAI-wire path
     (_openai_wire_call), not a native Gemini client."""
     from src.agents.base import _GOOGLE_BASE_URL
+
     with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
         oai_cls.return_value = _openai_stream_mock()
-        agent = ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                              max_tokens=4096, provider="google")
+        agent = ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=4096, provider="google")
         assert agent._use_google is True
         assert agent._use_openrouter is False
         assert agent._use_openai is False
@@ -1275,8 +1343,7 @@ def test_bare_gemini_id_infers_google_provider_without_explicit_override():
 def test_google_client_disables_sdk_internal_retries():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                     max_tokens=64, provider="google")
+        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google")
         assert oai_cls.call_args.kwargs.get("max_retries") == 0
 
 
@@ -1285,12 +1352,12 @@ def test_google_uses_dedicated_semaphore_not_openai_relay_or_openrouter():
     must not contend for (or be starved by) the OpenAI relay's or
     OpenRouter's concurrency slots."""
     from src.agents import base as base_mod
+
     openai_start = base_mod._OPENAI_LLM_SEMAPHORE._value
     openrouter_start = base_mod._OPENROUTER_LLM_SEMAPHORE._value
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                     max_tokens=64, provider="google").run(data="x")
+        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google").run(data="x")
     assert base_mod._OPENAI_LLM_SEMAPHORE._value == openai_start
     assert base_mod._OPENROUTER_LLM_SEMAPHORE._value == openrouter_start
 
@@ -1304,8 +1371,7 @@ def test_google_primary_run_succeeds_end_to_end():
     attribution reports 'google' with no failover."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        agent = ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                              max_tokens=64, provider="google")
+        agent = ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google")
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
     assert result.requested_provider == "google"
@@ -1322,8 +1388,9 @@ def test_explicit_provider_field_overrides_prefix_inference():
     which is the entire reason OpenRouter needs an explicit field at all."""
     with patch("openai.OpenAI") as oai_cls, patch("anthropic.Anthropic") as anth_cls:
         oai_cls.return_value = _openai_stream_mock()
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=4096, provider="openrouter")
+        agent = ConcreteAgent(
+            api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=4096, provider="openrouter"
+        )
         assert agent._provider == "openrouter"
         anth_cls.assert_not_called()
         oai_cls.assert_called_once()
@@ -1338,14 +1405,14 @@ def test_provider_unset_preserves_existing_prefix_routing_behavior():
         assert ConcreteAgent(api_key="k", model="deepseek-v4-flash", max_tokens=64)._provider == "deepseek"
         assert ConcreteAgent(api_key="k", model="claude-opus-4-7", max_tokens=64)._provider == "anthropic"
         # Explicitly passing provider=None must be identical to omitting it.
-        assert ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64,
-                             provider=None)._provider == "openai"
+        assert ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=64, provider=None)._provider == "openai"
 
 
 def test_invalid_explicit_provider_falls_back_to_prefix_inference():
     """resolve_provider() only honors a KNOWN provider name — a typo must
     not silently misroute (and must not crash construction either)."""
     from src.agents.base import resolve_provider
+
     assert resolve_provider("gpt-5.5", "not-a-real-provider") == "openai"
     assert resolve_provider("gpt-5.5", "") == "openai"
     assert resolve_provider("gpt-5.5", None) == "openai"
@@ -1364,9 +1431,15 @@ def test_openrouter_primary_fails_over_to_anthropic(monkeypatch):
     anth = MagicMock()
     anth.messages.create.return_value = _good_anthropic_response()
     with patch("openai.OpenAI", return_value=ork), patch("anthropic.Anthropic", return_value=anth):
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64,
-                              fallback_api_key="fk", provider="openrouter",
-                              fallback_provider="anthropic", fallback_model="claude-opus-4-7")
+        agent = ConcreteAgent(
+            api_key="ork",
+            model="anthropic/claude-3.5-sonnet",
+            max_tokens=64,
+            fallback_api_key="fk",
+            provider="openrouter",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
+        )
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
     assert result.model == "claude-opus-4-7"
@@ -1383,8 +1456,9 @@ def test_openrouter_primary_no_failover_without_key(monkeypatch):
     ork = MagicMock()
     ork.chat.completions.create.side_effect = ConnectionError("down")
     with patch("openai.OpenAI", return_value=ork), patch("anthropic.Anthropic") as A:
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")  # no fallback key
+        agent = ConcreteAgent(
+            api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter"
+        )  # no fallback key
         with pytest.raises(ConnectionError):
             agent.run(data="x")
         A.assert_not_called()
@@ -1393,8 +1467,7 @@ def test_openrouter_primary_no_failover_without_key(monkeypatch):
 def test_openrouter_client_disables_sdk_internal_retries():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                     max_tokens=64, provider="openrouter")
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         assert oai_cls.call_args.kwargs.get("max_retries") == 0
 
 
@@ -1402,11 +1475,13 @@ def test_openrouter_uses_dedicated_semaphore_not_openai_relay():
     """OpenRouter is a distinct account/rate-limit domain from the OpenAI
     relay — it must not contend for the relay's concurrency slots."""
     from src.agents import base as base_mod
+
     openai_start = base_mod._OPENAI_LLM_SEMAPHORE._value
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                     max_tokens=64, provider="openrouter").run(data="x")
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter").run(
+            data="x"
+        )
     # The OpenAI relay's semaphore must be untouched by an OpenRouter call.
     assert base_mod._OPENAI_LLM_SEMAPHORE._value == openai_start
 
@@ -1419,6 +1494,7 @@ def test_openrouter_uses_dedicated_semaphore_not_openai_relay():
 # GET /generation?id=<chunk.id> — not immediately queryable (measured 404 then
 # resolves minutes later), so recovery is a small bounded best-effort retry
 # that must never raise and must never make a call worse than 0/0-unknown.
+
 
 def _generation_response(total_cost=1.1e-06, tokens_prompt=8, tokens_completion=1):
     """A requests.Response-shaped mock for GET /generation?id=..., matching
@@ -1462,9 +1538,8 @@ def _requests_get_stub(generation_response=None, generation_exception=None):
             if generation_exception is not None:
                 raise generation_exception
             return generation_response
-        raise _requests.ConnectionError(
-            "outbound HTTP disabled in this test (only /generation is stubbed)"
-        )
+        raise _requests.ConnectionError("outbound HTTP disabled in this test (only /generation is stubbed)")
+
     return MagicMock(side_effect=_get)
 
 
@@ -1472,6 +1547,7 @@ def _generation_calls(mock_get):
     """The subset of a stubbed requests.get's calls that hit /generation —
     filters out any unrelated pricing-catalog call sharing the same mock."""
     from src.agents.base import _OPENROUTER_GENERATION_URL
+
     return [c for c in mock_get.call_args_list if c.args[:1] == (_OPENROUTER_GENERATION_URL,)]
 
 
@@ -1489,8 +1565,7 @@ def test_generation_id_captured_and_used_for_recovery_lookup(monkeypatch):
         # trips). Set it explicitly to exercise "read it off self.client".
         client.api_key = "ork"
         oai_cls.return_value = client
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         agent.run(data="x")
     calls = _generation_calls(mock_get)
     assert len(calls) == 1
@@ -1502,13 +1577,16 @@ def test_recovered_openrouter_cost_reaches_settled_cost(monkeypatch):
     """A successful post-hoc lookup must settle the ACTUAL cost/tokens, not
     the 0/0-unknown fallback that would otherwise hold the full reservation."""
     monkeypatch.setattr("time.sleep", lambda s: None)
-    mock_get = _requests_get_stub(generation_response=_generation_response(
-        total_cost=1.1e-06, tokens_prompt=8, tokens_completion=1,
-    ))
+    mock_get = _requests_get_stub(
+        generation_response=_generation_response(
+            total_cost=1.1e-06,
+            tokens_prompt=8,
+            tokens_completion=1,
+        )
+    )
     with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-xyz")
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         result = agent.run(data="x")
     assert result.input_tokens == 8
     assert result.output_tokens == 1
@@ -1521,8 +1599,7 @@ def test_recovery_only_attempted_when_usage_absent():
     mock_get = _requests_get_stub(generation_response=_generation_response())
     with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(gen_id="gen-should-be-unused")
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         result = agent.run(data="x")
     assert _generation_calls(mock_get) == []
     assert result.input_tokens == 100 and result.output_tokens == 50
@@ -1536,12 +1613,12 @@ def test_recovery_404_falls_back_to_unknown_cost_without_raising(monkeypatch):
     mock_get = _requests_get_stub(generation_response=_404_response())
     with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-404")
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         result = agent.run(data="x")
     assert result.input_tokens == 0 and result.output_tokens == 0
     assert result.cost_usd is None
     from src.agents.base import _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+
     assert len(_generation_calls(mock_get)) == _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
 
 
@@ -1549,18 +1626,17 @@ def test_recovery_timeout_falls_back_to_unknown_cost_without_raising(monkeypatch
     """A network timeout must degrade the same way as a 404 — never raise,
     never block the session beyond the bounded retry budget."""
     import requests
+
     monkeypatch.setattr("time.sleep", lambda s: None)
-    mock_get = _requests_get_stub(
-        generation_exception=requests.Timeout("generation lookup timed out")
-    )
+    mock_get = _requests_get_stub(generation_exception=requests.Timeout("generation lookup timed out"))
     with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(usage=None, gen_id="gen-timeout")
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         result = agent.run(data="x")
     assert result.input_tokens == 0 and result.output_tokens == 0
     assert result.cost_usd is None
     from src.agents.base import _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
+
     assert len(_generation_calls(mock_get)) == _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS
 
 
@@ -1585,8 +1661,7 @@ def test_recovery_skipped_when_no_generation_id_was_ever_seen():
     mock_get = _requests_get_stub(generation_response=_generation_response())
     with patch("requests.get", mock_get), patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock(usage=None, gen_id=None)
-        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                              max_tokens=64, provider="openrouter")
+        agent = ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter")
         result = agent.run(data="x")
     assert _generation_calls(mock_get) == []
     assert result.cost_usd is None
@@ -1604,6 +1679,7 @@ def test_agent_result_new_fields_populated_on_primary_success(mock_anthropic):
     assert result.used_fallback is False
     assert result.latency_s >= 0.0
     import hashlib
+
     expected = hashlib.sha256(agent.system_prompt.encode("utf-8")).hexdigest()[:12]
     assert result.prompt_version == expected
 
@@ -1630,6 +1706,7 @@ def test_prompt_version_changes_with_prompt_content(mock_anthropic):
 
 def test_agent_log_kwargs_helper_maps_fallback_status():
     from src.agents.base import agent_log_kwargs, AgentResult
+
     success = AgentResult(raw_text="", tokens_used=0, model="m", used_fallback=False)
     fallback = AgentResult(raw_text="", tokens_used=0, model="m", used_fallback=True)
     assert agent_log_kwargs(success)["status"] == "success"
@@ -1637,6 +1714,7 @@ def test_agent_log_kwargs_helper_maps_fallback_status():
 
 
 # ---------------------------------- every attempt's failure reaches the circuit
+
 
 def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
     """`run()` re-raises the PRIMARY error, so the failover's error used to be
@@ -1662,9 +1740,13 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
 
         def begin_call(self, **kw):
             return SimpleNamespace(
-                reservation_id="r", run_id="run", mode="morning",
-                agent_name="test_agent", model=kw.get("model"),
-                input_tokens_estimate=10, max_output_tokens=10,
+                reservation_id="r",
+                run_id="run",
+                mode="morning",
+                agent_name="test_agent",
+                model=kw.get("model"),
+                input_tokens_estimate=10,
+                max_output_tokens=10,
             )
 
         def before_provider_attempt(self, reservation, *, model):
@@ -1682,12 +1764,15 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
     anth = MagicMock()
     anth.messages.create.side_effect = _Status(401)
 
-    with patch("openai.OpenAI", return_value=oai), \
-            patch("anthropic.Anthropic", return_value=anth):
+    with patch("openai.OpenAI", return_value=oai), patch("anthropic.Anthropic", return_value=anth):
         agent = ConcreteAgent(
-            api_key="k", model="google/gemini-3.5-flash-lite", max_tokens=64,
-            fallback_api_key="fk", provider="openrouter",
-            fallback_provider="anthropic", fallback_model="claude-opus-4-7",
+            api_key="k",
+            model="google/gemini-3.5-flash-lite",
+            max_tokens=64,
+            fallback_api_key="fk",
+            provider="openrouter",
+            fallback_provider="anthropic",
+            fallback_model="claude-opus-4-7",
         )
         agent.set_cost_circuit(_Circuit())
         with pytest.raises(_Status):
@@ -1696,9 +1781,9 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
     statuses = [getattr(e, "status_code", None) for e in seen["attempts"]]
     assert 401 in statuses, "the failover's 401 must reach the circuit"
     from src.agents.base import capacity_max_attempts
+
     assert statuses.count(429) == capacity_max_attempts(), (
-        "and EVERY primary refusal — the count is the deadline-derived "
-        "capacity cap, not a hand-pinned 2"
+        "and EVERY primary refusal — the count is the deadline-derived capacity cap, not a hand-pinned 2"
     )
 
 
@@ -1719,19 +1804,21 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
 # status never reached the classifier.
 # ===========================================================================
 
+
 def _mid_stream_error(code=429, error_type="rate_limit_exceeded", message="rate-limited upstream"):
     oai = MagicMock()
     oai.chat.completions.create.return_value = [
         _stream_chunk(piece='{"partial"'),
-        _stream_chunk(error={"code": code, "message": message,
-                             "metadata": {"error_type": error_type}},
-                      finish_reason="error"),
+        _stream_chunk(
+            error={"code": code, "message": message, "metadata": {"error_type": error_type}}, finish_reason="error"
+        ),
     ]
     return oai
 
 
 def test_mid_stream_error_surfaces_the_providers_status_code():
     from src.agents.base import LLMStreamErrorChunk
+
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _mid_stream_error()
         agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
@@ -1747,10 +1834,13 @@ def test_mid_stream_rate_limit_is_classified_provably_free():
     reservation."""
     from src.agents.base import LLMStreamErrorChunk
     from src.cost_circuit import _is_known_zero_cost_failure
-    assert _is_known_zero_cost_failure(
-        LLMStreamErrorChunk("rate limited", status_code=429,
-                            error_type="rate_limit_exceeded")
-    ) is True
+
+    assert (
+        _is_known_zero_cost_failure(
+            LLMStreamErrorChunk("rate limited", status_code=429, error_type="rate_limit_exceeded")
+        )
+        is True
+    )
 
 
 def test_mid_stream_error_without_a_code_stays_ambiguous():
@@ -1758,9 +1848,8 @@ def test_mid_stream_error_without_a_code_stays_ambiguous():
     free — it only stops discarding a status the provider did send."""
     from src.agents.base import LLMStreamErrorChunk
     from src.cost_circuit import _is_known_zero_cost_failure
-    assert _is_known_zero_cost_failure(
-        LLMStreamErrorChunk("something odd", status_code=None)
-    ) is False
+
+    assert _is_known_zero_cost_failure(LLMStreamErrorChunk("something odd", status_code=None)) is False
 
 
 def test_mid_stream_429_retries_but_400_fast_fails():
@@ -1768,6 +1857,7 @@ def test_mid_stream_429_retries_but_400_fast_fails():
     is checked before status_code — so it is judged on the provider's own
     code rather than blanket-retried."""
     from src.agents.base import LLMStreamErrorChunk, _is_retryable
+
     assert _is_retryable(LLMStreamErrorChunk("rl", status_code=429)) is True
     assert _is_retryable(LLMStreamErrorChunk("bad", status_code=400)) is False
     assert _is_retryable(LLMStreamErrorChunk("upstream", status_code=502)) is True
@@ -1804,8 +1894,9 @@ class ConcreteAgentWithSchema(ConcreteAgent):
 def test_openrouter_sends_default_medium_reasoning_effort():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                      max_tokens=64, provider="openrouter").run(data="x")
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter").run(
+            data="x"
+        )
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert kwargs["extra_body"]["reasoning"] == {"effort": "medium"}
 
@@ -1813,9 +1904,13 @@ def test_openrouter_sends_default_medium_reasoning_effort():
 def test_openrouter_sends_configured_reasoning_effort():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                      max_tokens=64, provider="openrouter",
-                      reasoning_effort="high").run(data="x")
+        ConcreteAgent(
+            api_key="ork",
+            model="anthropic/claude-3.5-sonnet",
+            max_tokens=64,
+            provider="openrouter",
+            reasoning_effort="high",
+        ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert kwargs["extra_body"]["reasoning"] == {"effort": "high"}
 
@@ -1825,8 +1920,9 @@ def test_openrouter_omits_response_format_when_agent_has_no_result_model():
     the request must not carry response_format at all."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
-                      max_tokens=64, provider="openrouter").run(data="x")
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet", max_tokens=64, provider="openrouter").run(
+            data="x"
+        )
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert "response_format" not in kwargs["extra_body"]
 
@@ -1835,8 +1931,10 @@ def test_openrouter_sends_strict_json_schema_when_result_model_set():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
         ConcreteAgentWithSchema(
-            api_key="ork", model="anthropic/claude-3.5-sonnet",
-            max_tokens=64, provider="openrouter",
+            api_key="ork",
+            model="anthropic/claude-3.5-sonnet",
+            max_tokens=64,
+            provider="openrouter",
         ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     fmt = kwargs["extra_body"]["response_format"]
@@ -1852,8 +1950,11 @@ def test_openrouter_structured_output_false_omits_response_format():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
         ConcreteAgentWithSchema(
-            api_key="ork", model="anthropic/claude-3.5-sonnet",
-            max_tokens=64, provider="openrouter", structured_output=False,
+            api_key="ork",
+            model="anthropic/claude-3.5-sonnet",
+            max_tokens=64,
+            provider="openrouter",
+            structured_output=False,
         ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert "response_format" not in kwargs["extra_body"]
@@ -1869,8 +1970,7 @@ def test_google_sends_default_medium_reasoning_effort():
     unlike OpenRouter's nested `reasoning: {effort: ...}`."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                      max_tokens=64, provider="google").run(data="x")
+        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google").run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert kwargs["extra_body"]["reasoning_effort"] == "medium"
     assert "reasoning" not in kwargs["extra_body"]  # that key is OpenRouter's shape
@@ -1879,9 +1979,9 @@ def test_google_sends_default_medium_reasoning_effort():
 def test_google_sends_configured_reasoning_effort():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                      max_tokens=64, provider="google",
-                      reasoning_effort="high").run(data="x")
+        ConcreteAgent(
+            api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google", reasoning_effort="high"
+        ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert kwargs["extra_body"]["reasoning_effort"] == "high"
 
@@ -1892,9 +1992,13 @@ def test_google_undocumented_reasoning_effort_left_unset_and_logged(caplog):
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
         with caplog.at_level("WARNING"):
-            ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
-                          max_tokens=64, provider="google",
-                          reasoning_effort="ultrathink").run(data="x")
+            ConcreteAgent(
+                api_key="gk",
+                model="gemini-3.5-flash-lite",
+                max_tokens=64,
+                provider="google",
+                reasoning_effort="ultrathink",
+            ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert "reasoning_effort" not in kwargs.get("extra_body", {})
     assert any("no documented Google" in r.message for r in caplog.records)
@@ -1906,8 +2010,9 @@ def test_google_sends_strict_json_schema_when_result_model_set():
     response_format too."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
-        ConcreteAgentWithSchema(api_key="gk", model="gemini-3.5-flash-lite",
-                                max_tokens=64, provider="google").run(data="x")
+        ConcreteAgentWithSchema(api_key="gk", model="gemini-3.5-flash-lite", max_tokens=64, provider="google").run(
+            data="x"
+        )
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     fmt = kwargs["extra_body"]["response_format"]
     assert fmt["type"] == "json_schema"
@@ -1918,8 +2023,11 @@ def test_google_structured_output_false_omits_response_format():
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
         ConcreteAgentWithSchema(
-            api_key="gk", model="gemini-3.5-flash-lite",
-            max_tokens=64, provider="google", structured_output=False,
+            api_key="gk",
+            model="gemini-3.5-flash-lite",
+            max_tokens=64,
+            provider="google",
+            structured_output=False,
         ).run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
     assert "response_format" not in kwargs["extra_body"]
@@ -1952,6 +2060,7 @@ def test_strict_schema_fallback_logs_once_and_still_sends_response_format(caplog
 #
 # Message text is the MEASURED production wording, 2026-09-30.
 
+
 class _Credit402(Exception):
     status_code = 402
 
@@ -1967,11 +2076,13 @@ _REAL_402_MESSAGE = (
 
 def test_affordable_max_tokens_reads_the_providers_own_figure():
     from src.agents.base import _affordable_max_tokens
+
     assert _affordable_max_tokens(_Credit402(_REAL_402_MESSAGE)) == 775
 
 
 def test_affordable_max_tokens_never_guesses_when_no_figure_is_named():
     from src.agents.base import _affordable_max_tokens
+
     exc = _Credit402("Error code: 402 - insufficient credit")
     assert _affordable_max_tokens(exc) is None
 
@@ -1982,12 +2093,12 @@ def test_affordable_max_tokens_ignores_non_credit_errors():
     class _RateLimited(Exception):
         status_code = 429
 
-    assert _affordable_max_tokens(
-        _RateLimited("you can only afford 775")) is None
+    assert _affordable_max_tokens(_RateLimited("you can only afford 775")) is None
 
 
 def test_402_stays_non_retryable_so_the_shrink_retry_is_the_only_re_ask():
     from src.agents.base import _is_retryable
+
     assert _is_retryable(_Credit402(_REAL_402_MESSAGE)) is False
 
 
@@ -1995,5 +2106,6 @@ def test_truncated_finish_reason_is_still_unusable():
     """A shrunken allowance may cut the answer off; that answer must still be
     discarded, never salvaged into a decision."""
     from src.agents.base import _TRUNCATION_FINISH_REASONS
+
     assert "max_tokens" in _TRUNCATION_FINISH_REASONS
     assert "length" in _TRUNCATION_FINISH_REASONS

@@ -24,16 +24,20 @@ def await_cover_and_finalize(pipeline, prot) -> None:
         logger.warning(
             "ExecutionStage: wait_for_order_terminal failed for %s: %s "
             "— treating as unknown status so finalize still runs",
-            order_id, e,
+            order_id,
+            e,
         )
         status = None
     if status != "filled":
         logger.warning(
             "Cover order %s did not fill before buy phase (status=%s)",
-            order_id, status or "unknown",
+            order_id,
+            status or "unknown",
         )
     pipeline._finalize_pending_protections(
-        [prot], context="ExecutionStage-Cover", wait=False,
+        [prot],
+        context="ExecutionStage-Cover",
+        wait=False,
     )
 
 

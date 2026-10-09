@@ -1,4 +1,5 @@
 """Five swallowed DB/broker read failures now log a traceback and leave a counted row."""
+
 from unittest.mock import MagicMock
 
 from src.prompt_facts.decisions import PromptDecisions
@@ -14,8 +15,7 @@ def _db(tmp_path):
 
 
 def _rows(db):
-    return [r[0] for r in db.conn.execute(
-        "SELECT kind FROM reconciliation_runs WHERE agreed = 0").fetchall()]
+    return [r[0] for r in db.conn.execute("SELECT kind FROM reconciliation_runs WHERE agreed = 0").fetchall()]
 
 
 def test_prompt_decisions_failures_are_recorded(tmp_path):
@@ -47,7 +47,11 @@ def test_stop_proximity_failure_is_recorded(tmp_path):
     db = _db(tmp_path)
     step = EveningStopProximitySession(
         atr_for_symbol=MagicMock(side_effect=RuntimeError("boom")),
-        sweep_symbol=lambda: "", broker=MagicMock(), stop_reader=MagicMock(), db=db)
+        sweep_symbol=lambda: "",
+        broker=MagicMock(),
+        stop_reader=MagicMock(),
+        db=db,
+    )
     pos = MagicMock()
     assert step.run([pos]) == []
     assert _rows(db) == ["guarded:sessions.evening_stop_proximity"]

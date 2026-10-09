@@ -8,6 +8,7 @@ The retired-vehicle pair (`_retired_cash_park_symbol`, `_release_retired_cash_pa
 on the host because each imports `src.execution.cash_sweep` inline and the broker-seam
 importer set must not widen (tests/test_import_layering.py); see docs/ARCHITECTURE.md.
 """
+
 from __future__ import annotations
 
 import logging
@@ -76,8 +77,7 @@ class CashPark:
         try:
             parked = sweeper.parked_value(positions)
         except Exception as e:  # noqa: BLE001 — unknowable sweep state must not inflate
-            logger.warning("deployable cash: parked-value read failed (%s) — "
-                           "treating sweep reserve as unavailable", e)
+            logger.warning("deployable cash: parked-value read failed (%s) — treating sweep reserve as unavailable", e)
             parked = 0.0
         return deployable_cash(cash, parked)
 
@@ -101,9 +101,5 @@ class CashPark:
         if sweeper is not None:
             investable, _parked = sweeper.split_positions(positions)
         return [
-            s for s in (
-                str(getattr(p, "symbol", "")).strip().upper()
-                for p in investable if getattr(p, "qty", 0)
-            )
-            if s
+            s for s in (str(getattr(p, "symbol", "")).strip().upper() for p in investable if getattr(p, "qty", 0)) if s
         ]

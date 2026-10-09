@@ -3,6 +3,7 @@
 Bodies moved verbatim from `PortfolioConstructor`; the config and the record
 side-channels are passed in as explicit arguments.
 """
+
 from __future__ import annotations
 
 from src.data.levels import (
@@ -17,7 +18,9 @@ from src.portfolio_constructor.divergence_counter import log_divergence
 
 
 def _held_trim_entry_and_stop(
-    note_refusal, target: TargetPosition, market_price: float | None,
+    note_refusal,
+    target: TargetPosition,
+    market_price: float | None,
     live_stop: float | None,
 ) -> tuple[float | None, float | None]:
     """(current price, live broker stop) for a trim of an unanalysed
@@ -29,14 +32,18 @@ def _held_trim_entry_and_stop(
     otherwise it bounds no loss and cannot size anything.
     """
     import math as _math
+
     sym = target.symbol
     is_short = target.direction == "short"
     action = "COVER" if is_short else "SELL"
     price = float(market_price) if market_price else 0.0
     stop = float(live_stop) if live_stop else 0.0
     usable = (
-        _math.isfinite(price) and _math.isfinite(stop) and price > 0
-        and stop > 0 and (stop > price if is_short else stop < price)
+        _math.isfinite(price)
+        and _math.isfinite(stop)
+        and price > 0
+        and stop > 0
+        and (stop > price if is_short else stop < price)
     )
     if usable:
         return (price, stop)
@@ -51,7 +58,9 @@ def _held_trim_entry_and_stop(
             f"(${price:,.2f}), so it bounds no loss"
         )
     note_refusal(
-        sym, target.direction, TRIM_REFUSAL_NO_USABLE_LIVE_STOP,
+        sym,
+        target.direction,
+        TRIM_REFUSAL_NO_USABLE_LIVE_STOP,
         f"the PM asked to trim {sym} to {target.risk_allocation_pct:.2f}% "
         f"risk. {sym} was not analysed this session, so the trim can only "
         f"be sized from the position's own stop, and {why}. The position "
@@ -119,20 +128,27 @@ def _derive_target(
         # through, so the eligibility preview and order construction
         # cannot disagree about what was unmeasurable.
         note_data_fault(
-            symbol, direction, derivation.fault, derivation.detail,
+            symbol,
+            direction,
+            derivation.fault,
+            derivation.detail,
         )
     log_target_divergence(symbol, derivation)
     return derivation
 
 
 def _log_target_divergence(
-    cfg, refusal_recorder, symbol: str, derivation: TargetDerivation,
+    cfg,
+    refusal_recorder,
+    symbol: str,
+    derivation: TargetDerivation,
 ) -> None:
     """Delegate to `divergence_counter.log_divergence`, which logs the
     comparison and, when a recorder is wired, writes one durable row for
     it. Nothing is accumulated in memory."""
     log_divergence(
-        symbol=symbol, derivation=derivation,
+        symbol=symbol,
+        derivation=derivation,
         threshold_pct=cfg.target_divergence_warn_pct,
         recorder=refusal_recorder,
     )

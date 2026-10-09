@@ -26,10 +26,17 @@ _BODIES = "src/agents/portfolio_manager/decision_grounding.py"
 
 #: Every name the agent exposes for decision grounding, delegated to the held part.
 DELEGATED = (
-    '_target_intent', 'validate_grounding', '_conflict_is_named', '_drop_unadjudicated_conflicts',
-    '_state_change_symbols_by_date', '_catalyst_cites_state_change', '_apply_subfloor_catalyst_rule',
-    '_drop_invalid_rejections', '_drop_invalid_targets', '_canonical_targets',
-    '_decision_fields_unchanged',
+    "_target_intent",
+    "validate_grounding",
+    "_conflict_is_named",
+    "_drop_unadjudicated_conflicts",
+    "_state_change_symbols_by_date",
+    "_catalyst_cites_state_change",
+    "_apply_subfloor_catalyst_rule",
+    "_drop_invalid_rejections",
+    "_drop_invalid_targets",
+    "_canonical_targets",
+    "_decision_fields_unchanged",
 )
 
 #: Bodies the part owns that it also reads through `self.` — handed in live.

@@ -4,6 +4,7 @@ The repo has shipped "recordings that record nothing" before, so every test
 here drives a real sqlite connection through the real migration ladder and
 reads the row back; nothing is asserted on a mock.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -32,10 +33,15 @@ def conn():
 
 # --- boundary ---------------------------------------------------------------
 
-@pytest.mark.parametrize("module", [
-    "src.sentinel.order_attempts", "src.sentinel.reconciliation",
-    "src.storage.schema.sentinel_tables",
-])
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "src.sentinel.order_attempts",
+        "src.sentinel.reconciliation",
+        "src.storage.schema.sentinel_tables",
+    ],
+)
 def test_sentinel_modules_pass_the_boundary_check(module):
     verdict = check_boundary(module)
     assert verdict.passed, verdict.failures
@@ -50,6 +56,7 @@ def test_sentinel_classes_build_from_stubs_with_keyword_only_args(cls):
 
 # --- migration --------------------------------------------------------------
 
+
 def test_migration_creates_both_tables_and_is_idempotent(conn):
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"order_attempts", "reconciliation_runs"} <= names
@@ -59,11 +66,20 @@ def test_migration_creates_both_tables_and_is_idempotent(conn):
 
 # --- order attempts ---------------------------------------------------------
 
+
 def test_order_attempt_row_is_written_and_read_back(conn):
     log = OrderAttemptLog(conn=conn)
-    rowid = log.record(symbol="ZZZT", side="buy", qty=3.0, outcome="submitted",
-                       client_order_id="ENT-ZZZT-2026-01-02-x", broker_order_id="b1",
-                       run_id="r1", reason="broker_accepted", limit_price=1.5)
+    rowid = log.record(
+        symbol="ZZZT",
+        side="buy",
+        qty=3.0,
+        outcome="submitted",
+        client_order_id="ENT-ZZZT-2026-01-02-x",
+        broker_order_id="b1",
+        run_id="r1",
+        reason="broker_accepted",
+        limit_price=1.5,
+    )
     assert rowid == 1
     rows = log.recent(limit=5)
     assert len(rows) == 1
@@ -87,12 +103,21 @@ def test_event_funnel_writes_an_attempt_row_for_order_events(conn):
     """`_record_pipeline_event(... 'order' ...)` -- the execution stage's existing
     call -- now lands one row; a non-order event lands none."""
     from src import pipeline_stages
+
     pipeline = SimpleNamespace(db=SimpleNamespace(conn=conn))
     ctx = SimpleNamespace(run_id="run-9", decision_id="d1")
     with patch.object(pipeline_stages, "_persist_evidence"):
         pipeline_stages._record_pipeline_event(
-            pipeline, ctx, "ZZZT", "order", "submitted", "broker_accepted",
-            broker_order_id="b7", qty=2, limit_price=1.25, side="sell",
+            pipeline,
+            ctx,
+            "ZZZT",
+            "order",
+            "submitted",
+            "broker_accepted",
+            broker_order_id="b7",
+            qty=2,
+            limit_price=1.25,
+            side="sell",
         )
         pipeline_stages._record_pipeline_event(pipeline, ctx, "ZZZT", "sizing", "accepted")
     rows = OrderAttemptLog(conn=conn).recent(limit=10)
@@ -102,11 +127,13 @@ def test_event_funnel_writes_an_attempt_row_for_order_events(conn):
 
 
 def test_event_hook_skips_a_db_without_a_sqlite_connection():
-    record_order_attempt_from_event(db=MagicMock(spec=[]), symbol="ZZZT", outcome="submitted",
-                                    reason="", run_id=None, details={})
+    record_order_attempt_from_event(
+        db=MagicMock(spec=[]), symbol="ZZZT", outcome="submitted", reason="", run_id=None, details={}
+    )
 
 
 # --- reconciliation ---------------------------------------------------------
+
 
 def test_not_run_is_distinct_from_agreed_and_disagreed(conn):
     log = ReconciliationLog(conn=conn)
@@ -142,6 +169,7 @@ def test_record_reconciliation_hook_tolerates_a_db_without_a_connection():
 def test_reconciler_hooks_are_wired_at_the_four_return_sites():
     import re
     from pathlib import Path
+
     root = Path(__file__).resolve().parent.parent
     prot = (root / "src/pipeline_protection.py").read_text()
     fr = (root / "src/protection/fill_reconciler.py").read_text()

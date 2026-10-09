@@ -1,4 +1,5 @@
 """Evening report session (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -187,15 +188,12 @@ class EveningSession:
         # notifier can say "unknown" instead of a fabricated number.
         try:
             risk_heat = self._build_portfolio_heat(positions, total_value)
-            risk_capital_dollars = (
-                risk_heat.budget_risk_dollars if risk_heat is not None else None
-            )
+            risk_capital_dollars = risk_heat.budget_risk_dollars if risk_heat is not None else None
         except Exception as e:  # noqa: BLE001
             record_evening_pass(self, "risk_heat", e)
             risk_capital_dollars = None
         else:
             record_evening_pass(self, "risk_heat")
-
 
         # Phase 4 #5: daily_pnl write is deferred to the atomic
         # save_evening_snapshot() below, along with insights. Doing both in
@@ -246,17 +244,22 @@ class EveningSession:
             # so _news_held_symbols' own split is a no-op; called anyway to
             # keep this call site identical to the other two.
             evening_news, evening_news_coverage = self._run_news_update(
-                run_id, session="evening",
+                run_id,
+                session="evening",
                 held_symbols=self._news_held_symbols(positions),
             )
         except PaidAnalysisSuspended as exc:
             self._db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+                date=today_str,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
             )
             payload = self._paid_suspended_payload(run_id, error=exc)
             payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                analysis=None,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
                 daily_return_pct=daily_return_pct,
                 stop_coverage_gaps=coverage_gaps,
             )
@@ -280,12 +283,16 @@ class EveningSession:
             self._require_paid_analysis("evening_analyst")
         except PaidAnalysisSuspended as exc:
             self._db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+                date=today_str,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
             )
             payload = self._paid_suspended_payload(run_id, error=exc)
             payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                analysis=None,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
                 daily_return_pct=daily_return_pct,
                 stop_coverage_gaps=coverage_gaps,
             )
@@ -321,7 +328,8 @@ class EveningSession:
         )
         # v2: mirror SELL grading with BUY grading. Entry quality feedback loop.
         recent_buys = self._build_recent_buys_for_grading(
-            lookback_days=5, symbols_bars=ctx.symbols_bars,
+            lookback_days=5,
+            symbols_bars=ctx.symbols_bars,
         )
         # v2: meta-calibration — evening sees its own recent tomorrow_bias vs
         # actual outcomes so it can detect "I've been too bullish 7/10 days".
@@ -338,7 +346,9 @@ class EveningSession:
         held_set = {p.symbol for p in positions}
         try:
             missed_ops_snapshots = self._build_missed_opportunities_digest(
-                lookback_days=5, move_threshold_pct=8.0, top_n=15,
+                lookback_days=5,
+                move_threshold_pct=8.0,
+                top_n=15,
                 current_position_symbols=held_set,
             )
         except Exception as e:
@@ -411,12 +421,16 @@ class EveningSession:
             )
         except PaidAnalysisSuspended as exc:
             self._db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
+                date=today_str,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
+                daily_return_pct=daily_return_pct,
             )
             payload = self._paid_suspended_payload(run_id, error=exc)
             payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
+                analysis=None,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
                 daily_return_pct=daily_return_pct,
                 stop_coverage_gaps=coverage_gaps,
             )
@@ -431,7 +445,8 @@ class EveningSession:
             # of the exception, so record that much for attribution.
             _requested_model = self._config.llm.evening_analyst_model
             _requested_provider = resolve_provider(
-                _requested_model, self._config.llm.evening_analyst_provider,
+                _requested_model,
+                self._config.llm.evening_analyst_provider,
             )
             ev_result = AgentResult(
                 raw_text=f"[exception] {e}",
@@ -452,14 +467,17 @@ class EveningSession:
         elif analysis is None:
             _ev_log_kwargs["status"] = "evening_parse_error"
         self._db.insert_agent_log(
-            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
-            agent_name="evening_analyst", run_id=run_id,
+            **seat_acceptance_kwargs(
+                _ev_log_kwargs.get("status")
+                if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error")
+                else None
+            ),
+            agent_name="evening_analyst",
+            run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
             input_message=ev_result.user_message,
             output_summary=(
-                analysis.daily_summary
-                if analysis
-                else ("analysis_error" if analysis_error else "parse_error")
+                analysis.daily_summary if analysis else ("analysis_error" if analysis_error else "parse_error")
             ),
             full_response=ev_result.raw_text,
             model=ev_result.model,
@@ -495,7 +513,8 @@ class EveningSession:
                 logger.info(
                     "4pm snapshot: portfolio_history latest date %s != today %s "
                     "(API lag?) — evening uses the real-time P&L fallback",
-                    closes[-1][0], today_str,
+                    closes[-1][0],
+                    today_str,
                 )
             # Self-heal: when portfolio_history is a day behind at the
             # 20:00 ET evening run (the "API lag?" branch above), that
@@ -520,15 +539,17 @@ class EveningSession:
                 # backfill report success while storing nothing.
                 if not (math.isfinite(close_val) and close_val > 0):
                     logger.warning(
-                        "equity_close backfill skipped for %s: suspect "
-                        "equity value %r", d, close_val,
+                        "equity_close backfill skipped for %s: suspect equity value %r",
+                        d,
+                        close_val,
                     )
                     continue
                 try:
                     if self._db.backfill_equity_close(d, close_val):
                         logger.info(
                             "equity_close backfilled for %s = %.2f (API lag self-heal)",
-                            d, close_val,
+                            d,
+                            close_val,
                         )
                 except Exception as exc:
                     record_evening_pass(self, "equity_close_backfill", exc)
@@ -545,7 +566,8 @@ class EveningSession:
         if analysis:
             self._db.save_evening_snapshot(
                 date=today_str,
-                total_value=total_value, daily_pnl=daily_pnl,
+                total_value=total_value,
+                daily_pnl=daily_pnl,
                 daily_return_pct=daily_return_pct,
                 equity_close=equity_close,
                 tomorrow_outlook=analysis.tomorrow_outlook,
@@ -600,8 +622,10 @@ class EveningSession:
                     "Conviction ledger: scored %d newly closed position(s) into "
                     "%d seat credit(s) (%d already scored, %d unscorable without "
                     "an entry stop, %d with no recorded stances)",
-                    ledger["scored_positions"], ledger["credits_written"],
-                    ledger["skipped_already_scored"], ledger["skipped_no_r"],
+                    ledger["scored_positions"],
+                    ledger["credits_written"],
+                    ledger["skipped_already_scored"],
+                    ledger["skipped_no_r"],
                     ledger["skipped_no_stances"],
                 )
         except Exception as e:
@@ -611,9 +635,13 @@ class EveningSession:
 
         run_evening_housekeeping(self)
 
-        logger.info("Evening: value=$%.2f, PnL=$%.2f (%.2f%%), risk=%s",
-                     total_value, daily_pnl, daily_return_pct,
-                     analysis.risk_rating if analysis else "error")
+        logger.info(
+            "Evening: value=$%.2f, PnL=$%.2f (%.2f%%), risk=%s",
+            total_value,
+            daily_pnl,
+            daily_return_pct,
+            analysis.risk_rating if analysis else "error",
+        )
         if analysis:
             logger.info("Summary: %s", analysis.daily_summary)
             logger.info("Tomorrow: %s", analysis.tomorrow_outlook)
@@ -629,18 +657,17 @@ class EveningSession:
         # `_total_pnl_since_reset` the trader-feed messages already use is
         # read here so the evening message can lead with BOTH figures on the
         # identical basis, rather than computing a second "total" of its own.
-        total_pnl, total_return_pct, total_pnl_since = (
-            self._total_pnl_since_reset(total_value)
-        )
+        total_pnl, total_return_pct, total_pnl_since = self._total_pnl_since_reset(total_value)
         if missing_sessions:
             logger.warning(
-                "Dead-man's check: expected session(s) left no agent_logs "
-                "today: %s", ", ".join(missing_sessions),
+                "Dead-man's check: expected session(s) left no agent_logs today: %s",
+                ", ".join(missing_sessions),
             )
         return {
             "status": (
-                "analyzed" if analysis is not None else
-                ("evening_analysis_error" if analysis_error else "evening_parse_error")
+                "analyzed"
+                if analysis is not None
+                else ("evening_analysis_error" if analysis_error else "evening_parse_error")
             ),
             "total_value": total_value,
             "daily_pnl": daily_pnl,

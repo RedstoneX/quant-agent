@@ -44,6 +44,7 @@ commit GitHub reports, and HEAD's first parent is an ancestor of the current
 merge base is a commit the branch picks by not merging, which would let a
 branch delete something today's main still needs and pass.
 """
+
 from __future__ import annotations
 
 import ast
@@ -169,9 +170,7 @@ def blobs_at(rev: str, paths: list[str]) -> dict[str, str]:
     if not paths:
         return {}
     request = "".join(f"{rev}:{p}\n" for p in paths).encode()
-    proc = subprocess.run(
-        ["git", "cat-file", "--batch"], cwd=ROOT, input=request, capture_output=True
-    )
+    proc = subprocess.run(["git", "cat-file", "--batch"], cwd=ROOT, input=request, capture_output=True)
     if proc.returncode != 0:
         raise ReferenceUnavailable(f"git cat-file at {rev} failed: {proc.stderr.decode()}")
 
@@ -186,7 +185,7 @@ def blobs_at(rev: str, paths: list[str]) -> dict[str, str]:
         if len(header) < 3 or header[1] != "blob":  # "<name> missing"
             continue
         size = int(header[2])
-        blobs[path] = data[pos:pos + size].decode("utf-8", errors="replace")
+        blobs[path] = data[pos : pos + size].decode("utf-8", errors="replace")
         pos += size + 1  # trailing newline git appends after the payload
     return blobs
 
@@ -252,9 +251,7 @@ def added_sites(
     removed in the same change, which is exactly the case a total would hide.
     """
     have, had = Counter(now), Counter(before)
-    return sorted(
-        (key, n, had.get(key, 0)) for key, n in have.items() if n > had.get(key, 0)
-    )
+    return sorted((key, n, had.get(key, 0)) for key, n in have.items() if n > had.get(key, 0))
 
 
 def enclosing_scopes(tree: ast.AST) -> dict[int, str]:

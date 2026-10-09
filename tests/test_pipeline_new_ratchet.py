@@ -6,6 +6,7 @@ with any trunk. The check fails on a site not in the list and on a listed site
 that no longer occurs. See scripts/pipeline_new_guard.py for why, and
 tests/pipeline_factory.py for the replacement.
 """
+
 from __future__ import annotations
 
 from scripts import pipeline_new_guard, struct_allowlist

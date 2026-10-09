@@ -13,6 +13,7 @@ Three separate guarantees, tested separately because they fail separately:
 
 No test here makes a model call.
 """
+
 from __future__ import annotations
 
 import ast
@@ -40,6 +41,7 @@ PROMPT_DIR = REPO_ROOT / "config" / "prompts"
 # ---------------------------------------------------------------------------
 # (a) the behaviour-change registry
 # ---------------------------------------------------------------------------
+
 
 def test_the_live_registry_agrees_with_the_live_tree():
     """The whole point: a red build here means somebody changed a mechanism
@@ -120,27 +122,37 @@ def _tiny_tree(tmp_path: Path, *, behaviour: str, prose: str) -> Path:
     """A two-file repo: one module, one prompt sheet, one binding."""
     (tmp_path / "src").mkdir()
     (tmp_path / "config" / "prompts").mkdir(parents=True)
-    (tmp_path / "src" / "thing.py").write_text(textwrap.dedent(f"""
+    (tmp_path / "src" / "thing.py").write_text(
+        textwrap.dedent(f"""
         def decide(x):
             '''A docstring nobody should be digesting.'''
             {behaviour}
-    """))
+    """)
+    )
     (tmp_path / "config" / "prompts" / "seat.md").write_text(
         f"# Seat\n\n{prose}\n\nUnrelated line.\n",
     )
-    (tmp_path / "config" / "prompt_bindings.yaml").write_text(yaml.safe_dump({
-        "bindings": [{
-            "name": "the_thing",
-            "why": "the seat is told what decide() does",
-            "code": [{"file": "src/thing.py", "symbol": "decide"}],
-            "prose": [{
-                "file": "config/prompts/seat.md",
-                "contains": ["the desk refuses above"],
-            }],
-            "code_digest": "0" * 16,
-            "prose_digest": "0" * 16,
-        }],
-    }))
+    (tmp_path / "config" / "prompt_bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "bindings": [
+                    {
+                        "name": "the_thing",
+                        "why": "the seat is told what decide() does",
+                        "code": [{"file": "src/thing.py", "symbol": "decide"}],
+                        "prose": [
+                            {
+                                "file": "config/prompts/seat.md",
+                                "contains": ["the desk refuses above"],
+                            }
+                        ],
+                        "code_digest": "0" * 16,
+                        "prose_digest": "0" * 16,
+                    }
+                ],
+            }
+        )
+    )
     return tmp_path
 
 
@@ -203,7 +215,8 @@ def test_reformatting_and_rewriting_a_docstring_do_not_fire(tmp_path):
         prose="the desk refuses above 12 percent.",
     )
     _pin(root)
-    (root / "src" / "thing.py").write_text(textwrap.dedent("""
+    (root / "src" / "thing.py").write_text(
+        textwrap.dedent("""
         # a new comment
 
 
@@ -214,7 +227,8 @@ def test_reformatting_and_rewriting_a_docstring_do_not_fire(tmp_path):
                 x
                 > 12
             )
-    """))
+    """)
+    )
     assert prompt_bindings.check(root) == []
 
 
@@ -267,6 +281,7 @@ def test_the_behaviour_registry_is_not_a_second_deletion_grep():
 # (c) all ten sheets, not a subset
 # ---------------------------------------------------------------------------
 
+
 def test_every_prompt_file_on_disk_is_registered():
     on_disk = {p.name for p in PROMPT_DIR.glob("*.md")}
     assert on_disk, "no prompt sheets found — the check would pass vacuously"
@@ -311,8 +326,7 @@ def test_no_sheet_ships_an_unrendered_placeholder_to_a_model():
         if not keys:
             continue
         assert PROMPT_NAMESPACES[path.name], (
-            f"{path.name} carries {sorted(keys)} but is registered as "
-            f"carrying no placeholders"
+            f"{path.name} carries {sorted(keys)} but is registered as carrying no placeholders"
         )
 
 
@@ -358,8 +372,7 @@ def test_the_drift_threshold_has_exactly_one_definition_site():
             if re.match(r"\s*DRIFT_WEIGHT_PCT\s*=", line):
                 definitions.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
     assert definitions == ["src/risk/metrics.py:" + str(_line_of_definition())], (
-        f"the drift weight threshold must have exactly one definition; "
-        f"found {definitions}"
+        f"the drift weight threshold must have exactly one definition; found {definitions}"
     )
     assert DRIFT_WEIGHT_PCT == 12.0
     assert DRIFT_PNL_PCT == 10.0
@@ -403,7 +416,7 @@ def test_no_prompt_sheet_types_the_drift_threshold():
 
 def test_drift_flag_treats_unknowable_as_not_flagged():
     assert drift_flag(20.0, 20.0) is True
-    assert drift_flag(12.0, 20.0) is False       # strict, not >=
+    assert drift_flag(12.0, 20.0) is False  # strict, not >=
     assert drift_flag(20.0, 10.0) is False
-    assert drift_flag(None, 20.0) is False       # never a silent zero
+    assert drift_flag(None, 20.0) is False  # never a silent zero
     assert drift_flag(20.0, None) is False

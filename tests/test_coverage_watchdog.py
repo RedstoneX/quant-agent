@@ -15,6 +15,7 @@ trading session.
 
 Nothing here touches the network, the broker, or a real Telegram chat.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,8 +54,12 @@ def state_path(tmp_path, monkeypatch):
 
 def _seed_session(db_path, *, source: str, when: datetime) -> None:
     alert_watchdog.record_check(
-        ok=True, stage="delivered", detail="", source=source,
-        db_path=db_path, now=when,
+        ok=True,
+        stage="delivered",
+        detail="",
+        source=source,
+        db_path=db_path,
+        now=when,
     )
 
 
@@ -85,8 +90,14 @@ def _orcl_broker(held=5.3089, stops=(5.0,), price=150.28, trading_days=True):
             if not trading_days or on_date is None:
                 return None
             return datetime(
-                on_date.year, on_date.month, on_date.day, hour, minute, tzinfo=ET,
+                on_date.year,
+                on_date.month,
+                on_date.day,
+                hour,
+                minute,
+                tzinfo=ET,
             )
+
         return _get
 
     broker.get_session_open.side_effect = _edge(9, 30)
@@ -98,6 +109,7 @@ def _orcl_broker(held=5.3089, stops=(5.0,), price=150.28, trading_days=True):
 # 1. The real incident: fires
 # ===========================================================================
 
+
 def test_the_orcl_case_alerts_when_no_session_ran_on_the_last_trading_day(db, state_path):
     """ORCL 5.3089 held, 5.0 covered, timers paused: no session on Friday.
     This is the state the box was in on 2026-09-12 and nothing said so.
@@ -105,7 +117,11 @@ def test_the_orcl_case_alerts_when_no_session_ran_on_the_last_trading_day(db, st
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _orcl_broker()
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-11"
     assert status.session_ran is False
@@ -133,7 +149,11 @@ def test_the_cash_sweep_vehicle_is_never_a_gap(db, state_path):
     """SGOV deliberately carries no stop. Flagging it would page every day."""
     broker = _orcl_broker(stops=(5.0, 0.3089))
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.gaps == []
     assert status.should_alert is False
@@ -143,6 +163,7 @@ def test_the_cash_sweep_vehicle_is_never_a_gap(db, state_path):
 # 2. The healthy morning: silent (owner-ratified)
 # ===========================================================================
 
+
 def test_a_lapsed_remainder_after_a_normal_session_day_stays_silent(db, state_path):
     """The DAY leg lapses every night on a healthy desk. A session ran during
     Friday's cash session, so Monday's sweep owns the re-placement. NOT an
@@ -150,7 +171,11 @@ def test_a_lapsed_remainder_after_a_normal_session_day_stays_silent(db, state_pa
     _seed_session(db, source="intra_check", when=_FRI.replace(hour=12, minute=1).astimezone(timezone.utc))
     broker = _orcl_broker()
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.gaps and status.session_ran is True
     assert status.should_alert is False
@@ -163,7 +188,11 @@ def test_only_a_session_inside_cash_hours_counts_as_evidence(db, state_path):
     _seed_session(db, source="evening", when=_FRI.replace(hour=20, minute=1).astimezone(timezone.utc))
     _seed_session(db, source="earnings_preprocess", when=_FRI.replace(hour=8, minute=1).astimezone(timezone.utc))
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        _orcl_broker(),
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.session_ran is False
     assert status.should_alert is True
@@ -172,7 +201,11 @@ def test_only_a_session_inside_cash_hours_counts_as_evidence(db, state_path):
 def test_the_heartbeat_probe_itself_is_not_a_session(db, state_path):
     _seed_session(db, source="heartbeat_timer", when=_FRI.replace(hour=12).astimezone(timezone.utc))
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        _orcl_broker(),
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.session_ran is False
 
@@ -180,7 +213,11 @@ def test_the_heartbeat_probe_itself_is_not_a_session(db, state_path):
 def test_fully_covered_book_is_clean(db, state_path):
     broker = _orcl_broker(stops=(5.0, 0.3089))
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.gaps == [] and status.should_alert is False
     assert coverage_watchdog.status_line(status).startswith("coverage_watchdog: OK")
@@ -190,9 +227,14 @@ def test_fully_covered_book_is_clean(db, state_path):
 # 3. Which day is judged
 # ===========================================================================
 
+
 def test_monday_morning_judges_friday_not_the_weekend(db, state_path):
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=_MON_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        _orcl_broker(),
+        now=_MON_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-11"
 
@@ -203,7 +245,11 @@ def test_run_after_the_close_judges_today_not_yesterday(db, state_path):
     over, so Friday is the day that can have failed to re-place a stop."""
     fri_late = datetime(2026, 9, 11, 23, 50, tzinfo=ET).astimezone(timezone.utc)
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=fri_late, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        _orcl_broker(),
+        now=fri_late,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-11"
 
@@ -213,7 +259,11 @@ def test_run_during_the_session_judges_yesterday(db, state_path):
     hours to run; the finished day to judge is Thursday."""
     fri_noon = datetime(2026, 9, 11, 12, 0, tzinfo=ET).astimezone(timezone.utc)
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=fri_noon, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        _orcl_broker(),
+        now=fri_noon,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-10"
 
@@ -225,7 +275,11 @@ def test_a_market_holiday_is_skipped_via_the_broker_calendar(db, state_path):
     broker.is_trading_day.side_effect = lambda d: d.isoformat() != "2026-09-07"
     tue = datetime(2026, 9, 8, 6, 15, tzinfo=ET).astimezone(timezone.utc)
     status = coverage_watchdog.check_coverage(
-        broker, now=tue, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=tue,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-04"
 
@@ -234,8 +288,11 @@ def test_a_dead_calendar_falls_back_to_the_weekday_and_still_alerts(db, state_pa
     """A pathological all-False calendar must not walk past every real day
     and suppress the alert; provider exceptions now propagate distinctly."""
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(trading_days=False), now=_SAT_0615, sweep_symbol="SGOV",
-        db_path=db, state_path=state_path,
+        _orcl_broker(trading_days=False),
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.trading_day == "2026-09-11"
     assert status.should_alert is True
@@ -245,22 +302,34 @@ def test_a_dead_calendar_falls_back_to_the_weekday_and_still_alerts(db, state_pa
 # 4. Once per trading day, and failures stay on the alerting side
 # ===========================================================================
 
+
 def test_alerts_once_per_trading_day_then_again_the_next_day(db, state_path):
     broker = _orcl_broker()
-    first = coverage_watchdog.check_coverage(broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path)
-    again = coverage_watchdog.check_coverage(broker, now=_SAT_0615 + timedelta(hours=1), sweep_symbol="SGOV", db_path=db, state_path=state_path)
-    monday = coverage_watchdog.check_coverage(broker, now=_MON_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path)
-    tuesday = coverage_watchdog.check_coverage(broker, now=_MON_0615 + timedelta(days=1), sweep_symbol="SGOV", db_path=db, state_path=state_path)
+    first = coverage_watchdog.check_coverage(
+        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path
+    )
+    again = coverage_watchdog.check_coverage(
+        broker, now=_SAT_0615 + timedelta(hours=1), sweep_symbol="SGOV", db_path=db, state_path=state_path
+    )
+    monday = coverage_watchdog.check_coverage(
+        broker, now=_MON_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path
+    )
+    tuesday = coverage_watchdog.check_coverage(
+        broker, now=_MON_0615 + timedelta(days=1), sweep_symbol="SGOV", db_path=db, state_path=state_path
+    )
     assert first.should_alert is True
     assert again.should_alert is False and again.already_alerted_for_day is True
-    assert monday.should_alert is False          # still judging Friday
+    assert monday.should_alert is False  # still judging Friday
     assert tuesday.trading_day == "2026-09-14" and tuesday.should_alert is True
 
 
 def test_an_unreadable_database_cannot_prove_a_session_and_alerts(state_path, tmp_path):
     status = coverage_watchdog.check_coverage(
-        _orcl_broker(), now=_SAT_0615, sweep_symbol="SGOV",
-        db_path=tmp_path / "does-not-exist.db", state_path=state_path,
+        _orcl_broker(),
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=tmp_path / "does-not-exist.db",
+        state_path=state_path,
     )
     assert status.session_ran is None and status.db_error
     assert status.should_alert is True
@@ -271,7 +340,11 @@ def test_a_broker_failure_reports_could_not_check_never_clean(db, state_path):
     broker = _orcl_broker()
     broker.get_positions.side_effect = RuntimeError("401")
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert status.gaps == [] and status.broker_error
     assert status.should_alert is False
@@ -284,7 +357,11 @@ def test_a_short_is_checked_against_buy_stops(db, state_path):
     broker.snapshot_protective_stops.return_value = (True, [{"qty": 10.0}])
     broker.is_trading_day.return_value = True
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
     )
     assert broker.snapshot_protective_stops.call_args.kwargs["side"] == "buy"
     assert status.gaps == []
@@ -293,6 +370,7 @@ def test_a_short_is_checked_against_buy_stops(db, state_path):
 # ===========================================================================
 # 5. Wired into the daily heartbeat, and it cannot change the probe's verdict
 # ===========================================================================
+
 
 def test_heartbeat_runs_the_coverage_check_after_the_probe_and_keeps_its_own_exit_code(monkeypatch, capsys):
     import scripts.alert_heartbeat as hb
@@ -353,7 +431,9 @@ def _repairable_broker(**kw):
     broker.get_latest_price.return_value = 150.28
     broker.STOP_LIMIT_BUFFER_PCT = 0.01
     broker._submit_protective_stop_retrying.return_value = {
-        "id": "new-day-stop", "uncovered_qty": 0.0, "day_qty": 0.3089,
+        "id": "new-day-stop",
+        "uncovered_qty": 0.0,
+        "day_qty": 0.3089,
     }
     return broker
 
@@ -371,8 +451,12 @@ def test_pre_open_run_places_nothing_and_says_the_market_is_shut(db, state_path)
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     status = coverage_watchdog.check_coverage(
-        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_SAT_0615,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert status.market_open is False
     assert "has not opened yet" in status.market_reason
@@ -408,8 +492,12 @@ def test_inside_the_session_it_re_places_the_missing_day_stop(db, state_path):
     broker._submit_protective_stop_retrying.side_effect = _place
 
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert status.market_open is True
     assert [r.symbol for r in status.repaired] == ["ORCL"]
@@ -438,6 +526,7 @@ def test_inside_the_session_it_re_places_the_missing_day_stop(db, state_path):
 # session lock, so it must check it explicitly and defer — never skip the
 # alert, only the ADD — whenever a session holds it.
 
+
 def _hold_session_lock(monkeypatch, tmp_path, mode="midday"):
     """Simulate run_if_et_window.sh's acquire_session_lock having the
     named mode's lock currently held, the same directory
@@ -452,7 +541,10 @@ def _hold_session_lock(monkeypatch, tmp_path, mode="midday"):
 
 
 def test_repair_defers_while_a_session_holds_the_trading_lock(
-    db, state_path, tmp_path, monkeypatch,
+    db,
+    state_path,
+    tmp_path,
+    monkeypatch,
 ):
     """THE INCIDENT, reproduced: a session (midday, that day) holds the
     lock. The standalone coverage-sweep tick must not place its own stop —
@@ -464,8 +556,12 @@ def test_repair_defers_while_a_session_holds_the_trading_lock(
     broker = _repairable_broker()
 
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
 
     assert not broker._submit_protective_stop_retrying.called, (
@@ -493,15 +589,22 @@ def test_repair_proceeds_once_the_session_lock_is_released(db, state_path):
     broker._submit_protective_stop_retrying.side_effect = _place
 
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert broker._submit_protective_stop_retrying.called
     assert [r.symbol for r in status.repaired] == ["ORCL"]
 
 
 def test_repair_defer_does_not_apply_to_intra_check(
-    db, state_path, tmp_path, monkeypatch,
+    db,
+    state_path,
+    tmp_path,
+    monkeypatch,
 ):
     """intra_check is deliberately exempt from run_if_et_window.sh's
     session lock, so it never appears as the lock owner here — this proves
@@ -527,8 +630,12 @@ def test_repair_defer_does_not_apply_to_intra_check(
     broker._submit_protective_stop_retrying.side_effect = _place
 
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert broker._submit_protective_stop_retrying.called
 
@@ -546,7 +653,7 @@ def test_it_cannot_double_cover_a_remainder_a_live_order_already_holds(db, state
         if symbol != "ORCL":
             return True, []
         reads["n"] += 1
-        if reads["n"] == 1:            # the survey pass: a gap is real here
+        if reads["n"] == 1:  # the survey pass: a gap is real here
             return True, [{"id": "gtc", "qty": 5.0, "stop_price": 137.53}]
         # by the time we go to place, a DAY stop from an earlier tick is live
         return True, [
@@ -556,8 +663,12 @@ def test_it_cannot_double_cover_a_remainder_a_live_order_already_holds(db, state
 
     broker.snapshot_protective_stops.side_effect = _snapshot
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert reads["n"] >= 2, "the broker must be re-read right before placing"
     assert not broker._submit_protective_stop_retrying.called
@@ -571,8 +682,12 @@ def test_a_failed_placement_alerts_and_is_not_swallowed(db, state_path, monkeypa
     broker = _repairable_broker()
     broker._submit_protective_stop_retrying.return_value = None
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert [r.symbol for r in status.repair_failures] == ["ORCL"]
     assert status.should_alert_repair_failure is True
@@ -581,8 +696,12 @@ def test_a_failed_placement_alerts_and_is_not_swallowed(db, state_path, monkeypa
     assert "FAILED to place" in coverage_watchdog.status_line(status)
     # second run the same trading day: still exposed, but not paged twice
     again = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert again.repair_failures and again.should_alert_repair_failure is False
 
@@ -592,8 +711,12 @@ def test_a_placement_error_is_reported_not_swallowed(db, state_path):
     broker = _repairable_broker()
     broker._submit_protective_stop_retrying.side_effect = RuntimeError("429")
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert status.repair_failures and "429" in status.repair_failures[0].detail
 
@@ -604,8 +727,12 @@ def test_it_never_sells_resizes_or_cancels_anything(db, state_path):
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert not broker.close_position.called
     assert not broker.submit_order.called
@@ -620,13 +747,14 @@ def test_the_cash_sweep_vehicle_is_never_repaired(db, state_path):
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
-    placed = [
-        c.kwargs.get("symbol")
-        for c in broker._submit_protective_stop_retrying.call_args_list
-    ]
+    placed = [c.kwargs.get("symbol") for c in broker._submit_protective_stop_retrying.call_args_list]
     assert "SGOV" not in placed
 
 
@@ -660,8 +788,12 @@ def test_a_naked_short_is_repaired_with_a_buy_stop(db, state_path):
 
     broker._submit_protective_stop_retrying.side_effect = _place
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=_last_buy,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=_last_buy,
     )
     assert status.market_open is True
     assert [r.symbol for r in status.repaired] == ["TSLA"]
@@ -686,8 +818,13 @@ def test_heartbeat_last_buy_reader_forwards_short_action(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=3, price=200.0,
-        reasoning="opened short", run_id="r1", stop_loss=220.0,
+        symbol="TSLA",
+        action="SHORT",
+        qty=3,
+        price=200.0,
+        reasoning="opened short",
+        run_id="r1",
+        stop_loss=220.0,
         fill_status="filled",
     )
     monkeypatch.setattr("src.api.deps.get_db_path", lambda: str(db_path))
@@ -702,14 +839,19 @@ def test_no_recorded_stop_lookup_means_it_stays_a_pure_reader(db, state_path):
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     status = coverage_watchdog.check_coverage(
-        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
-        state_path=state_path, last_buy=None,
+        broker,
+        now=_FRI_1005,
+        sweep_symbol="SGOV",
+        db_path=db,
+        state_path=state_path,
+        last_buy=None,
     )
     assert not broker._submit_protective_stop_retrying.called
     assert "nothing was placed" in status.market_reason
 
 
 # ---- the coverage-only entry point ----
+
 
 def test_coverage_only_runs_the_check_and_never_the_channel_probe(monkeypatch):
     import scripts.alert_heartbeat as hb
@@ -742,9 +884,11 @@ def test_coverage_only_reports_a_broker_it_cannot_build(monkeypatch, capsys):
 # board could not tell whether it had ever run.
 # ===========================================================================
 
+
 def _sweep_rows(database):
     return [
-        json.loads(r["evidence_json"]) for r in database.conn.execute(
+        json.loads(r["evidence_json"])
+        for r in database.conn.execute(
             "SELECT evidence_json FROM specialist_evidence "
             "WHERE agent_name = ? AND kind = 'pipeline_event' AND scope = 'run'",
             ("coverage_sweep",),
@@ -763,7 +907,11 @@ def desk_db(tmp_path):
 
 
 def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
-    monkeypatch, db, state_path, desk_db, caplog,
+    monkeypatch,
+    db,
+    state_path,
+    desk_db,
+    caplog,
 ):
     import logging
 
@@ -809,7 +957,7 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     row = rows[0]
     assert row["outcome"] == "repaired"
     assert row["entry"] == "coverage_sweep"
-    assert row["positions_checked"] == 1          # SGOV is excluded
+    assert row["positions_checked"] == 1  # SGOV is excluded
     assert row["repairs_attempted"] == 1
     assert row["repairs_succeeded"] == 1
     assert row["repairs_failed"] == 0
@@ -818,7 +966,7 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     # because the post-repair re-read rebound the same variable, which is
     # how a repaired gap was reported as no gap at all.
     assert row["gaps_found"] == 1
-    assert row["gaps_remaining"] == 0              # re-read after placing
+    assert row["gaps_remaining"] == 0  # re-read after placing
     # Defect 5b: a repair now pages. (Not delivered in this test — no
     # notifier is configured — which the line reports honestly.)
     assert row["alerts"] == ["stop-repaired alert could NOT be delivered"]
@@ -841,7 +989,10 @@ def test_a_clean_sweep_run_is_recorded_as_clean(monkeypatch, db, state_path, des
 
 
 def test_an_alerting_sweep_run_records_that_the_alert_went_out(
-    monkeypatch, db, state_path, desk_db,
+    monkeypatch,
+    db,
+    state_path,
+    desk_db,
 ):
     import scripts.alert_heartbeat as hb
 
@@ -858,7 +1009,10 @@ def test_an_alerting_sweep_run_records_that_the_alert_went_out(
 
 
 def test_a_sweep_that_cannot_build_its_broker_still_leaves_a_record(
-    monkeypatch, db, state_path, desk_db,
+    monkeypatch,
+    db,
+    state_path,
+    desk_db,
 ):
     import scripts.alert_heartbeat as hb
 
@@ -911,8 +1065,8 @@ def _repaired_status(**kw):
     base = dict(
         trading_day="2026-09-30",
         session_ran=True,
-        gaps=[],                 # the POST-repair re-read: nothing left
-        gaps_detected=1,         # what the run actually found
+        gaps=[],  # the POST-repair re-read: nothing left
+        gaps_detected=1,  # what the run actually found
         repairs=[RepairOutcome(symbol="AAPL", qty=7.33, placed=True)],
         positions_checked=11,
     )
@@ -926,7 +1080,9 @@ def test_summary_reports_the_gap_it_found_not_the_one_left():
     from src.coverage_watchdog import sweep_log_line, sweep_summary
 
     summary = sweep_summary(
-        _repaired_status(), entry="coverage_sweep", run_id="r1",
+        _repaired_status(),
+        entry="coverage_sweep",
+        run_id="r1",
     )
     assert summary["gaps_found"] == 1
     assert summary["gaps_remaining"] == 0
@@ -951,8 +1107,12 @@ def test_a_clean_sweep_still_says_nothing():
     from src.coverage_watchdog import CoverageStatus
 
     clean = CoverageStatus(
-        trading_day="2026-09-30", session_ran=True, gaps=[],
-        gaps_detected=0, repairs=[], positions_checked=11,
+        trading_day="2026-09-30",
+        session_ran=True,
+        gaps=[],
+        gaps_detected=0,
+        repairs=[],
+        positions_checked=11,
     )
     assert clean.should_alert_repair_performed is False
 
@@ -966,9 +1126,11 @@ def test_a_repair_already_all_cleared_does_not_page_twice():
 # board item 193 — a deliberately unguarded position is REPORTED, not hidden
 # ---------------------------------------------------------------------------
 
+
 def _item193_db(tmp_path, *, created_at, windows=()):
     import json as _json
     import sqlite3 as _sq
+
     path = tmp_path / "item193.db"
     conn = _sq.connect(path)
     conn.execute(
@@ -978,6 +1140,7 @@ def _item193_db(tmp_path, *, created_at, windows=()):
         " run_id TEXT, side TEXT)"
     )
     from src.execution.scale_in import WAL_SCALE_IN_SENTINEL
+
     conn.execute(
         "INSERT INTO pending_protection_restores "
         "(symbol, sell_order_id, position_qty_before_sell, specs_json, created_at) "
@@ -985,16 +1148,21 @@ def _item193_db(tmp_path, *, created_at, windows=()):
         ("AAPL", WAL_SCALE_IN_SENTINEL, 12.0, "[]", created_at),
     )
     conn.execute(
-        "CREATE TABLE specialist_evidence (id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        " kind TEXT, evidence_json TEXT)"
+        "CREATE TABLE specialist_evidence (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, evidence_json TEXT)"
     )
     for secs in windows:
         conn.execute(
             "INSERT INTO specialist_evidence (kind, evidence_json) VALUES (?,?)",
-            ("pipeline_event", _json.dumps({
-                "stage": "scale_in", "outcome": "unprotected_window_closed",
-                "window_seconds": secs,
-            })),
+            (
+                "pipeline_event",
+                _json.dumps(
+                    {
+                        "stage": "scale_in",
+                        "outcome": "unprotected_window_closed",
+                        "window_seconds": secs,
+                    }
+                ),
+            ),
         )
     conn.commit()
     conn.close()
@@ -1009,7 +1177,10 @@ def test_item193_skipped_symbol_is_reported_with_its_age(tmp_path):
     db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
     now = datetime(2026, 9, 30, 14, 1, 0, tzinfo=timezone.utc)
     rows = cw.deliberately_unguarded(
-        object(), db, skip_symbols={"AAPL"}, now=now,
+        object(),
+        db,
+        skip_symbols={"AAPL"},
+        now=now,
     )
     assert [r.symbol for r in rows] == ["AAPL"]
     row = rows[0]
@@ -1026,13 +1197,14 @@ def test_item193_no_measured_history_means_nothing_is_called_overdue(tmp_path):
 
     db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")
     rows = cw.deliberately_unguarded(
-        object(), db, skip_symbols={"AAPL"},
+        object(),
+        db,
+        skip_symbols={"AAPL"},
         now=datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc),
     )
     assert rows and rows[0].bound_seconds is None
     assert rows[0].over_bound is False
-    status = cw.CoverageStatus(trading_day="2026-09-30", session_ran=True,
-                               unguarded=rows)
+    status = cw.CoverageStatus(trading_day="2026-09-30", session_ran=True, unguarded=rows)
     assert status.unguarded_over_bound == []
     assert status.should_alert_unguarded is False
 
@@ -1042,23 +1214,34 @@ def test_item193_only_actually_skipped_symbols_are_reported(tmp_path):
     import src.coverage_watchdog as cw
 
     db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")
-    assert cw.deliberately_unguarded(
-        object(), db, skip_symbols=set(),
-        now=datetime(2026, 9, 30, 14, 5, tzinfo=timezone.utc),
-    ) == []
+    assert (
+        cw.deliberately_unguarded(
+            object(),
+            db,
+            skip_symbols=set(),
+            now=datetime(2026, 9, 30, 14, 5, tzinfo=timezone.utc),
+        )
+        == []
+    )
 
 
 def test_item193_summary_and_log_line_name_the_unguarded_position():
     import src.coverage_watchdog as cw
 
     row = cw.UnguardedWindow(
-        symbol="AAPL", held_qty=12.0, is_short=False,
-        since_utc="2026-09-30 14:00:00", seconds_open=60.0,
-        bound_seconds=9.0, bound_observations=2,
+        symbol="AAPL",
+        held_qty=12.0,
+        is_short=False,
+        since_utc="2026-09-30 14:00:00",
+        seconds_open=60.0,
+        bound_seconds=9.0,
+        bound_observations=2,
     )
     status = cw.CoverageStatus(
-        trading_day="2026-09-30", session_ran=True,
-        unguarded=[row], unguarded_fresh=[row],
+        trading_day="2026-09-30",
+        session_ran=True,
+        unguarded=[row],
+        unguarded_fresh=[row],
     )
     summary = cw.sweep_summary(status, entry="unit", run_id="r1")
     assert summary["unguarded_count"] == 1
@@ -1076,6 +1259,7 @@ def test_item193_summary_and_log_line_name_the_unguarded_position():
 # board item 193 — the session-lock skip is BOUNDED by measured history
 # ---------------------------------------------------------------------------
 
+
 class _EntryBroker:
     """Broker double whose only job is to say what entry orders are working."""
 
@@ -1088,6 +1272,7 @@ class _EntryBroker:
 
 def _lock_held(monkeypatch, held):
     import src.execution.scale_in as si
+
     monkeypatch.setattr(si, "trading_session_lock_held", lambda: held)
 
 
@@ -1103,7 +1288,8 @@ def test_item193_lock_held_within_measured_bound_still_skips(tmp_path, monkeypat
 
 
 def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Past every window ever measured, the lock is no longer reason to look
     away: with no entry order working there is nothing to collide with, so the
@@ -1113,6 +1299,7 @@ def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
 
     _lock_held(monkeypatch, True)
     import src.execution.scale_in as si
+
     monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
     db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
     now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)  # 300s > 9s
@@ -1120,7 +1307,8 @@ def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
 
 
 def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The collision is real — a stop would be blocked — so the skip stands."""
     from datetime import datetime, timezone
@@ -1135,7 +1323,8 @@ def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
 
 
 def test_item193_no_measured_history_leaves_the_old_behaviour_exactly(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """With nothing measured there is no bound, so nothing is called overdue
     and the lock-held skip behaves exactly as it did before."""
@@ -1199,6 +1388,7 @@ def test_typed_alert_claim_is_per_type_and_records_what_it_held_back(tmp_path):
 # Item 211 defect 2 — the per-DAY unprotected marker silenced a second name
 # ===========================================================================
 
+
 def _two_name_broker(stopless: tuple[str, ...]):
     """Two held longs; the ones named in `stopless` have no protective stop."""
     broker = MagicMock()
@@ -1233,23 +1423,30 @@ def test_a_second_name_going_unprotected_the_same_day_still_alerts(db, state_pat
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
 
     first = coverage_watchdog.check_coverage(
-        _two_name_broker(("AAA",)), now=_SAT_0615, db_path=db, state_path=state_path,
+        _two_name_broker(("AAA",)),
+        now=_SAT_0615,
+        db_path=db,
+        state_path=state_path,
     )
     assert [g.symbol for g in first.gaps] == ["AAA"]
     assert first.should_alert is True
 
     # Same trading day, same state file. BBB's stop is now gone too.
     second = coverage_watchdog.check_coverage(
-        _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
+        _two_name_broker(("AAA", "BBB")),
+        now=_SAT_0615,
+        db_path=db,
+        state_path=state_path,
     )
     assert {g.symbol for g in second.gaps} == {"AAA", "BBB"}
-    assert second.should_alert is True, (
-        "a second name going unprotected the same day must page the owner"
-    )
+    assert second.should_alert is True, "a second name going unprotected the same day must page the owner"
     assert "BBB" in coverage_watchdog.alert_text(second)
 
     # And a repeat of the SAME name alone is still only said once a day.
     third = coverage_watchdog.check_coverage(
-        _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
+        _two_name_broker(("AAA", "BBB")),
+        now=_SAT_0615,
+        db_path=db,
+        state_path=state_path,
     )
     assert third.should_alert is False

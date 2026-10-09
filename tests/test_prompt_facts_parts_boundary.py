@@ -3,6 +3,7 @@
 Every collaborator is an explicit keyword-only constructor argument, so the class is
 built from stubs alone (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import inspect
@@ -54,7 +55,6 @@ def test_macro_sector_map_tolerates_an_empty_macro_store():
     assert isinstance(out, dict)
 
 
-
 # --- The trade-review parts (src/prompt_facts/review/): built and run with no pipeline behind them.
 
 from src.prompt_facts.review.blocked import ReviewBlocked  # noqa: E402
@@ -104,7 +104,6 @@ def test_grading_part_is_handed_post_exit_reality_not_owning_it():
     assert part._build_post_exit_reality() == "HANDED IN"
 
 
-
 # --- The parent prompt-facts parts (src/prompt_facts/*.py): built and run with no pipeline behind them.
 
 from src.prompt_facts.decisions import PromptDecisions  # noqa: E402
@@ -116,7 +115,16 @@ from src.pipeline_prompt_facts import PromptPositionFacts  # noqa: E402
 from src.prompt_facts.projected import PromptProjected  # noqa: E402
 from src.prompt_facts.watchlist import PromptWatchlist  # noqa: E402
 
-FACT_PARTS = [PromptHistory, PromptDecisions, PromptProjected, PromptWatchlist, PromptExposure, PromptHeat, PromptPMFacts, PromptPositionFacts]
+FACT_PARTS = [
+    PromptHistory,
+    PromptDecisions,
+    PromptProjected,
+    PromptWatchlist,
+    PromptExposure,
+    PromptHeat,
+    PromptPMFacts,
+    PromptPositionFacts,
+]
 FACT_MODULES = [f"src.prompt_facts.{m}" for m in ("decisions", "projected", "watchlist", "heat", "pm_facts")]
 
 
@@ -137,8 +145,11 @@ def test_heat_part_is_handed_the_stop_map_not_owning_it():
     """Portfolio heat reads the stop map through the host's shim; the heat part never defines it, and the sweeper is read per use."""
     assert not hasattr(PromptHeat, "_build_stop_map") and hasattr(PromptExposure, "_build_stop_map")
     reads = []
-    part = _build(PromptHeat, sweeper=lambda: reads.append("sweeper") or None,
-                  build_stop_map=lambda positions: reads.append("stop_map") or ({}, {}, set()))
+    part = _build(
+        PromptHeat,
+        sweeper=lambda: reads.append("sweeper") or None,
+        build_stop_map=lambda positions: reads.append("stop_map") or ({}, {}, set()),
+    )
     part._build_portfolio_heat([MagicMock(name="pos", symbol="AAA")], 100_000.0)
     assert reads[:2] == ["sweeper", "stop_map"]
 
@@ -147,7 +158,9 @@ def test_pm_facts_part_is_handed_heat_and_history_not_owning_them():
     assert not hasattr(PromptPMFacts, "_build_portfolio_heat") and not hasattr(PromptPMFacts, "_build_position_history")
     part = _build(PromptPMFacts, build_portfolio_heat=lambda *a, **k: "HEAT", build_position_history=lambda *a, **k: {})
     assert part._build_portfolio_heat() == "HEAT" and part._build_position_history() == {}
-    assert "config" in inspect.signature(PromptPMFacts).parameters, "the body reads getattr(self, 'config') by string; it must be handed in"
+    assert "config" in inspect.signature(PromptPMFacts).parameters, (
+        "the body reads getattr(self, 'config') by string; it must be handed in"
+    )
 
 
 def test_projected_part_holds_no_sector_cache_and_writes_onto_the_run():

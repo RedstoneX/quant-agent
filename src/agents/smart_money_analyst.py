@@ -107,7 +107,10 @@ _FRESHNESS_RANK = {"fresh": 2, "delayed": 1, "stale": 0}
 # section 1). They are still presented — the operator must be able to see what
 # was discounted and why — but they lose every ranking contest.
 _SIGNAL_CLASS_RANK = {
-    "opportunistic": 2, "": 1, "indeterminate": 1, "routine": 0,
+    "opportunistic": 2,
+    "": 1,
+    "indeterminate": 1,
+    "routine": 0,
 }
 
 
@@ -119,12 +122,11 @@ class SmartMoneyAnalystAgent(BaseAgent):
 
     def __init__(self, *args, synthesis_cache_path: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.synthesis_cache_path = Path(
-            synthesis_cache_path or DEFAULT_SYNTHESIS_CACHE
-        )
+        self.synthesis_cache_path = Path(synthesis_cache_path or DEFAULT_SYNTHESIS_CACHE)
 
     @property
-    def name(self) -> str: return "smart_money_analyst"
+    def name(self) -> str:
+        return "smart_money_analyst"
 
     @property
     def system_prompt(self) -> str:
@@ -159,9 +161,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # if it were a bullish buy of the same dollar value, so a symbol
             # whose only large trades are sales cannot outrank one with genuine
             # buying, and a routine buy still cannot outrank an opportunistic one.
-            -sum((row.transaction_value_usd or 0) * row.signal_weight
-                 * row.signal_direction
-                 for row in observations),
+            -sum((row.transaction_value_usd or 0) * row.signal_weight * row.signal_direction for row in observations),
             -len({row.actor_cik or row.actor for row in observations}),
             min(row.disclosure_age_days for row in observations),
             symbol,
@@ -177,8 +177,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -_FRESHNESS_RANK[observation.freshness],
             # Direction-signed (board item 63): a contra/bearish row scores 0,
             # not a positive that would rank it alongside a bullish buy.
-            -(observation.transaction_value_usd or 0) * observation.signal_weight
-            * observation.signal_direction,
+            -(observation.transaction_value_usd or 0) * observation.signal_weight * observation.signal_direction,
             observation.disclosure_age_days,
             -observation.transaction_date.toordinal(),
             observation.actor_cik or observation.actor,
@@ -223,10 +222,9 @@ class SmartMoneyAnalystAgent(BaseAgent):
             if any(row.direction == direction for row in observations)
         }
         value_by_direction = {
-            direction: round(sum(
-                row.transaction_value_usd or 0
-                for row in observations if row.direction == direction
-            ), 2)
+            direction: round(
+                sum(row.transaction_value_usd or 0 for row in observations if row.direction == direction), 2
+            )
             for direction in direction_counts
         }
         public_times = [
@@ -241,9 +239,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             "observation_count": len(observations),
             "direction_counts": direction_counts,
             "transaction_value_usd_by_direction": value_by_direction,
-            "independent_owner_count": len({
-                row.actor_cik or row.actor for row in observations
-            }),
+            "independent_owner_count": len({row.actor_cik or row.actor for row in observations}),
             "streams": sorted({row.stream for row in observations}),
             "economic_roles": sorted({row.economic_role for row in observations}),
             "freshness_counts": {
@@ -251,9 +247,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 for freshness in ("fresh", "delayed", "stale")
                 if any(row.freshness == freshness for row in observations)
             },
-            "latest_transaction_date": max(
-                row.transaction_date for row in observations
-            ).isoformat(),
+            "latest_transaction_date": max(row.transaction_date for row in observations).isoformat(),
             "latest_public_at": max(public_times),
             "lag_days_range": [
                 min(row.lag_days for row in observations),
@@ -265,21 +259,15 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # filing date). Surfaced here so the seat never reads a lag
             # figure as a measured, on-time disclosure when it is really an
             # estimate the eligibility gate already refuses to credit.
-            "disclosure_date_estimated_count": sum(
-                row.disclosure_date_estimated for row in observations
-            ),
+            "disclosure_date_estimated_count": sum(row.disclosure_date_estimated for row in observations),
             "disclosure_age_days_range": [
                 min(row.disclosure_age_days for row in observations),
                 max(row.disclosure_age_days for row in observations),
             ],
-            "transient_admission_eligible": any(
-                row.transient_admission_eligible for row in observations
-            ),
+            "transient_admission_eligible": any(row.transient_admission_eligible for row in observations),
             "admission_eligible": any(row.admission_eligible for row in observations),
             "in_core_universe": any(row.in_core_universe for row in observations),
-            "in_trading_universe": any(
-                row.in_trading_universe for row in observations
-            ),
+            "in_trading_universe": any(row.in_trading_universe for row in observations),
             "transient_admitted": any(row.transient_admitted for row in observations),
             # Routine/opportunistic split. Cohen/Malloy/Pomorski: routine
             # trades carry zero predictive power, so the model is told which
@@ -290,21 +278,27 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 if any(row.signal_class == label for row in observations)
             },
             "opportunistic_transaction_value_usd_by_direction": {
-                direction: round(sum(
-                    row.transaction_value_usd or 0
-                    for row in observations
-                    if row.direction == direction and row.signal_class == "opportunistic"
-                ), 2)
+                direction: round(
+                    sum(
+                        row.transaction_value_usd or 0
+                        for row in observations
+                        if row.direction == direction and row.signal_class == "opportunistic"
+                    ),
+                    2,
+                )
                 for direction in direction_counts
             },
             # Board item 124: the deterministic same-day opportunistic
             # purchase cluster, or null. A source fact; the seat may explain
             # it, but conviction is set by code (`_purchase_cluster_lift`).
             "insider_purchase_cluster": cls._cluster_fact(observations),
-            "routine_reasons": sorted({
-                row.signal_class_reason for row in observations
-                if row.signal_class == "routine" and row.signal_class_reason
-            }),
+            "routine_reasons": sorted(
+                {
+                    row.signal_class_reason
+                    for row in observations
+                    if row.signal_class == "routine" and row.signal_class_reason
+                }
+            ),
             "amendment_count": sum(row.amendment for row in observations),
             "late_filing_count": sum(row.late_filing for row in observations),
             "ten_b_five_one_counts": {
@@ -314,47 +308,48 @@ class SmartMoneyAnalystAgent(BaseAgent):
             },
             "actor_roles": [
                 cls._bounded_context(role)
-                for role in sorted({
-                    role for row in observations for role in row.actor_roles
-                })[:_MAX_ACTOR_ROLES]
+                for role in sorted({role for row in observations for role in row.actor_roles})[:_MAX_ACTOR_ROLES]
             ],
-            "representative_transactions": [{
-                "actor": cls._bounded_context(row.actor),
-                "actor_cik": row.actor_cik,
-                "direction": row.direction,
-                "amount_range": cls._bounded_context(row.amount_range),
-                "transaction_date": row.transaction_date.isoformat(),
-                "accepted_at": (
-                    (row.accepted_at or row.known_at).isoformat()
-                    if row.accepted_at or row.known_at else None
-                ),
-                # Board item 170: whether `accepted_at`/the lag this row
-                # contributes is a real filing date or congresswatch.us's
-                # trade+45d guess (never a measurement of timeliness).
-                "disclosure_date_estimated": row.disclosure_date_estimated,
-                "transaction_value_usd": row.transaction_value_usd,
-                "post_transaction_shares": row.post_transaction_shares,
-                # Exact insider-holding ratio: uncited descriptive context,
-                # never a gate; item 90 owns the legacy bucket edges.
-                "holdings_fraction": row.holdings_fraction,
-                "holdings_fraction_band": row.holdings_fraction_band,
-                "ownership_nature": row.ownership_nature,
-                "is_10b5_1": row.is_10b5_1,
-                "signal_class": row.signal_class,
-                "signal_class_reason": row.signal_class_reason,
-                "signal_class_detail": cls._bounded_context(row.signal_class_detail, _MAX_REASON_TEXT_CHARS, "_MAX_REASON_TEXT_CHARS"),
-                "amendment": row.amendment,
-                "late_filing": row.late_filing,
-                "accession_number": row.accession_number,
-                "transaction_row": row.transaction_row,
-            } for row in representatives],
+            "representative_transactions": [
+                {
+                    "actor": cls._bounded_context(row.actor),
+                    "actor_cik": row.actor_cik,
+                    "direction": row.direction,
+                    "amount_range": cls._bounded_context(row.amount_range),
+                    "transaction_date": row.transaction_date.isoformat(),
+                    "accepted_at": (
+                        (row.accepted_at or row.known_at).isoformat() if row.accepted_at or row.known_at else None
+                    ),
+                    # Board item 170: whether `accepted_at`/the lag this row
+                    # contributes is a real filing date or congresswatch.us's
+                    # trade+45d guess (never a measurement of timeliness).
+                    "disclosure_date_estimated": row.disclosure_date_estimated,
+                    "transaction_value_usd": row.transaction_value_usd,
+                    "post_transaction_shares": row.post_transaction_shares,
+                    # Exact insider-holding ratio: uncited descriptive context,
+                    # never a gate; item 90 owns the legacy bucket edges.
+                    "holdings_fraction": row.holdings_fraction,
+                    "holdings_fraction_band": row.holdings_fraction_band,
+                    "ownership_nature": row.ownership_nature,
+                    "is_10b5_1": row.is_10b5_1,
+                    "signal_class": row.signal_class,
+                    "signal_class_reason": row.signal_class_reason,
+                    "signal_class_detail": cls._bounded_context(
+                        row.signal_class_detail, _MAX_REASON_TEXT_CHARS, "_MAX_REASON_TEXT_CHARS"
+                    ),
+                    "amendment": row.amendment,
+                    "late_filing": row.late_filing,
+                    "accession_number": row.accession_number,
+                    "transaction_row": row.transaction_row,
+                }
+                for row in representatives
+            ],
         }
 
     @staticmethod
     def _cluster_fact(observations: list[SmartMoneyObservation]) -> dict | None:
         stamped = [
-            row.purchase_cluster for row in observations
-            if row.stream == "insider" and row.purchase_cluster is not None
+            row.purchase_cluster for row in observations if row.stream == "insider" and row.purchase_cluster is not None
         ]
         if not stamped:
             return None
@@ -380,10 +375,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             "input_symbol_count": len(by_symbol),
             "presented_symbol_count": len(selected_symbols),
             "omitted_symbol_count": len(by_symbol) - len(selected_symbols),
-            "symbol_facts": [
-                cls._compact_symbol(symbol, by_symbol[symbol])
-                for symbol in selected_symbols
-            ],
+            "symbol_facts": [cls._compact_symbol(symbol, by_symbol[symbol]) for symbol in selected_symbols],
         }
 
     @classmethod
@@ -394,10 +386,12 @@ class SmartMoneyAnalystAgent(BaseAgent):
         by_symbol: dict[str, list[SmartMoneyObservation]] = {}
         for observation in observations:
             by_symbol.setdefault(observation.symbol, []).append(observation)
-        return tuple(sorted(
-            by_symbol,
-            key=lambda symbol: cls._symbol_rank(symbol, by_symbol[symbol]),
-        )[:_MAX_SYNTHESIS_SYMBOLS])
+        return tuple(
+            sorted(
+                by_symbol,
+                key=lambda symbol: cls._symbol_rank(symbol, by_symbol[symbol]),
+            )[:_MAX_SYNTHESIS_SYMBOLS]
+        )
 
     @staticmethod
     def _synthesis_cache_key(
@@ -428,22 +422,42 @@ class SmartMoneyAnalystAgent(BaseAgent):
         # trading context. Otherwise unchanged evidence would burn a fresh
         # model call every day merely because disclosure_age_days advanced.
         stable_fields = (
-            "symbol", "stream", "actor", "actor_cik", "actor_roles",
-            "joint_owner_ciks", "direction", "transaction_date",
-            "disclosure_date", "accepted_at", "source_url",
-            "accession_number", "filing_form", "transaction_code",
-            "transaction_row", "security_title", "shares",
-            "price_per_share", "transaction_value_usd",
-            "post_transaction_shares", "ownership_nature", "amendment",
-            "late_filing", "is_10b5_1", "listed_exchange",
-            "admission_eligible", "transient_admission_eligible",
+            "symbol",
+            "stream",
+            "actor",
+            "actor_cik",
+            "actor_roles",
+            "joint_owner_ciks",
+            "direction",
+            "transaction_date",
+            "disclosure_date",
+            "accepted_at",
+            "source_url",
+            "accession_number",
+            "filing_form",
+            "transaction_code",
+            "transaction_row",
+            "security_title",
+            "shares",
+            "price_per_share",
+            "transaction_value_usd",
+            "post_transaction_shares",
+            "ownership_nature",
+            "amendment",
+            "late_filing",
+            "is_10b5_1",
+            "listed_exchange",
+            "admission_eligible",
+            "transient_admission_eligible",
             # Deterministic from source facts, and it changes what the model
             # is being asked to weigh — a reclassification must not replay a
             # synthesis produced before the trade was known to be routine.
-            "signal_class", "signal_class_reason",
+            "signal_class",
+            "signal_class_reason",
             # Deterministic from `shares` and `post_transaction_shares`, and
             # it is part of what the seat is asked to weigh.
-            "holdings_fraction", "holdings_fraction_band",
+            "holdings_fraction",
+            "holdings_fraction_band",
         )
         rows = []
         for observation in observations:
@@ -455,16 +469,16 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # before and existing cached syntheses stay valid.
             cluster = dumped.get("purchase_cluster")
             if isinstance(cluster, dict):
-                row["purchase_cluster"] = {
-                    k: v for k, v in cluster.items() if k != "filing_age_days"
-                }
+                row["purchase_cluster"] = {k: v for k, v in cluster.items() if k != "filing_age_days"}
             rows.append(row)
-        rows.sort(key=lambda row: (
-            str(row.get("symbol", "")),
-            str(row.get("accession_number", "")),
-            str(row.get("transaction_row", "")),
-            str(row.get("actor_cik", "")),
-        ))
+        rows.sort(
+            key=lambda row: (
+                str(row.get("symbol", "")),
+                str(row.get("accession_number", "")),
+                str(row.get("transaction_row", "")),
+                str(row.get("actor_cik", "")),
+            )
+        )
         encoded = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
@@ -486,12 +500,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
 
     @staticmethod
     def _stance_matches_source(
-        stance: str, observations: list[SmartMoneyObservation],
+        stance: str,
+        observations: list[SmartMoneyObservation],
     ) -> bool:
-        directions = {
-            item.direction for item in observations
-            if item.direction in {"buy", "sell"}
-        }
+        directions = {item.direction for item in observations if item.direction in {"buy", "sell"}}
         if directions == {"buy"}:
             return stance in {"bullish", "neutral"}
         if directions == {"sell"}:
@@ -520,14 +532,16 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 stance = str(raw.get("stance", "")).lower()
                 if symbol not in presented_symbols or symbol in seen_symbols:
                     logger.warning(
-                        "Dropping omitted/duplicate smart-money finding: %s", symbol,
+                        "Dropping omitted/duplicate smart-money finding: %s",
+                        symbol,
                     )
                     invalid += 1
                     continue
                 if not source_rows or not self._stance_matches_source(stance, source_rows):
                     logger.warning(
-                        "Dropping direction-incompatible smart-money finding: "
-                        "%s stance=%s", symbol, stance,
+                        "Dropping direction-incompatible smart-money finding: %s stance=%s",
+                        symbol,
+                        stance,
                     )
                     invalid += 1
                     continue
@@ -542,7 +556,9 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 invalid += 1
         return findings, invalid
 
-    def analyze(self, observations: list[SmartMoneyObservation]) -> tuple[list[SmartMoneyFinding], AgentResult | None, str | None]:
+    def analyze(
+        self, observations: list[SmartMoneyObservation]
+    ) -> tuple[list[SmartMoneyFinding], AgentResult | None, str | None]:
         if not observations:
             return [], None, None
         evidence_hash = self._evidence_hash(observations)
@@ -551,35 +567,43 @@ class SmartMoneyAnalystAgent(BaseAgent):
         cached = self._load_cache().get(cache_key)
         if isinstance(cached, dict) and isinstance(cached.get("findings"), list):
             findings, invalid = self._parse_findings(
-                cached["findings"], observations, evidence_hash,
+                cached["findings"],
+                observations,
+                evidence_hash,
             )
             if not invalid:
                 raw_text = json.dumps(cached, sort_keys=True)
-                return findings, AgentResult(
-                    raw_text=raw_text,
-                    tokens_used=0,
-                    model=getattr(self, "model", "cached"),
-                    user_message="[cached evidence hash]",
-                    provider_requests=0,
-                    # docs/WORK.md item 147. A cache hit issues NO provider
-                    # request (`provider_requests=0`, no `run()`, no
-                    # `complete_call`), so its cost is not unknown -- it is
-                    # exactly $0.00, the same way `pipeline.py`'s
-                    # deterministic risk_gate row books 0.0. Leaving the
-                    # `AgentResult.cost_usd` default of None wrote a NULL
-                    # into `agent_logs` that reads as "a call happened and
-                    # we cannot price it", which is the one class the cost
-                    # circuit hard-latches on. All 7 NULL-cost rows in the
-                    # production DB (2026-08-14..2026-09-26, 667 rows) are
-                    # this path [measured, read-only 2026-09-26].
-                    cost_usd=0.0,
-                ), None
+                return (
+                    findings,
+                    AgentResult(
+                        raw_text=raw_text,
+                        tokens_used=0,
+                        model=getattr(self, "model", "cached"),
+                        user_message="[cached evidence hash]",
+                        provider_requests=0,
+                        # docs/WORK.md item 147. A cache hit issues NO provider
+                        # request (`provider_requests=0`, no `run()`, no
+                        # `complete_call`), so its cost is not unknown -- it is
+                        # exactly $0.00, the same way `pipeline.py`'s
+                        # deterministic risk_gate row books 0.0. Leaving the
+                        # `AgentResult.cost_usd` default of None wrote a NULL
+                        # into `agent_logs` that reads as "a call happened and
+                        # we cannot price it", which is the one class the cost
+                        # circuit hard-latches on. All 7 NULL-cost rows in the
+                        # production DB (2026-08-14..2026-09-26, 667 rows) are
+                        # this path [measured, read-only 2026-09-26].
+                        cost_usd=0.0,
+                    ),
+                    None,
+                )
         result = self.run(observations=observations)
         parsed = result.parse_json()
         if not isinstance(parsed, dict) or not isinstance(parsed.get("findings"), list):
             return [], result, "analysis_parse_error"
         findings, invalid = self._parse_findings(
-            parsed["findings"], observations, evidence_hash,
+            parsed["findings"],
+            observations,
+            evidence_hash,
         )
         if invalid and not findings:
             return [], result, "analysis_schema_error"
@@ -587,13 +611,16 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # Cache only fully validated synthesis. Source facts are reattached
             # from current observations on every cache hit.
             compact = {
-                "findings": [{
-                    "symbol": finding.symbol,
-                    "stance": finding.stance,
-                    "economic_role": finding.economic_role,
-                    "summary": finding.summary,
-                    "why_now": finding.why_now,
-                } for finding in findings]
+                "findings": [
+                    {
+                        "symbol": finding.symbol,
+                        "stance": finding.stance,
+                        "economic_role": finding.economic_role,
+                        "summary": finding.summary,
+                        "why_now": finding.why_now,
+                    }
+                    for finding in findings
+                ]
             }
             self._save_cache({**self._load_cache(), cache_key: compact})
         return findings, result, "analysis_partial_schema_error" if invalid else None

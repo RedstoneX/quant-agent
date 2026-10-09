@@ -79,7 +79,8 @@ if TYPE_CHECKING:
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.event_calendar import (
-        FOMCCalendarProvider, MacroEventCalendarProvider,
+        FOMCCalendarProvider,
+        MacroEventCalendarProvider,
     )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
@@ -89,6 +90,7 @@ if TYPE_CHECKING:
     from src.data.tech_store import TechStore
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
+
 
 class ExecutionStage:
     """Record HOLDs → submit SELLs → wait → refresh → submit BUYs.
@@ -131,9 +133,7 @@ class ExecutionStage:
         # exit-side twin of SELL and gets its OWN loop further down that
         # reuses `_submit_protected_sell` with side="buy", exactly the
         # plumbing PR #135 built for emergency covers.
-        buy_decisions = [
-            d for d in portfolio_decision.decisions if d.action in ("BUY", "SHORT")
-        ]
+        buy_decisions = [d for d in portfolio_decision.decisions if d.action in ("BUY", "SHORT")]
         cover_decisions = [d for d in portfolio_decision.decisions if d.action == "COVER"]
         hold_decisions = [d for d in portfolio_decision.decisions if d.action == "HOLD"]
 
@@ -157,7 +157,9 @@ class ExecutionStage:
             ctx.total_value = total_value
             logger.info(
                 "Pre-sell refresh: $%.2f total, $%.2f cash, %d positions",
-                total_value, cash, len(positions),
+                total_value,
+                cash,
+                len(positions),
             )
 
         # Board item 39 — the RANKED-MARGIN rotation's close goes LAST
@@ -172,8 +174,12 @@ class ExecutionStage:
         for d in hold_decisions:
             try:
                 pipeline.db.insert_trade(
-                    symbol=d.symbol, action="HOLD", qty=0.0, price=0.0,
-                    reasoning=d.reasoning, run_id=run_id,
+                    symbol=d.symbol,
+                    action="HOLD",
+                    qty=0.0,
+                    price=0.0,
+                    reasoning=d.reasoning,
+                    run_id=run_id,
                     decision_id=decision_id,
                 )
             except Exception as e:
@@ -195,8 +201,14 @@ class ExecutionStage:
                 # desk keeps the position instead of going naked. `None`
                 # for every other SELL in the desk's history.
                 rotation_gate = _rotation_sell_gate(
-                    pipeline, ctx, decision, buy_decisions, positions,
-                    total_value, cash, cover_decisions,
+                    pipeline,
+                    ctx,
+                    decision,
+                    buy_decisions,
+                    positions,
+                    total_value,
+                    cash,
+                    cover_decisions,
                 )
                 if rotation_gate is not None:
                     cleared, positions, total_value, cash = rotation_gate
@@ -208,11 +220,12 @@ class ExecutionStage:
                     # loop's own handler and leave three fresh fields
                     # beside a stale derivation. All four, or none.
                     refreshed = (
-                        positions, cash, total_value,
+                        positions,
+                        cash,
+                        total_value,
                         pipeline._compute_deployable_cash(cash, positions),
                     )
-                    (ctx.positions, ctx.cash, ctx.total_value,
-                     ctx.deployable_cash) = refreshed
+                    (ctx.positions, ctx.cash, ctx.total_value, ctx.deployable_cash) = refreshed
                     if not cleared:
                         continue
                 existing = [p for p in positions if p.symbol == decision.symbol]
@@ -228,7 +241,9 @@ class ExecutionStage:
                 # this item replaced exactly this kind of structural barrier
                 # with a config boolean; it is not a config boolean again.
                 rotation_final_reason = _rotation_ranked_margin_sell_reason(
-                    pipeline, ctx, decision,
+                    pipeline,
+                    ctx,
+                    decision,
                 )
                 if rotation_final_reason is _ROTATION_SELL_REFUSED:
                     continue
@@ -244,34 +259,52 @@ class ExecutionStage:
                 # can't skip a step; defer reprotect/restore to the post-sell
                 # wait below, which resolves the actual fill_qty.
                 sale = pipeline._submit_protected_sell(
-                    symbol=decision.symbol, qty=qty, limit_price=sell_limit,
+                    symbol=decision.symbol,
+                    qty=qty,
+                    limit_price=sell_limit,
                     reference_price=existing[0].current_price,
-                    position_qty_before_sell=position_qty, label=action_label,
+                    position_qty_before_sell=position_qty,
+                    label=action_label,
                 )
                 if sale is None:
                     continue
                 order, prot = sale
                 orders.append(order)
                 pipeline.db.insert_trade(
-                    symbol=decision.symbol, action=action_label, qty=qty,
-                    price=sell_price, reasoning=decision.reasoning, run_id=run_id,
+                    symbol=decision.symbol,
+                    action=action_label,
+                    qty=qty,
+                    price=sell_price,
+                    reasoning=decision.reasoning,
+                    run_id=run_id,
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                     decision_id=decision_id,
                 )
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "order", "submitted",
-                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
-                    limit_price=sell_limit, side="sell",
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "order",
+                    "submitted",
+                    "broker_accepted",
+                    broker_order_id=order.get("id"),
+                    qty=qty,
+                    limit_price=sell_limit,
+                    side="sell",
                 )
                 record_rotation_close(
-                    pipeline, ctx,
+                    pipeline,
+                    ctx,
                     SellLeg(decision, qty, sell_limit, rotation_final_reason),
                     order,
                 )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
-                    action_label.lower(), pipeline._format_qty(qty), decision.symbol, sell_limit,
+                    action_label.lower(),
+                    pipeline._format_qty(qty),
+                    decision.symbol,
+                    sell_limit,
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
@@ -302,9 +335,12 @@ class ExecutionStage:
                 # in pipeline.py, applied here to the ordinary decision path).
                 cover_limit = round(cover_price * 1.005, 2)
                 sale = pipeline._submit_protected_sell(
-                    symbol=decision.symbol, qty=qty, limit_price=cover_limit,
+                    symbol=decision.symbol,
+                    qty=qty,
+                    limit_price=cover_limit,
                     reference_price=existing[0].current_price,
-                    position_qty_before_sell=held_qty, label=action_label,
+                    position_qty_before_sell=held_qty,
+                    label=action_label,
                     side="buy",
                 )
                 if sale is None:
@@ -312,20 +348,34 @@ class ExecutionStage:
                 order, prot = sale
                 orders.append(order)
                 pipeline.db.insert_trade(
-                    symbol=decision.symbol, action=action_label, qty=qty,
-                    price=cover_price, reasoning=decision.reasoning, run_id=run_id,
+                    symbol=decision.symbol,
+                    action=action_label,
+                    qty=qty,
+                    price=cover_price,
+                    reasoning=decision.reasoning,
+                    run_id=run_id,
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                     decision_id=decision_id,
                 )
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "order", "submitted",
-                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
-                    limit_price=cover_limit, side="buy",
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "order",
+                    "submitted",
+                    "broker_accepted",
+                    broker_order_id=order.get("id"),
+                    qty=qty,
+                    limit_price=cover_limit,
+                    side="buy",
                 )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
-                    action_label.lower(), pipeline._format_qty(qty), decision.symbol, cover_limit,
+                    action_label.lower(),
+                    pipeline._format_qty(qty),
+                    decision.symbol,
+                    cover_limit,
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
@@ -343,7 +393,9 @@ class ExecutionStage:
             ctx.total_value = total_value
             logger.info(
                 "Post-sell refresh: $%.2f total, $%.2f cash, %d positions",
-                total_value, cash, len(positions),
+                total_value,
+                cash,
+                len(positions),
             )
         else:
             price_map = {p.symbol: p.current_price for p in positions}
@@ -386,7 +438,10 @@ class ExecutionStage:
         # `_record_execution_skip` path every other deterministic BUY skip
         # uses, so the funnel and the evening review see it.
         buy_decisions = _drop_rotation_buy_if_room_not_freed(
-            pipeline, ctx, buy_decisions, sell_status_by_id,
+            pipeline,
+            ctx,
+            buy_decisions,
+            sell_status_by_id,
         )
 
         # A desk that cannot read price places no new entry: one reference
@@ -398,7 +453,9 @@ class ExecutionStage:
         # TODAY for failing its own entry bar is not bought back in the
         # same session. No new number — same exchange-day window.
         buy_decisions = _drop_buys_sold_today_below_bar(
-            pipeline, ctx, buy_decisions,
+            pipeline,
+            ctx,
+            buy_decisions,
         )
 
         # The cheap deterministic entry-viability checks, lifted out verbatim
@@ -406,8 +463,12 @@ class ExecutionStage:
         # print wait there for the batched re-ask; see that module.
         fundable_notional: dict[str, float] = {}
         buy_decisions = entry_viability_preflight(
-            pipeline, ctx, buy_decisions, total_value=total_value,
-            price_map=price_map, fundable_notional=fundable_notional,
+            pipeline,
+            ctx,
+            buy_decisions,
+            total_value=total_value,
+            price_map=price_map,
+            fundable_notional=fundable_notional,
         )
 
         # Cash-sweep funding. `planned_notional` counts BUYs ONLY, at the
@@ -447,8 +508,13 @@ class ExecutionStage:
             # the only funding source, so there is nothing to record as freed.
             for d in buy_decisions:
                 _record_pipeline_event(
-                    pipeline, ctx, d.symbol, "funding", "not_required",
-                    "cash_sweep_disabled", raw_cash=cash,
+                    pipeline,
+                    ctx,
+                    d.symbol,
+                    "funding",
+                    "not_required",
+                    "cash_sweep_disabled",
+                    raw_cash=cash,
                 )
             _adopt_stream_stall(pipeline, ctx)
             # Encode AFTER funding so the fund step's own 180s/30s ceiling
@@ -463,15 +529,21 @@ class ExecutionStage:
         # post-funding figures adopted above, so the headroom is measured
         # against the book the entries will actually join.
         entry_budget, budget_is_gross, budget_note = _entry_deployment_budget(
-            pipeline, ctx, positions, total_value, cash,
+            pipeline,
+            ctx,
+            positions,
+            total_value,
+            cash,
         )
         single_name_cap = _single_name_execution_cap(pipeline, total_value)
         if buy_decisions:
             logger.info(
-                "Entry budget for %d entr%s: $%.2f — %s (single-order ceiling "
-                "$%.2f)",
-                len(buy_decisions), "y" if len(buy_decisions) == 1 else "ies",
-                entry_budget, budget_note, single_name_cap,
+                "Entry budget for %d entr%s: $%.2f — %s (single-order ceiling $%.2f)",
+                len(buy_decisions),
+                "y" if len(buy_decisions) == 1 else "ies",
+                entry_budget,
+                budget_note,
+                single_name_cap,
             )
         pending_entry_stops: list[dict] = []
         # A QUEUE, not the decision list. `entry_budget` is drawn on
@@ -488,8 +560,13 @@ class ExecutionStage:
         original_entry_count = len(submit_queue)
         deferred_far_through: set[str] = set()
         entry_run = EntryRun(
-            pipeline, ctx, submit_queue, deferred_far_through,
-            original_entry_count, budget_is_gross, total_value,
+            pipeline,
+            ctx,
+            submit_queue,
+            deferred_far_through,
+            original_entry_count,
+            budget_is_gross,
+            total_value,
         )
         queue_index = 0
         while queue_index < len(submit_queue):
@@ -503,6 +580,7 @@ class ExecutionStage:
             submit_attempted = False
             try:
                 from src.execution.scale_in import LongAddPrep
+
                 add_prep = LongAddPrep.not_scale_in()
                 # D6 (Stage 3): the borrow gate. Refuse to open a short
                 # unless the broker reports it BOTH shortable AND easy to
@@ -520,24 +598,27 @@ class ExecutionStage:
                     except Exception as e:  # noqa: BLE001
                         logger.warning(
                             "SHORT %s: shortability lookup raised: %s",
-                            decision.symbol, e,
+                            decision.symbol,
+                            e,
                         )
                         borrow = {
-                            "shortable": False, "easy_to_borrow": False,
+                            "shortable": False,
+                            "easy_to_borrow": False,
                             "reason": "asset_lookup_failed",
                         }
-                    if not (isinstance(borrow, dict) and borrow.get("shortable")
-                            and borrow.get("easy_to_borrow")):
-                        reason = (
-                            borrow.get("reason", "not_shortable")
-                            if isinstance(borrow, dict) else "not_shortable"
-                        )
+                    if not (isinstance(borrow, dict) and borrow.get("shortable") and borrow.get("easy_to_borrow")):
+                        reason = borrow.get("reason", "not_shortable") if isinstance(borrow, dict) else "not_shortable"
                         logger.warning(
                             "SHORT %s skipped: borrow gate refused (%s)",
-                            decision.symbol, reason,
+                            decision.symbol,
+                            reason,
                         )
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "borrow_gate", reason,
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "borrow_gate",
+                            reason,
                         )
                         continue
                     # Short scale-in (adding to an existing short) is now a
@@ -574,11 +655,17 @@ class ExecutionStage:
                                 "%s %s skipped: LLM entry_price $%.2f is %.1f%% "
                                 "away from market $%.2f (threshold 5%%). Stop/R/R "
                                 "computed against stale entry would be unsafe.",
-                                decision.action, decision.symbol, decision.entry_price,
-                                deviation * 100, market_price,
+                                decision.action,
+                                decision.symbol,
+                                decision.entry_price,
+                                deviation * 100,
+                                market_price,
                             )
                             _record_execution_skip(
-                                pipeline, ctx, decision.symbol, "stale_entry",
+                                pipeline,
+                                ctx,
+                                decision.symbol,
+                                "stale_entry",
                                 f"entry ${decision.entry_price:.2f} is "
                                 f"{deviation * 100:.1f}% from market "
                                 f"${market_price:.2f} (threshold 5%)",
@@ -587,7 +674,9 @@ class ExecutionStage:
                         elif not is_short and limit_price < market_price:
                             logger.info(
                                 "Adjusting limit price for %s: $%.2f → $%.2f (raised to market)",
-                                decision.symbol, limit_price, market_price,
+                                decision.symbol,
+                                limit_price,
+                                market_price,
                             )
                             limit_price = market_price
                         elif is_short and limit_price > market_price:
@@ -596,9 +685,10 @@ class ExecutionStage:
                             # above the market and expect an immediate fill —
                             # so pull it DOWN to market instead of UP.
                             logger.info(
-                                "Adjusting limit price for SHORT %s: $%.2f → "
-                                "$%.2f (lowered to market)",
-                                decision.symbol, limit_price, market_price,
+                                "Adjusting limit price for SHORT %s: $%.2f → $%.2f (lowered to market)",
+                                decision.symbol,
+                                limit_price,
+                                market_price,
                             )
                             limit_price = market_price
                     # `sizing_price` is deliberately NOT set from market_price
@@ -611,16 +701,20 @@ class ExecutionStage:
                         "%s %s skipped: no verifiable price reference "
                         "(broker + bars both unavailable). "
                         "LLM proposed entry $%.2f but cannot be validated.",
-                        decision.action, decision.symbol, decision.entry_price,
+                        decision.action,
+                        decision.symbol,
+                        decision.entry_price,
                     )
                     classified = classified_no_price(pipeline, decision.symbol)
                     if classified:
                         _record_execution_skip(pipeline, ctx, decision.symbol, *classified)
                     else:
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "no_price",
-                            "no verifiable price reference (broker + bars "
-                            "unavailable)",
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "no_price",
+                            "no verifiable price reference (broker + bars unavailable)",
                         )
                     continue
 
@@ -634,7 +728,10 @@ class ExecutionStage:
                 # (which passed the 5% freshness check above); refuse the name
                 # when no print is available rather than size on a bad price.
                 sizing_print, why, detail = sizing_price_or_refusal(
-                    _today_sizing_price, pipeline, decision.symbol, "order",
+                    _today_sizing_price,
+                    pipeline,
+                    decision.symbol,
+                    "order",
                 )
                 if sizing_print is None:
                     _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
@@ -684,7 +781,9 @@ class ExecutionStage:
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "%s %s quote lookup failed: %s",
-                        decision.action, decision.symbol, e,
+                        decision.action,
+                        decision.symbol,
+                        e,
                     )
                     quote = None
                 ask = quote.get("ask_price") if isinstance(quote, dict) else None
@@ -692,20 +791,24 @@ class ExecutionStage:
                 if _submit_window_overrun(ctx):
                     ctx.desk_latency_stall = True
                     logger.warning(
-                        "%s %s NOT SUBMITTED — latency blew the window "
-                        "(encoded post-Risk budget %.1fs).",
-                        decision.action, decision.symbol,
+                        "%s %s NOT SUBMITTED — latency blew the window (encoded post-Risk budget %.1fs).",
+                        decision.action,
+                        decision.symbol,
                         float(getattr(ctx, "entry_submit_budget_s", 0.0) or 0.0),
                     )
                     _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "latency_window",
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "latency_window",
                         "latency blew the window",
                     )
                     continue
                 priced = entry_limit_from_quote(
                     entry_run,
                     EntryLeg(decision, is_short, queue_index, market_price, ask, bid),
-                    limit_price, sizing_price,
+                    limit_price,
+                    sizing_price,
                 )
                 if priced is SKIP:
                     continue
@@ -726,8 +829,12 @@ class ExecutionStage:
                     risk_sizing_price = float(limit_price)
 
                 sized = entry_qty(
-                    entry_run, decision, is_short,
-                    sizing_price, risk_sizing_price, stop_price,
+                    entry_run,
+                    decision,
+                    is_short,
+                    sizing_price,
+                    risk_sizing_price,
+                    stop_price,
                 )
                 if sized is SKIP:
                     continue
@@ -748,7 +855,8 @@ class ExecutionStage:
                 # shipped.
                 if not is_short and estimated_cost > order_ceiling:
                     affordable_qty = _size_shares(
-                        pipeline, order_ceiling / sizing_price,
+                        pipeline,
+                        order_ceiling / sizing_price,
                         fractional=fractional,
                     )
                     # The skip reason stays `insufficient_cash` even though
@@ -759,23 +867,29 @@ class ExecutionStage:
                     # carries the truth.
                     if affordable_qty <= 0:
                         logger.warning(
-                            "Skipping BUY %s: estimated cost $%.2f exceeds the "
-                            "$%.2f still deployable — %s",
-                            decision.symbol, estimated_cost, order_ceiling,
+                            "Skipping BUY %s: estimated cost $%.2f exceeds the $%.2f still deployable — %s",
+                            decision.symbol,
+                            estimated_cost,
+                            order_ceiling,
                             budget_note,
                         )
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "insufficient_cash",
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "insufficient_cash",
                             f"estimated cost ${estimated_cost:.2f} exceeds the "
                             f"${order_ceiling:.2f} still deployable "
                             f"({budget_note})",
                         )
                         continue
                     logger.warning(
-                        "Resizing BUY %s from %s to %s share(s): only $%.2f is "
-                        "still deployable — %s",
-                        decision.symbol, _fmt_shares(qty),
-                        _fmt_shares(affordable_qty), order_ceiling, budget_note,
+                        "Resizing BUY %s from %s to %s share(s): only $%.2f is still deployable — %s",
+                        decision.symbol,
+                        _fmt_shares(qty),
+                        _fmt_shares(affordable_qty),
+                        order_ceiling,
+                        budget_note,
                     )
                     qty = min(qty, affordable_qty)
                     estimated_cost = qty * sizing_price
@@ -790,9 +904,15 @@ class ExecutionStage:
                     # `insufficient_cash`), so a $3 residue now simply buys
                     # 0.0281 shares rather than being refused for smallness.
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "funding", "resized",
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "funding",
+                        "resized",
                         "confirmed_cash_partially_funded_order",
-                        approved_qty=qty_by_risk if qty_by_risk is not None and qty_by_risk < qty_by_alloc else qty_by_alloc,
+                        approved_qty=qty_by_risk
+                        if qty_by_risk is not None and qty_by_risk < qty_by_alloc
+                        else qty_by_alloc,
                         resized_qty=qty,
                         deployment_budget=entry_budget,
                         order_ceiling=order_ceiling,
@@ -806,9 +926,12 @@ class ExecutionStage:
                 # blocked above: scale-in is the long path.
                 if not is_short:
                     from src.execution.scale_in import prepare_long_add
+
                     add_prep = prepare_long_add(
-                        broker=pipeline.broker, db=pipeline.db,
-                        symbol=decision.symbol, positions=positions,
+                        broker=pipeline.broker,
+                        db=pipeline.db,
+                        symbol=decision.symbol,
+                        positions=positions,
                         intended_stop=stop_price,
                     )
                 else:
@@ -819,8 +942,10 @@ class ExecutionStage:
                     # the budget-resize floor above (it never spends cash), so
                     # this is where the floor is re-applied for a short add.
                     from src.execution.scale_in import (
-                        held_signed_qty, prepare_short_add,
+                        held_signed_qty,
+                        prepare_short_add,
                     )
+
                     if held_signed_qty(positions, decision.symbol) < 0:
                         floor_usd = _min_order_usd(pipeline)
                         if estimated_cost < floor_usd:
@@ -828,36 +953,52 @@ class ExecutionStage:
                                 "Skipping SHORT add %s: order $%.2f (%s sh) is "
                                 "below the $%.0f minimum worth trading — dropped "
                                 "before any protective buy-stop is cancelled",
-                                decision.symbol, estimated_cost,
-                                _fmt_shares(qty), floor_usd,
+                                decision.symbol,
+                                estimated_cost,
+                                _fmt_shares(qty),
+                                floor_usd,
                             )
                             _record_execution_skip(
-                                pipeline, ctx, decision.symbol,
+                                pipeline,
+                                ctx,
+                                decision.symbol,
                                 "below_min_notional",
-                                f"short add ${estimated_cost:.2f} is below the "
-                                f"${floor_usd:,.0f} minimum worth trading",
+                                f"short add ${estimated_cost:.2f} is below the ${floor_usd:,.0f} minimum worth trading",
                             )
                             _record_pipeline_event(
-                                pipeline, ctx, decision.symbol, "funding",
-                                "refused", "short_add_below_min_notional",
+                                pipeline,
+                                ctx,
+                                decision.symbol,
+                                "funding",
+                                "refused",
+                                "short_add_below_min_notional",
                                 resized_notional=estimated_cost,
                                 min_order_usd=floor_usd,
                             )
                             continue
                     add_prep = prepare_short_add(
-                        broker=pipeline.broker, db=pipeline.db,
-                        symbol=decision.symbol, positions=positions,
+                        broker=pipeline.broker,
+                        db=pipeline.db,
+                        symbol=decision.symbol,
+                        positions=positions,
                         intended_stop=stop_price,
                     )
                 if add_prep is not None:
                     if add_prep.skip_reason:
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol,
-                            add_prep.skip_reason, add_prep.skip_detail,
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            add_prep.skip_reason,
+                            add_prep.skip_detail,
                         )
                         _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "scale_in",
-                            "skipped", add_prep.skip_reason,
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "scale_in",
+                            "skipped",
+                            add_prep.skip_reason,
                             detail=add_prep.skip_detail,
                         )
                         continue
@@ -866,7 +1007,10 @@ class ExecutionStage:
                         # signature registry and historical rows read it); it
                         # covers a cancelled buy-stop on a short add too.
                         _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "scale_in",
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "scale_in",
                             "protective_sell_cancelled",
                             "cancel_confirmed_via_trade_updates",
                             wal_row_id=add_prep.wal_row_id,
@@ -917,22 +1061,33 @@ class ExecutionStage:
                 # decision.
                 _is_scale_in = add_prep is not None and add_prep.is_scale_in
                 # Item 82 scale-in carry-forward lives in src/entry_evidence.py.
-                _existing_buy, _setup_type_unused, _ceiling_unused = (
-                    _resolve_entry_pins(
-                        pipeline.db, decision,
-                        is_short=is_short, is_scale_in=_is_scale_in,
-                    )
+                _existing_buy, _setup_type_unused, _ceiling_unused = _resolve_entry_pins(
+                    pipeline.db,
+                    decision,
+                    is_short=is_short,
+                    is_scale_in=_is_scale_in,
                 )
                 pending_row_id, entry_side = insert_pending_entry(
-                    db=pipeline.db, decision=decision, add_prep=add_prep,
-                    is_short=is_short, qty=qty, executed_price=executed_price,
-                    run_id=run_id, stop_price=stop_price, decision_id=decision_id,
-                    entry_analysis=entry_analysis, decision_model=ctx.decision_model,
+                    db=pipeline.db,
+                    decision=decision,
+                    add_prep=add_prep,
+                    is_short=is_short,
+                    qty=qty,
+                    executed_price=executed_price,
+                    run_id=run_id,
+                    stop_price=stop_price,
+                    decision_id=decision_id,
+                    entry_analysis=entry_analysis,
+                    decision_model=ctx.decision_model,
                 )
 
                 _record_scale_in_own_verdict(
-                    pipeline.db, logger, run_id=run_id, decision_id=decision_id,
-                    decision=decision, prior_row=_existing_buy,
+                    pipeline.db,
+                    logger,
+                    run_id=run_id,
+                    decision_id=decision_id,
+                    decision=decision,
+                    prior_row=_existing_buy,
                     is_scale_in=_is_scale_in,
                 )
 
@@ -945,7 +1100,9 @@ class ExecutionStage:
                     # Leave the scale-in WAL row; drain rearms at broker qty.
                     submit_attempted = True
                     order = pipeline.broker.submit_order(
-                        symbol=decision.symbol, qty=qty, side=entry_side,
+                        symbol=decision.symbol,
+                        qty=qty,
+                        side=entry_side,
                         limit_price=limit_price,
                         # PASSED THROUGH AS-IS (docs/WORK.md item 88). This
                         # used to read `stop_price if stop_price > 0 else
@@ -982,8 +1139,13 @@ class ExecutionStage:
                     # submit_failed silently HID the row from the
                     # recovery path it was supposed to be flagged for.
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "order", "submit_unknown",
-                        "broker_submit_exception", detail=str(e),
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "order",
+                        "submit_unknown",
+                        "broker_submit_exception",
+                        detail=str(e),
                         trade_row_id=pending_row_id,
                     )
                     raise
@@ -1007,8 +1169,12 @@ class ExecutionStage:
                     # KNOW the order did not go live, so there's no orphan
                     # to sweep.
                     from src.execution.scale_in import restore_after_failed_add
+
                     restore_after_failed_add(
-                        pipeline.broker, pipeline.db, add_prep, decision.symbol,
+                        pipeline.broker,
+                        pipeline.db,
+                        add_prep,
+                        decision.symbol,
                     )
                     pipeline.db.mark_trade_submit_failed(pending_row_id)
                     order_status = str((order or {}).get("status") or "")
@@ -1035,9 +1201,7 @@ class ExecutionStage:
                         skip_detail = order_detail or "the quantity is not usable"
                     elif order_status == "kill_switch_halted":
                         skip_reason = "kill_switch_halted"
-                        skip_detail = order_detail or (
-                            "the trading kill switch is active"
-                        )
+                        skip_detail = order_detail or ("the trading kill switch is active")
                     else:
                         skip_reason = "broker_rejected"
                         # Board item 89 clarity defect — "a missing broker
@@ -1048,31 +1212,51 @@ class ExecutionStage:
                             f"broker rejected {decision.action.lower()} "
                             f"{_fmt_shares(qty)} @ "
                             f"{'limit $%.2f' % limit_price if limit_price else 'market'}"
-                            + (f" — broker said: {order_detail}" if order_detail
-                               else " — the broker gave no reason the desk recorded")
+                            + (
+                                f" — broker said: {order_detail}"
+                                if order_detail
+                                else " — the broker gave no reason the desk recorded"
+                            )
                         )
                         # The raw broker status token is not appended to the
                         # owner-facing detail any more (it read
                         # "(status=rejected)"); it stays in the log line and
                         # the pipeline event above.
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "order", "rejected",
-                        skip_reason, trade_row_id=pending_row_id, qty=qty,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "order",
+                        "rejected",
+                        skip_reason,
+                        trade_row_id=pending_row_id,
+                        qty=qty,
                     )
                     _record_execution_skip(
-                        pipeline, ctx, decision.symbol, skip_reason, skip_detail,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        skip_reason,
+                        skip_detail,
                     )
                     continue
 
                 # Submit accepted — finalize the pending row with the
                 # broker's order_id and flip to 'submitted'.
                 pipeline.db.confirm_trade_submitted(
-                    pending_row_id, broker_order_id=order.get("id"),
+                    pending_row_id,
+                    broker_order_id=order.get("id"),
                 )
                 buy_accepted = True
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "order", "submitted",
-                    "broker_accepted", broker_order_id=order.get("id"), qty=qty,
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "order",
+                    "submitted",
+                    "broker_accepted",
+                    broker_order_id=order.get("id"),
+                    qty=qty,
                     limit_price=executed_price,
                 )
                 if isinstance(order, dict):
@@ -1092,8 +1276,11 @@ class ExecutionStage:
                 order_type = "limit" if limit_price is not None else "market"
                 logger.info(
                     "Executed: %s %s %s @ %s $%.2f",
-                    decision.action.lower(), _fmt_shares(qty), decision.symbol,
-                    order_type, executed_price,
+                    decision.action.lower(),
+                    _fmt_shares(qty),
+                    decision.symbol,
+                    order_type,
+                    executed_price,
                 )
                 # The entry still owes a protective stop: it is placed as a
                 # separate GTC order AFTER the fill, because an OTO leg would
@@ -1102,9 +1289,7 @@ class ExecutionStage:
                 # naked every night). Deferred until all BUYs are submitted so
                 # the fill waits don't serialize the submission burst.
                 if isinstance(order, dict) and (
-                    order.get("pending_stop_price") or (
-                        add_prep is not None and add_prep.cancelled
-                    )
+                    order.get("pending_stop_price") or (add_prep is not None and add_prep.cancelled)
                 ):
                     # Scale-in: the add's own stop is not automatically the
                     # live one. Most-protective for a long is the HIGHEST
@@ -1112,55 +1297,39 @@ class ExecutionStage:
                     # over pending_stop_price or a looser cancelled stop
                     # would be replaced by the add's wider number.
                     protect_stop = order.get("pending_stop_price") or 0
-                    if (
-                        add_prep is not None and add_prep.is_scale_in
-                        and add_prep.intended_stop > 0
-                    ):
+                    if add_prep is not None and add_prep.is_scale_in and add_prep.intended_stop > 0:
                         protect_stop = add_prep.intended_stop
-                    pending_entry_stops.append({
-                        "symbol": decision.symbol,
-                        "side": entry_side,
-                        "order_id": order.get("id"),
-                        "stop_price": protect_stop,
-                        "qty": qty,
-                        # Carried for the bounded re-peg (off by default).
-                        # `reference_price` is the verified reference the
-                        # slippage ceiling was computed from at SUBMISSION —
-                        # the re-peg re-uses it rather than re-deriving a
-                        # ceiling from a fresh quote, because a ceiling that
-                        # follows the market is not a ceiling.
-                        "reference_price": market_price,
-                        "limit_price": limit_price,
-                        "trade_row_id": pending_row_id,
-                        "cover_full_position": bool(
-                            add_prep is not None and add_prep.is_scale_in
-                        ),
-                        "held_qty_before": (
-                            add_prep.held_qty_before if add_prep else 0.0
-                        ),
-                        "wal_row_id": (
-                            add_prep.wal_row_id if add_prep else None
-                        ),
-                        "cancelled_specs": (
-                            add_prep.specs if add_prep else []
-                        ),
-                        "intended_stop": (
-                            add_prep.intended_stop if add_prep else 0.0
-                        ),
-                        # Board item 193: the monotonic instant the BROKER
-                        # acknowledged the protective cancel. Carried to the
-                        # rearm so the unprotected window is measured end to
-                        # end inside one run, from broker acknowledgement to
-                        # broker acknowledgement, not from row write times.
-                        "cancel_confirmed_at": (
-                            add_prep.cancel_confirmed_at if add_prep else None
-                        ),
-                    })
+                    pending_entry_stops.append(
+                        {
+                            "symbol": decision.symbol,
+                            "side": entry_side,
+                            "order_id": order.get("id"),
+                            "stop_price": protect_stop,
+                            "qty": qty,
+                            # Carried for the bounded re-peg (off by default).
+                            # `reference_price` is the verified reference the
+                            # slippage ceiling was computed from at SUBMISSION —
+                            # the re-peg re-uses it rather than re-deriving a
+                            # ceiling from a fresh quote, because a ceiling that
+                            # follows the market is not a ceiling.
+                            "reference_price": market_price,
+                            "limit_price": limit_price,
+                            "trade_row_id": pending_row_id,
+                            "cover_full_position": bool(add_prep is not None and add_prep.is_scale_in),
+                            "held_qty_before": (add_prep.held_qty_before if add_prep else 0.0),
+                            "wal_row_id": (add_prep.wal_row_id if add_prep else None),
+                            "cancelled_specs": (add_prep.specs if add_prep else []),
+                            "intended_stop": (add_prep.intended_stop if add_prep else 0.0),
+                            # Board item 193: the monotonic instant the BROKER
+                            # acknowledged the protective cancel. Carried to the
+                            # rearm so the unprotected window is measured end to
+                            # end inside one run, from broker acknowledgement to
+                            # broker acknowledgement, not from row write times.
+                            "cancel_confirmed_at": (add_prep.cancel_confirmed_at if add_prep else None),
+                        }
+                    )
             except Exception as e:
-                if (
-                    add_prep is not None and add_prep.cancelled
-                    and not buy_accepted
-                ):
+                if add_prep is not None and add_prep.cancelled and not buy_accepted:
                     if submit_attempted:
                         logger.critical(
                             "scale-in: BUY submit for %s failed after the "
@@ -1168,12 +1337,16 @@ class ExecutionStage:
                             "stays so drain rearms at the broker's current "
                             "qty; restoring the old stop size would under-"
                             "cover a fill that may already have landed",
-                            decision.symbol, add_prep.wal_row_id,
+                            decision.symbol,
+                            add_prep.wal_row_id,
                         )
                     else:
                         from src.execution.scale_in import restore_after_failed_add
+
                         restore_after_failed_add(
-                            pipeline.broker, pipeline.db, add_prep,
+                            pipeline.broker,
+                            pipeline.db,
+                            add_prep,
                             decision.symbol,
                         )
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)

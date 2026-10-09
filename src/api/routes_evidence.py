@@ -57,9 +57,11 @@ from src.models import (
 router = APIRouter()
 
 _TECH_DIRECTION = {
-    "strong_buy": "bullish", "buy": "bullish",
+    "strong_buy": "bullish",
+    "buy": "bullish",
     "neutral": "neutral",
-    "sell": "bearish", "strong_sell": "bearish",
+    "sell": "bearish",
+    "strong_sell": "bearish",
 }
 
 
@@ -97,11 +99,15 @@ def _pipeline_events(rows: list[dict]) -> list[PipelineEvent]:
         if not isinstance(data, dict) or not data.get("stage") or not data.get("outcome"):
             continue
         details = {k: v for k, v in data.items() if k not in {"stage", "outcome", "reason"}}
-        events.append(PipelineEvent(
-            stage=data["stage"], outcome=data["outcome"],
-            reason=data.get("reason", ""), timestamp=row.get("timestamp"),
-            details=details,
-        ))
+        events.append(
+            PipelineEvent(
+                stage=data["stage"],
+                outcome=data["outcome"],
+                reason=data.get("reason", ""),
+                timestamp=row.get("timestamp"),
+                details=details,
+            )
+        )
     return events
 
 
@@ -134,8 +140,10 @@ def _run_scoped_context(run_rows: list[dict]) -> tuple:
         ma = _validate(MacroAnalysis, _parse_evidence(macro_row))
         if ma is not None:
             macro_context = MacroBroaderContext(
-                regime=ma.regime, equity_outlook=ma.equity_outlook,
-                confidence=ma.confidence, summary=ma.summary,
+                regime=ma.regime,
+                equity_outlook=ma.equity_outlook,
+                confidence=ma.confidence,
+                summary=ma.summary,
                 sector_guidance=[g.model_dump() for g in ma.sector_guidance],
                 timestamp=macro_row.get("timestamp"),
             )
@@ -159,7 +167,9 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
     client re-parsing raw agent output."""
     symbol = symbol.strip().upper()
     symbol_rows = db_reads.get_specialist_evidence(
-        run_id=run_id, symbol=symbol, scope="symbol",
+        run_id=run_id,
+        symbol=symbol,
+        scope="symbol",
     )
     trades = db_reads.get_trades(run_id=run_id, symbol=symbol, limit=100)
 
@@ -188,14 +198,10 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
     pm_target = _validate(TargetPosition, _parse_evidence(target_row)) if target_row else None
 
     proposed_row = _find(symbol_rows, "portfolio_manager", "proposed_order")
-    pm_proposed_order = (
-        _validate(TradeDecision, _parse_evidence(proposed_row)) if proposed_row else None
-    )
+    pm_proposed_order = _validate(TradeDecision, _parse_evidence(proposed_row)) if proposed_row else None
 
     mod_row = _find(symbol_rows, "risk_manager", "modification")
-    risk_modification = (
-        _validate(RiskModification, _parse_evidence(mod_row)) if mod_row else None
-    )
+    risk_modification = _validate(RiskModification, _parse_evidence(mod_row)) if mod_row else None
 
     pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)
 
@@ -206,19 +212,13 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
         ni = _validate(NewsIntelligenceReport, _parse_evidence(news_row))
         if ni is not None:
             news_symbol = [item.model_dump() for item in ni.stock_news.get(symbol, [])]
-            relevant_changes = [
-                sc.model_dump() for sc in ni.state_changes
-                if symbol in (sc.affected_symbols or [])
-            ]
+            relevant_changes = [sc.model_dump() for sc in ni.state_changes if symbol in (sc.affected_symbols or [])]
             news_context = NewsBroaderContext(
                 # Board item 152: `None` here means the seat's own sentiment
                 # word was unreadable and dropped. The dashboard renders this
                 # field verbatim, so send the absence in words — a blank cell
                 # would read as "nothing to say", not as "no answer".
-                market_sentiment=(
-                    ni.market_sentiment
-                    or "ABSENT — no readable sentiment from the seat (not neutral)"
-                ),
+                market_sentiment=(ni.market_sentiment or "ABSENT — no readable sentiment from the seat (not neutral)"),
                 confidence=ni.confidence,
                 pm_briefing=ni.pm_briefing,
                 era_themes=list(ni.macro_narrative.era_themes),
@@ -232,23 +232,29 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
 
     signals: list[ConsensusSignal] = []
     if tech is not None:
-        signals.append(ConsensusSignal(
-            source="tech_analyst",
-            direction=_TECH_DIRECTION.get(tech.rating, "neutral"),
-            detail=tech.reasoning,
-        ))
+        signals.append(
+            ConsensusSignal(
+                source="tech_analyst",
+                direction=_TECH_DIRECTION.get(tech.rating, "neutral"),
+                detail=tech.reasoning,
+            )
+        )
     if earnings is not None:
-        signals.append(ConsensusSignal(
-            source="earnings_analyst",
-            direction=earnings.investment_implications.sentiment,
-            detail=earnings.investment_implications.key_thesis,
-        ))
+        signals.append(
+            ConsensusSignal(
+                source="earnings_analyst",
+                direction=earnings.investment_implications.sentiment,
+                detail=earnings.investment_implications.key_thesis,
+            )
+        )
     for item in news_symbol:
-        signals.append(ConsensusSignal(
-            source="news_analyst",
-            direction=item.get("sentiment", "neutral"),
-            detail=item.get("headline", ""),
-        ))
+        signals.append(
+            ConsensusSignal(
+                source="news_analyst",
+                direction=item.get("sentiment", "neutral"),
+                detail=item.get("headline", ""),
+            )
+        )
 
     if len(signals) < 2:
         agreement = "insufficient_data"
@@ -267,12 +273,21 @@ def get_candidate_detail(run_id: str, symbol: str) -> CandidateDetailResponse:
             agreement = "mixed"
 
     return CandidateDetailResponse(
-        run_id=run_id, symbol=symbol, decision_id=decision_id,
-        tech=tech, earnings=earnings, news_symbol=news_symbol,
-        macro_context=macro_context, news_context=news_context,
-        pm_reasoning=pm_reasoning, pm_target=pm_target,
-        pm_proposed_order=pm_proposed_order, risk_verdict=risk_verdict,
-        risk_modification=risk_modification, trade=trade, trades=trade_items,
+        run_id=run_id,
+        symbol=symbol,
+        decision_id=decision_id,
+        tech=tech,
+        earnings=earnings,
+        news_symbol=news_symbol,
+        macro_context=macro_context,
+        news_context=news_context,
+        pm_reasoning=pm_reasoning,
+        pm_target=pm_target,
+        pm_proposed_order=pm_proposed_order,
+        risk_verdict=risk_verdict,
+        risk_modification=risk_modification,
+        trade=trade,
+        trades=trade_items,
         pipeline_events=_pipeline_events(symbol_rows),
         consensus=ConsensusSummary(signals=signals, agreement=agreement),
     )
@@ -363,34 +378,35 @@ def get_run_funnel(run_id: str) -> RunFunnelResponse:
 
         events = _pipeline_events(rows)
         protection = next(
-            (e for e in reversed(events) if e.stage == "protection"), None,
+            (e for e in reversed(events) if e.stage == "protection"),
+            None,
         )
-        candidates.append(CandidateFunnelItem(
-            symbol=sym,
-            direction=direction,
-            is_bearish_hedge=is_hedge,
-            reached_pm_target=reached_target,
-            pm_target_weight_pct=pm_target.target_weight_pct if pm_target else None,
-            pm_risk_allocation_pct=(
-                pm_target.risk_allocation_pct if pm_target else None
-            ),
-            reached_proposed_order=reached_proposed,
-            proposed_action=pm_proposed.action if pm_proposed else None,
-            risk_modified=risk_modified,
-            executed=executed,
-            trade_action=trade.get("action") if trade else None,
-            order_status=trade.get("fill_status") if trade else None,
-            fill_qty=trade.get("fill_qty") if trade else None,
-            fill_price=trade.get("fill_price") if trade else None,
-            realized_pnl=trade.get("realized_pnl") if trade else None,
-            protection_outcome=protection.outcome if protection else None,
-            pipeline_events=events,
-            execution_skip_reason=skip_reason,
-            execution_skip_detail=skip_detail,
-            analysis_drop_code=drop_code,
-            analysis_drop_reason=drop_reason,
-            analysis_drop_recovered=drop_recovered,
-        ))
+        candidates.append(
+            CandidateFunnelItem(
+                symbol=sym,
+                direction=direction,
+                is_bearish_hedge=is_hedge,
+                reached_pm_target=reached_target,
+                pm_target_weight_pct=pm_target.target_weight_pct if pm_target else None,
+                pm_risk_allocation_pct=(pm_target.risk_allocation_pct if pm_target else None),
+                reached_proposed_order=reached_proposed,
+                proposed_action=pm_proposed.action if pm_proposed else None,
+                risk_modified=risk_modified,
+                executed=executed,
+                trade_action=trade.get("action") if trade else None,
+                order_status=trade.get("fill_status") if trade else None,
+                fill_qty=trade.get("fill_qty") if trade else None,
+                fill_price=trade.get("fill_price") if trade else None,
+                realized_pnl=trade.get("realized_pnl") if trade else None,
+                protection_outcome=protection.outcome if protection else None,
+                pipeline_events=events,
+                execution_skip_reason=skip_reason,
+                execution_skip_detail=skip_detail,
+                analysis_drop_code=drop_code,
+                analysis_drop_reason=drop_reason,
+                analysis_drop_recovered=drop_recovered,
+            )
+        )
 
     pm_reasoning, risk_verdict, macro_context = _run_scoped_context(run_rows)
 

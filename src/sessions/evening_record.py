@@ -9,6 +9,7 @@ Three states stay distinct: no row means the step was never reached, an
 ran and swallowed a fault. When the session holds no ledger handle the
 traceback is still logged and the row is skipped.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,8 +23,10 @@ def record_evening_pass(session, where: str, exc: BaseException | None = None) -
     """Record ONE pass through an evening catch-all; never raises."""
     try:
         record_guarded_outcome(
-            db=getattr(session, "_db", None), where=f"evening.{where}",
-            exc=exc, log=logger,
+            db=getattr(session, "_db", None),
+            where=f"evening.{where}",
+            exc=exc,
+            log=logger,
         )
     except Exception:  # noqa: BLE001
         logger.error("record_evening_pass could not record %s", where, exc_info=True)

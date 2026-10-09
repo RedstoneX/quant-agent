@@ -5,6 +5,7 @@ was judged cosmetic because the smaller files only worked once mixed back
 into the giant object). It also proves the sweeper is read LIVE through the
 handed-in getter, never snapshotted.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,7 @@ def test_symbol_is_the_vehicle_only_while_the_sweep_is_disabled():
 def test_symbol_swallows_a_broken_sweeper():
     def boom():
         raise RuntimeError("config unreadable")
+
     assert retired_cash_park_symbol(lambda: SimpleNamespace(enabled=boom, symbol="PARK")) is None
 
 
@@ -43,6 +45,7 @@ def test_release_calls_the_sweeper_with_the_run_id_and_skips_when_absent():
 def test_release_failure_is_logged_not_raised(caplog):
     def boom(run_id=None):
         raise ConnectionError("down")
+
     with caplog.at_level(logging.WARNING, logger="src.cash_park_retired"):
         release_retired_cash_park(lambda: SimpleNamespace(release_retired_vehicle=boom), "r")
     assert "cash sweep retired: release failed (non-fatal): down" in caplog.text

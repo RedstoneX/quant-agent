@@ -17,9 +17,7 @@ FOMC_JSON_CALENDAR_URL = "https://www.federalreserve.gov/json/calendar.json"
 #: schedule stops before the end of the requested horizon (which it does at
 #: every year boundary: the JSON feed carries the current year, the page
 #: carries the next one too).
-FOMC_HTML_CALENDAR_URL = (
-    "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-)
+FOMC_HTML_CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
 #: Identifies this desk to the Fed's servers. Same courtesy as the EDGAR
 #: fetcher in `src/data/earnings.py`.
@@ -117,23 +115,19 @@ class FOMCMeeting:
         if self.start_date == self.end_date:
             block = (
                 f"{self.end_date.isoformat()} (one day"
-                + ("" if self.duration_stated else "; the source published a "
-                                                   "concluding date only, so "
-                                                   "the block length is UNKNOWN")
+                + (
+                    ""
+                    if self.duration_stated
+                    else "; the source published a concluding date only, so the block length is UNKNOWN"
+                )
                 + ")"
             )
         else:
-            block = (
-                f"{self.start_date.isoformat()} to {self.end_date.isoformat()} "
-                f"({self.days}-day meeting)"
-            )
+            block = f"{self.start_date.isoformat()} to {self.end_date.isoformat()} ({self.days}-day meeting)"
         flag = ""
         if horizon_end is not None and self.intersects(today, horizon_end) and away >= 0:
             flag = "  ** FOMC RATE DECISION INSIDE THIS HORIZON **"
-        return (
-            f"{block} — rate decision / statement on "
-            f"{self.end_date.isoformat()}, {when}{flag}"
-        )
+        return f"{block} — rate decision / statement on {self.end_date.isoformat()}, {when}{flag}"
 
 
 @dataclass
@@ -196,10 +190,7 @@ class FOMCCoverage:
         # — a coverage line a seat skims past is a coverage line that did not
         # do its job.
         if self.status == FOMC_MEASURED_STALE_CACHE:
-            age = (
-                f"{self.cache_age_days} days old"
-                if self.cache_age_days is not None else "of unknown age"
-            )
+            age = f"{self.cache_age_days} days old" if self.cache_age_days is not None else "of unknown age"
             parts.append(
                 f"STALE — the live Fed calendar did not answer this run "
                 f"({self.reason or 'no reason recorded'}), so this schedule is "
@@ -225,7 +216,5 @@ class FOMCCoverage:
                 # past the horizon, and did not answer. Naming it here is what
                 # lets an operator tell "the Fed has not published that far
                 # yet" from "our second source is broken"
-                parts.append(
-                    f"The fallback source did not answer either ({self.reason})"
-                )
+                parts.append(f"The fallback source did not answer either ({self.reason})")
         return ". ".join(parts) + "."

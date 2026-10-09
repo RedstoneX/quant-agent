@@ -1,6 +1,7 @@
 """Every phase module lifted out of `ExitEngineMixin._midday_execute_llm_actions`
 (src/pipeline_exits.py) into src/exits_parts/ imports on its own, exposes its
 phase function, and passes the boundary check."""
+
 import importlib
 
 import pytest
@@ -34,7 +35,5 @@ def test_phase_module_passes_boundary_check(module):
 
 
 def test_skip_sentinel_is_one_object():
-    assert midday_state.SKIP is importlib.import_module(
-        "src.exits_parts.midday_state"
-    ).SKIP
+    assert midday_state.SKIP is importlib.import_module("src.exits_parts.midday_state").SKIP
     assert repr(midday_state.SKIP) == "SKIP"

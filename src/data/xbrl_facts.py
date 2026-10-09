@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def fetch_xbrl_raw(
-    sec_get: Callable[[str], bytes], cik: str, ticker: str, filing_date: str,
+    sec_get: Callable[[str], bytes],
+    cik: str,
+    ticker: str,
+    filing_date: str,
 ) -> dict[str, tuple[float, str]]:
     """Pull hard financial-statement figures from SEC's structured XBRL
     data instead of hoping a text-regex found the right heading in the
@@ -63,7 +66,10 @@ def fetch_xbrl_raw(
         data = json.loads(sec_get(url))
     except Exception as e:  # noqa: BLE001 — fail open, see docstring
         logger.warning(
-            "XBRL companyfacts fetch failed for %s (CIK %s): %s", ticker, cik, e,
+            "XBRL companyfacts fetch failed for %s (CIK %s): %s",
+            ticker,
+            cik,
+            e,
         )
         return {}
 
@@ -142,7 +148,8 @@ def fetch_xbrl_raw(
 
     raw: dict[str, tuple[float, str]] = {}
     revenue = _best_value(
-        ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD",
+        ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"],
+        "USD",
     )
     if revenue is not None:
         raw["revenue"] = revenue
@@ -162,6 +169,7 @@ def fetch_xbrl_raw(
         raw["eps"] = eps
     return raw
 
+
 # Human-readable labels for the text block the LLM prompt reads, in the
 # same fixed order the block has always rendered in — kept in one place
 # so `format_xbrl_text` and any future consumer of
@@ -176,6 +184,7 @@ XBRL_TEXT_LABELS = (
     ("long_term_debt", "Long-Term Debt"),
     ("eps", "Diluted EPS"),
 )
+
 
 def format_xbrl_text(raw: dict[str, tuple[float, str]]) -> str:
     """Pure formatter half of `format_xbrl_text` — no network."""
@@ -193,11 +202,8 @@ def format_xbrl_text(raw: dict[str, tuple[float, str]]) -> str:
             lines.append(f"{label}: ${value:,.0f} (period ending {end})")
     if not lines:
         return ""
-    return (
-        "=== STRUCTURED FINANCIAL FACTS (SEC XBRL, not text-extracted) ===\n"
-        + "\n".join(lines)
-        + "\n"
-    )
+    return "=== STRUCTURED FINANCIAL FACTS (SEC XBRL, not text-extracted) ===\n" + "\n".join(lines) + "\n"
+
 
 # Concept keys (from `fetch_xbrl_raw`) that map ONE-TO-ONE onto an
 # `EarningsAnalysis` field — the same real-world figure, not a derived
@@ -212,6 +218,7 @@ def format_xbrl_text(raw: dict[str, tuple[float, str]]) -> str:
 # so there is nothing to compare them against.
 XBRL_COMPARABLE_KEYS = ("revenue", "net_income", "cash", "eps")
 
+
 def xbrl_comparable_values(raw: dict[str, tuple[float, str]]) -> dict[str, float]:
     """The subset of `fetch_xbrl_raw`'s output usable as real,
     directly-comparable ground truth — see `XBRL_COMPARABLE_KEYS` for
@@ -224,7 +231,4 @@ def xbrl_comparable_values(raw: dict[str, tuple[float, str]]) -> dict[str, float
     current data — which the mismatch check downstream already treats
     the same as "nothing to compare," never as a mismatch.
     """
-    return {
-        key: raw[key][0] for key in XBRL_COMPARABLE_KEYS if key in raw
-    }
-
+    return {key: raw[key][0] for key in XBRL_COMPARABLE_KEYS if key in raw}

@@ -47,6 +47,7 @@ def _mk_pipeline() -> TradingPipeline:
 # Schema: reasoning_chain is required
 # ---------------------------------------------------------------------------
 
+
 def test_reasoning_chain_required_on_review():
     """PositionReview without reasoning_chain must fail validation."""
     import pytest
@@ -54,7 +55,9 @@ def test_reasoning_chain_required_on_review():
 
     with pytest.raises(ValidationError):
         PositionReview(
-            actions=[], overall_assessment="fine", risk_level="low",
+            actions=[],
+            overall_assessment="fine",
+            risk_level="low",
         )
 
 
@@ -78,21 +81,32 @@ def test_reasoning_chain_rejects_empty_strings():
 # Deterministic thesis-progress math
 # ---------------------------------------------------------------------------
 
+
 def test_thesis_progress_pct_at_entry():
     """Position bought at $100, target $120, currently at $100 → progress 0%."""
     p = Position(
-        symbol="AAA", qty=10, avg_entry=100.0, current_price=100.0,
-        market_value=1000.0, unrealized_pnl=0.0, sector="Tech",
+        symbol="AAA",
+        qty=10,
+        avg_entry=100.0,
+        current_price=100.0,
+        market_value=1000.0,
+        unrealized_pnl=0.0,
+        sector="Tech",
     )
-    morning = [{
-        "symbol": "AAA", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 120.0,
-        "timestamp": "2026-04-18 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "AAA",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 120.0,
+            "timestamp": "2026-04-18 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=10_000.0,
     )
     assert facts["AAA"]["thesis_progress_pct"] == 0.0
@@ -101,18 +115,28 @@ def test_thesis_progress_pct_at_entry():
 def test_thesis_progress_pct_halfway_to_target():
     """Entry $100, target $120, current $110 → progress 50%."""
     p = Position(
-        symbol="BBB", qty=10, avg_entry=100.0, current_price=110.0,
-        market_value=1100.0, unrealized_pnl=100.0, sector="Tech",
+        symbol="BBB",
+        qty=10,
+        avg_entry=100.0,
+        current_price=110.0,
+        market_value=1100.0,
+        unrealized_pnl=100.0,
+        sector="Tech",
     )
-    morning = [{
-        "symbol": "BBB", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 120.0,
-        "timestamp": "2026-04-18 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "BBB",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 120.0,
+            "timestamp": "2026-04-18 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=10_000.0,
     )
     assert facts["BBB"]["thesis_progress_pct"] == 50.0
@@ -121,18 +145,28 @@ def test_thesis_progress_pct_halfway_to_target():
 def test_thesis_progress_pct_beyond_target():
     """Entry $100, target $120, current $140 → progress 200% (over target)."""
     p = Position(
-        symbol="CCC", qty=10, avg_entry=100.0, current_price=140.0,
-        market_value=1400.0, unrealized_pnl=400.0, sector="Tech",
+        symbol="CCC",
+        qty=10,
+        avg_entry=100.0,
+        current_price=140.0,
+        market_value=1400.0,
+        unrealized_pnl=400.0,
+        sector="Tech",
     )
-    morning = [{
-        "symbol": "CCC", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 120.0,
-        "timestamp": "2026-04-18 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "CCC",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 120.0,
+            "timestamp": "2026-04-18 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=10_000.0,
     )
     assert facts["CCC"]["thesis_progress_pct"] == 200.0
@@ -144,18 +178,28 @@ def test_distance_to_stop_and_target():
     """Current $110, stop $95, target $120 — should give 13.6% to_stop,
     9.1% to_target."""
     p = Position(
-        symbol="DDD", qty=10, avg_entry=100.0, current_price=110.0,
-        market_value=1100.0, unrealized_pnl=100.0, sector="Tech",
+        symbol="DDD",
+        qty=10,
+        avg_entry=100.0,
+        current_price=110.0,
+        market_value=1100.0,
+        unrealized_pnl=100.0,
+        sector="Tech",
     )
-    morning = [{
-        "symbol": "DDD", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 120.0,
-        "timestamp": "2026-04-18 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "DDD",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 120.0,
+            "timestamp": "2026-04-18 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=10_000.0,
     )
     assert round(facts["DDD"]["distance_to_stop_pct"], 1) == 13.6
@@ -165,6 +209,7 @@ def test_distance_to_stop_and_target():
 # ---------------------------------------------------------------------------
 # "Good stock long-hold" invariant — the user-mandated test
 # ---------------------------------------------------------------------------
+
 
 def test_good_stock_long_hold_has_no_flags_firing():
     """A healthy winner (+25%, thesis intact, mid-progress, not parabolic,
@@ -180,22 +225,33 @@ def test_good_stock_long_hold_has_no_flags_firing():
       - Progress 50% (not target_breach — <150%)
     """
     p = Position(
-        symbol="GOOD", qty=10, avg_entry=100.0, current_price=125.0,
-        market_value=1250.0, unrealized_pnl=250.0, sector="Tech",
+        symbol="GOOD",
+        qty=10,
+        avg_entry=100.0,
+        current_price=125.0,
+        market_value=1250.0,
+        unrealized_pnl=250.0,
+        sector="Tech",
     )
     # 10 days ago entry — far from "in <3d" parabolic window.
     from datetime import timedelta
     from src.trading_calendar import et_today
+
     entry_date = (et_today() - timedelta(days=10)).isoformat()
-    morning = [{
-        "symbol": "GOOD", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 150.0,
-        "timestamp": f"{entry_date} 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "GOOD",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 150.0,
+            "timestamp": f"{entry_date} 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=15_625.0,  # GOOD is 8% of book
     )
 
@@ -213,21 +269,32 @@ def test_good_stock_long_hold_has_no_flags_firing():
 def test_parabolic_flag_fires_on_recent_big_winner():
     """+18% in 2 days SHOULD fire parabolic_flag (momentum confirmation needed)."""
     p = Position(
-        symbol="FAST", qty=10, avg_entry=100.0, current_price=118.0,
-        market_value=1180.0, unrealized_pnl=180.0, sector="Tech",
+        symbol="FAST",
+        qty=10,
+        avg_entry=100.0,
+        current_price=118.0,
+        market_value=1180.0,
+        unrealized_pnl=180.0,
+        sector="Tech",
     )
     from datetime import timedelta
     from src.trading_calendar import et_today
+
     entry_date = (et_today() - timedelta(days=2)).isoformat()
-    morning = [{
-        "symbol": "FAST", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 130.0,
-        "timestamp": f"{entry_date} 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "FAST",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 130.0,
+            "timestamp": f"{entry_date} 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=20_000.0,
     )
     assert facts["FAST"]["parabolic_flag"] is True
@@ -236,21 +303,32 @@ def test_parabolic_flag_fires_on_recent_big_winner():
 def test_drift_flag_fires_on_oversized_winner():
     """Weight > 12% + PnL > 10% → drift_flag (concentration scrutiny)."""
     p = Position(
-        symbol="BIG", qty=100, avg_entry=100.0, current_price=115.0,
-        market_value=11_500.0, unrealized_pnl=1_500.0, sector="Tech",
+        symbol="BIG",
+        qty=100,
+        avg_entry=100.0,
+        current_price=115.0,
+        market_value=11_500.0,
+        unrealized_pnl=1_500.0,
+        sector="Tech",
     )
     from datetime import timedelta
     from src.trading_calendar import et_today
+
     entry_date = (et_today() - timedelta(days=20)).isoformat()
-    morning = [{
-        "symbol": "BIG", "action": "BUY",
-        "stop_loss": 95.0, "take_profit": 130.0,
-        "timestamp": f"{entry_date} 14:00:00",
-    }]
+    morning = [
+        {
+            "symbol": "BIG",
+            "action": "BUY",
+            "stop_loss": 95.0,
+            "take_profit": 130.0,
+            "timestamp": f"{entry_date} 14:00:00",
+        }
+    ]
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
     facts = pipeline._build_position_facts(
-        positions=[p], morning_trades=morning,
+        positions=[p],
+        morning_trades=morning,
         total_value=50_000.0,  # BIG is 23% of book
     )
     assert facts["BIG"]["drift_flag"] is True
@@ -260,6 +338,7 @@ def test_drift_flag_fires_on_oversized_winner():
 # ---------------------------------------------------------------------------
 # Session-type prompt disposition
 # ---------------------------------------------------------------------------
+
 
 def test_midday_and_close_prompts_differ_in_disposition():
     """Same inputs, different session_type — disposition text should change.
@@ -295,10 +374,17 @@ def test_prompt_embeds_position_metrics():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="NVDA", qty=10, avg_entry=100.0, current_price=115.0,
-                market_value=1150.0, unrealized_pnl=150.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="NVDA",
+                    qty=10,
+                    avg_entry=100.0,
+                    current_price=115.0,
+                    market_value=1150.0,
+                    unrealized_pnl=150.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 18.0}},
             cash_balance=1_000.0,
             total_value=10_000.0,
@@ -337,10 +423,17 @@ def test_prompt_backcomputes_short_stop_on_the_correct_side_of_price():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="XYZ", qty=-10, avg_entry=100.0, current_price=90.0,
-                market_value=-900.0, unrealized_pnl=100.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="XYZ",
+                    qty=-10,
+                    avg_entry=100.0,
+                    current_price=90.0,
+                    market_value=-900.0,
+                    unrealized_pnl=100.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 18.0}},
             cash_balance=1_000.0,
             total_value=10_000.0,
@@ -350,8 +443,7 @@ def test_prompt_backcomputes_short_stop_on_the_correct_side_of_price():
         )
 
     assert "Hard stop (broker): $110.00" in msg, (
-        f"expected the back-computed stop above current price for a short, "
-        f"got: {msg!r}"
+        f"expected the back-computed stop above current price for a short, got: {msg!r}"
     )
 
 
@@ -374,6 +466,7 @@ def test_prompt_contains_money_making_principles_reference():
 # Parse + validate round-trip
 # ---------------------------------------------------------------------------
 
+
 def test_review_round_trip():
     """Valid 6-step chain + actions parses + model_dumps cleanly."""
     from src.models import PositionAction
@@ -382,8 +475,7 @@ def test_review_round_trip():
         reasoning_chain=_rc(),
         actions=[
             PositionAction(action="HOLD", symbol="NVDA", reason="on pace, no flags"),
-            PositionAction(action="TRAIL_STOP", symbol="AAPL", reason="up 9%",
-                           new_stop_price=185.0),
+            PositionAction(action="TRAIL_STOP", symbol="AAPL", reason="up 9%", new_stop_price=185.0),
         ],
         overall_assessment="Healthy book, one stop raised.",
         risk_level="moderate",
@@ -398,6 +490,7 @@ def test_review_round_trip():
 # Per-entry isolation: one bad PositionAction must not tank the whole review
 # (audit follow-up to PR #73)
 # ---------------------------------------------------------------------------
+
 
 def _valid_review_json() -> dict:
     return {
@@ -498,16 +591,13 @@ def test_drop_invalid_actions_drops_non_dict_items():
 # Same-day trim discipline (PR following 2026-05-04 AMZN 41 → 21 → 11 incident)
 # ---------------------------------------------------------------------------
 
+
 def test_reason_cites_hard_trigger_recognises_thesis_invalid():
     from src.pipeline import _reason_cites_hard_trigger
 
-    assert _reason_cites_hard_trigger(
-        "thesis_invalid_if condition: price closed below MA50 for 2 sessions"
-    )
+    assert _reason_cites_hard_trigger("thesis_invalid_if condition: price closed below MA50 for 2 sessions")
     assert _reason_cites_hard_trigger("Thesis Invalid_If satisfied")
-    assert _reason_cites_hard_trigger(
-        "HIGH bearish state change on EU regulatory action"
-    )
+    assert _reason_cites_hard_trigger("HIGH bearish state change on EU regulatory action")
     assert _reason_cites_hard_trigger("bearish earnings filing posted today")
     assert _reason_cites_hard_trigger("stop hit at $185.50")
     assert _reason_cites_hard_trigger("thesis broken — guidance cut")
@@ -518,19 +608,11 @@ def test_reason_cites_hard_trigger_rejects_soft_signals():
     AMZN double-trim must NOT count as hard triggers."""
     from src.pipeline import _reason_cites_hard_trigger
 
-    assert not _reason_cites_hard_trigger(
-        "TARGET_BREACH at 150% thesis progress with elevated weight 10.3%"
-    )
-    assert not _reason_cites_hard_trigger(
-        "Pace slowing to 0.5x and macro backdrop turning hostile overnight"
-    )
-    assert not _reason_cites_hard_trigger(
-        "Concentration drift; valuation stretched at 28x forward"
-    )
+    assert not _reason_cites_hard_trigger("TARGET_BREACH at 150% thesis progress with elevated weight 10.3%")
+    assert not _reason_cites_hard_trigger("Pace slowing to 0.5x and macro backdrop turning hostile overnight")
+    assert not _reason_cites_hard_trigger("Concentration drift; valuation stretched at 28x forward")
     assert not _reason_cites_hard_trigger("")
-    assert not _reason_cites_hard_trigger(
-        "Geopolitical noise from oil shock, prudent to harvest"
-    )
+    assert not _reason_cites_hard_trigger("Geopolitical noise from oil shock, prudent to harvest")
 
 
 def test_hard_trigger_keyword_list_covers_every_prompt_category():
@@ -550,10 +632,7 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
     from pathlib import Path
     from src.pipeline import _reason_cites_hard_trigger
 
-    prompt_path = (
-        Path(__file__).resolve().parent.parent
-        / "config" / "prompts" / "position_reviewer.md"
-    )
+    prompt_path = Path(__file__).resolve().parent.parent / "config" / "prompts" / "position_reviewer.md"
     prompt_text = prompt_path.read_text()
 
     # Each tuple: (category description, prompt-side anchor, sample LLM reason).
@@ -613,9 +692,7 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
         "2026-09-13 (WORK.md item 44) because nothing can verify it, and the "
         "prompt must keep saying so. See docs/INCIDENT_HISTORY.md."
     )
-    assert not _reason_cites_hard_trigger(
-        "Correlation cluster breach: AI book over 55% with this name."
-    ), (
+    assert not _reason_cites_hard_trigger("Correlation cluster breach: AI book over 55% with this name."), (
         "the executor accepts a correlation-breach reason again — this is an "
         "exit trigger that no part of the desk can check. See "
         "docs/INCIDENT_HISTORY.md, 2026-09-13."
@@ -652,30 +729,22 @@ def test_symbols_already_trimmed_today_pulls_sell_actions(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     # Today's sells in various forms — all should appear.
-    db.insert_trade("AMZN", "REDUCE", 20, 270.66, "midday trim", "r1",
-                    fill_status="filled")
-    db.insert_trade("META", "TAKE_PROFIT", 5, 612.0, "auto-tp", "r1",
-                    fill_status="filled")
-    db.insert_trade("WDC", "SELL", 7, 432.0, "thesis break", "r1",
-                    fill_status="submitted")  # pending also counts
+    db.insert_trade("AMZN", "REDUCE", 20, 270.66, "midday trim", "r1", fill_status="filled")
+    db.insert_trade("META", "TAKE_PROFIT", 5, 612.0, "auto-tp", "r1", fill_status="filled")
+    db.insert_trade("WDC", "SELL", 7, 432.0, "thesis break", "r1", fill_status="submitted")  # pending also counts
     # PARTIAL_SELL(15%) form — must normalise.
-    db.insert_trade("AAPL", "PARTIAL_SELL(20%)", 5, 280.0, "lock-in", "r1",
-                    fill_status="filled")
+    db.insert_trade("AAPL", "PARTIAL_SELL(20%)", 5, 280.0, "lock-in", "r1", fill_status="filled")
     # Canceled — does NOT count, symbol should be retry-able.
-    db.insert_trade("NVDA", "REDUCE", 10, 200.0, "midday — order rejected",
-                    "r1", fill_status="canceled")
+    db.insert_trade("NVDA", "REDUCE", 10, 200.0, "midday — order rejected", "r1", fill_status="canceled")
     # BUY today — never counts.
-    db.insert_trade("DXPE", "BUY", 18, 170.77, "morning add", "r1",
-                    fill_status="filled", stop_loss=90.0)
+    db.insert_trade("DXPE", "BUY", 18, 170.77, "morning add", "r1", fill_status="filled", stop_loss=90.0)
     # HOLD audit row — never counts.
     db.insert_trade("GOOGL", "HOLD", 0, 0, "no action", "r1")
 
     pipeline = build_pipeline(db=db)
 
     out = pipeline._symbols_already_trimmed_today()
-    assert out == {"AMZN", "META", "WDC", "AAPL"}, (
-        f"expected sell-side symbols only, got {out}"
-    )
+    assert out == {"AMZN", "META", "WDC", "AAPL"}, f"expected sell-side symbols only, got {out}"
     # NVDA had a canceled REDUCE — not blocked, can be re-tried.
     assert "NVDA" not in out
     # BUY / HOLD never block.
@@ -693,10 +762,17 @@ def test_already_trimmed_section_renders_in_prompt():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="close",
-            positions=[Position(
-                symbol="AMZN", qty=21, avg_entry=238.79, current_price=271.67,
-                market_value=5705.07, unrealized_pnl=690.51, sector="Cyclical",
-            )],
+            positions=[
+                Position(
+                    symbol="AMZN",
+                    qty=21,
+                    avg_entry=238.79,
+                    current_price=271.67,
+                    market_value=5705.07,
+                    unrealized_pnl=690.51,
+                    sector="Cyclical",
+                )
+            ],
             macro_summary={"vix": {"current": 17.0}},
             cash_balance=70_000.0,
             total_value=107_000.0,
@@ -722,17 +798,28 @@ def test_stop_out_surfaces_as_system_action_not_silent():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="AAPL", qty=10, avg_entry=250.0, current_price=275.0,
-                market_value=2750.0, unrealized_pnl=250.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="AAPL",
+                    qty=10,
+                    avg_entry=250.0,
+                    current_price=275.0,
+                    market_value=2750.0,
+                    unrealized_pnl=250.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 17.0}},
             cash_balance=10_000.0,
             total_value=12_750.0,
-            morning_trades=[{
-                "symbol": "ONDS", "action": "STOP_OUT", "qty": 17.0,
-                "reasoning": "Broker-initiated protective-stop fill",
-            }],
+            morning_trades=[
+                {
+                    "symbol": "ONDS",
+                    "action": "STOP_OUT",
+                    "qty": 17.0,
+                    "reasoning": "Broker-initiated protective-stop fill",
+                }
+            ],
         )
 
     assert "Non-LLM System Actions" in msg
@@ -748,10 +835,17 @@ def test_already_trimmed_section_omitted_when_empty():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="AAPL", qty=10, avg_entry=250.0, current_price=275.0,
-                market_value=2750.0, unrealized_pnl=250.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="AAPL",
+                    qty=10,
+                    avg_entry=250.0,
+                    current_price=275.0,
+                    market_value=2750.0,
+                    unrealized_pnl=250.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 17.0}},
             cash_balance=10_000.0,
             total_value=12_750.0,
@@ -765,14 +859,21 @@ def test_already_trimmed_section_omitted_when_empty():
 # Executor-level filter — the second belt for same-day trim discipline
 # ---------------------------------------------------------------------------
 
-def _mk_review_with_action(symbol: str, action: str, reason: str,
-                           new_stop_price: float | None = None):
+
+def _mk_review_with_action(symbol: str, action: str, reason: str, new_stop_price: float | None = None):
     """Build a minimal review-shaped object the executor accepts."""
     from src.models import PositionAction
-    return MagicMock(actions=[PositionAction(
-        action=action, symbol=symbol, reason=reason,
-        new_stop_price=new_stop_price,
-    )])
+
+    return MagicMock(
+        actions=[
+            PositionAction(
+                action=action,
+                symbol=symbol,
+                reason=reason,
+                new_stop_price=new_stop_price,
+            )
+        ]
+    )
 
 
 def _executor_pipeline_with_position(symbol: str, qty: float, current_price: float):
@@ -784,12 +885,15 @@ def _executor_pipeline_with_position(symbol: str, qty: float, current_price: flo
     pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.submit_order.return_value = {
-        "id": "test-order", "status": "accepted", "symbol": symbol,
+        "id": "test-order",
+        "status": "accepted",
+        "symbol": symbol,
     }
     pipeline.broker.get_latest_price.return_value = current_price
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": str(int(qty * 0.5)),
+        "status": "filled",
+        "filled_qty": str(int(qty * 0.5)),
         "filled_avg_price": str(current_price),
     }
     pipeline.db.has_pending_action_for_symbol.return_value = False
@@ -807,17 +911,27 @@ def test_executor_blocks_reduce_on_already_trimmed_with_soft_reason():
     from src.models import Position
 
     pipeline = _executor_pipeline_with_position("AMZN", 21.0, 271.67)
-    positions = [Position(
-        symbol="AMZN", qty=21, avg_entry=238.79, current_price=271.67,
-        market_value=5705.07, unrealized_pnl=690.51, sector="Cyclical",
-    )]
+    positions = [
+        Position(
+            symbol="AMZN",
+            qty=21,
+            avg_entry=238.79,
+            current_price=271.67,
+            market_value=5705.07,
+            unrealized_pnl=690.51,
+            sector="Cyclical",
+        )
+    ]
     review = _mk_review_with_action(
-        "AMZN", "REDUCE",
+        "AMZN",
+        "REDUCE",
         "thesis_progress 155% with TARGET_BREACH flag and pace only 0.62x. "
         "Overnight macro backdrop is less forgiving; prudent to trim 50%.",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions, review, run_id="r1",
+        positions,
+        review,
+        run_id="r1",
         already_trimmed_today={"AMZN"},
     )
 
@@ -833,17 +947,27 @@ def test_executor_allows_reduce_on_already_trimmed_with_hard_trigger():
     from src.models import Position
 
     pipeline = _executor_pipeline_with_position("AMZN", 21.0, 271.67)
-    positions = [Position(
-        symbol="AMZN", qty=21, avg_entry=238.79, current_price=271.67,
-        market_value=5705.07, unrealized_pnl=690.51, sector="Cyclical",
-    )]
+    positions = [
+        Position(
+            symbol="AMZN",
+            qty=21,
+            avg_entry=238.79,
+            current_price=271.67,
+            market_value=5705.07,
+            unrealized_pnl=690.51,
+            sector="Cyclical",
+        )
+    ]
     review = _mk_review_with_action(
-        "AMZN", "REDUCE",
+        "AMZN",
+        "REDUCE",
         "thesis_invalid_if condition satisfied — Q1 guidance cut materialised "
         "post-midday on AWS deceleration. Trim further to size down before close.",
     )
     pipeline._midday_execute_llm_actions(
-        positions, review, run_id="r1",
+        positions,
+        review,
+        run_id="r1",
         already_trimmed_today={"AMZN"},
     )
 
@@ -858,19 +982,31 @@ def test_executor_does_not_block_trail_stop_on_already_trimmed():
 
     pipeline = _executor_pipeline_with_position("AMZN", 21.0, 271.67)
     pipeline.broker.replace_stop_loss.return_value = {
-        "id": "trail-1", "status": "accepted", "symbol": "AMZN",
+        "id": "trail-1",
+        "status": "accepted",
+        "symbol": "AMZN",
     }
-    positions = [Position(
-        symbol="AMZN", qty=21, avg_entry=238.79, current_price=271.67,
-        market_value=5705.07, unrealized_pnl=690.51, sector="Cyclical",
-    )]
+    positions = [
+        Position(
+            symbol="AMZN",
+            qty=21,
+            avg_entry=238.79,
+            current_price=271.67,
+            market_value=5705.07,
+            unrealized_pnl=690.51,
+            sector="Cyclical",
+        )
+    ]
     review = _mk_review_with_action(
-        "AMZN", "TRAIL_STOP",
+        "AMZN",
+        "TRAIL_STOP",
         "Tighten stop to lock in gain after midday trim",
         new_stop_price=260.0,
     )
     pipeline._midday_execute_llm_actions(
-        positions, review, run_id="r1",
+        positions,
+        review,
+        run_id="r1",
         already_trimmed_today={"AMZN"},
     )
 
@@ -890,16 +1026,26 @@ def test_executor_blocks_a_soft_reasoned_reduce_even_on_a_clean_session():
     from src.models import Position
 
     pipeline = _executor_pipeline_with_position("AMZN", 41.0, 270.0)
-    positions = [Position(
-        symbol="AMZN", qty=41, avg_entry=238.79, current_price=270.0,
-        market_value=11070.0, unrealized_pnl=1212.0, sector="Cyclical",
-    )]
+    positions = [
+        Position(
+            symbol="AMZN",
+            qty=41,
+            avg_entry=238.79,
+            current_price=270.0,
+            market_value=11070.0,
+            unrealized_pnl=1212.0,
+            sector="Cyclical",
+        )
+    ]
     review = _mk_review_with_action(
-        "AMZN", "REDUCE",
+        "AMZN",
+        "REDUCE",
         "TARGET_BREACH and weight 10.3% — disciplined trim of overdelivered winner.",
     )
     pipeline._midday_execute_llm_actions(
-        positions, review, run_id="r1",
+        positions,
+        review,
+        run_id="r1",
         already_trimmed_today=set(),  # nothing trimmed yet today
     )
 
@@ -913,16 +1059,26 @@ def test_executor_blocks_full_sell_on_already_trimmed_soft_reason():
     from src.models import Position
 
     pipeline = _executor_pipeline_with_position("AMZN", 21.0, 271.67)
-    positions = [Position(
-        symbol="AMZN", qty=21, avg_entry=238.79, current_price=271.67,
-        market_value=5705.07, unrealized_pnl=690.51, sector="Cyclical",
-    )]
+    positions = [
+        Position(
+            symbol="AMZN",
+            qty=21,
+            avg_entry=238.79,
+            current_price=271.67,
+            market_value=5705.07,
+            unrealized_pnl=690.51,
+            sector="Cyclical",
+        )
+    ]
     review = _mk_review_with_action(
-        "AMZN", "SELL",
+        "AMZN",
+        "SELL",
         "Concentration drift and stretched valuation; close out before overnight.",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions, review, run_id="r1",
+        positions,
+        review,
+        run_id="r1",
         already_trimmed_today={"AMZN"},
     )
 
@@ -939,6 +1095,7 @@ def test_executor_blocks_full_sell_on_already_trimmed_soft_reason():
 # every short's P&L% and reads a WINNING short as a LOSS.
 # ==========================================================================
 
+
 def test_prompt_tags_a_short_position_and_signs_its_pnl_pct_correctly():
     """A held SHORT that is WINNING (price fell below entry) must render a
     POSITIVE P&L% and an explicit [SHORT] tag — not a negative percentage
@@ -952,10 +1109,17 @@ def test_prompt_tags_a_short_position_and_signs_its_pnl_pct_correctly():
             # -40 sh short @ $250, now $240 — price FELL, so the short is
             # WINNING: unrealized_pnl = qty * (price - entry)
             #        = -40 * (240 - 250) = +400 (a gain).
-            positions=[Position(
-                symbol="TSLA", qty=-40, avg_entry=250.0, current_price=240.0,
-                market_value=-9600.0, unrealized_pnl=400.0, sector="Cyclical",
-            )],
+            positions=[
+                Position(
+                    symbol="TSLA",
+                    qty=-40,
+                    avg_entry=250.0,
+                    current_price=240.0,
+                    market_value=-9600.0,
+                    unrealized_pnl=400.0,
+                    sector="Cyclical",
+                )
+            ],
             macro_summary={"vix": {"current": 18.0}},
             cash_balance=1_000.0,
             total_value=100_000.0,
@@ -979,10 +1143,17 @@ def test_prompt_tags_a_long_position_and_leaves_its_pnl_pct_unchanged():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="NVDA", qty=10, avg_entry=100.0, current_price=115.0,
-                market_value=1150.0, unrealized_pnl=150.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="NVDA",
+                    qty=10,
+                    avg_entry=100.0,
+                    current_price=115.0,
+                    market_value=1150.0,
+                    unrealized_pnl=150.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 18.0}},
             cash_balance=1_000.0,
             total_value=10_000.0,
@@ -999,12 +1170,14 @@ def test_dropped_news_symbols_are_stated_as_unknown_not_silence():
 
     news_intel = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-15", era_themes=["test"],
+            last_updated="2026-09-15",
+            era_themes=["test"],
             current_regime="risk-on",
         ),
         stock_news={},
         pm_briefing="quiet.",
-        market_sentiment="neutral", confidence="medium",
+        market_sentiment="neutral",
+        confidence="medium",
     )
     news_intel.dropped_news_symbols = ["ORCL"]
     news_intel.stock_news["ORCL"] = []
@@ -1013,10 +1186,17 @@ def test_dropped_news_symbols_are_stated_as_unknown_not_silence():
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
             session_type="midday",
-            positions=[Position(
-                symbol="ORCL", qty=10, avg_entry=100.0, current_price=110.0,
-                market_value=1100.0, unrealized_pnl=100.0, sector="Tech",
-            )],
+            positions=[
+                Position(
+                    symbol="ORCL",
+                    qty=10,
+                    avg_entry=100.0,
+                    current_price=110.0,
+                    market_value=1100.0,
+                    unrealized_pnl=100.0,
+                    sector="Tech",
+                )
+            ],
             macro_summary={"vix": {"current": 18.0}},
             cash_balance=1_000.0,
             total_value=10_000.0,

@@ -62,18 +62,15 @@ class MacroRelease:
 #: `src/data/macro.py`). Deliberately short: this is an event-risk calendar,
 #: not a data warehouse — a seat that has to read forty rows will read none.
 MACRO_RELEASES: tuple[MacroRelease, ...] = (
-    MacroRelease(10, "CPI", "headline/core inflation print — the single most "
-                            "reliable single-day vol event outside earnings"),
-    MacroRelease(50, "Employment Situation (NFP)",
-                 "payrolls + unemployment rate; moves rate expectations"),
+    MacroRelease(
+        10, "CPI", "headline/core inflation print — the single most reliable single-day vol event outside earnings"
+    ),
+    MacroRelease(50, "Employment Situation (NFP)", "payrolls + unemployment rate; moves rate expectations"),
     MacroRelease(46, "PPI", "producer prices; leads CPI and re-prices margins"),
-    MacroRelease(54, "Personal Income and Outlays (PCE)",
-                 "the Fed's preferred inflation gauge"),
+    MacroRelease(54, "Personal Income and Outlays (PCE)", "the Fed's preferred inflation gauge"),
     MacroRelease(53, "GDP", "growth print; released alongside PCE by BEA"),
-    MacroRelease(9, "Retail Sales (advance)",
-                 "consumer demand; hits discretionary names hardest"),
-    MacroRelease(180, "Initial Jobless Claims",
-                 "weekly, Thursdays — the high-frequency labor read"),
+    MacroRelease(9, "Retail Sales (advance)", "consumer demand; hits discretionary names hardest"),
+    MacroRelease(180, "Initial Jobless Claims", "weekly, Thursdays — the high-frequency labor read"),
 )
 
 #: Scheduled events this calendar does NOT fetch. Rendered into every seat's

@@ -8,8 +8,14 @@ MACRO_SUMMARY = {
     "vix": {"current": 19.5, "mean_5d": 20.1, "trend": "falling", "staleness_days": 0},
     "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True, "staleness_days": 0},
     "fed_funds_rate": {"current": 3.60, "change_30d": 0.0, "staleness_days": 0},
-    "inflation": {"headline_cpi_yoy": 3.0, "headline_cpi_mom": 0.2, "core_cpi_yoy": 2.8,
-                  "core_cpi_mom": 0.25, "pce_yoy": 2.5, "staleness_days": 10},
+    "inflation": {
+        "headline_cpi_yoy": 3.0,
+        "headline_cpi_mom": 0.2,
+        "core_cpi_yoy": 2.8,
+        "core_cpi_mom": 0.25,
+        "pce_yoy": 2.5,
+        "staleness_days": 10,
+    },
     "unemployment": {"current": 4.1, "change_3m": 0.1, "change_12m": 0.3, "staleness_days": 15},
     "credit_spread": {"current_bps": 380, "change_30d_bps": 0, "staleness_days": 0},
 }
@@ -17,33 +23,35 @@ MACRO_SUMMARY = {
 
 @patch("anthropic.Anthropic")
 def test_macro_analyze_parses_valid_response(mock_cls):
-    response_json = json.dumps({
-        "reasoning_chain": {
-            "volatility_analysis": "VIX compressing.",
-            "yield_curve_analysis": "Narrowing inversion.",
-            "monetary_policy_analysis": "DFF flat.",
-            "inflation_labor_credit": "Sticky core, benign labor, tight credit.",
-            "cross_signal_synthesis": "Aligned risk-on with inflation caveat.",
-            "sector_implications": "Tech, financials OW.",
-        },
-        "regime": "risk-on",
-        "confidence": "medium",
-        "equity_outlook": "bullish",
-        "regime_shift": False,
-        "shift_reason": "",
-        "key_observations": [{"indicator": "VIX", "reading": "19.5", "interpretation": "OK"}],
-        "sector_guidance": [{"sector": "Technology", "stance": "overweight", "reason": "AI"}],
-        "risk_factors": ["Core CPI sticky"],
-        "position_guidance": {
-            "target_invested_pct": 75.0,
-            "cash_recommendation_pct": 25.0,
-            "reasoning": "Hold buffer.",
-        },
-        "bull_triggers": ["Core CPI MoM < 0.2% for 2m"],
-        "bear_triggers": ["HY OAS > 450bps"],
-        "alignment_with_news": "Consistent.",
-        "summary": "Moderately supportive.",
-    })
+    response_json = json.dumps(
+        {
+            "reasoning_chain": {
+                "volatility_analysis": "VIX compressing.",
+                "yield_curve_analysis": "Narrowing inversion.",
+                "monetary_policy_analysis": "DFF flat.",
+                "inflation_labor_credit": "Sticky core, benign labor, tight credit.",
+                "cross_signal_synthesis": "Aligned risk-on with inflation caveat.",
+                "sector_implications": "Tech, financials OW.",
+            },
+            "regime": "risk-on",
+            "confidence": "medium",
+            "equity_outlook": "bullish",
+            "regime_shift": False,
+            "shift_reason": "",
+            "key_observations": [{"indicator": "VIX", "reading": "19.5", "interpretation": "OK"}],
+            "sector_guidance": [{"sector": "Technology", "stance": "overweight", "reason": "AI"}],
+            "risk_factors": ["Core CPI sticky"],
+            "position_guidance": {
+                "target_invested_pct": 75.0,
+                "cash_recommendation_pct": 25.0,
+                "reasoning": "Hold buffer.",
+            },
+            "bull_triggers": ["Core CPI MoM < 0.2% for 2m"],
+            "bear_triggers": ["HY OAS > 450bps"],
+            "alignment_with_news": "Consistent.",
+            "summary": "Moderately supportive.",
+        }
+    )
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.content = [MagicMock(text=response_json)]
@@ -70,21 +78,24 @@ def test_macro_analyze_parses_valid_response(mock_cls):
 def test_macro_analyze_heals_alias_sector(mock_cls):
     """LLM emitting 'Financials' (common alias) is auto-canonicalized to 'Financial Services'
     instead of rejecting the whole analysis."""
-    response = json.dumps({
-        "reasoning_chain": {
-            "volatility_analysis": "a", "yield_curve_analysis": "b",
-            "monetary_policy_analysis": "c", "inflation_labor_credit": "d",
-            "cross_signal_synthesis": "e", "sector_implications": "f",
-        },
-        "regime": "risk-on",
-        "confidence": "medium",
-        "equity_outlook": "bullish",
-        "sector_guidance": [{"sector": "Financials", "stance": "overweight", "reason": "x"}],
-        "position_guidance": {
-            "target_invested_pct": 60, "cash_recommendation_pct": 40, "reasoning": "y"
-        },
-        "summary": "z",
-    })
+    response = json.dumps(
+        {
+            "reasoning_chain": {
+                "volatility_analysis": "a",
+                "yield_curve_analysis": "b",
+                "monetary_policy_analysis": "c",
+                "inflation_labor_credit": "d",
+                "cross_signal_synthesis": "e",
+                "sector_implications": "f",
+            },
+            "regime": "risk-on",
+            "confidence": "medium",
+            "equity_outlook": "bullish",
+            "sector_guidance": [{"sector": "Financials", "stance": "overweight", "reason": "x"}],
+            "position_guidance": {"target_invested_pct": 60, "cash_recommendation_pct": 40, "reasoning": "y"},
+            "summary": "z",
+        }
+    )
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.content = [MagicMock(text=response)]
@@ -103,15 +114,24 @@ def test_macro_analyze_heals_alias_sector(mock_cls):
 @patch("anthropic.Anthropic")
 def test_macro_analyze_passes_last_state_and_news_to_prompt(mock_cls):
     """Verify the user message includes yesterday's regime and News tracker when provided."""
-    response_json = json.dumps({
-        "reasoning_chain": {"volatility_analysis": "a", "yield_curve_analysis": "b",
-                            "monetary_policy_analysis": "c", "inflation_labor_credit": "d",
-                            "cross_signal_synthesis": "e", "sector_implications": "f"},
-        "regime": "risk-on", "confidence": "medium", "equity_outlook": "bullish",
-        "sector_guidance": [],
-        "position_guidance": {"target_invested_pct": 60, "cash_recommendation_pct": 40, "reasoning": "y"},
-        "summary": "z",
-    })
+    response_json = json.dumps(
+        {
+            "reasoning_chain": {
+                "volatility_analysis": "a",
+                "yield_curve_analysis": "b",
+                "monetary_policy_analysis": "c",
+                "inflation_labor_credit": "d",
+                "cross_signal_synthesis": "e",
+                "sector_implications": "f",
+            },
+            "regime": "risk-on",
+            "confidence": "medium",
+            "equity_outlook": "bullish",
+            "sector_guidance": [],
+            "position_guidance": {"target_invested_pct": 60, "cash_recommendation_pct": 40, "reasoning": "y"},
+            "summary": "z",
+        }
+    )
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.content = [MagicMock(text=response_json)]
@@ -123,11 +143,18 @@ def test_macro_analyze_passes_last_state_and_news_to_prompt(mock_cls):
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     agent.analyze(
         macro_summary=MACRO_SUMMARY,
-        last_state={"date": "2026-04-16", "regime": "transitional", "confidence": "low",
-                    "equity_outlook": "neutral", "summary": "Choppy."},
-        news_narrative={"current_regime": "Transitional",
-                        "era_themes": ["AI supercycle"],
-                        "key_state_tracker": {"fed_policy": "On hold"}},
+        last_state={
+            "date": "2026-04-16",
+            "regime": "transitional",
+            "confidence": "low",
+            "equity_outlook": "neutral",
+            "summary": "Choppy.",
+        },
+        news_narrative={
+            "current_regime": "Transitional",
+            "era_themes": ["AI supercycle"],
+            "key_state_tracker": {"fed_policy": "On hold"},
+        },
     )
 
     sent_messages = mock_client.messages.create.call_args.kwargs["messages"]
@@ -141,12 +168,16 @@ def test_macro_analyze_passes_last_state_and_news_to_prompt(mock_cls):
 # Per-entry isolation for key_observations (mirrors PR #73/#74 pattern)
 # ---------------------------------------------------------------------------
 
+
 def _valid_macro_json() -> dict:
     return {
         "reasoning_chain": {
-            "volatility_analysis": "a", "yield_curve_analysis": "b",
-            "monetary_policy_analysis": "c", "inflation_labor_credit": "d",
-            "cross_signal_synthesis": "e", "sector_implications": "f",
+            "volatility_analysis": "a",
+            "yield_curve_analysis": "b",
+            "monetary_policy_analysis": "c",
+            "inflation_labor_credit": "d",
+            "cross_signal_synthesis": "e",
+            "sector_implications": "f",
         },
         "regime": "risk-on",
         "confidence": "medium",
@@ -181,9 +212,7 @@ def test_drop_invalid_key_observations_strips_missing_fields_keeps_rest():
     ]
     out = MacroAnalystAgent._drop_invalid_key_observations(parsed)
     indicators = [o["indicator"] for o in out["key_observations"]]
-    assert indicators == ["VIX", "DFF"], (
-        f"DGS10 (missing interpretation) must be dropped; got {indicators}"
-    )
+    assert indicators == ["VIX", "DFF"], f"DGS10 (missing interpretation) must be dropped; got {indicators}"
 
 
 def test_macro_analysis_constructs_after_dropping_bad_observation():
@@ -267,16 +296,12 @@ def test_macro_analyze_survives_one_malformed_observation(mock_cls):
 # unchanged — the sanity check must not regress that.
 
 _ALL_FRESH_MACRO = {
-    "vix":           {"current": 19.5, "mean_5d": 20.1, "trend": "falling",
-                      "staleness_days": 0},
-    "treasury":      {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2,
-                      "inverted": True, "staleness_days": 0},
+    "vix": {"current": 19.5, "mean_5d": 20.1, "trend": "falling", "staleness_days": 0},
+    "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True, "staleness_days": 0},
     "fed_funds_rate": {"current": 3.60, "change_30d": 0.0, "staleness_days": 0},
-    "inflation":     {"headline_cpi_yoy": 3.0, "core_cpi_yoy": 2.8,
-                      "staleness_days": 1},
-    "unemployment":  {"current": 4.1, "change_3m": 0.1, "staleness_days": 1},
-    "credit_spread": {"current_bps": 380, "change_30d_bps": 0,
-                      "staleness_days": 0},
+    "inflation": {"headline_cpi_yoy": 3.0, "core_cpi_yoy": 2.8, "staleness_days": 1},
+    "unemployment": {"current": 4.1, "change_3m": 0.1, "staleness_days": 1},
+    "credit_spread": {"current_bps": 380, "change_30d_bps": 0, "staleness_days": 0},
 }
 
 
@@ -298,12 +323,8 @@ def _llm_response_dict(confidence: str, regime_shift: bool, shift_reason: str = 
         "equity_outlook": "bullish",
         "regime_shift": regime_shift,
         "shift_reason": shift_reason,
-        "key_observations": [
-            {"indicator": "VIX", "reading": "19.5", "interpretation": "OK"}
-        ],
-        "sector_guidance": [
-            {"sector": "Technology", "stance": "overweight", "reason": "AI"}
-        ],
+        "key_observations": [{"indicator": "VIX", "reading": "19.5", "interpretation": "OK"}],
+        "sector_guidance": [{"sector": "Technology", "stance": "overweight", "reason": "AI"}],
         "risk_factors": ["Core CPI sticky"],
         "position_guidance": {
             "target_invested_pct": 75.0,
@@ -357,23 +378,26 @@ def test_sanity_check_downgrades_high_when_print_is_overdue(mock_cls, caplog):
     OVERDUE."""
     macro = {
         **MACRO_SUMMARY,
-        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2,
-                "freshness": "overdue",
-                "freshness_detail": "VIXCLS: OVERDUE — next print was due 6 days ago"},
+        "vix": {
+            **MACRO_SUMMARY["vix"],
+            "staleness_days": 2,
+            "freshness": "overdue",
+            "freshness_detail": "VIXCLS: OVERDUE — next print was due 6 days ago",
+        },
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     import logging
+
     with caplog.at_level(logging.WARNING):
         analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
 
     assert analysis is not None
     assert analysis.confidence == "medium"
-    assert any(
-        "confidence='high'" in r.message and "vix" in r.message
-        for r in caplog.records
-    ), "downgrade must log which indicators triggered it"
+    assert any("confidence='high'" in r.message and "vix" in r.message for r in caplog.records), (
+        "downgrade must log which indicators triggered it"
+    )
 
 
 @patch("anthropic.Anthropic")
@@ -384,8 +408,7 @@ def test_sanity_check_keeps_high_when_daily_print_is_legitimately_old(mock_cls):
     longer a test, so a `current` reading passes at any age."""
     macro = {
         **MACRO_SUMMARY,
-        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 10,
-                "freshness": "current"},
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 10, "freshness": "current"},
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
@@ -405,8 +428,7 @@ def test_sanity_check_keeps_high_when_monthly_print_is_old_but_current(mock_cls)
     says it wasn't."""
     macro = {
         **MACRO_SUMMARY,
-        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60,
-                      "freshness": "current"},
+        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60, "freshness": "current"},
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
@@ -424,9 +446,12 @@ def test_sanity_check_downgrades_high_when_monthly_release_is_overdue(mock_cls):
     old gate that was protecting something real."""
     macro = {
         **MACRO_SUMMARY,
-        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60,
-                      "freshness": "overdue",
-                      "freshness_detail": "CPIAUCSL: OVERDUE"},
+        "inflation": {
+            **MACRO_SUMMARY["inflation"],
+            "staleness_days": 60,
+            "freshness": "overdue",
+            "freshness_detail": "CPIAUCSL: OVERDUE",
+        },
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
@@ -444,8 +469,7 @@ def test_sanity_check_downgrades_high_when_series_returned_no_data(mock_cls):
     does."""
     macro = {
         **MACRO_SUMMARY,
-        "credit_spread": {"current_bps": None, "change_30d_bps": None,
-                          "staleness_days": None, "freshness": "empty"},
+        "credit_spread": {"current_bps": None, "change_30d_bps": None, "staleness_days": None, "freshness": "empty"},
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
@@ -501,9 +525,7 @@ def test_sanity_check_keeps_high_confidence_when_all_fresh(mock_cls):
     analysis, _ = agent.analyze(macro_summary=_ALL_FRESH_MACRO, universe=["SPY"])
 
     assert analysis is not None
-    assert analysis.confidence == "high", (
-        "all-fresh indicators must allow high confidence to pass through"
-    )
+    assert analysis.confidence == "high", "all-fresh indicators must allow high confidence to pass through"
 
 
 @patch("anthropic.Anthropic")
@@ -516,43 +538,38 @@ def test_sanity_check_clears_regime_shift_when_indicators_missing_or_overdue(moc
     in this fixture that DOES count is several days old."""
     macro = {
         **MACRO_SUMMARY,
-        "treasury": {"us2y": None, "us10y": None, "staleness_days": None,
-                     "freshness": "empty"},
-        "fed_funds_rate": {"current": None, "change_30d": None,
-                           "staleness_days": None, "freshness": "empty"},
-        "credit_spread": {**MACRO_SUMMARY["credit_spread"],
-                          "freshness": "overdue"},
+        "treasury": {"us2y": None, "us10y": None, "staleness_days": None, "freshness": "empty"},
+        "fed_funds_rate": {"current": None, "change_30d": None, "staleness_days": None, "freshness": "empty"},
+        "credit_spread": {**MACRO_SUMMARY["credit_spread"], "freshness": "overdue"},
         "inflation": {**MACRO_SUMMARY["inflation"], "freshness": "overdue"},
         "unemployment": {**MACRO_SUMMARY["unemployment"], "freshness": "overdue"},
-        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2,
-                "freshness": "current"},
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2, "freshness": "current"},
     }
     _mock_macro_llm(
         mock_cls,
         _llm_response_dict(
-            confidence="medium", regime_shift=True,
+            confidence="medium",
+            regime_shift=True,
             shift_reason="VIX jumped from 17 to 23",
         ),
     )
 
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     import logging
+
     with caplog.at_level(logging.WARNING):
         analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
 
     assert analysis is not None
     assert analysis.regime_shift is False, (
-        "regime_shift=True must be cleared when < 2 indicators carry a "
-        "usable latest reading"
+        "regime_shift=True must be cleared when < 2 indicators carry a usable latest reading"
     )
     assert analysis.shift_reason == "", (
-        "shift_reason must also be cleared so PM doesn't read a flip "
-        "narrative built on data we don't have"
+        "shift_reason must also be cleared so PM doesn't read a flip narrative built on data we don't have"
     )
-    assert any(
-        "regime_shift=True" in r.message and "usable" in r.message
-        for r in caplog.records
-    ), "clear must log the gate that fired"
+    assert any("regime_shift=True" in r.message and "usable" in r.message for r in caplog.records), (
+        "clear must log the gate that fired"
+    )
 
 
 @patch("anthropic.Anthropic")
@@ -563,7 +580,8 @@ def test_sanity_check_keeps_regime_shift_with_two_fresh_indicators(mock_cls):
     _mock_macro_llm(
         mock_cls,
         _llm_response_dict(
-            confidence="medium", regime_shift=True,
+            confidence="medium",
+            regime_shift=True,
             shift_reason="VIX + HY both jumped today",
         ),
     )
@@ -599,14 +617,12 @@ def test_regime_shift_survives_real_fred_publication_lag(mock_cls):
     which pinned the defect deliberately while the replacement was an open
     owner decision.
     """
-    ordinary_day = {
-        key: {**value, "staleness_days": 2, "freshness": "current"}
-        for key, value in MACRO_SUMMARY.items()
-    }
+    ordinary_day = {key: {**value, "staleness_days": 2, "freshness": "current"} for key, value in MACRO_SUMMARY.items()}
     _mock_macro_llm(
         mock_cls,
         _llm_response_dict(
-            confidence="medium", regime_shift=True,
+            confidence="medium",
+            regime_shift=True,
             shift_reason="Curve steepened and credit tightened together",
         ),
     )
@@ -620,9 +636,7 @@ def test_regime_shift_survives_real_fred_publication_lag(mock_cls):
         "publication lag and each one the latest print that exists — must "
         "NOT clear a regime shift; that was the 52%-of-runs defect"
     )
-    assert analysis.shift_reason == (
-        "Curve steepened and credit tightened together"
-    )
+    assert analysis.shift_reason == ("Curve steepened and credit tightened together")
 
 
 @patch("anthropic.Anthropic")
@@ -633,14 +647,12 @@ def test_regime_shift_gate_reachable_when_freshness_unverified(mock_cls):
     overdue-check is unverifiable. Unknown must therefore stay USABLE —
     refusing to act on unverifiable metadata is precisely how the old gate
     became unreachable."""
-    unverified = {
-        key: {**value, "freshness": "unknown"}
-        for key, value in MACRO_SUMMARY.items()
-    }
+    unverified = {key: {**value, "freshness": "unknown"} for key, value in MACRO_SUMMARY.items()}
     _mock_macro_llm(
         mock_cls,
         _llm_response_dict(
-            confidence="medium", regime_shift=True,
+            confidence="medium",
+            regime_shift=True,
             shift_reason="HY OAS widened 40bps",
         ),
     )
@@ -658,10 +670,14 @@ def test_prompt_carries_no_calendar_day_freshness_threshold():
     regime shift) are gone from both sides; what replaced them is the
     latest-published / overdue language asserted below."""
     from src.agents.macro_analyst import PROMPT_PATH
+
     text = PROMPT_PATH.read_text()
     for gone in (
-        "staleness_days > 7", "staleness_days > 3", "staleness_days > 55",
-        "staleness_days ≤ 1", "staleness_days <= 1",
+        "staleness_days > 7",
+        "staleness_days > 3",
+        "staleness_days > 55",
+        "staleness_days ≤ 1",
+        "staleness_days <= 1",
     ):
         assert gone not in text, (
             f"{gone!r} must not reappear — macro freshness is no longer a "

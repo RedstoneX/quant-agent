@@ -17,7 +17,8 @@ class PromptHeat:
     """The portfolio heat block; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         sweeper=None,
         build_stop_map=None,
     ) -> None:
@@ -33,6 +34,7 @@ class PromptHeat:
         say "unknown" instead of rendering a confident zero.
         """
         from src.risk.heat_unreadable import portfolio_heat_with_unreadable as portfolio_heat
+
         try:
             sweeper = self._sweeper()
             excluded = set()
@@ -44,7 +46,8 @@ class PromptHeat:
                 equity=total_value,
                 stops=live_stops,
                 initial_stops=initial_stops,
-                exclude_symbols=excluded, unreadable_stops=unreadable,
+                exclude_symbols=excluded,
+                unreadable_stops=unreadable,
             )
         except Exception as e:  # noqa: BLE001
             record_swallowed("prompt_facts.heat._build_portfolio_heat", e, log=logger)

@@ -22,6 +22,7 @@ cannot accept, so trying costs one rejected order that is recorded, while
 refusing costs a naked position. No new number: the retry count is one
 repeat of the same read, not a tuned threshold.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,8 +35,12 @@ from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger("src.market_session")
 
+
 def _calendar_edge(
-    broker: Any, getter: str, today: Any, problems: list[str],
+    broker: Any,
+    getter: str,
+    today: Any,
+    problems: list[str],
 ) -> datetime | None:
     """One session edge, or None when the broker could not give that edge.
 
@@ -92,8 +97,7 @@ def _read_calendar(broker: Any, now: datetime) -> tuple[bool, str]:
         # fallback's own message quotes it, so a calendar outage is named in
         # the owner-visible reason instead of being flattened to "unreadable".
         raise ValueError(
-            "the broker's calendar did not give both session edges"
-            + (f" ({'; '.join(problems)})" if problems else "")
+            "the broker's calendar did not give both session edges" + (f" ({'; '.join(problems)})" if problems else "")
         )
     return True, f"the session is open until {_stamp(closes)}"
 
@@ -115,15 +119,13 @@ def market_open_verdict(broker: Any, now: datetime) -> tuple[bool, str]:
         is_open = in_regular_session(now)
     except Exception as exc2:  # noqa: BLE001
         logger.warning(
-            "market-open: calendar (%s) and weekday/clock (%s) both unreadable "
-            "— answering OPEN", last_exc, exc2,
+            "market-open: calendar (%s) and weekday/clock (%s) both unreadable — answering OPEN",
+            last_exc,
+            exc2,
         )
-        return True, (
-            f"calendar ({last_exc}) and clock ({exc2}) unreadable — treated as open"
-        )
+        return True, (f"calendar ({last_exc}) and clock ({exc2}) unreadable — treated as open")
     return is_open, (
-        f"broker calendar unreadable ({last_exc}); weekday/clock check says "
-        f"{'open' if is_open else 'shut'}"
+        f"broker calendar unreadable ({last_exc}); weekday/clock check says {'open' if is_open else 'shut'}"
     )
 
 
@@ -144,7 +146,8 @@ def market_open_now(broker: Any, clock: Callable[[], datetime]) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "market-open: the clock source is unreadable (%s) — answering OPEN "
-            "so a naked-position alert is never suppressed", exc,
+            "so a naked-position alert is never suppressed",
+            exc,
         )
         return True
     return market_open_verdict(broker, now)[0]

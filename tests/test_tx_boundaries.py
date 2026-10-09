@@ -13,10 +13,15 @@ def test_save_evening_snapshot_persists_both_rows(tmp_path):
 
     db.save_evening_snapshot(
         date="2026-04-17",
-        total_value=10500.0, daily_pnl=500.0, daily_return_pct=5.0,
-        tomorrow_outlook="Watch FOMC", lessons="Don't chase",
-        suggested_actions=["trim risk"], risk_rating="moderate",
-        tomorrow_bias="bearish", tomorrow_conviction="medium",
+        total_value=10500.0,
+        daily_pnl=500.0,
+        daily_return_pct=5.0,
+        tomorrow_outlook="Watch FOMC",
+        lessons="Don't chase",
+        suggested_actions=["trim risk"],
+        risk_rating="moderate",
+        tomorrow_bias="bearish",
+        tomorrow_conviction="medium",
         tomorrow_key_risks=["FOMC at 2pm"],
         sell_decisions_assessment="AAPL sell premature",
     )
@@ -65,8 +70,12 @@ def test_save_evening_snapshot_rolls_back_on_error(tmp_path):
     with pytest.raises(RuntimeError):
         db.save_evening_snapshot(
             date="2026-04-17",
-            total_value=10000.0, daily_pnl=0.0, daily_return_pct=0.0,
-            tomorrow_outlook="x", lessons="y", suggested_actions=[],
+            total_value=10000.0,
+            daily_pnl=0.0,
+            daily_return_pct=0.0,
+            tomorrow_outlook="x",
+            lessons="y",
+            suggested_actions=[],
             risk_rating="low",
         )
 

@@ -32,9 +32,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
-DEFAULT_ATTESTATIONS_PATH = (
-    PROJECT_ROOT / "config" / "live_capital_preflight_attestations.yaml"
-)
+DEFAULT_ATTESTATIONS_PATH = PROJECT_ROOT / "config" / "live_capital_preflight_attestations.yaml"
 
 _PAPER_HOST = "paper-api.alpaca.markets"
 
@@ -226,8 +224,7 @@ MANUAL_CONDITIONS: tuple[ManualCondition, ...] = (
     ),
     ManualCondition(
         "failure_mode_tests_passed",
-        "Stop-lifecycle, network, VPS, provider, split-brain and stale-state "
-        "failure tests have passed",
+        "Stop-lifecycle, network, VPS, provider, split-brain and stale-state failure tests have passed",
         "docs/FUTURE.md",
     ),
     ManualCondition(
@@ -283,12 +280,14 @@ def _evaluate_manual(cond: ManualCondition, attestations: dict) -> ConditionResu
         note = entry.get("note")
         suffix = f" — {note}" if note else ""
         return ConditionResult(
-            cond.condition_id, cond.title, "manual", cond.source, PASS,
+            cond.condition_id,
+            cond.title,
+            "manual",
+            cond.source,
+            PASS,
             f"attested by {entry['attested_by']} on {entry['attested_on']}{suffix}",
         )
-    return ConditionResult(
-        cond.condition_id, cond.title, "manual", cond.source, BLOCK, detail
-    )
+    return ConditionResult(cond.condition_id, cond.title, "manual", cond.source, BLOCK, detail)
 
 
 def evaluate(
@@ -317,8 +316,12 @@ def evaluate(
             status, detail = FAIL, f"checker raised {exc!r}"
         results.append(
             ConditionResult(
-                mech.condition_id, mech.title, "mechanical", mech.source,
-                status, detail,
+                mech.condition_id,
+                mech.title,
+                "mechanical",
+                mech.source,
+                status,
+                detail,
             )
         )
 
@@ -343,9 +346,7 @@ class LiveCapitalBlocked(Exception):
 
     def __init__(self, gate: "GateResult") -> None:
         self.gate = gate
-        named = "; ".join(
-            f"{r.condition_id} [{r.status}] {r.detail}" for r in gate.blocking
-        )
+        named = "; ".join(f"{r.condition_id} [{r.status}] {r.detail}" for r in gate.blocking)
         super().__init__(
             f"live-capital pre-flight gate BLOCKED — "
             f"{len(gate.blocking)} of {len(gate.results)} condition(s) unmet: {named}"
@@ -389,10 +390,7 @@ def format_report(gate: GateResult, scope: str = AUDIT) -> str:
         lines.append("RESULT: all conditions satisfied — live capital may proceed.")
     else:
         n = len(gate.blocking)
-        lines.append(
-            f"RESULT: BLOCKED — {n} condition(s) unmet. Live capital must NOT be "
-            "activated."
-        )
+        lines.append(f"RESULT: BLOCKED — {n} condition(s) unmet. Live capital must NOT be activated.")
     return "\n".join(lines)
 
 
@@ -407,13 +405,13 @@ def main(
         "Exits non-zero (BLOCK) unless every condition is satisfied.",
     )
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_PATH)
+    parser.add_argument("--attestations", type=Path, default=DEFAULT_ATTESTATIONS_PATH)
     parser.add_argument(
-        "--attestations", type=Path, default=DEFAULT_ATTESTATIONS_PATH
-    )
-    parser.add_argument(
-        "--scope", choices=sorted(ALL_SCOPES), default=AUDIT,
+        "--scope",
+        choices=sorted(ALL_SCOPES),
+        default=AUDIT,
         help="audit (default) checks everything; activation checks what the "
-             "paper-only guard itself evaluates when live capital is requested",
+        "paper-only guard itself evaluates when live capital is requested",
     )
     args = parser.parse_args(argv)
 

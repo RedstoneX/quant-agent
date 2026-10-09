@@ -58,8 +58,13 @@ _DEFAULT_DB_RELATIVE = "data/quant_agent.db"
 #                       route left was a model unmeasured at that seat. Not
 #                       a provider failure: a deliberate, recorded refusal.
 EVENT_TYPES = (
-    "route_switch", "route_demoted", "probe_primary",
-    "route_restored", "probe_failed", "retry_after", "seat_refused",
+    "route_switch",
+    "route_demoted",
+    "probe_primary",
+    "route_restored",
+    "probe_failed",
+    "retry_after",
+    "seat_refused",
 )
 
 _SCHEMA = """
@@ -169,8 +174,7 @@ def record(
     journal, and the caller has nothing useful to do with the exception.
     """
     if event_type not in EVENT_TYPES:
-        logger.warning("llm_route_journal: unknown event_type %r — not recorded",
-                       event_type)
+        logger.warning("llm_route_journal: unknown event_type %r — not recorded", event_type)
         return False
     error_shape = None
     if error is not None:
@@ -188,9 +192,19 @@ def record(
                     " input_usd_per_mtok, output_usd_per_mtok, wait_s, "
                     " error_shape, detail) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (event_type, agent_name, run_id, route, from_route, tier,
-                     input_usd_per_mtok, output_usd_per_mtok, wait_s,
-                     error_shape, detail),
+                    (
+                        event_type,
+                        agent_name,
+                        run_id,
+                        route,
+                        from_route,
+                        tier,
+                        input_usd_per_mtok,
+                        output_usd_per_mtok,
+                        wait_s,
+                        error_shape,
+                        detail,
+                    ),
                 )
                 conn.commit()
             finally:
@@ -203,8 +217,10 @@ def record(
         # what it cost. Losing it is not a nuisance, it is losing the only
         # evidence for the question the owner will ask.
         logger.error(
-            "llm_route_journal: could not record %s (%d write failure(s) this "
-            "process): %s", event_type, _write_failures, exc,
+            "llm_route_journal: could not record %s (%d write failure(s) this process): %s",
+            event_type,
+            _write_failures,
+            exc,
         )
         return False
 

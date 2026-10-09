@@ -53,7 +53,8 @@ def _fired(result, *, mode="intra_check"):
 
     with patch("src.notifier.send_owner_alert", return_value=True) as alert:
         sent = maybe_alert_data_quality(
-            evidence_gate.data_quality_page_input(result), mode=mode,
+            evidence_gate.data_quality_page_input(result),
+            mode=mode,
         )
     body = alert.call_args.args[0] if alert.call_args else ""
     return sent, body
@@ -62,6 +63,7 @@ def _fired(result, *, mode="intra_check"):
 # ===========================================================================
 # The regression: the real tick must not page.
 # ===========================================================================
+
 
 def test_the_2026_09_21_carried_over_news_tick_sends_no_red_page():
     result = {
@@ -91,16 +93,14 @@ def test_but_that_same_tick_still_says_the_news_was_carried_over():
     # sources degraded" advisory, the report's "degraded:" line and the
     # postmortem log all still see this seat.
     assert evidence_gate.counts_as_degraded("expired") is True
-    degraded = [
-        seat for seat, value in REAL_TICK_DATA_STATUS.items()
-        if evidence_gate.counts_as_degraded(value)
-    ]
+    degraded = [seat for seat, value in REAL_TICK_DATA_STATUS.items() if evidence_gate.counts_as_degraded(value)]
     assert degraded == ["news"]
 
 
 # ===========================================================================
 # The thing that must never break: a lost answer still pages.
 # ===========================================================================
+
 
 def test_a_seat_whose_answer_never_arrived_still_pages():
     result = {"data_status": {"tech": "failed", "macro": "ok"}}
@@ -124,8 +124,7 @@ def test_a_lost_seat_still_pages_on_a_tick_that_also_has_a_carried_one():
 @pytest.mark.parametrize(
     "status",
     sorted(
-        value for value, category in evidence_gate.STATUS_CATEGORY.items()
-        if category == evidence_gate.CATEGORY_LOST
+        value for value, category in evidence_gate.STATUS_CATEGORY.items() if category == evidence_gate.CATEGORY_LOST
     ),
 )
 def test_every_lost_status_still_warrants_a_page(status):
@@ -144,6 +143,7 @@ def test_an_unclassified_status_still_pages():
 # The distinction itself, pinned by name.
 # ===========================================================================
 
+
 def test_the_page_exemption_is_exactly_expired_and_nothing_else():
     assert evidence_gate.DISCLOSE_ONLY_STATUSES == frozenset({"expired"})
     assert evidence_gate.warrants_data_quality_page("expired") is False
@@ -155,9 +155,7 @@ def test_nothing_but_a_held_answer_may_ever_be_page_exempt():
     CATEGORY_EXPIRED — the desk HOLDS an answer. Adding a LOST word here
     would silence the hazard the alert exists for."""
     for status in evidence_gate.DISCLOSE_ONLY_STATUSES:
-        assert evidence_gate.STATUS_CATEGORY.get(status) == (
-            evidence_gate.CATEGORY_EXPIRED
-        ), status
+        assert evidence_gate.STATUS_CATEGORY.get(status) == (evidence_gate.CATEGORY_EXPIRED), status
 
 
 def test_paging_is_strictly_narrower_than_degraded():
@@ -173,11 +171,12 @@ def test_paging_is_strictly_narrower_than_degraded():
 # The filter itself.
 # ===========================================================================
 
+
 def test_page_worthy_statuses_drops_only_the_held_answers():
     assert evidence_gate.page_worthy_statuses(REAL_TICK_DATA_STATUS) == {}
-    assert evidence_gate.page_worthy_statuses(
-        {"tech": "truncated", "news": "expired", "macro": "ok"}
-    ) == {"tech": "truncated"}
+    assert evidence_gate.page_worthy_statuses({"tech": "truncated", "news": "expired", "macro": "ok"}) == {
+        "tech": "truncated"
+    }
 
 
 def test_the_filter_returns_the_result_untouched_when_nothing_is_dropped():

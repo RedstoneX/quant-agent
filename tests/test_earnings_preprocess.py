@@ -26,9 +26,13 @@ def _mk_pipeline(tmp_path, earnings_provider, earnings_analyst):
 def test_preprocess_analyzes_new_filings_synchronously(tmp_path):
     """Fresh filings → full LLM analysis → confirm. No background thread."""
     new_filing = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [new_filing]
@@ -36,14 +40,16 @@ def test_preprocess_analyzes_new_filings_synchronously(tmp_path):
 
     earnings_analyst = MagicMock()
     agent_result = AgentResult(raw_text="{}", tokens_used=50, model="test", user_message="x")
-    earnings_analyst.analyze_reports.return_value = [{
-        "symbol": "NVDA",
-        "is_new": True,
-        "form_type": "10-Q",
-        "filing_date": "2026-04-20",
-        "agent_result": agent_result,
-        "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
-    }]
+    earnings_analyst.analyze_reports.return_value = [
+        {
+            "symbol": "NVDA",
+            "is_new": True,
+            "form_type": "10-Q",
+            "filing_date": "2026-04-20",
+            "agent_result": agent_result,
+            "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
+        }
+    ]
 
     pipeline = _mk_pipeline(tmp_path, earnings_provider, earnings_analyst)
     result = pipeline.run_earnings_preprocess()
@@ -80,12 +86,15 @@ def test_preprocess_unions_form4_hot_names_without_an_invented_cap(tmp_path):
     pipeline = _mk_pipeline(tmp_path, earnings_provider, MagicMock())
     pipeline.config.smart_money.enabled = True
     pipeline.smart_money_provider = MagicMock()
-    pipeline.smart_money_provider.fetch.return_value = ([
-        SimpleNamespace(admission_eligible=True, symbol="FTK"),
-        SimpleNamespace(admission_eligible=True, symbol="RSG"),
-        SimpleNamespace(admission_eligible=False, symbol="ZZZ"),
-        SimpleNamespace(admission_eligible=True, symbol="nvda"),
-    ], None)
+    pipeline.smart_money_provider.fetch.return_value = (
+        [
+            SimpleNamespace(admission_eligible=True, symbol="FTK"),
+            SimpleNamespace(admission_eligible=True, symbol="RSG"),
+            SimpleNamespace(admission_eligible=False, symbol="ZZZ"),
+            SimpleNamespace(admission_eligible=True, symbol="nvda"),
+        ],
+        None,
+    )
     pipeline.smart_money_provider.refresh.return_value = {"status": "ok"}
     symbols = pipeline._earnings_preprocess_symbols()
     assert symbols == ["NVDA", "AAPL", "FTK", "RSG"]
@@ -97,9 +106,13 @@ def test_preprocess_unions_form4_hot_names_without_an_invented_cap(tmp_path):
 
 def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path):
     new_filing = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-08-25",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-08-25",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [new_filing]
@@ -110,7 +123,8 @@ def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
-        "prelatched", {"suspended": True},
+        "prelatched",
+        {"suspended": True},
     )
 
     result = pipeline.run_earnings_preprocess()
@@ -131,7 +145,9 @@ def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path
 
 
 def test_preprocess_skips_when_market_closed(tmp_path):
-    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock())
+    pipeline = build_pipeline(
+        db=MagicMock(), broker=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = False
     pipeline.config = MagicMock()
 
@@ -149,9 +165,13 @@ def test_record_failure_abandons_after_max_attempts_with_et_timestamp(tmp_path):
 
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     report = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path=None,
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path=None,
+        text_excerpt="...",
+        is_new=True,
     )
 
     # Two failures — not yet abandoned.
@@ -172,9 +192,7 @@ def test_record_failure_abandons_after_max_attempts_with_et_timestamp(tmp_path):
     from src.trading_calendar import ET
 
     parsed = _dt.fromisoformat(entry["abandoned_at"])
-    assert parsed.tzinfo is not None, (
-        "abandoned_at must carry a timezone; naive utcnow drifts from ET day keys"
-    )
+    assert parsed.tzinfo is not None, "abandoned_at must carry a timezone; naive utcnow drifts from ET day keys"
     # The offset must equal ET's offset at that same instant (ET shifts DST —
     # compare offsets at the exact same moment rather than asserting a fixed
     # number of hours).
@@ -196,9 +214,13 @@ def test_record_failure_resets_retry_budget_when_filing_date_changes(tmp_path):
 
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     q1_report = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-01-20",
-        filing_path="/tmp/nvda_q1.html", analysis_path=None,
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-01-20",
+        filing_path="/tmp/nvda_q1.html",
+        analysis_path=None,
+        text_excerpt="...",
+        is_new=True,
     )
     # Burn through Q1 retry budget: 3 failures → abandoned.
     for _ in range(3):
@@ -210,21 +232,20 @@ def test_record_failure_resets_retry_budget_when_filing_date_changes(tmp_path):
     # Q2 lands on the same key with a NEW filing_date. The first failure
     # must NOT inherit Q1's abandoned state — it should start fresh.
     q2_report = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda_q2.html", analysis_path=None,
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda_q2.html",
+        analysis_path=None,
+        text_excerpt="...",
+        is_new=True,
     )
     abandoned = provider.record_failure(q2_report, max_attempts=3)
 
-    assert abandoned is False, (
-        "Q2's first failure must NOT abandon — that's Q1's history "
-        "incorrectly carried forward"
-    )
+    assert abandoned is False, "Q2's first failure must NOT abandon — that's Q1's history incorrectly carried forward"
     entry = provider.manifest["NVDA_10-Q"]
     assert entry["filing_date"] == "2026-04-20"
-    assert entry["failed_attempts"] == 1, (
-        f"Q2 should be on attempt 1 of its own budget; got {entry['failed_attempts']}"
-    )
+    assert entry["failed_attempts"] == 1, f"Q2 should be on attempt 1 of its own budget; got {entry['failed_attempts']}"
     assert entry.get("abandoned") is not True
     assert "abandoned_at" not in entry
 
@@ -236,9 +257,13 @@ def test_record_failure_does_not_reset_within_same_filing_date(tmp_path):
 
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     report = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path=None,
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path=None,
+        text_excerpt="...",
+        is_new=True,
     )
     provider.record_failure(report, max_attempts=3)
     provider.record_failure(report, max_attempts=3)
@@ -249,9 +274,13 @@ def test_record_failure_does_not_reset_within_same_filing_date(tmp_path):
 def test_preprocess_records_failures_on_llm_error(tmp_path):
     """If analyze_reports raises, each new filing gets record_failure called."""
     new_filing = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [new_filing]
@@ -268,28 +297,38 @@ def test_preprocess_records_failures_on_llm_error(tmp_path):
 def test_preprocess_records_per_filing_validation_failures(tmp_path):
     """A silently dropped filing still consumes retry budget and is not confirmed."""
     good = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     bad = EarningsReport(
-        symbol="AAPL", form_type="10-K", filing_date="2026-04-20",
-        filing_path="/tmp/aapl.html", analysis_path="/tmp/aapl.md",
-        text_excerpt="...", is_new=True,
+        symbol="AAPL",
+        form_type="10-K",
+        filing_date="2026-04-20",
+        filing_path="/tmp/aapl.html",
+        analysis_path="/tmp/aapl.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [good, bad]
 
     earnings_analyst = MagicMock()
     agent_result = AgentResult(raw_text="{}", tokens_used=50, model="test", user_message="x")
-    earnings_analyst.analyze_reports.return_value = [{
-        "symbol": "NVDA",
-        "is_new": True,
-        "form_type": "10-Q",
-        "filing_date": "2026-04-20",
-        "agent_result": agent_result,
-        "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
-    }]
+    earnings_analyst.analyze_reports.return_value = [
+        {
+            "symbol": "NVDA",
+            "is_new": True,
+            "form_type": "10-Q",
+            "filing_date": "2026-04-20",
+            "agent_result": agent_result,
+            "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
+        }
+    ]
 
     pipeline = _mk_pipeline(tmp_path, earnings_provider, earnings_analyst)
     result = pipeline.run_earnings_preprocess()
@@ -311,14 +350,22 @@ def test_preprocess_keys_results_by_symbol_form_filing_date_not_just_symbol(tmp_
     (symbol, form_type, filing_date) key for both result-matching and
     confirm-filing decisions."""
     good_10k = EarningsReport(
-        symbol="NVDA", form_type="10-K", filing_date="2026-04-20",
-        filing_path="/tmp/nvda_10k.html", analysis_path="/tmp/nvda_10k.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-K",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda_10k.html",
+        analysis_path="/tmp/nvda_10k.md",
+        text_excerpt="...",
+        is_new=True,
     )
     bad_10q = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda_10q.html", analysis_path="/tmp/nvda_10q.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda_10q.html",
+        analysis_path="/tmp/nvda_10q.md",
+        text_excerpt="...",
+        is_new=True,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [good_10k, bad_10q]
@@ -327,14 +374,16 @@ def test_preprocess_keys_results_by_symbol_form_filing_date_not_just_symbol(tmp_
     agent_result = AgentResult(raw_text="{}", tokens_used=50, model="test", user_message="x")
     # Only the 10-K result is in the response — 10-Q analysis silently
     # validation-failed and was dropped by analyze_reports.
-    earnings_analyst.analyze_reports.return_value = [{
-        "symbol": "NVDA",
-        "is_new": True,
-        "form_type": "10-K",
-        "filing_date": "2026-04-20",
-        "agent_result": agent_result,
-        "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
-    }]
+    earnings_analyst.analyze_reports.return_value = [
+        {
+            "symbol": "NVDA",
+            "is_new": True,
+            "form_type": "10-K",
+            "filing_date": "2026-04-20",
+            "agent_result": agent_result,
+            "analysis": {"investment_implications": {"sentiment": "bullish", "conviction": "high"}},
+        }
+    ]
 
     pipeline = _mk_pipeline(tmp_path, earnings_provider, earnings_analyst)
     result = pipeline.run_earnings_preprocess()
@@ -360,23 +409,36 @@ def test_load_earnings_analyses_never_confirms_or_spawns_threads(tmp_path):
     import threading
 
     new_filing = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-20",
-        filing_path="/tmp/nvda.html", analysis_path="/tmp/nvda.md",
-        text_excerpt="...", is_new=True,
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-20",
+        filing_path="/tmp/nvda.html",
+        analysis_path="/tmp/nvda.md",
+        text_excerpt="...",
+        is_new=True,
     )
     cached_filing = EarningsReport(
-        symbol="AAPL", form_type="10-K", filing_date="2026-04-15",
-        filing_path="/tmp/aapl.html", analysis_path="/tmp/aapl.md",
-        text_excerpt="", is_new=False,
+        symbol="AAPL",
+        form_type="10-K",
+        filing_date="2026-04-15",
+        filing_path="/tmp/aapl.html",
+        analysis_path="/tmp/aapl.md",
+        text_excerpt="",
+        is_new=False,
     )
     earnings_provider = MagicMock()
     earnings_provider.check_and_fetch.return_value = [new_filing, cached_filing]
     earnings_analyst = MagicMock()
-    earnings_analyst.analyze_reports.return_value = [{
-        "symbol": "AAPL", "is_new": False, "form_type": "10-K",
-        "filing_date": "2026-04-15", "agent_result": None,
-        "analysis": {"investment_implications": {"sentiment": "neutral"}},
-    }]
+    earnings_analyst.analyze_reports.return_value = [
+        {
+            "symbol": "AAPL",
+            "is_new": False,
+            "form_type": "10-K",
+            "filing_date": "2026-04-15",
+            "agent_result": None,
+            "analysis": {"investment_implications": {"sentiment": "neutral"}},
+        }
+    ]
 
     pipeline = _mk_pipeline(tmp_path, earnings_provider, earnings_analyst)
 
@@ -401,18 +463,7 @@ def test_load_earnings_analyses_never_confirms_or_spawns_threads(tmp_path):
     assert len(aapl_entries) == 1
     assert aapl_entries[0]["analysis"] is not None
 
-
-
-
-
-
-
-
-
-
     # No IndexError, no crash — proves the misalignment was tolerated.
-
-
 
 
 def test_earnings_provider_prune_removes_old_raw_html_keeps_analyses(tmp_path, monkeypatch):
@@ -426,8 +477,8 @@ def test_earnings_provider_prune_removes_old_raw_html_keeps_analyses(tmp_path, m
     prov = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     sdir = prov.data_dir / "NVDA"
     sdir.mkdir(parents=True)
-    old_html = sdir / "10-Q_2024-01-15.html"      # >400d old → prune
-    recent_html = sdir / "10-Q_2026-03-15.html"    # recent → keep
+    old_html = sdir / "10-Q_2024-01-15.html"  # >400d old → prune
+    recent_html = sdir / "10-Q_2026-03-15.html"  # recent → keep
     old_analysis = sdir / "analysis_10-Q_2024-01-15.md"  # analysis → always keep
     old_html.write_text("<html>old</html>")
     recent_html.write_text("<html>recent</html>")
@@ -436,9 +487,9 @@ def test_earnings_provider_prune_removes_old_raw_html_keeps_analyses(tmp_path, m
     removed = prov.prune(keep_days=400)
 
     assert removed == 1
-    assert not old_html.exists()        # old raw HTML pruned
-    assert recent_html.exists()         # recent raw HTML kept
-    assert old_analysis.exists()        # analysis markdown never touched
+    assert not old_html.exists()  # old raw HTML pruned
+    assert recent_html.exists()  # recent raw HTML kept
+    assert old_analysis.exists()  # analysis markdown never touched
 
 
 # --------------------------------------------------------------------------
@@ -456,6 +507,7 @@ def test_earnings_provider_prune_removes_old_raw_html_keeps_analyses(tmp_path, m
 # handed to a session as current in the first place, rather than served and
 # then discounted. Reuses the same constant, not a new number.
 # --------------------------------------------------------------------------
+
 
 def _write_analysis(symbol_dir, form_type, filing_date_str, body="# analysis\n"):
     symbol_dir.mkdir(parents=True, exist_ok=True)

@@ -30,7 +30,8 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=cancel_ok, coverage_shrank=False)
     cleared = snapshot_ok and cancel_ok
     broker.cancel_protective_stops.return_value = (
-        cleared, specs if cleared else [],
+        cleared,
+        specs if cleared else [],
     )
 
 
@@ -39,7 +40,9 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     pipeline._cancel_stops_with_write_ahead (audit F1 #1); stub its
     3-tuple directly (the broker seam is never reached on a mock)."""
     pipeline._cancel_stops_with_write_ahead.return_value = (
-        ok, list(specs), wal_row_id,
+        ok,
+        list(specs),
+        wal_row_id,
     )
     # Callers unpack finalize's (ok, retry_specs) contract; default to
     # "coverage confirmed" so the full-MagicMock pipeline yields a tuple.
@@ -49,11 +52,14 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     # against the mocked broker/seams (real integration, not a no-op mock).
     import types as _types
     from src.pipeline import TradingPipeline as _TP
+
     pipeline._submit_protected_sell = _types.MethodType(
-        _TP._submit_protected_sell, pipeline,
+        _TP._submit_protected_sell,
+        pipeline,
     )
     pipeline._finalize_pending_protections = _types.MethodType(
-        _TP._finalize_pending_protections, pipeline,
+        _TP._finalize_pending_protections,
+        pipeline,
     )
 
 
@@ -81,10 +87,13 @@ def _carried_forward_macro_dict(target_invested_pct=55.0):
 def _valid_carried_macro_dict(target_invested_pct=55.0):
     """Same-day MacroStore snapshot that still validates as MacroAnalysis."""
     from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
+
     return {
         "date": "2026-08-26",
         **MacroAnalysis(
-            regime="risk-on", confidence="high", equity_outlook="bullish",
+            regime="risk-on",
+            confidence="high",
+            equity_outlook="bullish",
             summary="carried forward from yesterday",
             position_guidance=MacroPositionGuidance(
                 target_invested_pct=target_invested_pct,
@@ -93,9 +102,12 @@ def _valid_carried_macro_dict(target_invested_pct=55.0):
             ),
             sector_guidance=[],
             reasoning_chain=MacroReasoningChain(
-                volatility_analysis="x", yield_curve_analysis="x",
-                monetary_policy_analysis="x", inflation_labor_credit="x",
-                cross_signal_synthesis="x", sector_implications="x",
+                volatility_analysis="x",
+                yield_curve_analysis="x",
+                monetary_policy_analysis="x",
+                inflation_labor_credit="x",
+                cross_signal_synthesis="x",
+                sector_implications="x",
             ),
         ).model_dump(),
         "sector_guidance": {"Technology": "bullish"},
@@ -113,8 +125,12 @@ def test_persist_evidence_never_raises_on_db_failure():
     db.insert_specialist_evidence.side_effect = RuntimeError("disk full")
 
     _persist_evidence(
-        db, run_id="run-1", agent_name="macro_analyst", kind="analysis",
-        scope="run", evidence_json="{}",
+        db,
+        run_id="run-1",
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json="{}",
     )
     # No exception raised — that's the assertion. The call was still
     # attempted (not silently skipped).
@@ -131,10 +147,16 @@ def test_stage_classes_take_pipeline_reference():
 
 def _buy(symbol, alloc):
     from src.models import TradeDecision
+
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=alloc,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
-        reasoning="x", thesis_invalid_if="closes below support",
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="x",
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -142,10 +164,15 @@ def _pm_rc():
     """Minimal valid PM reasoning_chain — every required step a non-empty
     string per PR #89 min_length=1 enforcement."""
     from src.models import ReasoningChain
+
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -153,35 +180,54 @@ def _risk_rc():
     """Minimal valid RM reasoning_chain — every required step a non-empty
     string per PR #89 min_length=1 enforcement."""
     from src.models import RiskReasoningChain
+
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _tech_rc():
     """Minimal valid Tech reasoning_chain."""
     from src.models import TechReasoningChain
+
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x",
-        volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
 def _hold(symbol):
     from src.models import TradeDecision
+
     return TradeDecision(
-        action="HOLD", symbol=symbol, allocation_pct=0.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="HOLD",
+        symbol=symbol,
+        allocation_pct=0.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="hold",
     )
 
 
 def _sell(symbol):
     from src.models import TradeDecision
+
     return TradeDecision(
-        action="SELL", symbol=symbol, allocation_pct=100.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="SELL",
+        symbol=symbol,
+        allocation_pct=100.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="exit",
     )
 
@@ -195,7 +241,8 @@ def test_scale_advisory_zero_does_not_change_or_drop_any_entry():
     from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.0,
+        approved=True,
+        scale_all_buys=0.0,
         reasoning_chain=_risk_rc(),
         reasoning="risk-off — exposure concern",
     )
@@ -206,8 +253,10 @@ def test_scale_advisory_zero_does_not_change_or_drop_any_entry():
     assert scale == 0.0, "0.0 must propagate, not collapse to 1.0"
     # Nothing dropped, nothing resized.
     assert [(d.symbol, d.action, d.allocation_pct) for d in out] == [
-        ("SPY", "BUY", 10.0), ("QQQ", "BUY", 8.0),
-        ("MSFT", "HOLD", 0.0), ("NVDA", "SELL", 100.0),
+        ("SPY", "BUY", 10.0),
+        ("QQQ", "BUY", 8.0),
+        ("MSFT", "HOLD", 0.0),
+        ("NVDA", "SELL", 100.0),
     ]
     # Both entries flagged for the advisory record; exits not flagged.
     assert sorted(advised) == [("QQQ", 8.0), ("SPY", 10.0)]
@@ -220,8 +269,10 @@ def test_scale_advisory_partial_records_entries_but_does_not_resize():
     from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.5,
-        reasoning_chain=_risk_rc(), reasoning="trim",
+        approved=True,
+        scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(),
+        reasoning="trim",
     )
     decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT")]
 
@@ -248,7 +299,8 @@ def test_scale_advisory_one_is_no_op_and_flags_nothing():
     assert scale == 1.0
     assert advised == []
     assert [(d.symbol, d.allocation_pct) for d in out] == [
-        ("SPY", 10.0), ("QQQ", 8.0),
+        ("SPY", 10.0),
+        ("QQQ", 8.0),
     ]
 
 
@@ -270,9 +322,6 @@ def test_scale_advisory_handles_missing_attribute_as_one():
     assert len(out) == 1 and out[0].allocation_pct == 10.0
 
 
-
-
-
 def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
     """When LLM's entry_price deviates >5% from live market, the BUY must be
     skipped — not fallback-to-market. A stale entry implies the stop_loss
@@ -289,7 +338,9 @@ def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
     # and consults risk_engine — wire benign defaults so this orthogonal
     # entry-price-stale test isn't entangled with the loss-breach path.
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
 
     ctx = RunContext.start("morning")
@@ -302,8 +353,12 @@ def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
         decisions=[
             # LLM says entry $80, market is $100 → 20% off → must skip.
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=80.0, stop_loss=72.0, take_profit=130.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=80.0,
+                stop_loss=72.0,
+                take_profit=130.0,
                 reasoning="stale entry scenario",
             ),
         ],
@@ -327,12 +382,16 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
     pipeline.broker.submit_order.return_value = {
-        "id": "order-1", "status": "accepted", "symbol": "SPY",
+        "id": "order-1",
+        "status": "accepted",
+        "symbol": "SPY",
     }
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
 
     ctx = RunContext.start("morning")
@@ -348,8 +407,12 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
             # audit-round-2 executed-geometry floor of 1.2 (a TP of 130 would
             # now be correctly SKIPPED at 1.07; that case has its own test).
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=98.0, stop_loss=72.0, take_profit=140.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=98.0,
+                stop_loss=72.0,
+                take_profit=140.0,
                 reasoning="fresh setup",
             ),
         ],
@@ -381,7 +444,9 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     # finalize couldn't rebuild coverage → (False, specs).
     pipeline._finalize_protection_after_sell.return_value = (False, list(specs))
     pipeline.broker.submit_order.return_value = {
-        "id": "sell-9", "status": "accepted", "symbol": "JPM",
+        "id": "sell-9",
+        "status": "accepted",
+        "symbol": "JPM",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # Board item 178: ExecutionStage now re-reads the account before the
@@ -393,8 +458,13 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
         {"cash": 60_000.0, "portfolio_value": 100_000.0},
         [
             Position(
-                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+                symbol="JPM",
+                qty=10.0,
+                avg_entry=300.0,
+                current_price=320.0,
+                market_value=3_200.0,
+                unrealized_pnl=200.0,
+                sector="Financial",
             ),
         ],
         {},
@@ -410,16 +480,25 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     ctx.last_equity = 100_000.0
     ctx.positions = [
         Position(
-            symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-            market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            symbol="JPM",
+            qty=10.0,
+            avg_entry=300.0,
+            current_price=320.0,
+            market_value=3_200.0,
+            unrealized_pnl=200.0,
+            sector="Financial",
         ),
     ]
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="SELL", symbol="JPM", allocation_pct=100,
-                entry_price=300.0, stop_loss=280.0, take_profit=350.0,
+                action="SELL",
+                symbol="JPM",
+                allocation_pct=100,
+                entry_price=300.0,
+                stop_loss=280.0,
+                take_profit=350.0,
                 reasoning="exit",
             ),
         ],
@@ -438,8 +517,7 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     assert pipeline.broker.submit_order.call_args.kwargs["side"] == "sell"
     # ...and the finalize-failure warning surfaced.
     assert any(
-        "did not confirm stop coverage" in r.getMessage() and "ExecutionStage" in r.getMessage()
-        for r in caplog.records
+        "did not confirm stop coverage" in r.getMessage() and "ExecutionStage" in r.getMessage() for r in caplog.records
     ), f"expected a finalize-failure warning; got {[r.getMessage() for r in caplog.records]}"
 
 
@@ -457,7 +535,9 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     _mock_stop_seam(pipeline.broker)
     _mock_stage_seam(pipeline)
     pipeline.broker.submit_order.return_value = {
-        "id": "sell-1", "status": "accepted", "symbol": "JPM",
+        "id": "sell-1",
+        "status": "accepted",
+        "symbol": "JPM",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline._order_accepted.return_value = True
@@ -468,8 +548,13 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     # Fresh broker read (mid-run): only 40 shares remain (down from the
     # run-open 100) and the price has moved to $340.
     fresh_position = Position(
-        symbol="JPM", qty=40.0, avg_entry=250.0, current_price=340.0,
-        market_value=13_600.0, unrealized_pnl=3_600.0, sector="Financial",
+        symbol="JPM",
+        qty=40.0,
+        avg_entry=250.0,
+        current_price=340.0,
+        market_value=13_600.0,
+        unrealized_pnl=3_600.0,
+        sector="Financial",
     )
     pipeline._refresh_account_state.return_value = (
         {"cash": 20_000.0, "portfolio_value": 60_000.0},
@@ -484,12 +569,19 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     # Stale run-open snapshot: 100 shares @ $300.
     ctx.positions = [
         Position(
-            symbol="JPM", qty=100.0, avg_entry=250.0, current_price=300.0,
-            market_value=30_000.0, unrealized_pnl=5_000.0, sector="Financial",
+            symbol="JPM",
+            qty=100.0,
+            avg_entry=250.0,
+            current_price=300.0,
+            market_value=30_000.0,
+            unrealized_pnl=5_000.0,
+            sector="Financial",
         ),
     ]
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[_sell("JPM")], portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=[_sell("JPM")],
+        portfolio_view="test",
     )
     ctx.symbols_bars = {}
 
@@ -500,8 +592,7 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     pipeline.broker.submit_order.assert_called_once()
     call_kwargs = pipeline.broker.submit_order.call_args.kwargs
     assert call_kwargs["qty"] == 40.0, (
-        f"SELL sized off the stale run-open qty (100) instead of the fresh "
-        f"read (40): got {call_kwargs['qty']}"
+        f"SELL sized off the stale run-open qty (100) instead of the fresh read (40): got {call_kwargs['qty']}"
     )
     assert call_kwargs["limit_price"] == round(340.0 * 0.995, 2), (
         f"SELL limit priced off the stale run-open price ($300) instead of "
@@ -520,7 +611,9 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     _mock_stop_seam(pipeline.broker)
     _mock_stage_seam(pipeline)
     pipeline.broker.submit_order.return_value = {
-        "id": "cover-1", "status": "accepted", "symbol": "TSLA",
+        "id": "cover-1",
+        "status": "accepted",
+        "symbol": "TSLA",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline._order_accepted.return_value = True
@@ -531,8 +624,13 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     # Fresh broker read (mid-run): the short shrank from -50 to -20 shares,
     # and the price moved to $210.
     fresh_position = Position(
-        symbol="TSLA", qty=-20.0, avg_entry=200.0, current_price=210.0,
-        market_value=-4_200.0, unrealized_pnl=-200.0, sector="Consumer Cyclical",
+        symbol="TSLA",
+        qty=-20.0,
+        avg_entry=200.0,
+        current_price=210.0,
+        market_value=-4_200.0,
+        unrealized_pnl=-200.0,
+        sector="Consumer Cyclical",
     )
     pipeline._refresh_account_state.return_value = (
         {"cash": 20_000.0, "portfolio_value": 60_000.0},
@@ -547,16 +645,25 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     # Stale run-open snapshot: -50 shares @ $200.
     ctx.positions = [
         Position(
-            symbol="TSLA", qty=-50.0, avg_entry=200.0, current_price=200.0,
-            market_value=-10_000.0, unrealized_pnl=0.0, sector="Consumer Cyclical",
+            symbol="TSLA",
+            qty=-50.0,
+            avg_entry=200.0,
+            current_price=200.0,
+            market_value=-10_000.0,
+            unrealized_pnl=0.0,
+            sector="Consumer Cyclical",
         ),
     ]
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="COVER", symbol="TSLA", allocation_pct=100.0,
-                entry_price=200.0, stop_loss=220.0, take_profit=180.0,
+                action="COVER",
+                symbol="TSLA",
+                allocation_pct=100.0,
+                entry_price=200.0,
+                stop_loss=220.0,
+                take_profit=180.0,
                 reasoning="cover",
             ),
         ],
@@ -571,8 +678,7 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     pipeline.broker.submit_order.assert_called_once()
     call_kwargs = pipeline.broker.submit_order.call_args.kwargs
     assert call_kwargs["qty"] == 20.0, (
-        f"COVER sized off the stale run-open qty (50) instead of the fresh "
-        f"read (20): got {call_kwargs['qty']}"
+        f"COVER sized off the stale run-open qty (50) instead of the fresh read (20): got {call_kwargs['qty']}"
     )
     assert call_kwargs["limit_price"] == round(210.0 * 1.005, 2), (
         f"COVER limit priced off the stale run-open price ($200) instead of "
@@ -594,7 +700,9 @@ def test_execution_stage_submits_buys_after_the_account_state_refresh():
     pipeline.broker.get_latest_price.return_value = 100.0
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
-        "id": "buy-1", "status": "accepted", "symbol": "SPY",
+        "id": "buy-1",
+        "status": "accepted",
+        "symbol": "SPY",
     }
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_500.0},
@@ -613,8 +721,12 @@ def test_execution_stage_submits_buys_after_the_account_state_refresh():
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=99.0, stop_loss=92.0, take_profit=110.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=99.0,
+                stop_loss=92.0,
+                take_profit=110.0,
                 reasoning="normal dip buy",
             ),
         ],
@@ -641,7 +753,9 @@ def test_execution_stage_skips_buy_when_entry_price_above_market_by_more_than_5p
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
 
     ctx = RunContext.start("morning")
@@ -654,8 +768,12 @@ def test_execution_stage_skips_buy_when_entry_price_above_market_by_more_than_5p
         decisions=[
             # LLM says $115, market $100 → 15% above → skip.
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=115.0, stop_loss=105.0, take_profit=135.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=115.0,
+                stop_loss=105.0,
+                take_profit=135.0,
                 reasoning="above-market proposal",
             ),
         ],
@@ -707,6 +825,7 @@ def test_risk_stage_delegation_returns_early_exit_dict():
 # `agent_logs` row (agent_name="risk_gate") at both early-return sites.
 # ---------------------------------------------------------------------------
 
+
 def test_persist_hard_risk_block_writes_risk_gate_agent_log():
     """Unit test of the persistence helper itself: distinct sentinel
     agent_name (never confused with a real risk_manager LLM call), known-
@@ -720,7 +839,8 @@ def test_persist_hard_risk_block_writes_risk_gate_agent_log():
     ctx.decision_id = f"{ctx.run_id}-dec-000099"
 
     pipeline.risk_gate._persist_hard_risk_block(
-        ctx, "AAPL position would be 25.0% and exceed max 20%",
+        ctx,
+        "AAPL position would be 25.0% and exceed max 20%",
         stage="pre_rm",
     )
 
@@ -759,7 +879,12 @@ def _risk_stage_pipeline(decisions):
     is exercised, not just the helper."""
     from src.pipeline import TradingPipeline
 
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions))
+    pipeline = build_pipeline(
+        db=MagicMock(),
+        _sweeper=MagicMock(return_value=None),
+        _filter_supported_symbols=MagicMock(return_value=(decisions, [])),
+        _refuse_queued_earnings_buys=MagicMock(return_value=decisions),
+    )
     return pipeline
 
 
@@ -779,14 +904,17 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
     ctx.last_equity = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     stage = RiskStage(pipeline=pipeline)
     result = stage.run(ctx)
 
     assert result == {
-        "status": "hard_risk_block", "orders": [],
+        "status": "hard_risk_block",
+        "orders": [],
         "reason": "AAPL position would be 25.0% and exceed max 20%",
     }
     pipeline.db.insert_agent_log.assert_called_once()
@@ -809,12 +937,18 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
     pipeline = _risk_stage_pipeline([sell])
 
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="ok",
-        modifications=[{
-            "symbol": "XLE", "field": "allocation_pct",
-            "original_value": 100, "new_value": 0,
-            "reason": "RM believes this exit is unnecessary",
-        }],
+        approved=True,
+        reasoning_chain=_risk_rc(),
+        reasoning="ok",
+        modifications=[
+            {
+                "symbol": "XLE",
+                "field": "allocation_pct",
+                "original_value": 100,
+                "new_value": 0,
+                "reason": "RM believes this exit is unnecessary",
+            }
+        ],
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
@@ -834,7 +968,9 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
     ctx.last_equity = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[sell], portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=[sell],
+        portfolio_view="test",
     )
 
     stage = RiskStage(pipeline=pipeline)
@@ -846,9 +982,9 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
 
     evidence_calls = pipeline.db.insert_specialist_evidence.call_args_list
     rejection_calls = [
-        c for c in evidence_calls
-        if c.kwargs.get("kind") == "pipeline_event"
-        and "modification_rejected" in c.kwargs.get("evidence_json", "")
+        c
+        for c in evidence_calls
+        if c.kwargs.get("kind") == "pipeline_event" and "modification_rejected" in c.kwargs.get("evidence_json", "")
     ]
     assert len(rejection_calls) == 1
     assert rejection_calls[0].kwargs["symbol"] == "XLE"
@@ -867,11 +1003,18 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
 
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
-        modifications=[{
-            "symbol": "AAPL", "field": "allocation_pct",
-            "original_value": 10, "new_value": 5, "reason": "trim sizing",
-        }],
+        approved=True,
+        reasoning_chain=_risk_rc(),
+        reasoning="trim AAPL",
+        modifications=[
+            {
+                "symbol": "AAPL",
+                "field": "allocation_pct",
+                "original_value": 10,
+                "new_value": 5,
+                "reason": "trim sizing",
+            }
+        ],
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
@@ -893,14 +1036,17 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     ctx.last_equity = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=first_pass_decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=first_pass_decisions,
+        portfolio_view="test",
     )
 
     stage = RiskStage(pipeline=pipeline)
     result = stage.run(ctx)
 
     assert result == {
-        "status": "hard_risk_block", "orders": [],
+        "status": "hard_risk_block",
+        "orders": [],
         "reason": "AAPL position would be 25.0% and exceed max 20%",
     }
     # One real risk_manager agent_logs write (RM was reached) + one
@@ -936,7 +1082,9 @@ def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
     ctx.cash = 50_000.0
     ctx.macro_analysis = _carried_forward_macro_dict(target_invested_pct=62.5)
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     stage = RiskStage(pipeline=pipeline)
@@ -945,7 +1093,8 @@ def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
     result = stage.run(ctx)
 
     assert result == {
-        "status": "hard_risk_block", "orders": [],
+        "status": "hard_risk_block",
+        "orders": [],
         "reason": "AAPL position would be 25.0% and exceed max 20%",
     }
     assert ctx.invested_target_pct == 100.0
@@ -975,7 +1124,9 @@ def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
     pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(decisions, []))
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="clean reuse",
+        approved=True,
+        reasoning_chain=_risk_rc(),
+        reasoning="clean reuse",
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
@@ -994,7 +1145,9 @@ def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
         "earnings": "not_run_intraday",
     }
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     result = RiskStage(pipeline=pipeline).run(ctx)
@@ -1004,8 +1157,7 @@ def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
     violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
     degraded = [v for v in violations if v.rule == "data_degraded"]
     assert degraded == [], (
-        "same-session reused morning intel must not be a Risk data-integrity "
-        f"advisory; got {degraded!r}"
+        f"same-session reused morning intel must not be a Risk data-integrity advisory; got {degraded!r}"
     )
 
 
@@ -1023,7 +1175,9 @@ def test_risk_stage_data_degraded_message_omits_reuse_statuses():
     pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(decisions, []))
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="two real failures",
+        approved=True,
+        reasoning_chain=_risk_rc(),
+        reasoning="two real failures",
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
@@ -1042,7 +1196,9 @@ def test_risk_stage_data_degraded_message_omits_reuse_statuses():
         "earnings": "not_run_intraday",
     }
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     RiskStage(pipeline=pipeline).run(ctx)
@@ -1077,7 +1233,9 @@ def test_risk_stage_invested_target_holds_when_guidance_missing():
     ctx.cash = 50_000.0
     ctx.macro_analysis = {"regime": "risk-on"}  # no position_guidance key
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     RiskStage(pipeline=pipeline).run(ctx)
@@ -1103,9 +1261,11 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
 
     decisions = decisions if decisions is not None else [_buy("MRVL", 5)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline.admission = MagicMock(_filter_supported_symbols=MagicMock(
-        side_effect=lambda d, *a, **kw: (list(d), []),
-    ))
+    pipeline.admission = MagicMock(
+        _filter_supported_symbols=MagicMock(
+            side_effect=lambda d, *a, **kw: (list(d), []),
+        )
+    )
     pipeline.risk_gate._refuse_queued_earnings_buys = MagicMock(
         side_effect=lambda d, *a, **kw: list(d),
     )
@@ -1117,7 +1277,9 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
     )
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_risk_rc(), reasoning="ok",
+        approved=True,
+        reasoning_chain=_risk_rc(),
+        reasoning="ok",
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
@@ -1132,7 +1294,9 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
     ctx.positions = list(positions or [])
     ctx.data_status = {"tech": "ok"}
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     parse_telemetry.reset()
@@ -1145,15 +1309,20 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
 
     pipeline.risk_manager.review.assert_called_once()
     violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
-    return {v.rule: v for v in violations
-            if v.rule.startswith("analysis_parse_loss")}
+    return {v.rule: v for v in violations if v.rule.startswith("analysis_parse_loss")}
 
 
 def _held(symbol):
     from src.models import Position
+
     return Position(
-        symbol=symbol, qty=10, avg_entry=100.0, current_price=101.0,
-        market_value=1010.0, unrealized_pnl=10.0, sector="Technology",
+        symbol=symbol,
+        qty=10,
+        avg_entry=100.0,
+        current_price=101.0,
+        market_value=1010.0,
+        unrealized_pnl=10.0,
+        sector="Technology",
     )
 
 
@@ -1169,8 +1338,7 @@ def test_a_recovered_parse_drop_is_a_cost_note_not_a_missing_coverage_claim():
         positions=[_held("META")],
     )
     assert "analysis_parse_loss" not in found, (
-        "a symbol sitting in the book is not a parse LOSS; got "
-        f"{found.get('analysis_parse_loss')!r}"
+        f"a symbol sitting in the book is not a parse LOSS; got {found.get('analysis_parse_loss')!r}"
     )
     note = found.get("analysis_parse_loss_recovered")
     assert note is not None, "the paid round-trip must still be reported"
@@ -1203,9 +1371,7 @@ def test_an_unidentified_drop_is_always_treated_as_lost():
         decisions=[_buy("MRVL", 5)],
         positions=[_held("MRVL")],
     )
-    assert "analysis_parse_loss_recovered" not in found, (
-        "an unidentified row must never be reported as recovered"
-    )
+    assert "analysis_parse_loss_recovered" not in found, "an unidentified row must never be reported as recovered"
     lost = found.get("analysis_parse_loss")
     assert lost is not None
     assert "TechAnalysisResult:?" in lost.message
@@ -1260,7 +1426,9 @@ def test_risk_parse_failure_is_agent_failure_not_rejection():
     pipeline.risk_manager.review.return_value = (
         None,
         AgentResult(
-            raw_text="not valid json", tokens_used=10, model="test-model",
+            raw_text="not valid json",
+            tokens_used=10,
+            model="test-model",
             user_message="risk input",
         ),
     )
@@ -1271,13 +1439,16 @@ def test_risk_parse_failure_is_agent_failure_not_rejection():
     ctx.last_equity = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
 
     result = RiskStage(pipeline=pipeline).run(ctx)
 
     assert result == {
-        "status": "agent_failure", "orders": [],
+        "status": "agent_failure",
+        "orders": [],
         "reason": "risk_manager_unparseable_output",
     }
     risk_log = pipeline.db.insert_agent_log.call_args.kwargs
@@ -1330,9 +1501,16 @@ def test_decision_stage_passes_valid_carried_macro_dict_after_coerce():
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
     p.portfolio_manager.decide.return_value = (
-        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                        input_tokens=1, output_tokens=1, cost_usd=0.0,
-                        model="test-model"),
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            model="test-model",
+        ),
     )
 
     macro_dict = _valid_carried_macro_dict()
@@ -1383,9 +1561,16 @@ def test_decision_stage_does_not_pass_chainless_trim_into_pm():
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
     p.portfolio_manager.decide.return_value = (
-        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                        input_tokens=1, output_tokens=1, cost_usd=0.0,
-                        model="test-model"),
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            model="test-model",
+        ),
     )
 
     ctx = RunContext.start("intra_check")
@@ -1412,7 +1597,9 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
     dict either way."""
     from src.pipeline import TradingPipeline
     from src.models import (
-        MacroAnalysis, MacroPositionGuidance, MacroReasoningChain,
+        MacroAnalysis,
+        MacroPositionGuidance,
+        MacroReasoningChain,
     )
 
     p = build_pipeline(db=MagicMock(), portfolio_manager=MagicMock())
@@ -1437,22 +1624,36 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
     p.portfolio_manager.decide.return_value = (
-        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                        input_tokens=1, output_tokens=1, cost_usd=0.0,
-                        model="test-model"),
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            model="test-model",
+        ),
     )
 
     macro_model = MacroAnalysis(
-        regime="risk-on", confidence="high", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="high",
+        equity_outlook="bullish",
         summary="fresh macro run",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=55.0, cash_recommendation_pct=45.0, reasoning="x",
+            target_invested_pct=55.0,
+            cash_recommendation_pct=45.0,
+            reasoning="x",
         ),
         sector_guidance=[],
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="x", yield_curve_analysis="x",
-            monetary_policy_analysis="x", inflation_labor_credit="x",
-            cross_signal_synthesis="x", sector_implications="x",
+            volatility_analysis="x",
+            yield_curve_analysis="x",
+            monetary_policy_analysis="x",
+            inflation_labor_credit="x",
+            cross_signal_synthesis="x",
+            sector_implications="x",
         ),
     )
     ctx = RunContext.start("morning")
@@ -1504,9 +1705,16 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
     p.portfolio_manager.decide.return_value = (
-        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                        input_tokens=1, output_tokens=1, cost_usd=0.0,
-                        model="test-model"),
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            model="test-model",
+        ),
     )
 
     ctx = RunContext.start("morning")
@@ -1558,13 +1766,20 @@ def test_morning_research_stage_populates_ctx_on_success():
 
     ma = MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="high", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="high",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
     )
@@ -1674,13 +1889,20 @@ def _minimal_macro_analysis(confidence="high"):
 
     return MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence=confidence, equity_outlook="bullish",
+        regime="risk-on",
+        confidence=confidence,
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
     )
@@ -1740,13 +1962,18 @@ def test_morning_research_stage_macro_overdue_print_is_not_ok():
 
     ma = _minimal_macro_analysis(confidence="high")
     coverage = MacroCoverage(
-        configured=9, succeeded=9, failed=[],
-        overdue=[SeriesFreshness(
-            series_id="CPIAUCSL", status="overdue",
-            latest_observation=date(2026, 5, 1),
-            expected_next_by=date(2026, 7, 15),
-            detail="a newer print was due by 2026-07-15",
-        )],
+        configured=9,
+        succeeded=9,
+        failed=[],
+        overdue=[
+            SeriesFreshness(
+                series_id="CPIAUCSL",
+                status="overdue",
+                latest_observation=date(2026, 5, 1),
+                expected_next_by=date(2026, 7, 15),
+                detail="a newer print was due by 2026-07-15",
+            )
+        ],
     )
     stage = _macro_stage_with_coverage(ma, coverage)
 
@@ -1766,12 +1993,16 @@ def test_morning_research_stage_macro_coverage_failure_beats_overdue_print():
 
     ma = _minimal_macro_analysis(confidence="high")
     coverage = MacroCoverage(
-        configured=9, succeeded=0,
+        configured=9,
+        succeeded=0,
         failed=[SeriesFailure(series_id=f"S{i}", reason="timed out") for i in range(9)],
-        overdue=[SeriesFreshness(
-            series_id="CPIAUCSL", status="overdue",
-            latest_observation=date(2026, 5, 1),
-        )],
+        overdue=[
+            SeriesFreshness(
+                series_id="CPIAUCSL",
+                status="overdue",
+                latest_observation=date(2026, 5, 1),
+            )
+        ],
     )
     stage = _macro_stage_with_coverage(ma, coverage)
 
@@ -1790,7 +2021,8 @@ def test_morning_research_stage_macro_low_confidence_does_not_override_coverage_
 
     ma = _minimal_macro_analysis(confidence="low")
     coverage = MacroCoverage(
-        configured=9, succeeded=0,
+        configured=9,
+        succeeded=0,
         failed=[SeriesFailure(series_id=f"S{i}", reason="timed out") for i in range(9)],
     )
     stage = _macro_stage_with_coverage(ma, coverage)
@@ -1856,7 +2088,8 @@ def test_morning_research_stage_records_admission_reason_without_collision():
         smart_money_provider=smart_money_provider,
         smart_money_analyst=None,
         admit_smart_money_candidates_fn=lambda _observations: (
-            {"RSG"}, {"RSG": admission},
+            {"RSG"},
+            {"RSG": admission},
         ),
         has_actionable_signal_fn=lambda *args, **kwargs: False,
         run_news_update_fn=lambda *args, **kwargs: (None, None),
@@ -1869,7 +2102,8 @@ def test_morning_research_stage_records_admission_reason_without_collision():
 
     assert result_ctx.admitted_symbols == {"RSG"}
     assert [call.args[0] for call in market.get_ohlcv.call_args_list[:2]] == [
-        "RSG", "SPY",
+        "RSG",
+        "SPY",
     ]
     event_payloads = [
         json.loads(call.kwargs["evidence_json"])
@@ -1878,10 +2112,7 @@ def test_morning_research_stage_records_admission_reason_without_collision():
         and call.kwargs["kind"] == "pipeline_event"
         and call.kwargs["symbol"] == "RSG"
     ]
-    admission_event = next(
-        payload for payload in event_payloads
-        if payload["outcome"] == "admitted"
-    )
+    admission_event = next(payload for payload in event_payloads if payload["outcome"] == "admitted")
     assert admission_event["reason"] == "smart_money_form4_admission"
     assert admission_event["admission_reason"] == "material_sec_form4_purchase"
     assert admission_event["transaction_value_usd"] == 87_980_000.0
@@ -1922,8 +2153,12 @@ def test_morning_research_stage_smart_money_truncated_marks_status_truncated():
     smart_money_provider.fetch.return_value = ([SimpleNamespace(symbol="RSG")], None)
 
     truncated_result = AgentResult(
-        raw_text='{"findings":[]}', tokens_used=3000, model="test",
-        user_message="x", output_tokens=3000, finish_reason="length",
+        raw_text='{"findings":[]}',
+        tokens_used=3000,
+        model="test",
+        user_message="x",
+        output_tokens=3000,
+        finish_reason="length",
         truncated=True,
     )
     smart_money_analyst = MagicMock()
@@ -1992,16 +2227,22 @@ def _smart_money_morning_stage(coverage, findings):
     smart_money_analyst = MagicMock()
     smart_money_analyst.analyze.return_value = (
         findings,
-        AgentResult(raw_text='{"findings":[]}', tokens_used=1, model="test",
-                    user_message="x"),
+        AgentResult(raw_text='{"findings":[]}', tokens_used=1, model="test", user_message="x"),
         None,
     )
     stage = MorningResearchStage(
-        config=config, db=MagicMock(), market=market, macro=macro,
-        news_provider=MagicMock(), news_store=news_store,
-        macro_store=macro_store, tech_store=MagicMock(),
-        earnings_provider=MagicMock(), macro_analyst=macro_analyst,
-        news_analyst=MagicMock(), tech_analyst=MagicMock(),
+        config=config,
+        db=MagicMock(),
+        market=market,
+        macro=macro,
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_analyst,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
         earnings_analyst=MagicMock(),
         smart_money_provider=smart_money_provider,
         smart_money_analyst=smart_money_analyst,
@@ -2020,20 +2261,42 @@ def test_morning_smart_money_is_partial_while_watched_names_are_unread():
     all been read. With unread filings left on a watched name, a clean run
     must not be recorded as `ok` — nor as `empty`, which would claim "no
     material insider activity" on names nobody finished reading."""
-    verified = {"known": True, "verified": True, "reasons": [],
-                "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
-                "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
-    unread = {"known": True, "as_of": "2026-09-21", "watched": 82,
-              "read_through": 60, "unread": ["WMT"], "edgar": dict(verified)}
+    verified = {
+        "known": True,
+        "verified": True,
+        "reasons": [],
+        "edgar_total": 900,
+        "enumerated": 900,
+        "ratio": 1.0,
+        "days_queried": 15,
+        "days_in_window": 15,
+        "days_with_total": 15,
+    }
+    unread = {
+        "known": True,
+        "as_of": "2026-09-21",
+        "watched": 82,
+        "read_through": 60,
+        "unread": ["WMT"],
+        "edgar": dict(verified),
+    }
     assert _smart_money_morning_stage(unread, []).data_status["smart_money"] == "partial"
-    assert _smart_money_morning_stage(
-        {"known": False, "as_of": "", "watched": 0, "read_through": 0,
-         "unread": [], "edgar": dict(verified)},
-        [],
-    ).data_status["smart_money"] == "partial"
+    assert (
+        _smart_money_morning_stage(
+            {"known": False, "as_of": "", "watched": 0, "read_through": 0, "unread": [], "edgar": dict(verified)},
+            [],
+        ).data_status["smart_money"]
+        == "partial"
+    )
 
-    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
-                "read_through": 82, "unread": [], "edgar": dict(verified)}
+    complete = {
+        "known": True,
+        "as_of": "2026-09-21",
+        "watched": 82,
+        "read_through": 82,
+        "unread": [],
+        "edgar": dict(verified),
+    }
     assert _smart_money_morning_stage(complete, []).data_status["smart_money"] == "ok"
 
 
@@ -2045,29 +2308,48 @@ def test_morning_smart_money_market_wide_blind_is_its_own_word():
     morning. The state gets its own word, so the standing DATA QUALITY ALERT
     can say what actually happened.
     """
-    verified = {"known": True, "verified": True, "reasons": [],
-                "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
-                "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
-    complete = {"known": True, "as_of": "2026-09-21", "watched": 82,
-                "read_through": 82, "unread": [], "edgar": dict(verified)}
+    verified = {
+        "known": True,
+        "verified": True,
+        "reasons": [],
+        "edgar_total": 900,
+        "enumerated": 900,
+        "ratio": 1.0,
+        "days_queried": 15,
+        "days_in_window": 15,
+        "days_with_total": 15,
+    }
+    complete = {
+        "known": True,
+        "as_of": "2026-09-21",
+        "watched": 82,
+        "read_through": 82,
+        "unread": [],
+        "edgar": dict(verified),
+    }
 
-    blind = {**complete, "market_wide_blind": True, "market_wide_read": 0,
-             "market_wide_pending": 21217}
-    assert _smart_money_morning_stage(blind, []).data_status["smart_money"] == \
-        "market_wide_blind"
+    blind = {**complete, "market_wide_blind": True, "market_wide_read": 0, "market_wide_pending": 21217}
+    assert _smart_money_morning_stage(blind, []).data_status["smart_money"] == "market_wide_blind"
 
     # It wins over `partial` — a blind pass with unread watched names is
     # still blind, and `partial` is the quieter of the two.
     blind_and_unread = {**blind, "read_through": 60, "unread": ["WMT"]}
-    assert _smart_money_morning_stage(
-        blind_and_unread, [],
-    ).data_status["smart_money"] == "market_wide_blind"
+    assert (
+        _smart_money_morning_stage(
+            blind_and_unread,
+            [],
+        ).data_status["smart_money"]
+        == "market_wide_blind"
+    )
 
     # And a pass that read normally is untouched.
-    assert _smart_money_morning_stage(
-        {**complete, "market_wide_blind": False, "market_wide_read": 1000,
-         "market_wide_pending": 21217}, [],
-    ).data_status["smart_money"] == "ok"
+    assert (
+        _smart_money_morning_stage(
+            {**complete, "market_wide_blind": False, "market_wide_read": 1000, "market_wide_pending": 21217},
+            [],
+        ).data_status["smart_money"]
+        == "ok"
+    )
 
 
 def test_morning_smart_money_is_partial_when_edgar_coverage_is_unverified():
@@ -2078,21 +2360,35 @@ def test_morning_smart_money_is_partial_when_edgar_coverage_is_unverified():
     `partial`, an EXISTING status word `src/evidence_gate.py` already
     classifies; a new word would be read as unknown and treated as a loss.
     """
-    complete_names = {"known": True, "as_of": "2026-09-21", "watched": 82,
-                      "read_through": 82, "unread": []}
-    unverified = {"known": True, "verified": False,
-                  "reasons": ["edgar_total_unreadable"],
-                  "edgar_total": 0, "enumerated": 0, "ratio": None,
-                  "days_queried": 15, "days_in_window": 15, "days_with_total": 3}
-    assert _smart_money_morning_stage(
-        {**complete_names, "edgar": unverified}, [],
-    ).data_status["smart_money"] == "partial"
+    complete_names = {"known": True, "as_of": "2026-09-21", "watched": 82, "read_through": 82, "unread": []}
+    unverified = {
+        "known": True,
+        "verified": False,
+        "reasons": ["edgar_total_unreadable"],
+        "edgar_total": 0,
+        "enumerated": 0,
+        "ratio": None,
+        "days_queried": 15,
+        "days_in_window": 15,
+        "days_with_total": 3,
+    }
+    assert (
+        _smart_money_morning_stage(
+            {**complete_names, "edgar": unverified},
+            [],
+        ).data_status["smart_money"]
+        == "partial"
+    )
 
     # A coverage record from before this shipped carries no `edgar` key at
     # all. Never-recorded is not evidence of a clean fetch.
-    assert _smart_money_morning_stage(
-        dict(complete_names), [],
-    ).data_status["smart_money"] == "partial"
+    assert (
+        _smart_money_morning_stage(
+            dict(complete_names),
+            [],
+        ).data_status["smart_money"]
+        == "partial"
+    )
 
 
 def test_morning_smart_money_quiet_day_with_verified_coverage_stays_clean():
@@ -2101,12 +2397,19 @@ def test_morning_smart_money_quiet_day_with_verified_coverage_stays_clean():
     the analyst found nothing. A genuinely quiet insider day must still read
     clean — `src/evidence_gate.py` treats degraded seats as a loss and on
     2026-09-16 that made Risk veto a whole intraday plan."""
-    quiet = {"known": True, "verified": True, "reasons": [],
-             "edgar_total": 0, "enumerated": 0, "ratio": None,
-             "days_queried": 15, "days_in_window": 15, "days_with_total": 15}
+    quiet = {
+        "known": True,
+        "verified": True,
+        "reasons": [],
+        "edgar_total": 0,
+        "enumerated": 0,
+        "ratio": None,
+        "days_queried": 15,
+        "days_in_window": 15,
+        "days_with_total": 15,
+    }
     status = _smart_money_morning_stage(
-        {"known": True, "as_of": "2026-09-21", "watched": 82,
-         "read_through": 82, "unread": [], "edgar": quiet},
+        {"known": True, "as_of": "2026-09-21", "watched": 82, "read_through": 82, "unread": [], "edgar": quiet},
         [],
     ).data_status["smart_money"]
     assert status == "ok", status
@@ -2114,15 +2417,24 @@ def test_morning_smart_money_quiet_day_with_verified_coverage_stays_clean():
     # ...and a budget-bounded scan is likewise not a failure: the cap and
     # the deadline are the desk's own choices, reported through the backlog
     # counts, and must not flip the seat every morning.
-    bounded = {"known": True, "verified": True,
-               "reasons": ["days_not_queried", "scan_cap_reached"],
-               "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
-               "days_queried": 3, "days_in_window": 15, "days_with_total": 3}
-    assert _smart_money_morning_stage(
-        {"known": True, "as_of": "2026-09-21", "watched": 82,
-         "read_through": 82, "unread": [], "edgar": bounded},
-        [],
-    ).data_status["smart_money"] == "ok"
+    bounded = {
+        "known": True,
+        "verified": True,
+        "reasons": ["days_not_queried", "scan_cap_reached"],
+        "edgar_total": 900,
+        "enumerated": 900,
+        "ratio": 1.0,
+        "days_queried": 3,
+        "days_in_window": 15,
+        "days_with_total": 3,
+    }
+    assert (
+        _smart_money_morning_stage(
+            {"known": True, "as_of": "2026-09-21", "watched": 82, "read_through": 82, "unread": [], "edgar": bounded},
+            [],
+        ).data_status["smart_money"]
+        == "ok"
+    )
 
 
 @patch("src.stage_morning_research.compute_indicators")
@@ -2146,13 +2458,23 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
 
     tech_analyst = MagicMock()
     from src.models import TechAnalysisResult, TechReasoningChain
+
     resolved = TechAnalysisResult(
-        symbol="AAPL", rating="buy", conviction="medium",
-        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-        support_levels=[95.0], resistance_levels=[110.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol="AAPL",
+        rating="buy",
+        conviction="medium",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=110.0,
+        support_levels=[95.0],
+        resistance_levels=[110.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
         reasoning="test",
@@ -2162,8 +2484,9 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     # retry — the sentinel this whole fix introduces.
     tech_analyst.analyze_batch.return_value = (
         {"AAPL": resolved, "MSFT": None},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
 
     macro_store = MagicMock()
@@ -2171,10 +2494,18 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     tech_store = MagicMock()
     tech_store.load.return_value = {}
     tech_store.compute_ages.return_value = {}
@@ -2222,8 +2553,9 @@ def _tech_stage_for_conviction_test(analyses_map):
     tech_analyst = MagicMock()
     tech_analyst.analyze_batch.return_value = (
         analyses_map,
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
 
     macro_store = MagicMock()
@@ -2231,10 +2563,18 @@ def _tech_stage_for_conviction_test(analyses_map):
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     tech_store = MagicMock()
     tech_store.load.return_value = {}
     tech_store.compute_ages.return_value = {}
@@ -2275,17 +2615,26 @@ def test_morning_research_stage_tech_full_batch_low_conviction_marks_low_confide
 
     def _mk(symbol, conviction):
         return TechAnalysisResult(
-            symbol=symbol, rating="buy", conviction=conviction,
-            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-            support_levels=[95.0], resistance_levels=[110.0],
-            setup_type="range", expected_horizon_sessions=10,
+            symbol=symbol,
+            rating="buy",
+            conviction=conviction,
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=110.0,
+            support_levels=[95.0],
+            resistance_levels=[110.0],
+            setup_type="range",
+            expected_horizon_sessions=10,
             reasoning_chain=TechReasoningChain(
-                trend="x", momentum="x", volatility="x", volume="x",
+                trend="x",
+                momentum="x",
+                volatility="x",
+                volume="x",
                 support_resistance="x",
             ),
             reasoning="test",
-        thesis_invalid_if="closes below support",
-    )
+            thesis_invalid_if="closes below support",
+        )
 
     analyses_map = {"AAPL": _mk("AAPL", "medium"), "MSFT": _mk("MSFT", "low")}
     stage = _tech_stage_for_conviction_test(analyses_map)
@@ -2311,17 +2660,26 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
 
     def _mk(symbol, conviction):
         return TechAnalysisResult(
-            symbol=symbol, rating="buy", conviction=conviction,
-            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-            support_levels=[95.0], resistance_levels=[110.0],
-            setup_type="range", expected_horizon_sessions=10,
+            symbol=symbol,
+            rating="buy",
+            conviction=conviction,
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=110.0,
+            support_levels=[95.0],
+            resistance_levels=[110.0],
+            setup_type="range",
+            expected_horizon_sessions=10,
             reasoning_chain=TechReasoningChain(
-                trend="x", momentum="x", volatility="x", volume="x",
+                trend="x",
+                momentum="x",
+                volatility="x",
+                volume="x",
                 support_resistance="x",
             ),
             reasoning="test",
-        thesis_invalid_if="closes below support",
-    )
+            thesis_invalid_if="closes below support",
+        )
 
     analyses_map = {"AAPL": _mk("AAPL", "high"), "MSFT": _mk("MSFT", "medium")}
     stage = _tech_stage_for_conviction_test(analyses_map)
@@ -2336,7 +2694,8 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
 
 @patch("src.stage_morning_research.compute_indicators")
 def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
-    mock_compute_indicators, caplog,
+    mock_compute_indicators,
+    caplog,
 ):
     """2026-09-19 log-health false-alarm fix.
 
@@ -2361,18 +2720,27 @@ def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
 
     def _mk(symbol, rating, conviction):
         kwargs = dict(
-            symbol=symbol, rating=rating, conviction=conviction,
+            symbol=symbol,
+            rating=rating,
+            conviction=conviction,
             reasoning_chain=TechReasoningChain(
-                trend="x", momentum="x", volatility="x", volume="x",
+                trend="x",
+                momentum="x",
+                volatility="x",
+                volume="x",
                 support_resistance="x",
             ),
             reasoning="test",
         )
         if rating != "neutral":
             kwargs.update(
-                entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-                support_levels=[95.0], resistance_levels=[110.0],
-                setup_type="range", expected_horizon_sessions=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                reference_target=110.0,
+                support_levels=[95.0],
+                resistance_levels=[110.0],
+                setup_type="range",
+                expected_horizon_sessions=10,
                 thesis_invalid_if="closes below support",
             )
         return TechAnalysisResult(**kwargs)
@@ -2390,19 +2758,17 @@ def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
 
     # data_status is untouched — this is a reporting fix, not a gate change.
     assert result_ctx.data_status["tech"] == "low_confidence"
-    degraded_lines = [
-        r.getMessage() for r in caplog.records
-        if "Morning research degraded" in r.getMessage()
-    ]
+    degraded_lines = [r.getMessage() for r in caplog.records if "Morning research degraded" in r.getMessage()]
     assert degraded_lines, "test setup sanity: other mocked seats are expected to degrade"
-    assert not any(
-        "tech" in line.split("|", 1)[0] for line in degraded_lines
-    ), f"tech must not be named as degraded on a neutral-only morning: {degraded_lines}"
+    assert not any("tech" in line.split("|", 1)[0] for line in degraded_lines), (
+        f"tech must not be named as degraded on a neutral-only morning: {degraded_lines}"
+    )
 
 
 @patch("src.stage_morning_research.compute_indicators")
 def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
-    mock_compute_indicators, caplog,
+    mock_compute_indicators,
+    caplog,
 ):
     """Contrast case for the fix above: a real BUY/SELL read the model
     itself flagged as low-conviction is genuine degradation and must still
@@ -2416,12 +2782,21 @@ def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
 
     def _mk(symbol, conviction):
         return TechAnalysisResult(
-            symbol=symbol, rating="buy", conviction=conviction,
-            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-            support_levels=[95.0], resistance_levels=[110.0],
-            setup_type="range", expected_horizon_sessions=10,
+            symbol=symbol,
+            rating="buy",
+            conviction=conviction,
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=110.0,
+            support_levels=[95.0],
+            resistance_levels=[110.0],
+            setup_type="range",
+            expected_horizon_sessions=10,
             reasoning_chain=TechReasoningChain(
-                trend="x", momentum="x", volatility="x", volume="x",
+                trend="x",
+                momentum="x",
+                volatility="x",
+                volume="x",
                 support_resistance="x",
             ),
             reasoning="test",
@@ -2437,24 +2812,24 @@ def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
         result_ctx = stage.run(ctx)
 
     assert result_ctx.data_status["tech"] == "low_confidence"
-    degraded_lines = [
-        r.getMessage() for r in caplog.records
-        if "Morning research degraded" in r.getMessage()
-    ]
-    assert any(
-        "tech" in line.split("|", 1)[0] for line in degraded_lines
-    ), f"a real low-conviction BUY/SELL read must still be reported: {degraded_lines}"
+    degraded_lines = [r.getMessage() for r in caplog.records if "Morning research degraded" in r.getMessage()]
+    assert any("tech" in line.split("|", 1)[0] for line in degraded_lines), (
+        f"a real low-conviction BUY/SELL read must still be reported: {degraded_lines}"
+    )
 
 
 def _minimal_news_report(confidence="medium"):
     from src.models import MacroNarrative, NewsIntelligenceReport
+
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-08-28", era_themes=["AI capex"],
+            last_updated="2026-08-28",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
         pm_briefing="Quiet tape.",
-        market_sentiment="neutral", confidence=confidence,
+        market_sentiment="neutral",
+        confidence=confidence,
     )
 
 
@@ -2473,10 +2848,18 @@ def _news_coverage_stage(run_news_update_fn):
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
 
     return MorningResearchStage(
         config=mock_config,
@@ -2506,7 +2889,8 @@ def test_morning_research_stage_news_partial_coverage_marks_status_partial():
     'partial', which is the whole point of tracking coverage at all."""
     report = _minimal_news_report()
     coverage = NewsCoverage(
-        configured=9, succeeded=7,
+        configured=9,
+        succeeded=7,
         failed=[
             FeedFailure(name="Reuters Business", reason="HTTP Error 404: Not Found"),
             FeedFailure(name="AP Business", reason="HTTP Error 403: Forbidden"),
@@ -2532,7 +2916,8 @@ def test_morning_research_stage_news_total_feed_failure_marks_status_failed_even
     'coverage is NOT reported complete' assertion at the pipeline layer."""
     report = _minimal_news_report()
     coverage = NewsCoverage(
-        configured=9, succeeded=0,
+        configured=9,
+        succeeded=0,
         failed=[FeedFailure(name=f"Feed {i}", reason="timed out") for i in range(9)],
     )
     stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
@@ -2568,35 +2953,51 @@ def test_morning_research_stage_news_full_coverage_marks_status_ok():
 # back schema-valid with ZERO extracted figures. See
 # `_classify_earnings_status` in src/pipeline_stages.py.
 
+
 def _valid_earnings_analysis(symbol="AAPL", **field_overrides) -> dict:
     """A schema-valid `EarningsAnalysis.model_dump()` with real figures in
     every checked field — the clean control case. Tests override just the
     fields they care about via dotted-path shortcuts below."""
     from src.models import (
-        EarningsAnalysis, EarningsBalanceSheet, EarningsCashFlow,
-        EarningsInvestmentImplications, EarningsProfitability,
-        EarningsReasoningChain, EarningsRevenue,
+        EarningsAnalysis,
+        EarningsBalanceSheet,
+        EarningsCashFlow,
+        EarningsInvestmentImplications,
+        EarningsProfitability,
+        EarningsReasoningChain,
+        EarningsRevenue,
     )
+
     analysis = EarningsAnalysis(
-        symbol=symbol, form_type="10-Q", filing_date="2026-09-01",
+        symbol=symbol,
+        form_type="10-Q",
+        filing_date="2026-09-01",
         revenue=EarningsRevenue(total="$50B", yoy_growth="12%"),
         profitability=EarningsProfitability(
-            gross_margin="45%", operating_margin="20%",
-            net_income="$5B", eps="$2.50",
+            gross_margin="45%",
+            operating_margin="20%",
+            net_income="$5B",
+            eps="$2.50",
         ),
         cash_flow=EarningsCashFlow(
-            operating_cf="$8B", free_cf="$6B", capex="$2B",
+            operating_cf="$8B",
+            free_cf="$6B",
+            capex="$2B",
         ),
         balance_sheet=EarningsBalanceSheet(
-            cash_and_equivalents="$10B", total_debt="$0",
+            cash_and_equivalents="$10B",
+            total_debt="$0",
             assessment="strong balance sheet",
         ),
         guidance="Raised FY guidance.",
         investment_implications=EarningsInvestmentImplications(
-            sentiment="bullish", conviction="medium",
+            sentiment="bullish",
+            conviction="medium",
             reasoning_chain=EarningsReasoningChain(
-                fundamental_quality="x", growth_trajectory="x",
-                strategic_risks="x", management_execution="x",
+                fundamental_quality="x",
+                growth_trajectory="x",
+                strategic_risks="x",
+                management_execution="x",
                 valuation_context="x",
             ),
             key_thesis="Strong quarter.",
@@ -2653,10 +3054,18 @@ def _earnings_stage_for(load_earnings_analyses_fn):
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
 
     return MorningResearchStage(
         config=mock_config,
@@ -2728,13 +3137,15 @@ def test_earnings_status_content_missing_when_self_reported_data_quality_flags_p
     could not actually get the data. The owner's own framing: a seat must
     never claim 'ok' while its own free-text field says something is wrong.
     This must downgrade status even though structured content looks fine."""
-    results = [{
-        "symbol": "AAPL",
-        "analysis": _valid_earnings_analysis(
-            data_quality="Unable to extract segment detail; filing incomplete in the excerpt provided.",
-        ),
-        "is_new": True,
-    }]
+    results = [
+        {
+            "symbol": "AAPL",
+            "analysis": _valid_earnings_analysis(
+                data_quality="Unable to extract segment detail; filing incomplete in the excerpt provided.",
+            ),
+            "is_new": True,
+        }
+    ]
     stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
 
     ctx = RunContext.start("morning")
@@ -2766,10 +3177,16 @@ def test_earnings_status_ok_when_only_queued_placeholders():
     `analysis=None`) — already surfaced honestly via the `queued` flag and
     sized around downstream. This pass does not repurpose that state; a
     queued-only run stays 'ok' rather than inventing a new status for it."""
-    results = [{
-        "symbol": "AAPL", "analysis": None, "is_new": True,
-        "queued": True, "form_type": "10-Q", "filing_date": "2026-09-01",
-    }]
+    results = [
+        {
+            "symbol": "AAPL",
+            "analysis": None,
+            "is_new": True,
+            "queued": True,
+            "form_type": "10-Q",
+            "filing_date": "2026-09-01",
+        }
+    ]
     stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
 
     ctx = RunContext.start("morning")
@@ -2795,12 +3212,18 @@ def test_classify_earnings_status_real_zero_is_not_treated_as_missing():
 def test_earnings_data_quality_flags_problem_matches_real_failure_phrases():
     from src.pipeline_stages import _earnings_data_quality_flags_problem
 
-    assert _earnings_data_quality_flags_problem(
-        "Unable to find revenue breakdown in the excerpt.",
-    ) is True
-    assert _earnings_data_quality_flags_problem(
-        "All figures sourced directly from the filing.",
-    ) is False
+    assert (
+        _earnings_data_quality_flags_problem(
+            "Unable to find revenue breakdown in the excerpt.",
+        )
+        is True
+    )
+    assert (
+        _earnings_data_quality_flags_problem(
+            "All figures sourced directly from the filing.",
+        )
+        is False
+    )
     assert _earnings_data_quality_flags_problem("not disclosed") is False
     assert _earnings_data_quality_flags_problem("") is False
 
@@ -2815,6 +3238,7 @@ def test_earnings_data_quality_flags_problem_matches_real_failure_phrases():
 # tests exercise the real SEC-XBRL ground-truth comparison that catches
 # exactly that case. See `_earnings_xbrl_mismatch_fields` in
 # src/pipeline_stages.py for the field scope and tolerance reasoning.
+
 
 def test_parse_reported_figure_handles_real_world_formats():
     from src.pipeline_stages import _parse_reported_figure
@@ -2838,15 +3262,19 @@ def test_classify_earnings_status_ok_when_figures_match_real_xbrl_data():
     from src.pipeline_stages import _classify_earnings_status
 
     analysis = _valid_earnings_analysis()  # revenue $50B, net_income $5B, eps $2.50, cash $10B
-    results = [{
-        "symbol": "AAPL", "analysis": analysis, "is_new": True,
-        "xbrl_facts": {
-            "revenue": 49_700_000_000.0,  # "$50B" rounds this, well within 5%
-            "net_income": 5_000_000_000.0,
-            "eps": 2.50,
-            "cash": 10_000_000_000.0,
-        },
-    }]
+    results = [
+        {
+            "symbol": "AAPL",
+            "analysis": analysis,
+            "is_new": True,
+            "xbrl_facts": {
+                "revenue": 49_700_000_000.0,  # "$50B" rounds this, well within 5%
+                "net_income": 5_000_000_000.0,
+                "eps": 2.50,
+                "cash": 10_000_000_000.0,
+            },
+        }
+    ]
 
     assert _classify_earnings_status(results) == "ok"
 
@@ -2860,12 +3288,16 @@ def test_classify_earnings_status_figures_contradicted_on_material_xbrl_mismatch
     from src.pipeline_stages import _classify_earnings_status
 
     analysis = _valid_earnings_analysis(**{"revenue.total": "$50B"})
-    results = [{
-        "symbol": "AAPL", "analysis": analysis, "is_new": True,
-        # Real filed revenue is $20B — "$50B" is not a rounding of this,
-        # it's a different number entirely.
-        "xbrl_facts": {"revenue": 20_000_000_000.0},
-    }]
+    results = [
+        {
+            "symbol": "AAPL",
+            "analysis": analysis,
+            "is_new": True,
+            # Real filed revenue is $20B — "$50B" is not a rounding of this,
+            # it's a different number entirely.
+            "xbrl_facts": {"revenue": 20_000_000_000.0},
+        }
+    ]
 
     status = _classify_earnings_status(results)
     assert status == "figures_contradicted"
@@ -2882,10 +3314,13 @@ def test_classify_earnings_status_figures_contradicted_dominates_a_mixed_batch()
     good = _valid_earnings_analysis(symbol="AAPL")
     bad = _valid_earnings_analysis(symbol="MSFT", **{"profitability.net_income": "$50B"})
     results = [
-        {"symbol": "AAPL", "analysis": good, "is_new": True,
-         "xbrl_facts": {"revenue": 49_700_000_000.0, "net_income": 5_000_000_000.0}},
-        {"symbol": "MSFT", "analysis": bad, "is_new": True,
-         "xbrl_facts": {"net_income": 5_000_000_000.0}},
+        {
+            "symbol": "AAPL",
+            "analysis": good,
+            "is_new": True,
+            "xbrl_facts": {"revenue": 49_700_000_000.0, "net_income": 5_000_000_000.0},
+        },
+        {"symbol": "MSFT", "analysis": bad, "is_new": True, "xbrl_facts": {"net_income": 5_000_000_000.0}},
     ]
 
     assert _classify_earnings_status(results) == "figures_contradicted"
@@ -2901,10 +3336,14 @@ def test_classify_earnings_status_tolerates_legitimate_rounding():
     # "$50B" reported against an exact $49.3B filed value — ~1.4% off,
     # comfortably inside the tolerance real rounding-for-readability produces.
     analysis = _valid_earnings_analysis(**{"revenue.total": "$50B"})
-    results = [{
-        "symbol": "AAPL", "analysis": analysis, "is_new": True,
-        "xbrl_facts": {"revenue": 49_300_000_000.0},
-    }]
+    results = [
+        {
+            "symbol": "AAPL",
+            "analysis": analysis,
+            "is_new": True,
+            "xbrl_facts": {"revenue": 49_300_000_000.0},
+        }
+    ]
 
     assert _classify_earnings_status(results) == "ok"
 
@@ -2931,10 +3370,12 @@ def test_classify_earnings_status_no_xbrl_data_is_not_a_mismatch():
 def test_earnings_xbrl_mismatch_fields_skips_unparseable_and_absent_values():
     from src.pipeline_stages import _earnings_xbrl_mismatch_fields
 
-    analysis = _valid_earnings_analysis(**{
-        "revenue.total": "not disclosed",
-        "profitability.net_income": "roughly a lot",
-    })
+    analysis = _valid_earnings_analysis(
+        **{
+            "revenue.total": "not disclosed",
+            "profitability.net_income": "roughly a lot",
+        }
+    )
     # Real data exists for both, but neither analyst field parsed into a
     # comparable number — must not be flagged as a mismatch.
     xbrl_values = {"revenue": 50_000_000_000.0, "net_income": 5_000_000_000.0}
@@ -3053,23 +3494,32 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
 
     ma = MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="high", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="high",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
     )
     news_intel = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-04-17", era_themes=["AI capex"],
+            last_updated="2026-04-17",
+            era_themes=["AI capex"],
             current_regime="risk-on expansion",
         ),
         pm_briefing="Quiet tape.",
-        market_sentiment="bullish", confidence="medium",
+        market_sentiment="bullish",
+        confidence="medium",
     )
     agent_result = AgentResult(raw_text="{}", tokens_used=100, model="test", user_message="x")
 
@@ -3080,15 +3530,15 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
     mock_config.llm.tech_analyst_model = "claude-opus-4-6"
 
     market = MagicMock()
-    market.get_ohlcv.return_value = [
-        MagicMock(date="2026-04-17", open=99, high=101, low=98, close=100, volume=1000)
-    ]
+    market.get_ohlcv.return_value = [MagicMock(date="2026-04-17", open=99, high=101, low=98, close=100, volume=1000)]
     market.get_valuation_metrics.return_value = {}
 
     macro_provider = MagicMock()
     macro_provider.get_macro_summary.return_value = {
-        "vix": {"current": 18.0}, "credit_spread": {"current_bps": 300},
-        "inflation": {"core_cpi_yoy": 3.0}, "unemployment": {"current": 4.2},
+        "vix": {"current": 18.0},
+        "credit_spread": {"current_bps": 300},
+        "inflation": {"core_cpi_yoy": 3.0},
+        "unemployment": {"current": 4.2},
     }
 
     macro_store = MagicMock()
@@ -3101,14 +3551,23 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
 
     tech_agent = MagicMock()
     tech_agent.analyze_batch.return_value = (
-        {"NVDA": TechAnalysisResult(
-            symbol="NVDA", rating="buy", conviction="high",
-            entry_price=100.0, reference_target=110.0, stop_loss=95.0,
-            support_levels=[95.0], resistance_levels=[110.0],
-            setup_type="range", expected_horizon_sessions=10,
-            reasoning="fresh setup", reasoning_chain=_tech_rc(),
-        thesis_invalid_if="closes below support",
-    )},
+        {
+            "NVDA": TechAnalysisResult(
+                symbol="NVDA",
+                rating="buy",
+                conviction="high",
+                entry_price=100.0,
+                reference_target=110.0,
+                stop_loss=95.0,
+                support_levels=[95.0],
+                resistance_levels=[110.0],
+                setup_type="range",
+                expected_horizon_sessions=10,
+                reasoning="fresh setup",
+                reasoning_chain=_tech_rc(),
+                thesis_invalid_if="closes below support",
+            )
+        },
         agent_result,
     )
     tech_store = MagicMock()
@@ -3143,8 +3602,7 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
         conn = sqlite3.connect(str(tmp_path / "test.db"))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json "
-            "FROM specialist_evidence ORDER BY id"
+            "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json FROM specialist_evidence ORDER BY id"
         ).fetchall()
         by_key = {(r["agent_name"], r["kind"], r["symbol"]): r for r in rows}
         conn.close()
@@ -3177,13 +3635,20 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
 
     ma = MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="high", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="high",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
     )
@@ -3196,9 +3661,7 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
     mock_config.llm.tech_analyst_model = "claude-opus-4-6"
 
     market = MagicMock()
-    market.get_ohlcv.return_value = [
-        MagicMock(date="2026-04-17", open=99, high=101, low=98, close=100, volume=1000)
-    ]
+    market.get_ohlcv.return_value = [MagicMock(date="2026-04-17", open=99, high=101, low=98, close=100, volume=1000)]
     market.get_valuation_metrics.return_value = {}
 
     macro_provider = MagicMock()
@@ -3224,13 +3687,20 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
     tech_agent.analyze_batch.return_value = (
         {
             "NVDA": TechAnalysisResult(
-                symbol="NVDA", rating="buy", conviction="high",
-                entry_price=100.0, reference_target=110.0, stop_loss=95.0,
-                support_levels=[95.0], resistance_levels=[110.0],
-                setup_type="range", expected_horizon_sessions=10,
-                reasoning="fresh setup", reasoning_chain=_tech_rc(),
-        thesis_invalid_if="closes below support",
-    )
+                symbol="NVDA",
+                rating="buy",
+                conviction="high",
+                entry_price=100.0,
+                reference_target=110.0,
+                stop_loss=95.0,
+                support_levels=[95.0],
+                resistance_levels=[110.0],
+                setup_type="range",
+                expected_horizon_sessions=10,
+                reasoning="fresh setup",
+                reasoning_chain=_tech_rc(),
+                thesis_invalid_if="closes below support",
+            )
         },
         agent_result,
     )
@@ -3274,20 +3744,22 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
 # _state_change_symbols_by_date` parses back out.
 # --------------------------------------------------------------------------
 
+
 def test_build_active_state_changes_renders_direction_per_symbol():
     from src.pipeline_prompt_facts import PromptHistory
 
     fake_pipeline = MagicMock()
-    fake_pipeline.news_store.recent_state_changes.return_value = [{
-        "first_seen_date": "2026-08-31",
-        "event": "Oil majors expand footprint, bearish for airlines",
-        "affected_symbols": ["XOM", "CVX", "COST"],
-        "symbol_direction": {"XOM": "bullish", "CVX": "bullish", "COST": "bearish"},
-    }]
+    fake_pipeline.news_store.recent_state_changes.return_value = [
+        {
+            "first_seen_date": "2026-08-31",
+            "event": "Oil majors expand footprint, bearish for airlines",
+            "affected_symbols": ["XOM", "CVX", "COST"],
+            "symbol_direction": {"XOM": "bullish", "CVX": "bullish", "COST": "bearish"},
+        }
+    ]
     rendered = PromptHistory._build_active_state_changes(fake_pipeline)
     assert rendered == (
-        "- [2026-08-31] Oil majors expand footprint, bearish for airlines "
-        "→ XOM(bullish), CVX(bullish), COST(bearish)"
+        "- [2026-08-31] Oil majors expand footprint, bearish for airlines → XOM(bullish), CVX(bullish), COST(bearish)"
     )
 
 
@@ -3299,12 +3771,14 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
     from src.pipeline_prompt_facts import PromptHistory
 
     fake_pipeline = MagicMock()
-    fake_pipeline.news_store.recent_state_changes.return_value = [{
-        "first_seen_date": "2026-08-30",
-        "event": "Some older event",
-        "affected_symbols": ["FOO"],
-        # no "symbol_direction" key at all — pre-Phase-13 persisted shape
-    }]
+    fake_pipeline.news_store.recent_state_changes.return_value = [
+        {
+            "first_seen_date": "2026-08-30",
+            "event": "Some older event",
+            "affected_symbols": ["FOO"],
+            # no "symbol_direction" key at all — pre-Phase-13 persisted shape
+        }
+    ]
     rendered = PromptHistory._build_active_state_changes(fake_pipeline)
     assert rendered == "- [2026-08-30] Some older event → FOO(unknown)"
 
@@ -3318,16 +3792,25 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
 # it record coverage every run, and does it alert on the cases it claims to
 # catch and stay quiet on the cases it doesn't. ===
 
+
 def _levels_analysis(symbol, levels):
     """A minimal resolved TechAnalysisResult carrying a given computed_levels
     — the only field these tests vary."""
     from src.models import TechAnalysisResult
+
     return TechAnalysisResult(
-        symbol=symbol, rating="neutral", conviction="low",
-        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-        support_levels=[], resistance_levels=[],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning_chain=_tech_rc(), reasoning="test",
+        symbol=symbol,
+        rating="neutral",
+        conviction="low",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=110.0,
+        support_levels=[],
+        resistance_levels=[],
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning_chain=_tech_rc(),
+        reasoning="test",
         computed_levels=levels,
         thesis_invalid_if="closes below support",
     )
@@ -3549,23 +4032,32 @@ def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
     market.get_ohlcv.return_value = [MagicMock()]
 
     from src.models import TechAnalysisResult
+
     analyses_map = {
         sym: TechAnalysisResult(
-            symbol=sym, rating="neutral", conviction="low",
-            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-            support_levels=[], resistance_levels=[],
-            setup_type="range", expected_horizon_sessions=10,
-            reasoning_chain=_tech_rc(), reasoning="test",
+            symbol=sym,
+            rating="neutral",
+            conviction="low",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=110.0,
+            support_levels=[],
+            resistance_levels=[],
+            setup_type="range",
+            expected_horizon_sessions=10,
+            reasoning_chain=_tech_rc(),
+            reasoning="test",
             computed_levels=[],  # every symbol blind,
-        thesis_invalid_if="closes below support",
-    )
+            thesis_invalid_if="closes below support",
+        )
         for sym in universe
     }
     tech_agent = MagicMock()
     tech_agent.analyze_batch.return_value = (
         analyses_map,
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
 
     macro_store = MagicMock()
@@ -3573,10 +4065,18 @@ def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     tech_store = MagicMock()
     tech_store.load.return_value = {}
     tech_store.compute_ages.return_value = {}
@@ -3634,24 +4134,33 @@ def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
     market.get_ohlcv.side_effect = _get_ohlcv
 
     from src.models import TechAnalysisResult
+
     resolved_symbols = [s for s in universe if s not in missing]
     analyses_map = {
         sym: TechAnalysisResult(
-            symbol=sym, rating="neutral", conviction="low",
-            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-            support_levels=[], resistance_levels=[],
-            setup_type="range", expected_horizon_sessions=10,
-            reasoning_chain=_tech_rc(), reasoning="test",
+            symbol=sym,
+            rating="neutral",
+            conviction="low",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=110.0,
+            support_levels=[],
+            resistance_levels=[],
+            setup_type="range",
+            expected_horizon_sessions=10,
+            reasoning_chain=_tech_rc(),
+            reasoning="test",
             computed_levels=[100.0],  # every RESOLVED symbol has a level,
-        thesis_invalid_if="closes below support",
-    )
+            thesis_invalid_if="closes below support",
+        )
         for sym in resolved_symbols
     }
     tech_agent = MagicMock()
     tech_agent.analyze_batch.return_value = (
         analyses_map,
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
 
     macro_store = MagicMock()
@@ -3659,10 +4168,18 @@ def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     tech_store = MagicMock()
     tech_store.load.return_value = {}
     tech_store.compute_ages.return_value = {}
@@ -3699,7 +4216,8 @@ def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
 
 @patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_crashes(
-    mock_compute_indicators, tmp_path,
+    mock_compute_indicators,
+    tmp_path,
 ):
     """Bar fetch is the FIRST thing `_run_tech` does, before tech_analyst is
     ever called — so if analyze_batch itself raises (LLM/provider crash,
@@ -3733,10 +4251,18 @@ def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_cra
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     tech_store = MagicMock()
     tech_store.load.return_value = {}
 
@@ -3780,8 +4306,7 @@ def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_cra
         conn = sqlite3.connect(str(tmp_path / "test.db"))
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT evidence_json FROM specialist_evidence "
-            "WHERE agent_name='tech_analyst' AND kind='levels_coverage'"
+            "SELECT evidence_json FROM specialist_evidence WHERE agent_name='tech_analyst' AND kind='levels_coverage'"
         ).fetchone()
         conn.close()
         assert row is not None, "levels_coverage row must be written even when analyze_batch crashes"
@@ -3797,16 +4322,20 @@ def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_cra
 # retired board item 49 — the ranking handed to the constructor.
 # --------------------------------------------------------------------------
 
+
 def test_session_candidate_ranking_reads_the_pms_own_order():
     from types import SimpleNamespace
 
     from src.pipeline_stages import _session_candidate_ranking
 
-    pipeline = SimpleNamespace(portfolio_manager=SimpleNamespace(
-        last_candidate_ranking=[
-            SimpleNamespace(symbol="nvda"), SimpleNamespace(symbol=" amd "),
-        ],
-    ))
+    pipeline = SimpleNamespace(
+        portfolio_manager=SimpleNamespace(
+            last_candidate_ranking=[
+                SimpleNamespace(symbol="nvda"),
+                SimpleNamespace(symbol=" amd "),
+            ],
+        )
+    )
     assert _session_candidate_ranking(pipeline) == ["NVDA", "AMD"]
 
 
@@ -3819,14 +4348,20 @@ def test_session_candidate_ranking_is_none_not_empty_when_there_is_no_ranking():
     from src.pipeline_stages import _session_candidate_ranking
 
     assert _session_candidate_ranking(SimpleNamespace()) is None
-    assert _session_candidate_ranking(
-        SimpleNamespace(portfolio_manager=SimpleNamespace(last_candidate_ranking=[]))
-    ) is None
-    assert _session_candidate_ranking(
-        SimpleNamespace(portfolio_manager=SimpleNamespace(
-            last_candidate_ranking=[SimpleNamespace(symbol="  ")],
-        ))
-    ) is None
+    assert (
+        _session_candidate_ranking(SimpleNamespace(portfolio_manager=SimpleNamespace(last_candidate_ranking=[])))
+        is None
+    )
+    assert (
+        _session_candidate_ranking(
+            SimpleNamespace(
+                portfolio_manager=SimpleNamespace(
+                    last_candidate_ranking=[SimpleNamespace(symbol="  ")],
+                )
+            )
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3834,12 +4369,19 @@ def test_session_candidate_ranking_is_none_not_empty_when_there_is_no_ranking():
 # drop must leave a trace). 2026-09-18.
 # ---------------------------------------------------------------------------
 
+
 def _short(symbol, alloc):
     from src.models import TradeDecision
+
     return TradeDecision(
-        action="SHORT", symbol=symbol, allocation_pct=alloc,
-        entry_price=100.0, stop_loss=105.0, take_profit=90.0,
-        reasoning="x", thesis_invalid_if="reclaims resistance",
+        action="SHORT",
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=100.0,
+        stop_loss=105.0,
+        take_profit=90.0,
+        reasoning="x",
+        thesis_invalid_if="reclaims resistance",
     )
 
 
@@ -3862,21 +4404,21 @@ def test_item135_short_allocation_may_not_be_enlarged_by_a_risk_mod():
     the number reads. Must be reverted to the constructor's size."""
     from src.models import RiskModification
 
-    mods = [RiskModification(
-        symbol="XLU", field="allocation_pct",
-        original_value=12.0, new_value=40.0,
-        reason="wants a bigger short",
-    )]
+    mods = [
+        RiskModification(
+            symbol="XLU",
+            field="allocation_pct",
+            original_value=12.0,
+            new_value=40.0,
+            reason="wants a bigger short",
+        )
+    ]
     updated, rejected = _run_mods([_short("XLU", 12.0)], mods)
 
     assert len(updated) == 1
-    assert updated[0].allocation_pct == 12.0, (
-        "the SHORT must ship at the constructor's size, not the enlarged one"
-    )
+    assert updated[0].allocation_pct == 12.0, "the SHORT must ship at the constructor's size, not the enlarged one"
     assert any(
-        r["symbol"] == "XLU" and r["field"] == "allocation_pct"
-        and "INCREASE" in r["reason"]
-        for r in rejected
+        r["symbol"] == "XLU" and r["field"] == "allocation_pct" and "INCREASE" in r["reason"] for r in rejected
     ), f"the refusal must be recorded as a visible event; got {rejected}"
 
 
@@ -3884,10 +4426,15 @@ def test_item135_short_allocation_may_still_be_reduced():
     """Control. Cutting a short is the seat's actual remit and must apply."""
     from src.models import RiskModification
 
-    mods = [RiskModification(
-        symbol="XLU", field="allocation_pct",
-        original_value=12.0, new_value=5.0, reason="too big",
-    )]
+    mods = [
+        RiskModification(
+            symbol="XLU",
+            field="allocation_pct",
+            original_value=12.0,
+            new_value=5.0,
+            reason="too big",
+        )
+    ]
     updated, rejected = _run_mods([_short("XLU", 12.0)], mods)
 
     assert updated[0].allocation_pct == 5.0
@@ -3900,10 +4447,15 @@ def test_item135_buy_enlargement_is_refused_exactly_once():
     once — not double-reported by a second enforcement point."""
     from src.models import RiskModification
 
-    mods = [RiskModification(
-        symbol="SPY", field="allocation_pct",
-        original_value=10.0, new_value=25.0, reason="bigger",
-    )]
+    mods = [
+        RiskModification(
+            symbol="SPY",
+            field="allocation_pct",
+            original_value=10.0,
+            new_value=25.0,
+            reason="bigger",
+        )
+    ]
     updated, rejected = _run_mods([_buy("SPY", 10.0)], mods)
 
     assert updated[0].allocation_pct == 10.0
@@ -3939,9 +4491,7 @@ def test_item155_entry_enlargement_has_exactly_one_enforcement_point():
     )
     for name, obj in vars(ps).items():
         if callable(obj) and "revert_entry_size" in name:
-            raise AssertionError(
-                f"board item 155: `{name}` duplicates guard 1b's rule"
-            )
+            raise AssertionError(f"board item 155: `{name}` duplicates guard 1b's rule")
 
     # (b) Guard 1b itself still covers BOTH sides, so no second point is
     # needed. Read only the guard-1b block, not the whole method: guards 2
@@ -3956,11 +4506,20 @@ def test_item155_entry_enlargement_has_exactly_one_enforcement_point():
 
     # And it behaves, on both sides, from one place.
     from src.models import RiskModification
+
     for leg, side in ((_buy("SPY", 10.0), "BUY"), (_short("XLU", 10.0), "SHORT")):
-        updated, rejected = _run_mods([leg], [RiskModification(
-            symbol=leg.symbol, field="allocation_pct",
-            original_value=10.0, new_value=30.0, reason="bigger",
-        )])
+        updated, rejected = _run_mods(
+            [leg],
+            [
+                RiskModification(
+                    symbol=leg.symbol,
+                    field="allocation_pct",
+                    original_value=10.0,
+                    new_value=30.0,
+                    reason="bigger",
+                )
+            ],
+        )
         assert updated[0].allocation_pct == 10.0, side
         assert len(rejected) == 1, f"{side}: one refusal only; got {rejected}"
 
@@ -3975,8 +4534,10 @@ def test_item134_scale_advisory_records_every_entry_without_dropping_it():
     from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.0,
-        reasoning_chain=_risk_rc(), reasoning="risk-off",
+        approved=True,
+        scale_all_buys=0.0,
+        reasoning_chain=_risk_rc(),
+        reasoning="risk-off",
     )
     decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT"), _sell("NVDA")]
 
@@ -3997,8 +4558,10 @@ def test_item134_nothing_flagged_when_scale_is_one():
     from src.pipeline_stages import _record_scale_advisory
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=1.0,
-        reasoning_chain=_risk_rc(), reasoning="ok",
+        approved=True,
+        scale_all_buys=1.0,
+        reasoning_chain=_risk_rc(),
+        reasoning="ok",
     )
     out, scale, advised = _record_scale_advisory([_buy("SPY", 10)], verdict)
 
@@ -4015,15 +4578,18 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
     from src.pipeline_stages import RiskStage
     from src.pipeline import TradingPipeline
     from src.models import (
-        PortfolioDecision, ReasoningChain, RiskVerdict, RiskReasoningChain,
+        PortfolioDecision,
+        ReasoningChain,
+        RiskVerdict,
+        RiskReasoningChain,
     )
 
     events: list = []
     monkeypatch.setattr(
-        ps, "_record_pipeline_event",
+        ps,
+        "_record_pipeline_event",
         lambda pipeline, ctx, sym, kind, outcome, reason, **kw: events.append(
-            {"symbol": sym, "kind": kind, "outcome": outcome,
-             "reason": reason, "kw": kw}
+            {"symbol": sym, "kind": kind, "outcome": outcome, "reason": reason, "kw": kw}
         ),
     )
 
@@ -4036,17 +4602,21 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
     p.risk_gate._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
     p.risk_manager.review.return_value = (
         RiskVerdict(
-            approved=True, modifications=[],
+            approved=True,
+            modifications=[],
             scale_all_buys=0.5,
             reasoning="Aggregate exposure looks stretched for the regime.",
             reason_category="oversized",
             reasoning_chain=RiskReasoningChain(
-                rr_audit="x", signal_fidelity="x", correlation_check="x",
-                event_risk="x", sizing_sanity="x", overall="x",
+                rr_audit="x",
+                signal_fidelity="x",
+                correlation_check="x",
+                event_risk="x",
+                sizing_sanity="x",
+                overall="x",
             ),
         ),
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0),
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0),
     )
     p.config = MagicMock()
     p.config.llm.risk_manager_model = "test-model"
@@ -4060,9 +4630,13 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
     ctx.deployable_cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter="x", news_check="x", earnings_check="x",
-            signal_conflicts="x", sizing_logic="x",
-            portfolio_balance="x", cash_target="x",
+            macro_filter="x",
+            news_check="x",
+            earnings_check="x",
+            signal_conflicts="x",
+            sizing_logic="x",
+            portfolio_balance="x",
+            cash_target="x",
         ),
         decisions=[_buy("SPY", 10.0), _short("XLU", 8.0)],
         portfolio_view="v",
@@ -4073,8 +4647,7 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
     RiskStage(pipeline=p).run(ctx)
 
     # (a) sizes untouched, nothing dropped.
-    final = {(d.symbol, d.action): d.allocation_pct
-             for d in ctx.portfolio_decision.decisions}
+    final = {(d.symbol, d.action): d.allocation_pct for d in ctx.portfolio_decision.decisions}
     assert final == {("SPY", "BUY"): 10.0, ("XLU", "SHORT"): 8.0}
 
     # (b) the concern + reason are surfaced as scale_advisory events.
@@ -4100,31 +4673,58 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
     from src.models import RiskVerdict, TradeDecision
 
     verdict = RiskVerdict(
-        approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(),
-        reasoning="too aggressive", reason_category="oversized",
+        approved=True,
+        scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(),
+        reasoning="too aggressive",
+        reason_category="oversized",
     )
     # Two same-direction longs summing to 60% net, over a 50% hard total cap.
     decisions = [
-        TradeDecision(action="BUY", symbol="SPY", allocation_pct=30,
-                      entry_price=500, stop_loss=480, take_profit=530,
-                      reasoning="core"),
-        TradeDecision(action="BUY", symbol="QQQ", allocation_pct=30,
-                      entry_price=400, stop_loss=380, take_profit=430,
-                      reasoning="also core"),
+        TradeDecision(
+            action="BUY",
+            symbol="SPY",
+            allocation_pct=30,
+            entry_price=500,
+            stop_loss=480,
+            take_profit=530,
+            reasoning="core",
+        ),
+        TradeDecision(
+            action="BUY",
+            symbol="QQQ",
+            allocation_pct=30,
+            entry_price=400,
+            stop_loss=380,
+            take_profit=430,
+            reasoning="also core",
+        ),
     ]
 
     # Advisory pass changes NOTHING — the plan is still over the cap.
     out, scale, advised = _record_scale_advisory(decisions, verdict)
-    assert [(d.symbol, d.allocation_pct) for d in out] == [
-        ("SPY", 30.0), ("QQQ", 30.0)]
+    assert [(d.symbol, d.allocation_pct) for d in out] == [("SPY", 30.0), ("QQQ", 30.0)]
     assert sorted(advised) == [("QQQ", 30.0), ("SPY", 30.0)]
 
-    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=50, max_sector_pct=90, require_stop_loss=True, )))
-    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
-        "src.execution.broker._get_sector", return_value="Broad"
+    pipeline = build_pipeline(
+        risk_engine=RiskRuleEngine(
+            RiskConfig(
+                max_position_pct=40,
+                max_total_position_pct=50,
+                max_sector_pct=90,
+                require_stop_loss=True,
+            )
+        )
+    )
+    with (
+        patch("src.pipeline_admission._get_sector", return_value="Broad"),
+        patch("src.execution.broker._get_sector", return_value="Broad"),
     ):
         allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-            out, positions=[], total_value=100000,)
+            out,
+            positions=[],
+            total_value=100000,
+        )
 
     # The hard cap still binds: the second long is blocked.
     assert [d.symbol for d in allowed] == ["SPY"]
@@ -4184,8 +4784,7 @@ def test_morning_research_stage_news_parse_error_files_a_record_per_affected_sto
 
     assert result_ctx.data_status["news"] == "parse_error"
     drop_calls = [
-        c for c in stage.db.insert_specialist_evidence.call_args_list
-        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+        c for c in stage.db.insert_specialist_evidence.call_args_list if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
     ]
     assert {c.kwargs["symbol"] for c in drop_calls} == {"AAPL", "MSFT"}
     for call in drop_calls:
@@ -4212,8 +4811,7 @@ def test_morning_research_stage_news_clean_answer_files_no_drop_records():
     stage.run(ctx)
 
     assert not [
-        c for c in stage.db.insert_specialist_evidence.call_args_list
-        if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
+        c for c in stage.db.insert_specialist_evidence.call_args_list if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
     ]
 
 
@@ -4238,12 +4836,16 @@ def test_new_buy_records_entry_atr_from_the_analysis():
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
     pipeline.broker.submit_order.return_value = {
-        "id": "order-1", "status": "accepted", "symbol": "SPY",
+        "id": "order-1",
+        "status": "accepted",
+        "symbol": "SPY",
     }
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
 
     ctx = RunContext.start("morning")
@@ -4256,8 +4858,12 @@ def test_new_buy_records_entry_atr_from_the_analysis():
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="BUY", symbol="SPY", allocation_pct=10,
-                entry_price=98.0, stop_loss=72.0, take_profit=140.0,
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=98.0,
+                stop_loss=72.0,
+                take_profit=140.0,
                 reasoning="fresh setup",
                 stop_rule="stop_honoured_at_computed_level",
             ),
@@ -4268,10 +4874,7 @@ def test_new_buy_records_entry_atr_from_the_analysis():
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    opens = [
-        c for c in pipeline.db.insert_trade.call_args_list
-        if c.kwargs.get("action") == "BUY" or "BUY" in c.args
-    ]
+    opens = [c for c in pipeline.db.insert_trade.call_args_list if c.kwargs.get("action") == "BUY" or "BUY" in c.args]
     assert opens, "no opening row was inserted"
     kwargs = opens[0].kwargs
     assert kwargs.get("entry_atr") == 3.25

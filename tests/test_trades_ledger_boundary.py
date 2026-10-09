@@ -4,6 +4,7 @@ position_chain is pure functions; backfills, recovery_queues and excursions
 take the TradeLedger as their first argument, so each is exercised here on a
 bare in-memory connection with no Database or pipeline object behind it.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -31,10 +32,14 @@ def _bare_ledger() -> TradeLedger:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     DatabaseSchema(conn=conn)._create_tables()
-    return TradeLedger(conn=conn, lock=threading.Lock(), locked_write=lambda do, *, label="write": do(),
-                       executed_trade_predicate=Database._executed_trade_predicate,
-                       sqlite_utc_timestamp=Database._sqlite_utc_timestamp,
-                       et_day_utc_bounds=Database._et_day_utc_bounds)
+    return TradeLedger(
+        conn=conn,
+        lock=threading.Lock(),
+        locked_write=lambda do, *, label="write": do(),
+        executed_trade_predicate=Database._executed_trade_predicate,
+        sqlite_utc_timestamp=Database._sqlite_utc_timestamp,
+        et_day_utc_bounds=Database._et_day_utc_bounds,
+    )
 
 
 def test_every_piece_exposes_its_lifted_bodies():

@@ -9,6 +9,7 @@ part builds and runs alone). `src/risk/rules.py` keeps the engine, every
 ledger-pinned number and the re-export mirror, so every existing
 `from src.risk.rules import X` keeps resolving.
 """
+
 from src.models import AnalystVerdict
 
 
@@ -62,10 +63,7 @@ def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool
     is excluded — it adds no positive weight, it only gates (below).
     """
     return (
-        v.seat != "technical"
-        and v.direction == aligned
-        and bool((v.invalidation or "").strip())
-        and bool(v.evidence)
+        v.seat != "technical" and v.direction == aligned and bool((v.invalidation or "").strip()) and bool(v.evidence)
     )
 
 
@@ -92,10 +90,7 @@ def _is_broadcast_macro_verdict(v: "AnalystVerdict") -> bool:
     """
     if v.seat != "macro":
         return False
-    return not any(
-        str(getattr(ev, "label", "") or "").startswith("sector_stance:")
-        for ev in (v.evidence or [])
-    )
+    return not any(str(getattr(ev, "label", "") or "").startswith("sector_stance:") for ev in (v.evidence or []))
 
 
 def own_bar_block_reason(
@@ -154,36 +149,26 @@ def own_bar_block_reason(
             "timing cannot be confirmed (right name, wrong time)"
         )
     if any(v.direction == opposed for v in tech):
-        return (
-            f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to "
-            "the trade (right name, wrong time)"
-        )
+        return f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to the trade (right name, wrong time)"
     if not any(v.direction == aligned for v in tech):
         return (
             f"{OWN_BAR_REASON_PREFIX} — technical does not confirm timing; "
             "chart neutral/broken (right name, wrong time)"
         )
 
-    other_opposed = sorted({
-        v.seat for v in seat_verdicts
-        if v.direction == opposed and v.seat != "technical"
-        and not _is_broadcast_macro_verdict(v)
-    })
+    other_opposed = sorted(
+        {
+            v.seat
+            for v in seat_verdicts
+            if v.direction == opposed and v.seat != "technical" and not _is_broadcast_macro_verdict(v)
+        }
+    )
     if other_opposed:
-        return (
-            f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed "
-            "(mandate: no seat may be opposed)"
-        )
+        return f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed (mandate: no seat may be opposed)"
 
-    supporting = sorted({
-        v.seat for v in seat_verdicts
-        if _has_supported_directional_thesis(v, aligned)
-    })
+    supporting = sorted({v.seat for v in seat_verdicts if _has_supported_directional_thesis(v, aligned)})
     if not supporting:
-        return (
-            f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a "
-            "supported directional side"
-        )
+        return f"{OWN_BAR_REASON_PREFIX} — no non-technical seat took a supported directional side"
     if supporting == ["macro"]:
         # Board item 109, owner ruling 2026-09-25: "Nothing can green light a
         # name on its own. This is a trading desk with multiple agents."
@@ -258,20 +243,16 @@ def own_bar_opposition_reason(
 
     tech = [v for v in seat_verdicts if v.seat == "technical"]
     if any(v.direction == opposed for v in tech):
-        return (
-            f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to "
-            "the trade (right name, wrong time)"
-        )
+        return f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to the trade (right name, wrong time)"
 
-    other_opposed = sorted({
-        v.seat for v in seat_verdicts
-        if v.direction == opposed and v.seat != "technical"
-        and not _is_broadcast_macro_verdict(v)
-    })
+    other_opposed = sorted(
+        {
+            v.seat
+            for v in seat_verdicts
+            if v.direction == opposed and v.seat != "technical" and not _is_broadcast_macro_verdict(v)
+        }
+    )
     if other_opposed:
-        return (
-            f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed "
-            "(mandate: no seat may be opposed)"
-        )
+        return f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed (mandate: no seat may be opposed)"
 
     return None

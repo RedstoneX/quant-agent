@@ -108,6 +108,7 @@ Two entry points, one function, both through `scripts/alert_heartbeat.py`:
     probe, touches nothing outside a real session, and is the run that puts
     the DAY stop back.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -124,7 +125,8 @@ from src.trading_day import most_recent_trading_day as _read_only_most_recent_tr
 from src.trading_day import MAX_WEEKDAYS_BACK, _session_bounds_utc  # noqa: F401 -- moved to a read-only module
 from src.coverage_watchdog_records import record_watchdog_pass  # noqa: F401 -- re-export
 from src.coverage_watchdog_rows import (  # noqa: F401 -- re-export
-    _scale_in_row_age_seconds, measured_window_bound_seconds,
+    _scale_in_row_age_seconds,
+    measured_window_bound_seconds,
 )
 from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted verbatim
     exit_declined_text,
@@ -141,9 +143,16 @@ from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted ve
 )
 from src.data_paths import db_path
 from src.alert_claims import (  # noqa: F401 -- re-exported, lifted verbatim 2026-10-05
-    STATE_PATH, _SUPPRESSION_LOG_LIMIT, _record_suppressed_alert,
-    _typed_alerted_symbols, _utc_now, claim_typed_alert, load_state,
-    release_typed_alert, repair_failure_alert_day, save_state,
+    STATE_PATH,
+    _SUPPRESSION_LOG_LIMIT,
+    _record_suppressed_alert,
+    _typed_alerted_symbols,
+    _utc_now,
+    claim_typed_alert,
+    load_state,
+    release_typed_alert,
+    repair_failure_alert_day,
+    save_state,
 )
 from src.coverage_watchdog_parts.models import (  # noqa: F401 -- re-exported, lifted verbatim
     CoverageGap,
@@ -194,11 +203,10 @@ TABLE = "alert_channel_checks"
 _QTY_EPSILON = 1e-6
 
 
-
-
 # ---------------------------------------------------------------------------
 # which session are we judging?
 # ---------------------------------------------------------------------------
+
 
 def most_recent_trading_day(now: datetime, broker: Any = None, db: Any = None) -> date:
     """`src.trading_day.most_recent_trading_day`, recording a calendar-read failure.
@@ -207,7 +215,8 @@ def most_recent_trading_day(now: datetime, broker: Any = None, db: Any = None) -
     recording (a write) stays here, passed in as the error hook.
     """
     return _read_only_most_recent_trading_day(
-        now, broker,
+        now,
+        broker,
         on_error=lambda exc: record_watchdog_pass("calendar_lookup", exc, db=db),
     )
 
@@ -266,9 +275,14 @@ def _parse_iso(stamp: str) -> datetime | None:
 # broker truth — read only
 # ---------------------------------------------------------------------------
 
+
 def _record_unreadable(
-    sink: list[UnreadableStop] | None, *, symbol: str, held_qty: float,
-    reason: str, is_short: bool,
+    sink: list[UnreadableStop] | None,
+    *,
+    symbol: str,
+    held_qty: float,
+    reason: str,
+    is_short: bool,
 ) -> None:
     """Log an unreadable stop at ERROR and, when a sink was supplied, record
     it for the caller. Board item 172.
@@ -281,20 +295,29 @@ def _record_unreadable(
         "STOP UNREADABLE: %s holding %.4f — %s. Whether a protective stop "
         "exists for this position is UNKNOWN; this is not a measured gap "
         "and must not be reported as coverage.",
-        symbol, held_qty, reason,
+        symbol,
+        held_qty,
+        reason,
     )
     if sink is not None:
-        sink.append(UnreadableStop(
-            symbol=symbol, held_qty=held_qty, reason=reason,
-            is_short=is_short,
-        ))
+        sink.append(
+            UnreadableStop(
+                symbol=symbol,
+                held_qty=held_qty,
+                reason=reason,
+                is_short=is_short,
+            )
+        )
 
 
 def uncovered_positions(
-    broker: Any, *, sweep_symbol: str | None = None,
+    broker: Any,
+    *,
+    sweep_symbol: str | None = None,
     skip_symbols: set[str] | None = None,
     counts: dict[str, int] | None = None,
-    unreadable: list[UnreadableStop] | None = None, db: Any = None,
+    unreadable: list[UnreadableStop] | None = None,
+    db: Any = None,
 ) -> tuple[list[CoverageGap], str | None]:
     """Every held position whose open protective stops cover less than the
     held quantity. Longs are checked against SELL stops, shorts against BUY
@@ -345,12 +368,15 @@ def uncovered_positions(
         held = abs(qty)
         try:
             ok, specs = broker.snapshot_protective_stops(
-                symbol, side=("buy" if is_short else "sell"),
+                symbol,
+                side=("buy" if is_short else "sell"),
             )
         except Exception as exc:  # noqa: BLE001
             record_watchdog_pass("uncovered.snapshot_stops", exc, db=db)
             _record_unreadable(
-                unreadable, symbol=str(symbol), held_qty=held,
+                unreadable,
+                symbol=str(symbol),
+                held_qty=held,
                 is_short=is_short,
                 reason=f"snapshot_protective_stops raised: {exc}",
             )
@@ -361,7 +387,9 @@ def uncovered_positions(
         # read as a confirmed naked position. Board item 172.
         if not ok:
             _record_unreadable(
-                unreadable, symbol=str(symbol), held_qty=held,
+                unreadable,
+                symbol=str(symbol),
+                held_qty=held,
                 is_short=is_short,
                 reason=(
                     "the broker's open-order listing failed, so whether a "
@@ -371,12 +399,11 @@ def uncovered_positions(
             continue
         if specs is not None and not isinstance(specs, list):
             _record_unreadable(
-                unreadable, symbol=str(symbol), held_qty=held,
+                unreadable,
+                symbol=str(symbol),
+                held_qty=held,
                 is_short=is_short,
-                reason=(
-                    "protective-stop snapshot in an unusable shape: "
-                    f"{type(specs).__name__}"
-                ),
+                reason=(f"protective-stop snapshot in an unusable shape: {type(specs).__name__}"),
             )
             continue
         covered = 0.0
@@ -394,18 +421,25 @@ def uncovered_positions(
                 break
         if unparsable:
             _record_unreadable(
-                unreadable, symbol=str(symbol), held_qty=held,
-                is_short=is_short, reason=unparsable,
+                unreadable,
+                symbol=str(symbol),
+                held_qty=held,
+                is_short=is_short,
+                reason=unparsable,
             )
             continue
         if covered + _QTY_EPSILON < held:
             uncovered = round(held - covered, 9)
-            gaps.append(CoverageGap(
-                symbol=str(symbol), held_qty=held, covered_qty=covered,
-                uncovered_qty=uncovered,
-                unprotected_value=_notional(p, uncovered),
-                is_short=is_short,
-            ))
+            gaps.append(
+                CoverageGap(
+                    symbol=str(symbol),
+                    held_qty=held,
+                    covered_qty=covered,
+                    uncovered_qty=uncovered,
+                    unprotected_value=_notional(p, uncovered),
+                    is_short=is_short,
+                )
+            )
     return gaps, None
 
 
@@ -423,6 +457,7 @@ def _notional(position: Any, qty: float) -> float:
 # may we place an order right now? the exchange calendar answers, nobody else
 # ---------------------------------------------------------------------------
 
+
 def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
     """`(open_now, reason)` — delegates to the ONE shared answer.
 
@@ -439,6 +474,7 @@ def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 # the one mutation: ADD a protective stop over shares nobody is watching
 # ---------------------------------------------------------------------------
+
 
 def replace_missing_stops(
     broker: Any,
@@ -483,15 +519,20 @@ def replace_missing_stops(
         # Fresh broker truth for THIS symbol, taken as late as possible.
         try:
             _ok, specs = broker.snapshot_protective_stops(
-                gap.symbol, side=protective_side,
+                gap.symbol,
+                side=protective_side,
             )
             record_watchdog_pass("replace.reread_stops", db=db)
         except Exception as exc:  # noqa: BLE001
             record_watchdog_pass("replace.reread_stops", exc, db=db)
-            outcomes.append(RepairOutcome(
-                gap.symbol, gap.uncovered_qty, False,
-                f"could not re-read open stops before placing ({exc})",
-            ))
+            outcomes.append(
+                RepairOutcome(
+                    gap.symbol,
+                    gap.uncovered_qty,
+                    False,
+                    f"could not re-read open stops before placing ({exc})",
+                )
+            )
             continue
         covered_now = 0.0
         for s in specs or []:
@@ -502,9 +543,10 @@ def replace_missing_stops(
         shortfall = round(gap.held_qty - covered_now, 9)
         if shortfall <= _QTY_EPSILON:
             logger.info(
-                "coverage sweep: %s is already covered (%.4f of %.4f) by the "
-                "time we got to it — placing nothing.",
-                gap.symbol, covered_now, gap.held_qty,
+                "coverage sweep: %s is already covered (%.4f of %.4f) by the time we got to it — placing nothing.",
+                gap.symbol,
+                covered_now,
+                gap.held_qty,
             )
             continue
         # `repair` collects the refusal REASON (docs/WORK.md item 88). The
@@ -517,32 +559,48 @@ def replace_missing_stops(
         repair: dict = {"held_qty": gap.held_qty, "covered_qty": covered_now}
         try:
             placed = repair_stop_coverage(
-                broker=broker, last_buy=last_buy,
-                symbol=gap.symbol, uncovered_qty=shortfall,
-                is_short=gap.is_short, db=db, outcome=repair,
-                resting_stops=list(specs or []), caller="coverage_sweep",
+                broker=broker,
+                last_buy=last_buy,
+                symbol=gap.symbol,
+                uncovered_qty=shortfall,
+                is_short=gap.is_short,
+                db=db,
+                outcome=repair,
+                resting_stops=list(specs or []),
+                caller="coverage_sweep",
             )
             record_watchdog_pass("replace.placement", db=db)
         except Exception as exc:  # noqa: BLE001
             record_watchdog_pass("replace.placement", exc, db=db)
-            outcomes.append(RepairOutcome(
-                gap.symbol, shortfall, False, f"placement raised ({exc})",
-            ))
-            continue
-        outcomes.append(RepairOutcome(
-            gap.symbol, shortfall, bool(placed),
-            refusal_code=str(repair.get("repair_refusal_code") or ""),
-            still_covered=covered_now > _QTY_EPSILON,
-            detail="" if placed else (
-                repair.get("repair_refusal")
-                or (
-                    "the broker did not accept a protective stop for the "
-                    f"shortfall — see the journal for which guard stopped it "
-                    f"(no recorded {opening} stop level, stop on the live-"
-                    "price side, or retries exhausted)"
+            outcomes.append(
+                RepairOutcome(
+                    gap.symbol,
+                    shortfall,
+                    False,
+                    f"placement raised ({exc})",
                 )
-            ),
-        ))
+            )
+            continue
+        outcomes.append(
+            RepairOutcome(
+                gap.symbol,
+                shortfall,
+                bool(placed),
+                refusal_code=str(repair.get("repair_refusal_code") or ""),
+                still_covered=covered_now > _QTY_EPSILON,
+                detail=""
+                if placed
+                else (
+                    repair.get("repair_refusal")
+                    or (
+                        "the broker did not accept a protective stop for the "
+                        f"shortfall — see the journal for which guard stopped it "
+                        f"(no recorded {opening} stop level, stop on the live-"
+                        "price side, or retries exhausted)"
+                    )
+                ),
+            )
+        )
     return outcomes
 
 
@@ -551,10 +609,11 @@ def replace_missing_stops(
 # ---------------------------------------------------------------------------
 
 
-
-
 def _scale_in_skip(
-    broker: Any, db_path: str | Path | None, *, now: datetime | None = None,
+    broker: Any,
+    db_path: str | Path | None,
+    *,
+    now: datetime | None = None,
     db: Any = None,
 ) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
@@ -598,9 +657,11 @@ def _scale_in_skip(
     """
     try:
         from src.execution.scale_in import (
-            list_open_entry_ids, pending_scale_in_symbols_from_path,
+            list_open_entry_ids,
+            pending_scale_in_symbols_from_path,
             trading_session_lock_held,
         )
+
         path = db_path if db_path is not None else DB_PATH
         symbols = pending_scale_in_symbols_from_path(path)
     except Exception:  # noqa: BLE001
@@ -643,8 +704,11 @@ def _scale_in_skip(
 
 
 def _scale_in_symbols_past_measured_bound(
-    db_path: str | Path | None, symbols: set[str], *,
-    now: datetime | None = None, db: Any = None,
+    db_path: str | Path | None,
+    symbols: set[str],
+    *,
+    now: datetime | None = None,
+    db: Any = None,
 ) -> set[str]:
     """Of `symbols`, those whose window is older than every measured one.
 
@@ -659,6 +723,7 @@ def _scale_in_symbols_past_measured_bound(
         return set()
     try:
         from src.execution.scale_in import pending_scale_in_rows_from_path
+
         rows = pending_scale_in_rows_from_path(db_path)
     except Exception:  # noqa: BLE001
         record_watchdog_pass("scale_in_bound.rows", fault=True, db=db)
@@ -676,9 +741,12 @@ def _scale_in_symbols_past_measured_bound(
 
 
 def deliberately_unguarded(
-    broker: Any, db_path: str | Path | None, *,
+    broker: Any,
+    db_path: str | Path | None,
+    *,
     skip_symbols: set[str] | None = None,
-    now: datetime | None = None, db: Any = None,
+    now: datetime | None = None,
+    db: Any = None,
 ) -> list[UnguardedWindow]:
     """Every symbol the sweep skipped for a live scale-in, named, with how
     long its protection has been deliberately down.
@@ -693,6 +761,7 @@ def deliberately_unguarded(
         return []
     try:
         from src.execution.scale_in import pending_scale_in_rows_from_path
+
         rows = pending_scale_in_rows_from_path(
             db_path if db_path is not None else DB_PATH,
         )
@@ -700,7 +769,8 @@ def deliberately_unguarded(
         record_watchdog_pass("unguarded.rows", fault=True, db=db)
         return []
     bound, observations = measured_window_bound_seconds(
-        db_path if db_path is not None else DB_PATH, db=db,
+        db_path if db_path is not None else DB_PATH,
+        db=db,
     )
     moment = now or _utc_now()
     out: list[UnguardedWindow] = []
@@ -715,7 +785,8 @@ def deliberately_unguarded(
             if stamp.tzinfo is None:
                 stamp = stamp.replace(tzinfo=timezone.utc)
             seconds = round(
-                max(0.0, (moment - stamp).total_seconds()), 1,
+                max(0.0, (moment - stamp).total_seconds()),
+                1,
             )
         except Exception:  # noqa: BLE001
             record_watchdog_pass("unguarded.window_seconds", fault=True, db=db)
@@ -724,11 +795,17 @@ def deliberately_unguarded(
             qty = float(row.get("position_qty_before_sell") or 0.0)
         except (TypeError, ValueError):
             qty = 0.0
-        out.append(UnguardedWindow(
-            symbol=symbol, held_qty=abs(qty), is_short=qty < 0,
-            since_utc=created, seconds_open=seconds,
-            bound_seconds=bound, bound_observations=observations,
-        ))
+        out.append(
+            UnguardedWindow(
+                symbol=symbol,
+                held_qty=abs(qty),
+                is_short=qty < 0,
+                since_utc=created,
+                seconds_open=seconds,
+                bound_seconds=bound,
+                bound_observations=observations,
+            )
+        )
     return out
 
 
@@ -766,7 +843,6 @@ def unguarded_text(rows: list[UnguardedWindow]) -> str:
         "stop by hand if the adding session is gone. At most once per "
         "symbol per trading day."
     )
-
 
 
 # ---------------------------------------------------------------------------
@@ -817,6 +893,7 @@ def repair_lock(db_path: str | Path | None = None, db: Any = None):
 # the check
 # ---------------------------------------------------------------------------
 
+
 def check_coverage(
     broker: Any,
     *,
@@ -848,15 +925,21 @@ def check_coverage(
     # did not), which is exactly the untruth this item exists to remove.
     scale_in_skip = _scale_in_skip(broker, db_path, db=db)
     gaps, broker_error = uncovered_positions(
-        broker, sweep_symbol=sweep_symbol, skip_symbols=scale_in_skip,
-        counts=counts, unreadable=unreadable, db=db,
+        broker,
+        sweep_symbol=sweep_symbol,
+        skip_symbols=scale_in_skip,
+        counts=counts,
+        unreadable=unreadable,
+        db=db,
     )
     unguarded = deliberately_unguarded(
-        broker, db_path, skip_symbols=scale_in_skip, now=moment, db=db,
+        broker,
+        db_path,
+        skip_symbols=scale_in_skip,
+        now=moment,
+        db=db,
     )
-    positions_checked = (
-        None if broker_error else int(counts.get("positions_checked", 0))
-    )
+    positions_checked = None if broker_error else int(counts.get("positions_checked", 0))
     day = most_recent_trading_day(moment, broker, db)
     ran, db_error = session_ran_during(day, db_path, db)
 
@@ -892,6 +975,7 @@ def check_coverage(
     # process is writing to the broker right now; this tick defers exactly as
     # it defers to a session, and the next tick re-reads the broker.
     from src.execution.scale_in import trading_session_lock_held
+
     session_active = trading_session_lock_held()
     # Counted HERE, before the repair block below can rebind `gaps` to the
     # post-repair re-read. See `CoverageStatus.gaps_detected`.
@@ -908,14 +992,19 @@ def check_coverage(
                 market_reason = f"{market_reason}, but {repair_deferred}"
             else:
                 repairs = replace_missing_stops(
-                    broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
+                    broker,
+                    gaps,
+                    last_buy=last_buy,
+                    sweep_symbol=sweep_symbol,
                     db=db,
                 )
                 if any(r.placed for r in repairs):
                     refreshed, refresh_error = uncovered_positions(
-                        broker, sweep_symbol=sweep_symbol,
+                        broker,
+                        sweep_symbol=sweep_symbol,
                         skip_symbols=scale_in_skip,
-                        unreadable=unreadable, db=db,
+                        unreadable=unreadable,
+                        db=db,
                     )
                     if refresh_error is None:
                         gaps = refreshed
@@ -941,16 +1030,14 @@ def check_coverage(
         )
         market_reason = f"{market_reason}, but {repair_deferred}"
     elif gaps and market_open and last_buy is None:
-        market_reason = (
-            f"{market_reason}, but no recorded-stop lookup was supplied, so "
-            "nothing was placed"
-        )
+        market_reason = f"{market_reason}, but no recorded-stop lookup was supplied, so nothing was placed"
 
     if last_buy is not None:
         try:
             from src.execution.stop_records import (
                 reconcile_recorded_stop_levels,
             )
+
             try:
                 positions = broker.get_positions()
                 record_watchdog_pass("stop_level.get_positions", db=db)
@@ -960,9 +1047,12 @@ def check_coverage(
             if not isinstance(positions, list):
                 positions = []
             mismatches = reconcile_recorded_stop_levels(
-                broker=broker, last_buy=last_buy, positions=positions,
+                broker=broker,
+                last_buy=last_buy,
+                positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=scale_in_skip, db=db,
+                skip_symbols=scale_in_skip,
+                db=db,
             )
             # Log every pass; do not page from this 30-minute unit. An
             # out-of-band mismatch is never write-back-cleared, so paging
@@ -971,7 +1061,9 @@ def check_coverage(
             for item in mismatches:
                 logger.error(
                     "STOP RECORD MISMATCH: %s — %s (short=%s)",
-                    item.symbol, item.reason, item.is_short,
+                    item.symbol,
+                    item.reason,
+                    item.is_short,
                 )
             record_watchdog_pass("stop_level_reconcile", db=db)
         except Exception as exc:  # noqa: BLE001
@@ -992,8 +1084,11 @@ def check_coverage(
     # placed itself minutes later. The repair itself is unchanged and was
     # already attempted above; only the page waits.
     waiting_now = [
-        r for r in repairs
-        if str(r.symbol).strip() and not r.placed and awaiting_first_print(
+        r
+        for r in repairs
+        if str(r.symbol).strip()
+        and not r.placed
+        and awaiting_first_print(
             refusal_code=r.refusal_code,
             still_covered=r.still_covered,
             market_open=market_open,
@@ -1006,27 +1101,27 @@ def check_coverage(
             "session (%s) — the whole-share leg still covers it, the repair "
             "will be attempted again, and the pass that finds the market "
             "shut with this still true is the one that pages.",
-            outcome.symbol, outcome.detail or "no reason given",
+            outcome.symbol,
+            outcome.detail or "no reason given",
         )
-    waiting_symbols = {
-        str(r.symbol).strip().upper() for r in waiting_now
-    }
-    placed_symbols = [
-        str(r.symbol).strip().upper() for r in repairs
-        if r.placed and str(r.symbol).strip()
-    ]
+    waiting_symbols = {str(r.symbol).strip().upper() for r in waiting_now}
+    placed_symbols = [str(r.symbol).strip().upper() for r in repairs if r.placed and str(r.symbol).strip()]
     resolution_symbols: tuple[str, ...] = ()
     if placed_symbols:
         clear_awaiting_first_print(placed_symbols, now=moment, state=state)
         # The retraction half. Claimed here, beside every other marker, so
         # the caller sends exactly what was reserved.
-        resolution_symbols = tuple(claim_repair_resolution_notice(
-            placed_symbols, now=moment, state=state,
-        ))
+        resolution_symbols = tuple(
+            claim_repair_resolution_notice(
+                placed_symbols,
+                now=moment,
+                state=state,
+            )
+        )
     failing_symbols = [
-        str(r.symbol).strip().upper() for r in repairs
-        if not r.placed and str(r.symbol).strip()
-        and str(r.symbol).strip().upper() not in waiting_symbols
+        str(r.symbol).strip().upper()
+        for r in repairs
+        if not r.placed and str(r.symbol).strip() and str(r.symbol).strip().upper() not in waiting_symbols
     ]
 
     # Board item 172. Claimed BEFORE the status is built, exactly as the
@@ -1038,10 +1133,7 @@ def check_coverage(
     # what `claim_unreadable_stop_alert` writes. A raw symbol here would
     # never match the stored set, so a mixed-case name from the broker would
     # page on every 30-minute tick — the dedup silently not applying.
-    unreadable_symbols = [
-        str(r.symbol).strip().upper() for r in unreadable
-        if str(r.symbol).strip()
-    ]
+    unreadable_symbols = [str(r.symbol).strip().upper() for r in unreadable if str(r.symbol).strip()]
 
     # Board item 193. Same day-keyed, per-symbol claim the unreadable page
     # uses, and claimed HERE rather than by the caller for the same reason:
@@ -1049,14 +1141,9 @@ def check_coverage(
     # would find this run's own marker and silence the message it wrote.
     already_unguarded = _unguarded_alerted_symbols(state, failure_day)
     # Item 211 defect 2: per symbol per day, like both siblings.
-    exposure_symbols = {
-        str(g.symbol).strip().upper() for g in gaps if str(g.symbol).strip()
-    }
+    exposure_symbols = {str(g.symbol).strip().upper() for g in gaps if str(g.symbol).strip()}
     already_exposed = _exposure_alerted_symbols(state, day.isoformat())
-    unguarded_fresh = [
-        r for r in unguarded
-        if r.over_bound and str(r.symbol).strip().upper() not in already_unguarded
-    ]
+    unguarded_fresh = [r for r in unguarded if r.over_bound and str(r.symbol).strip().upper() not in already_unguarded]
 
     status = CoverageStatus(
         trading_day=day.isoformat(),
@@ -1065,30 +1152,24 @@ def check_coverage(
         gaps_detected=gaps_detected,
         broker_error=broker_error,
         db_error=db_error,
-        already_alerted_for_day=bool(exposure_symbols) and all(
-            sym in already_exposed for sym in exposure_symbols
-        ),
+        already_alerted_for_day=bool(exposure_symbols) and all(sym in already_exposed for sym in exposure_symbols),
         repairs=repairs,
         market_open=market_open,
         market_reason=market_reason,
-        already_alerted_repair_failure_for_day=bool(failing_symbols) and all(
-            sym in already_failed for sym in failing_symbols
-        ),
+        already_alerted_repair_failure_for_day=bool(failing_symbols)
+        and all(sym in already_failed for sym in failing_symbols),
         positions_checked=positions_checked,
         repair_deferred=repair_deferred,
         unreadable=list(unreadable),
-        already_alerted_unreadable_for_day=bool(unreadable_symbols) and all(
-            sym in already_unreadable for sym in unreadable_symbols
-        ),
+        already_alerted_unreadable_for_day=bool(unreadable_symbols)
+        and all(sym in already_unreadable for sym in unreadable_symbols),
         # Board item 172. What THIS run is entitled to say out loud: the
         # rows whose symbol has not already been reported today. Built from
         # the same upper-cased comparison the claim itself uses, so a
         # mixed-case symbol from the broker cannot slip past the filter and
         # re-page under a different spelling.
         unreadable_fresh=[
-            r for r in unreadable
-            if str(r.symbol).strip()
-            and str(r.symbol).strip().upper() not in already_unreadable
+            r for r in unreadable if str(r.symbol).strip() and str(r.symbol).strip().upper() not in already_unreadable
         ],
         resolution_notice_symbols=resolution_symbols,
         unguarded=list(unguarded),
@@ -1105,10 +1186,7 @@ def check_coverage(
     if status.should_alert_unguarded:
         state["unguarded_alerted_symbols"] = {
             "day": failure_day,
-            "symbols": sorted(
-                already_unguarded
-                | {str(r.symbol).strip().upper() for r in unguarded_fresh}
-            ),
+            "symbols": sorted(already_unguarded | {str(r.symbol).strip().upper() for r in unguarded_fresh}),
         }
     if status.should_alert_unreadable:
         state["unreadable_stop_alerted_symbols"] = {
@@ -1154,8 +1232,11 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
         return False
     try:
         db.insert_specialist_evidence(
-            run_id=str(summary.get("run_id") or ""), agent_name=SWEEP_AGENT_NAME,
-            kind="pipeline_event", scope="run", symbol=None,
+            run_id=str(summary.get("run_id") or ""),
+            agent_name=SWEEP_AGENT_NAME,
+            kind="pipeline_event",
+            scope="run",
+            symbol=None,
             evidence_json=json.dumps(summary, sort_keys=True, default=str),
         )
         record_watchdog_pass("sweep_run_record", db=db)
@@ -1172,5 +1253,3 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
 # `kind` so a new fail-closed page does not need its own pair of helpers.
 # Callers that page the owner about a per-symbol condition use this; the
 # older named helpers keep their own keys so their history is unaffected.
-
-

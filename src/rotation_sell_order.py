@@ -1,4 +1,5 @@
 """Order a session's SELLs so a ranked-margin rotation's close goes last (lifted from pipeline_rotation_exec)."""
+
 from __future__ import annotations
 
 
@@ -22,12 +23,6 @@ def _rotation_sell_last(sell_decisions: list, ctx) -> list:
     held = str(rotation.get("held_symbol") or "").strip().upper()
     if not held:
         return sell_decisions
-    others = [
-        d for d in sell_decisions
-        if str(getattr(d, "symbol", "") or "").strip().upper() != held
-    ]
-    rotation_legs = [
-        d for d in sell_decisions
-        if str(getattr(d, "symbol", "") or "").strip().upper() == held
-    ]
+    others = [d for d in sell_decisions if str(getattr(d, "symbol", "") or "").strip().upper() != held]
+    rotation_legs = [d for d in sell_decisions if str(getattr(d, "symbol", "") or "").strip().upper() == held]
     return others + rotation_legs

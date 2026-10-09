@@ -48,47 +48,70 @@ LIVE_ENDPOINT = "https://api.alpaca.markets"
 
 def _account(number="PA3ABCDEF", equity="9825.11", cash="1200.00"):
     return SimpleNamespace(
-        account_number=number, id="acct-uuid", status="ACTIVE",
-        cash=cash, equity=equity, portfolio_value=equity,
-        long_market_value="8625.11", short_market_value="0",
-        buying_power="19650.22", non_marginable_buying_power="1200.00",
-        multiplier="2", pattern_day_trader=False,
+        account_number=number,
+        id="acct-uuid",
+        status="ACTIVE",
+        cash=cash,
+        equity=equity,
+        portfolio_value=equity,
+        long_market_value="8625.11",
+        short_market_value="0",
+        buying_power="19650.22",
+        non_marginable_buying_power="1200.00",
+        multiplier="2",
+        pattern_day_trader=False,
     )
 
 
 def _position(symbol, qty, avg, mv):
     return SimpleNamespace(
-        symbol=symbol, qty=str(qty), side="long", avg_entry_price=str(avg),
-        current_price=str(avg), market_value=str(mv), unrealized_pl="0",
+        symbol=symbol,
+        qty=str(qty),
+        side="long",
+        avg_entry_price=str(avg),
+        current_price=str(avg),
+        market_value=str(mv),
+        unrealized_pl="0",
     )
 
 
 def _order(oid, symbol):
     return SimpleNamespace(
-        id=oid, symbol=symbol, side="sell", order_type="stop", qty="1",
-        limit_price=None, stop_price="100.00", status="new",
-        time_in_force="gtc", submitted_at="2026-09-01T20:00:00Z",
+        id=oid,
+        symbol=symbol,
+        side="sell",
+        order_type="stop",
+        qty="1",
+        limit_price=None,
+        stop_price="100.00",
+        status="new",
+        time_in_force="gtc",
+        submitted_at="2026-09-01T20:00:00Z",
     )
 
 
 class FakeClient:
     """Records every mutating call so a test can assert none happened."""
 
-    def __init__(self, *, account=None, positions=None, orders=None,
-                 endpoint=PAPER_ENDPOINT, market_open=False):
+    def __init__(self, *, account=None, positions=None, orders=None, endpoint=PAPER_ENDPOINT, market_open=False):
         self._account = account if account is not None else _account()
-        self._positions = list(positions if positions is not None else [
-            _position("CMCSA", 18, 26.78, 474.39),
-            _position("DIS", 3, 108.09, 318.63),
-            _position("MSFT", 1, 491.63, 501.07),
-            _position("RSG", 2, 221.26, 444.70),
-            _position("SGOV", 75, 100.65, 7530.00),
-            _position("V", 1, 380.33, 373.70),
-        ])
-        self._orders = list(orders if orders is not None else [
-            _order(f"ord-{i}", s)
-            for i, s in enumerate(["CMCSA", "DIS", "MSFT", "RSG", "V"])
-        ])
+        self._positions = list(
+            positions
+            if positions is not None
+            else [
+                _position("CMCSA", 18, 26.78, 474.39),
+                _position("DIS", 3, 108.09, 318.63),
+                _position("MSFT", 1, 491.63, 501.07),
+                _position("RSG", 2, 221.26, 444.70),
+                _position("SGOV", 75, 100.65, 7530.00),
+                _position("V", 1, 380.33, 373.70),
+            ]
+        )
+        self._orders = list(
+            orders
+            if orders is not None
+            else [_order(f"ord-{i}", s) for i, s in enumerate(["CMCSA", "DIS", "MSFT", "RSG", "V"])]
+        )
         self._base_url = endpoint
         self._market_open = market_open
         self.writes: list[str] = []
@@ -110,9 +133,9 @@ class FakeClient:
     def close_all_positions(self, cancel_orders=None):
         self.writes.append(f"close_all_positions(cancel_orders={cancel_orders})")
         closed = [
-            SimpleNamespace(symbol=p.symbol, status=200,
-                            order_id=f"liq-{p.symbol}",
-                            body=SimpleNamespace(id=f"liq-{p.symbol}"))
+            SimpleNamespace(
+                symbol=p.symbol, status=200, order_id=f"liq-{p.symbol}", body=SimpleNamespace(id=f"liq-{p.symbol}")
+            )
             for p in self._positions
         ]
         self._positions = []
@@ -151,10 +174,10 @@ _EVIDENCE_ROWS = [
     ("technical", "seat_stance", 4),
     ("execution", "execution_skip", 1),
     ("pipeline", "nomination_summary", 1),
-    ("somebody_new", "brand_new_kind", 2),   # unrecognised: must be reported
+    ("somebody_new", "brand_new_kind", 2),  # unrecognised: must be reported
 ]
 
-EVIDENCE_KEEP_TOTAL = 40 + 30 + 5 + 7 + 3 + 2 + 2      # 89
+EVIDENCE_KEEP_TOTAL = 40 + 30 + 5 + 7 + 3 + 2 + 2  # 89
 EVIDENCE_DROP_TOTAL = 60 + 9 + 6 + 4 + 3 + 2 + 5 + 4 + 1 + 1 + 2  # 97
 
 
@@ -188,32 +211,30 @@ def db_path(tmp_path):
         """
     )
     for i in range(45):
-        conn.execute("INSERT INTO trades(symbol,action,qty,price) VALUES(?,?,?,?)",
-                     (f"S{i}", "BUY", 1.0, 10.0))
+        conn.execute("INSERT INTO trades(symbol,action,qty,price) VALUES(?,?,?,?)", (f"S{i}", "BUY", 1.0, 10.0))
     for s in ("CMCSA", "DIS", "MSFT", "RSG", "SGOV", "V"):
         conn.execute("INSERT INTO positions(symbol,qty) VALUES(?,?)", (s, 1.0))
     for d in range(12):
-        conn.execute("INSERT INTO daily_pnl(date,total_value) VALUES(?,?)",
-                     (f"2026-08-{d + 1:02d}", 9900.0))
+        conn.execute("INSERT INTO daily_pnl(date,total_value) VALUES(?,?)", (f"2026-08-{d + 1:02d}", 9900.0))
     for d in range(11):
-        conn.execute("INSERT INTO insights(date,lessons) VALUES(?,?)",
-                     (f"2026-08-{d + 1:02d}", "lesson"))
+        conn.execute("INSERT INTO insights(date,lessons) VALUES(?,?)", (f"2026-08-{d + 1:02d}", "lesson"))
     for i in range(137):
         conn.execute(
-            "INSERT INTO intraday_evaluations(symbol,run_id,status) VALUES(?,?,?)",
-            (f"S{i}", "r", "evaluated"))
-    conn.execute("INSERT INTO pending_protection_restores(symbol,sell_order_id) "
-                 "VALUES('X','o1')")
+            "INSERT INTO intraday_evaluations(symbol,run_id,status) VALUES(?,?,?)", (f"S{i}", "r", "evaluated")
+        )
+    conn.execute("INSERT INTO pending_protection_restores(symbol,sell_order_id) VALUES('X','o1')")
     conn.execute("INSERT INTO pending_repegs(symbol,old_order_id) VALUES('Y','o2')")
     for agent, kind, n in _EVIDENCE_ROWS:
         for _ in range(n):
             conn.execute(
                 "INSERT INTO specialist_evidence(run_id,agent_name,kind,scope,"
                 "symbol,evidence_json) VALUES(?,?,?,?,?,?)",
-                ("run-1", agent, kind, "symbol", "AAA", "{}"))
+                ("run-1", agent, kind, "symbol", "AAA", "{}"),
+            )
     for i in range(332):
-        conn.execute("INSERT INTO agent_logs(agent_name,run_id,cost_usd) VALUES(?,?,?)",
-                     ("tech_analyst", "run-1", 0.01))
+        conn.execute(
+            "INSERT INTO agent_logs(agent_name,run_id,cost_usd) VALUES(?,?,?)", ("tech_analyst", "run-1", 0.01)
+        )
     for i in range(50):
         conn.execute("INSERT INTO alert_channel_checks(channel) VALUES('telegram')")
     conn.execute("INSERT INTO llm_budget_days(day,spend) VALUES('2026-09-01', 1.5)")
@@ -227,10 +248,8 @@ def db_path(tmp_path):
 def _counts(path: Path) -> dict[str, int]:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        names = [r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")]
-        return {n: conn.execute(f'SELECT COUNT(*) FROM "{n}"').fetchone()[0]
-                for n in names}
+        names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        return {n: conn.execute(f'SELECT COUNT(*) FROM "{n}"').fetchone()[0] for n in names}
     finally:
         conn.close()
 
@@ -238,25 +257,24 @@ def _counts(path: Path) -> dict[str, int]:
 @pytest.fixture
 def wired(dr, db_path, monkeypatch):
     """run() with config + broker + live-probe stubbed. Returns a handle."""
-    state = SimpleNamespace(client=FakeClient(), probe={"status": 403,
-                                                        "authenticated": False,
-                                                        "error": None})
+    state = SimpleNamespace(client=FakeClient(), probe={"status": 403, "authenticated": False, "error": None})
 
     cfg = SimpleNamespace(
-        alpaca=SimpleNamespace(paper=True,
-                               base_url="https://paper-api.alpaca.markets"),
+        alpaca=SimpleNamespace(paper=True, base_url="https://paper-api.alpaca.markets"),
         storage=SimpleNamespace(db_path=str(db_path)),
     )
     import src.config as src_config
+
     monkeypatch.setattr(src_config, "load_config", lambda _p: cfg)
 
     import alpaca.trading.client as ac
+
     monkeypatch.setattr(
-        ac, "TradingClient",
+        ac,
+        "TradingClient",
         lambda *a, **k: state.client,
     )
-    monkeypatch.setattr(dr, "probe_live_endpoint",
-                        lambda *a, **k: state.probe)
+    monkeypatch.setattr(dr, "probe_live_endpoint", lambda *a, **k: state.probe)
     monkeypatch.setenv("ALPACA_API_KEY", "PKTESTKEY")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "sekrit")
     # No .env in the tmp cwd; keep the loader from finding the real one.
@@ -272,9 +290,12 @@ def _base_argv(db_path, backup_root):
     # depending on what time of day CI runs. The window guardrail itself is
     # tested directly against a frozen clock further down.
     return [
-        "--config", "/does/not/matter.yaml",
-        "--db", str(db_path),
-        "--backup-root", str(backup_root),
+        "--config",
+        "/does/not/matter.yaml",
+        "--db",
+        str(db_path),
+        "--backup-root",
+        str(backup_root),
         "--allow-session-window",
     ]
 
@@ -282,6 +303,7 @@ def _base_argv(db_path, backup_root):
 # ===========================================================================
 # 1. THE LIVE-ACCOUNT GUARDRAIL
 # ===========================================================================
+
 
 def test_paper_account_passes_every_check(dr):
     passed = dr.assert_paper_account(
@@ -402,6 +424,7 @@ def test_unreadable_endpoint_refuses_rather_than_guessing(dr):
 
 def test_probe_live_endpoint_reports_authentication(dr, monkeypatch):
     import requests
+
     calls = {}
 
     def fake_get(url, headers=None, timeout=None):
@@ -432,12 +455,15 @@ def test_probe_live_endpoint_swallows_network_errors(dr, monkeypatch):
 def test_resolve_endpoint_reads_the_real_sdk_client(dr):
     """The guardrail's endpoint check must reflect what alpaca-py will hit."""
     from alpaca.trading.client import TradingClient
+
     assert dr.resolve_endpoint(TradingClient("k", "s", paper=True)) == PAPER_ENDPOINT
     assert dr.resolve_endpoint(TradingClient("k", "s", paper=False)) == LIVE_ENDPOINT
 
 
 def test_live_account_refusal_places_no_broker_calls_and_leaves_db_intact(
-    dr, wired, tmp_path,
+    dr,
+    wired,
+    tmp_path,
 ):
     """END TO END: the broker reports a LIVE-shaped account.
 
@@ -447,7 +473,8 @@ def test_live_account_refusal_places_no_broker_calls_and_leaves_db_intact(
     """
     wired.client = FakeClient(account=_account(number="927451638"))
     import alpaca.trading.client as ac
-    ac.TradingClient = lambda *a, **k: wired.client   # re-point after mutation
+
+    ac.TradingClient = lambda *a, **k: wired.client  # re-point after mutation
 
     before = _counts(wired.db_path)
     backup_root = tmp_path / "resets"
@@ -463,11 +490,11 @@ def test_live_endpoint_refusal_places_no_broker_calls(dr, wired, tmp_path):
     """Same, but the account looks fine and the ENDPOINT is live."""
     wired.client = FakeClient(endpoint=LIVE_ENDPOINT)
     import alpaca.trading.client as ac
+
     ac.TradingClient = lambda *a, **k: wired.client
 
     before = _counts(wired.db_path)
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes"])
     assert rc == 3
     assert wired.client.writes == []
     assert _counts(wired.db_path) == before
@@ -477,6 +504,7 @@ def test_live_endpoint_refusal_places_no_broker_calls(dr, wired, tmp_path):
 # 2. DRY RUN IS THE DEFAULT
 # ===========================================================================
 
+
 def test_dry_run_is_the_default_and_changes_nothing(dr, wired, tmp_path, capsys):
     before = _counts(wired.db_path)
     backup_root = tmp_path / "resets"
@@ -484,9 +512,9 @@ def test_dry_run_is_the_default_and_changes_nothing(dr, wired, tmp_path, capsys)
     rc = dr.run(_base_argv(wired.db_path, backup_root))
 
     assert rc == 0
-    assert wired.client.writes == []          # no broker writes
-    assert _counts(wired.db_path) == before   # no rows deleted
-    assert not backup_root.exists()           # no backup written either
+    assert wired.client.writes == []  # no broker writes
+    assert _counts(wired.db_path) == before  # no rows deleted
+    assert not backup_root.exists()  # no backup written either
 
     out = capsys.readouterr().out
     assert "DRY RUN" in out
@@ -503,8 +531,8 @@ def test_dry_run_prints_every_position_order_and_table(dr, wired, tmp_path, caps
     assert "POSITIONS TO CLOSE (6)" in out
     for table in dr.CLEAR_TABLES:
         assert f"CLEAR  {table}" in out
-    assert "45 rows" in out          # trades row count
-    assert "future_table" in out     # unknown table surfaced
+    assert "45 rows" in out  # trades row count
+    assert "future_table" in out  # unknown table surfaced
     assert "UNKNOWN to this tool" in out
 
 
@@ -520,6 +548,7 @@ def test_execute_without_a_tty_requires_yes(dr, wired, tmp_path, monkeypatch):
 # ===========================================================================
 # 3. BACKUP
 # ===========================================================================
+
 
 def test_backup_database_produces_a_readable_identical_copy(dr, db_path, tmp_path):
     dest = tmp_path / "bk" / "copy.db"
@@ -574,13 +603,13 @@ def test_backup_directory_is_timestamped(dr):
 # 4. TABLE SELECTION
 # ===========================================================================
 
+
 def test_policy_covers_clear_and_keep_without_overlap(dr):
     assert not set(dr.CLEAR_TABLES) & set(dr.KEEP_TABLES)
     assert dr.TABLE_POLICY[dr.EVIDENCE_TABLE] == "partial"
     # The tables that must never be cleared, spelled out so a future edit
     # that moves one of them trips this test.
-    for kept in ("agent_logs", "llm_budget_days", "llm_circuit_state",
-                 "llm_quota_holds", "alert_channel_checks"):
+    for kept in ("agent_logs", "llm_budget_days", "llm_circuit_state", "llm_quota_holds", "alert_channel_checks"):
         assert dr.TABLE_POLICY[kept] == "keep"
     for cleared in ("trades", "positions", "daily_pnl", "insights"):
         assert dr.TABLE_POLICY[cleared] == "clear"
@@ -604,8 +633,7 @@ def test_plan_classifies_every_table(dr, db_path):
 
 
 def test_execute_clears_only_the_allowlist(dr, wired, tmp_path):
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes"])
     assert rc == 0
     after = _counts(wired.db_path)
 
@@ -621,39 +649,44 @@ def test_execute_clears_only_the_allowlist(dr, wired, tmp_path):
 
 
 def test_evidence_analysis_only_keeps_paid_specialist_observation(
-    dr, wired, tmp_path,
+    dr,
+    wired,
+    tmp_path,
 ):
-    dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-           + ["--execute", "--yes", "--evidence", "analysis-only"])
+    dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--evidence", "analysis-only"])
 
     conn = sqlite3.connect(wired.db_path)
     try:
-        kinds = dict(conn.execute(
-            "SELECT kind, COUNT(*) FROM specialist_evidence GROUP BY kind"))
+        kinds = dict(conn.execute("SELECT kind, COUNT(*) FROM specialist_evidence GROUP BY kind"))
     finally:
         conn.close()
 
-    assert kinds == {"analysis": 75, "finding": 7, "admission": 3,
-                     "scan_summary": 2, "coverage": 2}
+    assert kinds == {"analysis": 75, "finding": 7, "admission": 3, "scan_summary": 2, "coverage": 2}
     # every decision-shaped row is gone
-    for gone in ("target", "proposed_order", "reasoning", "verdict",
-                 "modification", "review_metrics", "seat_stance",
-                 "execution_skip", "pipeline_event", "nomination_summary",
-                 "brand_new_kind"):
+    for gone in (
+        "target",
+        "proposed_order",
+        "reasoning",
+        "verdict",
+        "modification",
+        "review_metrics",
+        "seat_stance",
+        "execution_skip",
+        "pipeline_event",
+        "nomination_summary",
+        "brand_new_kind",
+    ):
         assert gone not in kinds
 
 
 def test_evidence_none_empties_the_table(dr, wired, tmp_path):
-    dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-           + ["--execute", "--yes", "--evidence", "none"])
+    dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--evidence", "none"])
     assert _counts(wired.db_path)["specialist_evidence"] == 0
 
 
 def test_evidence_all_keeps_the_table_intact(dr, wired, tmp_path):
-    dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-           + ["--execute", "--yes", "--evidence", "all"])
-    assert (_counts(wired.db_path)["specialist_evidence"]
-            == EVIDENCE_KEEP_TOTAL + EVIDENCE_DROP_TOTAL)
+    dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--evidence", "all"])
+    assert _counts(wired.db_path)["specialist_evidence"] == EVIDENCE_KEEP_TOTAL + EVIDENCE_DROP_TOTAL
 
 
 def test_unrecognised_evidence_kind_is_dropped_and_flagged(dr, db_path):
@@ -669,18 +702,19 @@ def test_unrecognised_evidence_kind_is_dropped_and_flagged(dr, db_path):
 
 
 def test_autoincrement_ids_restart_only_for_fully_emptied_tables(
-    dr, wired, tmp_path,
+    dr,
+    wired,
+    tmp_path,
 ):
-    dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-           + ["--execute", "--yes"])
+    dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes"])
     conn = sqlite3.connect(wired.db_path)
     try:
         seqs = dict(conn.execute("SELECT name, seq FROM sqlite_sequence"))
     finally:
         conn.close()
-    assert "trades" not in seqs                 # emptied -> counter reset
-    assert seqs.get("agent_logs") == 332        # untouched
-    assert "specialist_evidence" in seqs        # only partially cleared
+    assert "trades" not in seqs  # emptied -> counter reset
+    assert seqs.get("agent_logs") == 332  # untouched
+    assert "specialist_evidence" in seqs  # only partially cleared
 
 
 def test_clear_is_atomic(dr, db_path, monkeypatch):
@@ -705,8 +739,7 @@ def test_clear_is_atomic(dr, db_path, monkeypatch):
 def test_the_tool_never_deletes_files(dr):
     """Structural: no filesystem removal API appears in the script at all."""
     source = SCRIPT.read_text()
-    for forbidden in ("shutil.rmtree", "os.remove", "os.unlink",
-                      "Path.unlink", ".rmdir(", "DROP TABLE"):
+    for forbidden in ("shutil.rmtree", "os.remove", "os.unlink", "Path.unlink", ".rmdir(", "DROP TABLE"):
         assert forbidden not in source, f"{forbidden} must not appear"
 
 
@@ -714,33 +747,41 @@ def test_the_tool_never_deletes_files(dr):
 # 5. MARKET / SESSION-WINDOW GUARDRAIL
 # ===========================================================================
 
+
 def _et(hh, mm, *, weekday=True):
     from datetime import datetime
     from src.trading_calendar import ET
-    day = 1 if weekday else 6      # 2026-09-01 Tue, 2026-09-06 Sun
+
+    day = 1 if weekday else 6  # 2026-09-01 Tue, 2026-09-06 Sun
     return datetime(2026, 9, day, hh, mm, tzinfo=ET)
 
 
 def test_refuses_while_the_market_is_open(dr):
     w = dr.check_trading_window(
-        market_open=True, allow_market_open=False,
-        allow_session_window=True, now=_et(18, 30, weekday=False),
+        market_open=True,
+        allow_market_open=False,
+        allow_session_window=True,
+        now=_et(18, 30, weekday=False),
     )
     assert w["refusals"] and "market is OPEN" in w["refusals"][0]
 
 
 def test_allow_market_open_overrides_it(dr):
     w = dr.check_trading_window(
-        market_open=True, allow_market_open=True,
-        allow_session_window=True, now=_et(18, 30, weekday=False),
+        market_open=True,
+        allow_market_open=True,
+        allow_session_window=True,
+        now=_et(18, 30, weekday=False),
     )
     assert w["refusals"] == []
 
 
 def test_refuses_inside_a_desk_session_window(dr):
     w = dr.check_trading_window(
-        market_open=False, allow_market_open=False,
-        allow_session_window=False, now=_et(20, 30),   # evening window
+        market_open=False,
+        allow_market_open=False,
+        allow_session_window=False,
+        now=_et(20, 30),  # evening window
     )
     assert any("session window" in r for r in w["refusals"])
     assert "evening" in w["active_session_windows"]
@@ -748,16 +789,20 @@ def test_refuses_inside_a_desk_session_window(dr):
 
 def test_allow_session_window_overrides_it(dr):
     w = dr.check_trading_window(
-        market_open=False, allow_market_open=False,
-        allow_session_window=True, now=_et(20, 30),
+        market_open=False,
+        allow_market_open=False,
+        allow_session_window=True,
+        now=_et(20, 30),
     )
     assert w["refusals"] == []
 
 
 def test_closed_market_warns_that_liquidations_queue(dr):
     w = dr.check_trading_window(
-        market_open=False, allow_market_open=False,
-        allow_session_window=False, now=_et(17, 30),
+        market_open=False,
+        allow_market_open=False,
+        allow_session_window=False,
+        now=_et(17, 30),
     )
     assert w["refusals"] == []
     assert any("QUEUED" in x for x in w["warnings"])
@@ -777,6 +822,7 @@ def test_fresh_decision_checkpoint_is_warned_about(dr, tmp_path):
 def test_expired_decision_checkpoint_is_not_warned_about(dr, tmp_path):
     import os
     from src.decision_checkpoint import MAX_AGE_MINUTES
+
     ckpt = tmp_path / "checkpoints"
     ckpt.mkdir()
     old = ckpt / "2026-08-31-morning.json"
@@ -792,8 +838,10 @@ def test_no_checkpoint_directory_is_not_an_error(dr, tmp_path):
 
 def test_unknown_clock_is_warned_not_refused(dr):
     w = dr.check_trading_window(
-        market_open=None, allow_market_open=False,
-        allow_session_window=False, now=_et(17, 30),
+        market_open=None,
+        allow_market_open=False,
+        allow_session_window=False,
+        now=_et(17, 30),
     )
     assert w["refusals"] == []
     assert any("clock" in x for x in w["warnings"])
@@ -802,11 +850,11 @@ def test_unknown_clock_is_warned_not_refused(dr):
 def test_run_refuses_when_the_broker_clock_says_open(dr, wired, tmp_path):
     wired.client = FakeClient(market_open=True)
     import alpaca.trading.client as ac
+
     ac.TradingClient = lambda *a, **k: wired.client
 
     before = _counts(wired.db_path)
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes"])
     assert rc == 4
     assert wired.client.writes == []
     assert _counts(wired.db_path) == before
@@ -815,6 +863,7 @@ def test_run_refuses_when_the_broker_clock_says_open(dr, wired, tmp_path):
 # ===========================================================================
 # 6. THE FLATTEN ITSELF
 # ===========================================================================
+
 
 def test_flatten_cancels_orders_before_liquidating(dr):
     client = FakeClient()
@@ -836,8 +885,7 @@ def test_flatten_reports_broker_errors_instead_of_raising(dr):
 
 
 def test_execute_flattens_and_summarises(dr, wired, tmp_path, capsys):
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes"])
     assert rc == 0
     assert "close_all_positions(cancel_orders=True)" in wired.client.writes
     out = capsys.readouterr().out
@@ -849,6 +897,7 @@ def test_execute_flattens_and_summarises(dr, wired, tmp_path, capsys):
 def test_a_failed_flatten_does_not_wipe_the_ledger(dr, wired, tmp_path):
     """If the liquidation errors, the trade history that explains the
     still-open positions must survive."""
+
     class Broken(FakeClient):
         def close_all_positions(self, cancel_orders=None):
             self.writes.append("close_all_positions(attempted)")
@@ -856,35 +905,37 @@ def test_a_failed_flatten_does_not_wipe_the_ledger(dr, wired, tmp_path):
 
     wired.client = Broken()
     import alpaca.trading.client as ac
+
     ac.TradingClient = lambda *a, **k: wired.client
 
     before = _counts(wired.db_path)
     backup_root = tmp_path / "resets"
-    rc = dr.run(_base_argv(wired.db_path, backup_root)
-                + ["--execute", "--yes", "--settle-seconds", "0"])
+    rc = dr.run(_base_argv(wired.db_path, backup_root) + ["--execute", "--yes", "--settle-seconds", "0"])
 
     assert rc == 5
-    assert _counts(wired.db_path) == before      # ledger intact
+    assert _counts(wired.db_path) == before  # ledger intact
     stamp_dir = next(iter(backup_root.iterdir()))
     manifest = json.loads((stamp_dir / "reset_manifest.json").read_text())
     assert "503 from broker" in manifest["aborted"]
-    assert (stamp_dir / "quant_agent.db").exists()   # backup still taken
+    assert (stamp_dir / "quant_agent.db").exists()  # backup still taken
 
 
 def test_positions_left_open_with_the_market_open_aborts_the_clear(dr, wired, tmp_path):
     class NoOp(FakeClient):
         def close_all_positions(self, cancel_orders=None):
             self.writes.append("close_all_positions(no-op)")
-            return []          # broker accepted nothing; positions remain
+            return []  # broker accepted nothing; positions remain
 
     wired.client = NoOp(market_open=True)
     import alpaca.trading.client as ac
+
     ac.TradingClient = lambda *a, **k: wired.client
 
     before = _counts(wired.db_path)
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes", "--settle-seconds", "0",
-                   "--allow-market-open"])
+    rc = dr.run(
+        _base_argv(wired.db_path, tmp_path / "resets")
+        + ["--execute", "--yes", "--settle-seconds", "0", "--allow-market-open"]
+    )
     assert rc == 5
     assert _counts(wired.db_path) == before
 
@@ -892,27 +943,28 @@ def test_positions_left_open_with_the_market_open_aborts_the_clear(dr, wired, tm
 def test_positions_queued_with_the_market_closed_still_clears(dr, wired, tmp_path):
     """The normal daily path: the market is shut, the sells are queued to the
     next open, and the desk's own history is cleared anyway."""
+
     class Queued(FakeClient):
         def close_all_positions(self, cancel_orders=None):
             self.writes.append("close_all_positions(queued)")
             self._orders = []
-            return [SimpleNamespace(symbol=p.symbol, status=200,
-                                    order_id=f"q-{p.symbol}", body=None)
-                    for p in self._positions]      # positions NOT gone yet
+            return [
+                SimpleNamespace(symbol=p.symbol, status=200, order_id=f"q-{p.symbol}", body=None)
+                for p in self._positions
+            ]  # positions NOT gone yet
 
     wired.client = Queued(market_open=False)
     import alpaca.trading.client as ac
+
     ac.TradingClient = lambda *a, **k: wired.client
 
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes", "--settle-seconds", "0"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--settle-seconds", "0"])
     assert rc == 0
     assert _counts(wired.db_path)["trades"] == 0
 
 
 def test_skip_broker_leaves_the_book_alone(dr, wired, tmp_path):
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes", "--skip-broker"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--skip-broker"])
     assert rc == 0
     assert wired.client.writes == []
     assert _counts(wired.db_path)["trades"] == 0
@@ -920,8 +972,7 @@ def test_skip_broker_leaves_the_book_alone(dr, wired, tmp_path):
 
 def test_skip_db_leaves_the_database_alone(dr, wired, tmp_path):
     before = _counts(wired.db_path)
-    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets")
-                + ["--execute", "--yes", "--skip-db"])
+    rc = dr.run(_base_argv(wired.db_path, tmp_path / "resets") + ["--execute", "--yes", "--skip-db"])
     assert rc == 0
     assert _counts(wired.db_path) == before
     assert "close_all_positions(cancel_orders=True)" in wired.client.writes

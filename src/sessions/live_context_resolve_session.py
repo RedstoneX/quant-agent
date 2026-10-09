@@ -1,4 +1,5 @@
 """Live-context resolution step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ class LiveContextResolveSession:
         block blanked when the daily bar in it belongs to a prior session.
         """
         from src.data.live_price import (
-            NO_PRICE_AT_ALL, SOURCE_LAST_TRADE, resolve_live_price,
+            NO_PRICE_AT_ALL,
+            SOURCE_LAST_TRADE,
+            resolve_live_price,
         )
 
         out: dict[str, dict] = {}
@@ -40,8 +43,7 @@ class LiveContextResolveSession:
             snap = snapshots.get(sym) or {}
             resolved = resolve_live_price(snap)
             if resolved.price is None:
-                (missing if resolved.unavailable == NO_PRICE_AT_ALL
-                 else stale).append(sym)
+                (missing if resolved.unavailable == NO_PRICE_AT_ALL else stale).append(sym)
                 out[sym] = {"live_unavailable": resolved.unavailable}
                 continue
             # The RAW provider price is deliberately NOT republished here.
@@ -49,8 +51,7 @@ class LiveContextResolveSession:
             # prior session's number, and the next reader picking the wrong
             # one is this bug returning. What no consumer can reach, no
             # consumer can misread.
-            entry = {k: v for k, v in snap.items()
-                     if k not in ("last_price", "minute_close")}
+            entry = {k: v for k, v in snap.items() if k not in ("last_price", "minute_close")}
             entry["live_price"] = resolved.price
             entry["live_price_source"] = resolved.source
             entry["live_price_at"] = resolved.as_of
@@ -60,8 +61,7 @@ class LiveContextResolveSession:
                 # Blank it rather than let a caller render yesterday's
                 # open/high/low/volume under a "today" heading.
                 blanked.append(sym)
-                for field in ("session_open", "session_close", "session_high",
-                              "session_low", "session_volume"):
+                for field in ("session_open", "session_close", "session_high", "session_low", "session_volume"):
                     entry[field] = None
             if resolved.source != SOURCE_LAST_TRADE:
                 rescued[sym] = resolved.source
@@ -78,12 +78,15 @@ class LiveContextResolveSession:
                 "bar dated to a prior session. One name is ordinary; all of "
                 "them means the daily-bar timestamp convention is not what "
                 "`src/data/live_price.py` assumes — check it before trusting "
-                "any session range", len(blanked),
+                "any session range",
+                len(blanked),
             )
         elif blanked:
             logger.info(
                 "live session context: %d symbol(s) carried a PRIOR session's "
                 "daily bar; their session range is blanked rather than shown "
-                "as today's (item 120): %s", len(blanked), blanked[:10],
+                "as today's (item 120): %s",
+                len(blanked),
+                blanked[:10],
             )
         return out, missing, stale, rescued

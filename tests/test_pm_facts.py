@@ -11,7 +11,10 @@ from tests.pipeline_factory import build_pipeline
 
 def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg, current_price=current,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg,
+        current_price=current,
         market_value=qty * current,
         unrealized_pnl=(current - avg) * qty,
         sector=sector,
@@ -20,14 +23,22 @@ def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
 
 def _ta(symbol: str, age: int | None = None) -> TechAnalysisResult:
     t = TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=100,
-        stop_loss=95, reference_target=110,
-        support_levels=[95], resistance_levels=[110],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol=symbol,
+        rating="buy",
+        entry_price=100,
+        stop_loss=95,
+        reference_target=110,
+        support_levels=[95],
+        resistance_levels=[110],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning="test",
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x",
-            volume="x", support_resistance="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
+            support_resistance="x",
         ),
         thesis_invalid_if="closes below support",
     )
@@ -37,21 +48,30 @@ def _ta(symbol: str, age: int | None = None) -> TechAnalysisResult:
 
 def test_pmfacts_render_produces_structured_block():
     f = PMFacts(
-        closed_trades_30d=12, win_rate_30d_pct=58.3,
-        avg_return_30d_pct=2.4, avg_hold_days_30d=6.1,
+        closed_trades_30d=12,
+        win_rate_30d_pct=58.3,
+        avg_return_30d_pct=2.4,
+        avg_hold_days_30d=6.1,
         # audit round 2 #35: the render denominator is now rm_verdicts_seen
         # (real row count), not a hardcoded /5 — set it so "2/5" stays valid.
-        rm_verdicts_seen=5, rm_scale_downs_last5=2, rm_mods_last5=3,
-        invested_pct=72.0, cash_pct=28.0,
+        rm_verdicts_seen=5,
+        rm_scale_downs_last5=2,
+        rm_mods_last5=3,
+        invested_pct=72.0,
+        cash_pct=28.0,
         position_count=8,
         # Spec §12.2 — the table is split by side and never netted.
         sector_weights_long={"Technology": 22.0, "Financial Services": 15.0},
         sector_weights_short={"Energy": 6.0},
-        positions_under_5d=2, positions_5_to_15d=4, positions_over_15d=2,
+        positions_under_5d=2,
+        positions_5_to_15d=4,
+        positions_over_15d=2,
         positions_drift_flagged=1,
-        tech_signals_count=14, tech_signals_median_age_days=3,
+        tech_signals_count=14,
+        tech_signals_median_age_days=3,
         tech_signals_stale_count=2,
-        rolling_5d_pct=-1.5, rolling_20d_pct=3.0,
+        rolling_5d_pct=-1.5,
+        rolling_20d_pct=3.0,
     )
     rendered = f.render()
     assert "n=12" in rendered
@@ -72,38 +92,35 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     db.initialize()
 
     # Seed 3 closed trades (meets calibration threshold ≥3)
-    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1",
-                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-15 days') WHERE broker_order_id='b1'")
     db.conn.commit()
-    db.insert_trade("NVDA", "SELL", 10, 115, "x", "r2",
-                    broker_order_id="s1", fill_status="filled")
+    db.insert_trade("NVDA", "SELL", 10, 115, "x", "r2", broker_order_id="s1", fill_status="filled")
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-5 days') WHERE broker_order_id='s1'")
     db.conn.commit()
-    db.insert_trade("AAPL", "BUY", 5, 200, "x", "r1",
-                    broker_order_id="b2", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("AAPL", "BUY", 5, 200, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-14 days') WHERE broker_order_id='b2'")
     db.conn.commit()
-    db.insert_trade("AAPL", "SELL", 5, 180, "x", "r2",
-                    broker_order_id="s2", fill_status="filled")
+    db.insert_trade("AAPL", "SELL", 5, 180, "x", "r2", broker_order_id="s2", fill_status="filled")
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-4 days') WHERE broker_order_id='s2'")
     db.conn.commit()
-    db.insert_trade("JPM", "BUY", 10, 150, "x", "r1",
-                    broker_order_id="b3", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("JPM", "BUY", 10, 150, "x", "r1", broker_order_id="b3", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-10 days') WHERE broker_order_id='b3'")
     db.conn.commit()
-    db.insert_trade("JPM", "SELL", 10, 160, "x", "r2",
-                    broker_order_id="s3", fill_status="filled")
+    db.insert_trade("JPM", "SELL", 10, 160, "x", "r2", broker_order_id="s3", fill_status="filled")
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-3 days') WHERE broker_order_id='s3'")
     db.conn.commit()
 
     # Insert 2 RM verdicts: one clean, one with scale_down
     db.insert_agent_log(
-        agent_name="risk_manager", run_id="r1",
-        input_summary="", input_message="", output_summary="",
-        full_response=json.dumps({"approved": True, "scale_all_buys": 0.5,
-                                   "modifications": [], "reasoning": "cut"}),
-        model="x", tokens_used=0,
+        agent_name="risk_manager",
+        run_id="r1",
+        input_summary="",
+        input_message="",
+        output_summary="",
+        full_response=json.dumps({"approved": True, "scale_all_buys": 0.5, "modifications": [], "reasoning": "cut"}),
+        model="x",
+        tokens_used=0,
     )
     db.conn.execute("UPDATE agent_logs SET timestamp=datetime('now', '-2 days') WHERE agent_name='risk_manager'")
     db.conn.commit()
@@ -112,14 +129,18 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     pipeline.tech_store.get_history.return_value = []
 
     positions = [
-        _pos("MSFT", 20, 400, 440, sector="Technology"),  # weight=44%, pnl=10% (large but not drift because we want to test flag)
-        _pos("XOM", 10, 100, 110, sector="Energy"),       # small position
+        _pos(
+            "MSFT", 20, 400, 440, sector="Technology"
+        ),  # weight=44%, pnl=10% (large but not drift because we want to test flag)
+        _pos("XOM", 10, 100, 110, sector="Energy"),  # small position
     ]
     analyses = [_ta("NVDA", age=3), _ta("AMD", age=10), _ta("GOOGL", age=None)]
 
     facts = pipeline._build_pm_facts(
-        positions=positions, analyses=analyses,
-        total_value=10_000, cash=100,
+        positions=positions,
+        analyses=analyses,
+        total_value=10_000,
+        cash=100,
         recent_performance={"rolling_5d_pct": -2.0, "rolling_20d_pct": 1.0},
     )
 
@@ -140,12 +161,12 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     # cash is now the figure that actually completes the book — 9,900 of
     # positions + 100 of cash = the 10,000 of equity — so both readings
     # agree and the assertion no longer depends on which one is used.
-    assert facts.invested_pct == 99.0     # (8,800 MSFT + 1,100 XOM) / 10,000
+    assert facts.invested_pct == 99.0  # (8,800 MSFT + 1,100 XOM) / 10,000
     assert facts.cash_pct == 1.0
     assert facts.position_count == 2
     assert facts.sector_weights_long.get("Technology") == 88.0  # 20*440/10000 * 100
-    assert facts.sector_weights_long.get("Energy") == 11.0     # 10*110/10000 * 100
-    assert facts.sector_weights_short == {}   # long-only book (spec §12.2)
+    assert facts.sector_weights_long.get("Energy") == 11.0  # 10*110/10000 * 100
+    assert facts.sector_weights_short == {}  # long-only book (spec §12.2)
 
     # Signal freshness
     assert facts.tech_signals_count == 3
@@ -160,15 +181,21 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
 def test_pm_build_user_message_renders_facts_when_provided():
     """PM prompt surfaces the facts section under '## Quantitative Facts'."""
     facts = PMFacts(
-        closed_trades_30d=8, win_rate_30d_pct=62.5,
-        invested_pct=70.0, cash_pct=30.0, position_count=5,
+        closed_trades_30d=8,
+        win_rate_30d_pct=62.5,
+        invested_pct=70.0,
+        cash_pct=30.0,
+        position_count=5,
         sector_weights_long={"Technology": 30.0},
     )
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=3000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=3000.0,
+            total_value=10000.0,
             facts=facts,
         )
         assert "## Quantitative Facts" in msg
@@ -182,8 +209,11 @@ def test_pm_build_user_message_omits_facts_section_when_none():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=3000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=3000.0,
+            total_value=10000.0,
             # no facts kwarg
         )
         assert "## Quantitative Facts" not in msg

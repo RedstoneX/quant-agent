@@ -31,7 +31,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.models import (
-    EarningsAnalysis, PortfolioDecision, Position, ReasoningChain,
+    EarningsAnalysis,
+    PortfolioDecision,
+    Position,
+    ReasoningChain,
     TradeDecision,
 )
 from tests.pipeline_factory import build_pipeline
@@ -44,26 +47,35 @@ PROMPT_DIR = _REPO_ROOT / "config" / "prompts"
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _mk_agent(cls):
     with patch("anthropic.Anthropic"):
         return cls(api_key="test", model="claude-sonnet-4-6")
 
 
-def _position(symbol="NVDA", qty=10, avg_entry=100.0, current_price=110.0,
-              market_value=None, unrealized_pnl=100.0, sector="Tech"):
+def _position(
+    symbol="NVDA", qty=10, avg_entry=100.0, current_price=110.0, market_value=None, unrealized_pnl=100.0, sector="Tech"
+):
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry, current_price=current_price,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
         market_value=market_value if market_value is not None else qty * current_price,
-        unrealized_pnl=unrealized_pnl, sector=sector,
+        unrealized_pnl=unrealized_pnl,
+        sector=sector,
     )
 
 
 def _rc(**overrides) -> ReasoningChain:
     fields = dict(
-        macro_filter="macro is risk-on", news_check="nothing material",
-        earnings_check="none queued", signal_conflicts="none",
+        macro_filter="macro is risk-on",
+        news_check="nothing material",
+        earnings_check="none queued",
+        signal_conflicts="none",
         sizing_logic="base sizing per conviction",
-        portfolio_balance="within caps", cash_target="12% cash",
+        portfolio_balance="within caps",
+        cash_target="12% cash",
         continuity_check="consistent with the week",
         premortem_check="bear case on NVDA is crowding",
     )
@@ -73,8 +85,13 @@ def _rc(**overrides) -> ReasoningChain:
 
 def _decision(action="BUY", symbol="NVDA", alloc=10.0):
     return TradeDecision(
-        action=action, symbol=symbol, allocation_pct=alloc,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="x",
+        action=action,
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="x",
         thesis_invalid_if="closes below support",
     )
 
@@ -104,6 +121,7 @@ def _rm_message(**overrides) -> str:
 # F6 — risk evidence completeness
 # ===========================================================================
 
+
 def test_f6_rm_sees_position_age_as_plain_context() -> None:
     """`held: Nd` is informational only (spec item 25, 2026-09-03/04): the
     old flat `<5d` / `5-15d` / `>15d` tiers were replaced by a deterministic,
@@ -114,7 +132,8 @@ def test_f6_rm_sees_position_age_as_plain_context() -> None:
     """
     msg = _rm_message(
         positions=[
-            _position(symbol="NVDA"), _position(symbol="MSFT"),
+            _position(symbol="NVDA"),
+            _position(symbol="MSFT"),
             _position(symbol="JPM"),
         ],
         position_history={
@@ -158,8 +177,7 @@ def test_f6_account_section_survives_an_empty_book() -> None:
     all; the drawdown line still needs a header to hang off."""
     msg = _rm_message(
         positions=[],
-        recent_performance={"rolling_5d_pct": None, "rolling_20d_pct": None,
-                            "trailing_days": 0},
+        recent_performance={"rolling_5d_pct": None, "rolling_20d_pct": None, "trailing_days": 0},
     )
     assert "## Account" in msg
     assert "## Current Positions" in msg
@@ -196,8 +214,7 @@ def test_f6_risk_stage_forwards_the_evidence_it_was_given() -> None:
 
     ctx = RunContext.start("morning")
     ctx.position_history = {"NVDA": {"days_held": 3}}
-    ctx.recent_performance = {"rolling_5d_pct": -5.0,
-                              "rolling_20d_pct": -1.0, "trailing_days": 20}
+    ctx.recent_performance = {"rolling_5d_pct": -5.0, "rolling_20d_pct": -1.0, "trailing_days": 20}
 
     kwargs = _run_risk_stage_capturing_review(ctx)
     assert kwargs["position_history"] == {"NVDA": {"days_held": 3}}
@@ -219,8 +236,7 @@ def test_f6_risk_stage_rebuilds_the_evidence_on_the_resume_lane() -> None:
     kwargs = _run_risk_stage_capturing_review(
         ctx,
         position_history={"AAPL": {"days_held": 11}},
-        recent_performance={"in_drawdown": False, "rolling_5d_pct": 0.4,
-                            "rolling_20d_pct": 1.1, "trailing_days": 25},
+        recent_performance={"in_drawdown": False, "rolling_5d_pct": 0.4, "rolling_20d_pct": 1.1, "trailing_days": 25},
     )
     assert kwargs["position_history"] == {"AAPL": {"days_held": 11}}
     assert kwargs["recent_performance"]["trailing_days"] == 25
@@ -243,9 +259,7 @@ def test_f6_risk_stage_degrades_open_when_the_rebuild_raises() -> None:
     assert kwargs["recent_performance"] == {}
 
 
-def _run_risk_stage_capturing_review(ctx, *, position_history=None,
-                                     recent_performance=None,
-                                     reasoning_chain=None):
+def _run_risk_stage_capturing_review(ctx, *, position_history=None, recent_performance=None, reasoning_chain=None):
     """Drive RiskStage.run() far enough to capture the risk_manager.review
     kwargs, with every deterministic gate stubbed to a pass-through."""
     from src.models import RiskReasoningChain, RiskVerdict
@@ -253,7 +267,17 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     from src.pipeline_stages import RiskStage
 
     decisions = [_decision()]
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( return_value=(decisions, [], []), ), _apply_risk_modifications=MagicMock(return_value=(decisions, [])), risk_manager=MagicMock())
+    pipeline = build_pipeline(
+        db=MagicMock(),
+        _sweeper=MagicMock(return_value=None),
+        _filter_supported_symbols=MagicMock(return_value=(decisions, [])),
+        _refuse_queued_earnings_buys=MagicMock(return_value=decisions),
+        _filter_hard_risk_decisions=MagicMock(
+            return_value=(decisions, [], []),
+        ),
+        _apply_risk_modifications=MagicMock(return_value=(decisions, [])),
+        risk_manager=MagicMock(),
+    )
 
     def _seam(value):
         if isinstance(value, BaseException):
@@ -266,8 +290,12 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     verdict = RiskVerdict(
         approved=True,
         reasoning_chain=RiskReasoningChain(
-            rr_audit="x", signal_fidelity="x", correlation_check="x",
-            event_risk="x", sizing_sanity="x", overall="x",
+            rr_audit="x",
+            signal_fidelity="x",
+            correlation_check="x",
+            event_risk="x",
+            sizing_sanity="x",
+            overall="x",
         ),
         reasoning="ok",
     )
@@ -288,6 +316,7 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
 # ===========================================================================
 # F5 — PM / Risk independence
 # ===========================================================================
+
 
 def test_f5_pm_claims_come_after_the_primary_evidence() -> None:
     """PM's reasoning chain used to be the FIRST block in RM's message, so
@@ -372,22 +401,18 @@ def test_f5_rm_prompt_states_its_model_relationship_to_pm_accurately() -> None:
     """
     import yaml
 
-    settings = yaml.safe_load(
-        (_REPO_ROOT / "config" / "settings.yaml").read_text()
-    )["llm"]
+    settings = yaml.safe_load((_REPO_ROOT / "config" / "settings.yaml").read_text())["llm"]
     shared = settings["risk_manager_model"] == settings["portfolio_manager_model"]
 
     text = (PROMPT_DIR / "risk_manager.md").read_text()
     assert "MODEL_ROUTING_POLICY.md" in text
     if shared:
         assert "same model" in text, (
-            "PM and RM share a model — RM's prompt must disclose that it "
-            "shares PM's blind spots"
+            "PM and RM share a model — RM's prompt must disclose that it shares PM's blind spots"
         )
     else:
         assert "different model from PM" in text, (
-            "PM and RM run different models — RM's prompt must not claim "
-            "they share one"
+            "PM and RM run different models — RM's prompt must not claim they share one"
         )
         assert "same model" not in text
 
@@ -401,22 +426,25 @@ def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:
     assert "`clean` on a genuinely clean plan is the correct verdict" in text
 
 
-@pytest.mark.parametrize("anchor", (
-    # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto. The
-    # old "**Veto is nuclear.**" and "≥ 5 separate `modifications`" anchors were
-    # REMOVED with the veto itself — the seat may only drop named NEW entries
-    # and shrink sizing. These anchors pin the new contract.
-    "You have NO veto. There is no whole-batch reject.",
-    "no `approved: false` lever",
-    # "R/R discipline is non-negotiable" was an anchor here until
-    # 2026-09-11. It was REMOVED deliberately, by owner decision
-    # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
-    # setup type was the largest measured cause of proposals that never
-    # became trades, and it is meaningless on a trend trade with no
-    # overhead level. What replaces it is anchored below.
-    "R/R discipline is by SETUP TYPE, not universal",
-    "Err on the side of capital preservation",
-))
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        # Owner ruling 2026-09-24 (final): the seat has NO whole-batch veto. The
+        # old "**Veto is nuclear.**" and "≥ 5 separate `modifications`" anchors were
+        # REMOVED with the veto itself — the seat may only drop named NEW entries
+        # and shrink sizing. These anchors pin the new contract.
+        "You have NO veto. There is no whole-batch reject.",
+        "no `approved: false` lever",
+        # "R/R discipline is non-negotiable" was an anchor here until
+        # 2026-09-11. It was REMOVED deliberately, by owner decision
+        # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
+        # setup type was the largest measured cause of proposals that never
+        # became trades, and it is meaningless on a trend trade with no
+        # overhead level. What replaces it is anchored below.
+        "R/R discipline is by SETUP TYPE, not universal",
+        "Err on the side of capital preservation",
+    ),
+)
 def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:
     """Owner ruling 2026-09-24 (final): the whole-batch veto is REMOVED. The
     seat reduces risk only by dropping named NEW entries (`rejected_symbols`)
@@ -430,6 +458,7 @@ def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:
 # ===========================================================================
 # F4 — premortem / observability
 # ===========================================================================
+
 
 def test_f4_missing_premortem_renders_as_missing_to_rm() -> None:
     """`premortem_check` is mandatory in PM's prompt and optional in the
@@ -452,7 +481,8 @@ def test_f4_all_nine_fields_reach_rm_when_present() -> None:
     rc = _rc(continuity_check="week arc intact", premortem_check="crowding risk")
     msg = _rm_message(portfolio_decision=_pd(rc=rc))
     for label, value in (
-        ("Macro filter", rc.macro_filter), ("News check", rc.news_check),
+        ("Macro filter", rc.macro_filter),
+        ("News check", rc.news_check),
         ("Earnings check", rc.earnings_check),
         ("Signal conflicts", rc.signal_conflicts),
         ("Sizing logic", rc.sizing_logic),
@@ -477,10 +507,7 @@ def test_f4_missing_step_raises_an_engine_advisory() -> None:
     )
     rules = [v.rule for v in kwargs["rule_violations"]]
     assert "pm_audit_step_missing" in rules
-    message = next(
-        v.message for v in kwargs["rule_violations"]
-        if v.rule == "pm_audit_step_missing"
-    )
+    message = next(v.message for v in kwargs["rule_violations"] if v.rule == "pm_audit_step_missing")
     assert "premortem_check" in message and "continuity_check" in message
 
 
@@ -488,11 +515,10 @@ def test_f4_complete_chain_raises_no_advisory() -> None:
     from src.pipeline_context import RunContext
 
     kwargs = _run_risk_stage_capturing_review(
-        RunContext.start("morning"), reasoning_chain=_rc(),
+        RunContext.start("morning"),
+        reasoning_chain=_rc(),
     )
-    assert "pm_audit_step_missing" not in [
-        v.rule for v in kwargs["rule_violations"]
-    ]
+    assert "pm_audit_step_missing" not in [v.rule for v in kwargs["rule_violations"]]
 
 
 def test_f4_schema_stays_backward_compatible() -> None:
@@ -501,8 +527,12 @@ def test_f4_schema_stays_backward_compatible() -> None:
     carries neither. Enforcement belongs at the observability layer, not by
     making historical data unparseable."""
     old_log_shape = ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
         cash_target="x",
     )
     assert old_log_shape.premortem_check == ""
@@ -527,16 +557,22 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
             "PM Reasoning Chain:\n  Macro: %s\n  News: %s\n  Earnings: %s\n  "
             "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s\n  "
             "Continuity: %s\n  Pre-mortem: %s\n  Macro audit: %s",
-            "a", "b", "c", "d", "e", "f", "g",
-            "" or "[MISSING]", "" or "[MISSING]", "" or "[MISSING]",
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f",
+            "g",
+            "" or "[MISSING]",
+            "" or "[MISSING]",
+            "" or "[MISSING]",
         )
     # `DecisionStage` moved to `src/stage_decision.py` verbatim (item 210,
     # step 10); the log line travelled with it.
     from src import stage_decision as _stage_decision
 
-    source = (
-        Path(ps.__file__).read_text() + Path(_stage_decision.__file__).read_text()
-    )
+    source = Path(ps.__file__).read_text() + Path(_stage_decision.__file__).read_text()
     # Every field the schema lets default to "" must appear here, or the log
     # cannot tell a performed audit step from a skipped one. `macro_audit`
     # joined them 2026-09-14 (item 18e).
@@ -545,6 +581,7 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
         "the schema, the optional-default ones especially"
     )
     from src.models import ReasoningChain
+
     for name, field in ReasoningChain.model_fields.items():
         if field.default == "":
             assert name in source, (
@@ -557,17 +594,27 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
 # F7b — earnings valuation evidence
 # ===========================================================================
 
+
 def _earnings_analysis(valuation_context: str) -> EarningsAnalysis:
     return EarningsAnalysis(
-        symbol="AAPL", form_type="10-Q", filing_date="2026-03-15",
-        revenue={"total": "$95.4B"}, profitability={}, cash_flow={},
-        balance_sheet={}, guidance="flat", data_quality="complete",
+        symbol="AAPL",
+        form_type="10-Q",
+        filing_date="2026-03-15",
+        revenue={"total": "$95.4B"},
+        profitability={},
+        cash_flow={},
+        balance_sheet={},
+        guidance="flat",
+        data_quality="complete",
         investment_implications={
-            "sentiment": "bullish", "conviction": "medium",
+            "sentiment": "bullish",
+            "conviction": "medium",
             "key_thesis": "services mix",
             "reasoning_chain": {
-                "fundamental_quality": "strong", "growth_trajectory": "stable",
-                "strategic_risks": "vision pro", "management_execution": "credible",
+                "fundamental_quality": "strong",
+                "growth_trajectory": "stable",
+                "strategic_risks": "vision pro",
+                "management_execution": "credible",
                 "valuation_context": valuation_context,
             },
         },
@@ -581,19 +628,24 @@ def _flag(valuation_context: str, source: str = "llm") -> list[str]:
     report.symbol = "AAPL"
     report.form_type = "10-Q"
     return EarningsAnalystAgent._flag_unsourced_valuation_claims(
-        report, _earnings_analysis(valuation_context), source,
+        report,
+        _earnings_analysis(valuation_context),
+        source,
     )
 
 
-@pytest.mark.parametrize("text,label", (
-    ("trading at ~28x forward earnings", "trading at"),
-    ("the P/E of 34 is rich", "P/E"),
-    ("EV/EBITDA near 22x", "EV/x"),
-    ("market cap implies a premium", "market cap"),
-    ("share price already reflects this", "share price"),
-    ("roughly 6.4x sales", "Nx earnings/sales"),
-    ("a PEG above 2 is stretched", "PEG"),
-))
+@pytest.mark.parametrize(
+    "text,label",
+    (
+        ("trading at ~28x forward earnings", "trading at"),
+        ("the P/E of 34 is rich", "P/E"),
+        ("EV/EBITDA near 22x", "EV/x"),
+        ("market cap implies a premium", "market cap"),
+        ("share price already reflects this", "share price"),
+        ("roughly 6.4x sales", "Nx earnings/sales"),
+        ("a PEG above 2 is stretched", "PEG"),
+    ),
+)
 def test_f7b_price_derived_claims_are_detected(text: str, label: str) -> None:
     """`build_user_message` passes filing text plus symbol/form/date and
     nothing else — no price, no market cap, no multiple. Every claim here
@@ -603,13 +655,15 @@ def test_f7b_price_derived_claims_are_detected(text: str, label: str) -> None:
     assert label in _flag(text)
 
 
-@pytest.mark.parametrize("text", (
-    "net debt sits at 2.1x EBITDA, down from 2.6x",
-    "interest coverage of 8.4x on the disclosed schedule",
-    "the Services mix shift is doing the margin work; a deceleration below "
-    "+10% removes it",
-    "[UNSOURCED:no_market_data]",
-))
+@pytest.mark.parametrize(
+    "text",
+    (
+        "net debt sits at 2.1x EBITDA, down from 2.6x",
+        "interest coverage of 8.4x on the disclosed schedule",
+        "the Services mix shift is doing the margin work; a deceleration below +10% removes it",
+        "[UNSOURCED:no_market_data]",
+    ),
+)
 def test_f7b_filing_grounded_statements_are_not_flagged(text: str) -> None:
     """Leverage and coverage ratios ARE disclosed in a 10-Q/10-K. A detector
     that fires on them would train the agent away from citing real filing
@@ -622,7 +676,8 @@ def test_f7b_cached_analyses_are_checked_too() -> None:
     filing, so an invented multiple written before the prompt was corrected
     keeps arriving at PM until something can see it."""
     assert _flag("trading at 28x forward earnings", source="cache") == [
-        "trading at", "Nx earnings/sales",
+        "trading at",
+        "Nx earnings/sales",
     ]
 
 
@@ -639,10 +694,13 @@ def test_f7b_the_disclosure_does_not_trip_its_own_detector() -> None:
     assert _flag(f"  {_UNSOURCED_VALUATION_DISCLOSURE}  ") == []
 
 
-@pytest.mark.parametrize("wrap", (
-    lambda d: f"{d} The P/E of 34 is rich.",
-    lambda d: f"The P/E of 34 is rich. {d}",
-))
+@pytest.mark.parametrize(
+    "wrap",
+    (
+        lambda d: f"{d} The P/E of 34 is rich.",
+        lambda d: f"The P/E of 34 is rich. {d}",
+    ),
+)
 def test_f7b_disclosure_marker_cannot_be_used_to_smuggle_a_claim(wrap) -> None:
     """The exemption is exact equality, never a prefix or substring test: a
     model that pastes the marker around an invented multiple must still be
@@ -697,8 +755,7 @@ def test_f7b_schema_comment_matches_the_corrected_meaning() -> None:
     contradicting the prompt that had just been corrected."""
     src = (_REPO_ROOT / "src" / "models" / "earnings.py").read_text()
     assert "# is the market pricing this fairly given the above?" not in src, (
-        "the trailing schema comment still defines valuation_context as a "
-        "price judgement, contradicting the prompt"
+        "the trailing schema comment still defines valuation_context as a price judgement, contradicting the prompt"
     )
     assert 'NOT "is the market pricing this fairly"' in src
     assert "how conditional is the story" in src
@@ -707,6 +764,7 @@ def test_f7b_schema_comment_matches_the_corrected_meaning() -> None:
 # ===========================================================================
 # F8 — inherited behavioural priors
 # ===========================================================================
+
 
 def test_f8_priors_have_a_provenance_block() -> None:
     """Three rules in PM's prompt are corrections fitted to one measured
@@ -720,11 +778,14 @@ def test_f8_priors_have_a_provenance_block() -> None:
     assert "not a market law" in text
 
 
-@pytest.mark.parametrize("claim", (
-    "deployment gap",
-    "over-caution bias",
-    "momentum-leader sleeve",
-))
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "deployment gap",
+        "over-caution bias",
+        "momentum-leader sleeve",
+    ),
+)
 def test_f8_each_prior_is_named_in_the_provenance_table(claim: str) -> None:
     assert claim in (PROMPT_DIR / "portfolio_manager.md").read_text()
 
@@ -734,8 +795,7 @@ def test_f8_prior_tag_marks_each_claim_at_its_use_site() -> None:
     provenance. Each of the three carries the tag where it is applied."""
     text = (PROMPT_DIR / "portfolio_manager.md").read_text()
     assert text.count("[PRIOR") >= 4, (
-        "each inherited prior must be tagged where it is used, not only in "
-        "the provenance table"
+        "each inherited prior must be tagged where it is used, not only in the provenance table"
     )
     assert "**Momentum-leader starter sleeve** `[PRIOR" in text
     assert "`[PRIOR]` That gap was measured" in text

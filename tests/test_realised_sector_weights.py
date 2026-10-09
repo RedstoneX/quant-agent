@@ -5,6 +5,7 @@ RECORDING ONLY. These tests assert the row's shape, unit and NULL
 discipline. Nothing here derives, tunes or proposes a sector cap, and
 nothing in the product reads these rows back into a decision.
 """
+
 import ast
 import json
 import sqlite3
@@ -21,7 +22,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 def _decision(action, symbol, pct):
     short = action == "SHORT"
     return TradeDecision(
-        action=action, symbol=symbol, allocation_pct=pct,
+        action=action,
+        symbol=symbol,
+        allocation_pct=pct,
         entry_price=100.0,
         stop_loss=105.0 if short else 95.0,
         take_profit=80.0 if short else 120.0,
@@ -70,7 +73,9 @@ def test_weights_are_grouped_by_sector_and_side(db):
 def test_denominator_is_recorded_explicitly_and_matches_item_222_unit(db):
     db.record_realised_sector_weights(
         decisions=[_decision("BUY", "AAA", 4.0)],
-        sectors={"AAA": "Technology"}, total_value=50_000.0, run_id="run-2",
+        sectors={"AAA": "Technology"},
+        total_value=50_000.0,
+        run_id="run-2",
     )
     row = _row(db)[0]
     assert row["denominator"] == Database.REALISED_SECTOR_WEIGHT_DENOMINATOR
@@ -83,7 +88,9 @@ def test_denominator_is_recorded_explicitly_and_matches_item_222_unit(db):
 def test_unknown_sector_is_null_never_other(db):
     db.record_realised_sector_weights(
         decisions=[_decision("BUY", "ZZZ", 2.5)],
-        sectors={}, total_value=10_000.0, run_id="run-3",
+        sectors={},
+        total_value=10_000.0,
+        run_id="run-3",
     )
     row = _row(db)[0]
     entries = json.loads(row["weights_json"])
@@ -101,7 +108,10 @@ def test_a_run_that_built_nothing_records_that_fact_not_zero_concentration(db):
     book with zero concentration.
     """
     db.record_realised_sector_weights(
-        decisions=[], sectors={}, total_value=10_000.0, run_id="run-4",
+        decisions=[],
+        sectors={},
+        total_value=10_000.0,
+        run_id="run-4",
     )
     row = _row(db)[0]
     assert row["weights_json"] == "[]"
@@ -114,10 +124,8 @@ def test_no_recording_call_can_ever_write_a_null_weights_row(db):
     cases = [
         dict(decisions=[], sectors={}, total_value=None, run_id="n-1"),
         dict(decisions=None, sectors=None, total_value=0.0, run_id="n-2"),
-        dict(decisions=[_decision("SELL", "AAA", 1.0)], sectors=None,
-             total_value=1.0, run_id="n-3"),
-        dict(decisions=[_decision("BUY", "AAA", 1.0)], sectors={},
-             total_value=float("nan"), run_id="n-5"),
+        dict(decisions=[_decision("SELL", "AAA", 1.0)], sectors=None, total_value=1.0, run_id="n-3"),
+        dict(decisions=[_decision("BUY", "AAA", 1.0)], sectors={}, total_value=float("nan"), run_id="n-5"),
     ]
     for kw in cases:
         assert db.record_realised_sector_weights(**kw) is True, kw
@@ -170,9 +178,10 @@ def test_legacy_null_rows_remain_unknown_and_future_nulls_are_refused(tmp_path):
 
     d = Database(str(path))
     d.initialize()
-    assert tuple(d.conn.execute(
-        "SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'"
-    ).fetchone()) == original
+    assert (
+        tuple(d.conn.execute("SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'").fetchone())
+        == original
+    )
     assert _row(d)[0]["weights_json"] is None
     with pytest.raises(sqlite3.IntegrityError):
         d.conn.execute(
@@ -181,42 +190,40 @@ def test_legacy_null_rows_remain_unknown_and_future_nulls_are_refused(tmp_path):
             "VALUES ('2026-10-02 00:00:00', 'x', NULL, 'd')"
         )
     with pytest.raises(sqlite3.IntegrityError):
-        d.conn.execute(
-            "UPDATE realised_sector_weights SET weights_json = NULL "
-            "WHERE run_id = 'legacy-reductions'"
-        )
+        d.conn.execute("UPDATE realised_sector_weights SET weights_json = NULL WHERE run_id = 'legacy-reductions'")
     # This is the exact UPDATE the old initializer ran before its table
     # rebuild. Rolling back must fail closed instead of rewriting history.
     with pytest.raises(sqlite3.IntegrityError):
+        d.conn.execute("UPDATE realised_sector_weights SET weights_json = '[]' WHERE weights_json IS NULL")
+    assert (
         d.conn.execute(
-            "UPDATE realised_sector_weights SET weights_json = '[]' "
-            "WHERE weights_json IS NULL"
-        )
-    assert d.conn.execute(
-        "SELECT weights_json FROM realised_sector_weights "
-        "WHERE run_id = 'legacy-reductions'"
-    ).fetchone()[0] is None
+            "SELECT weights_json FROM realised_sector_weights WHERE run_id = 'legacy-reductions'"
+        ).fetchone()[0]
+        is None
+    )
     assert d.record_realised_sector_weights(
         decisions=[_decision("SELL", "AAA", 2.5)],
-        sectors={"AAA": "Energy"}, total_value=10_000,
+        sectors={"AAA": "Energy"},
+        total_value=10_000,
         run_id="new-reduction",
     )
     new_row = d.conn.execute(
-        "SELECT weights_json, reducing_orders_built "
-        "FROM realised_sector_weights WHERE run_id = 'new-reduction'"
+        "SELECT weights_json, reducing_orders_built FROM realised_sector_weights WHERE run_id = 'new-reduction'"
     ).fetchone()
     assert new_row[1] == 1
     assert json.loads(new_row[0]) == [
-        {"sector": "Energy", "side": "long", "kind": "reduce",
-         "weight_pct": 2.5, "orders": 1},
+        {"sector": "Energy", "side": "long", "kind": "reduce", "weight_pct": 2.5, "orders": 1},
     ]
     d.conn.close()
 
     reopened = Database(str(path))
     reopened.initialize()
-    assert tuple(reopened.conn.execute(
-        "SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'"
-    ).fetchone()) == original
+    assert (
+        tuple(
+            reopened.conn.execute("SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'").fetchone()
+        )
+        == original
+    )
     assert reopened.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
@@ -224,7 +231,9 @@ def test_one_row_per_run(db):
     for _ in range(3):
         db.record_realised_sector_weights(
             decisions=[_decision("BUY", "AAA", 1.0)],
-            sectors={"AAA": "Energy"}, total_value=1.0, run_id="run-5",
+            sectors={"AAA": "Energy"},
+            total_value=1.0,
+            run_id="run-5",
         )
     assert len(_row(db)) == 1
 
@@ -238,26 +247,27 @@ def test_recording_is_reachable_from_executable_product_code():
     stages = (SRC / "pipeline_sector_weights.py").read_text()
     tree = ast.parse(stages)
     helper = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef)
-        and n.name == "_record_realised_sector_weights"
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_record_realised_sector_weights"
     )
-    assert any(
-        isinstance(n, ast.Attribute) and n.attr == "record_realised_sector_weights"
-        for n in ast.walk(helper)
-    )
+    assert any(isinstance(n, ast.Attribute) and n.attr == "record_realised_sector_weights" for n in ast.walk(helper))
     # item 210 step 10 moved DecisionStage (the one call site) into
     # src/stage_decision.py; the helper itself still lives in
     # pipeline_stages.py. Scan both so the reachability claim survives
     # the split instead of being weakened by it.
     callers = []
-    for module in ("pipeline_stages.py", "stage_decision.py",
-                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py",
-                   "pipeline_risk_budget_recording.py",
-                   "pipeline_sector_weights.py"):
+    for module in (
+        "pipeline_stages.py",
+        "stage_decision.py",
+        "pipeline_entry_orders.py",
+        "pipeline_rotation_exec.py",
+        "pipeline_risk_budget_recording.py",
+        "pipeline_sector_weights.py",
+    ):
         callers += [
-            n for n in ast.walk(ast.parse((SRC / module).read_text()))
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            n
+            for n in ast.walk(ast.parse((SRC / module).read_text()))
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
             and n.func.id == "_record_realised_sector_weights"
         ]
     assert len(callers) == 1, "exactly one product call site"
@@ -282,29 +292,41 @@ def test_the_recording_never_blocks_a_trade(db):
             raise sqlite3.OperationalError("disk gone")
 
     db.conn = _Boom()
-    assert db.record_realised_sector_weights(
-        decisions=[_decision("BUY", "AAA", 1.0)],
-        sectors={"AAA": "Energy"}, total_value=1.0, run_id="run-6",
-    ) is False
+    assert (
+        db.record_realised_sector_weights(
+            decisions=[_decision("BUY", "AAA", 1.0)],
+            sectors={"AAA": "Energy"},
+            total_value=1.0,
+            run_id="run-6",
+        )
+        is False
+    )
 
 
 def _analysis(symbol, entry=100.0, stop=95.0, target=135.0):
     from src.models import TechAnalysisResult, TechReasoningChain
+
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test",
-        support_levels=[stop], resistance_levels=[target],
-        computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
-        reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
-            support_resistance="x"),
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target],
+        computed_levels=[stop, target],
+        atr_14=(entry - stop) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning_chain=TechReasoningChain(trend="x", momentum="x", volatility="x", volume="x", support_resistance="x"),
         thesis_invalid_if="closes below support",
     )
 
 
 def test_a_real_construct_orders_run_lands_a_populated_row_in_the_store(
-    db, monkeypatch,
+    db,
+    monkeypatch,
 ):
     """THE PROOF THE ROW LANDS: real constructor sizes real orders, the real
     product helper runs on its output, and the row is read back out of a real
@@ -318,15 +340,18 @@ def test_a_real_construct_orders_run_lands_a_populated_row_in_the_store(
 
     sectors = {"AAA": "SectorOne", "BBB": "SectorOne", "CCC": "SectorTwo"}
     monkeypatch.setattr(
-        sector_reference, "_get_sector", lambda s: sectors.get(s, "Unknown"),
+        sector_reference,
+        "_get_sector",
+        lambda s: sectors.get(s, "Unknown"),
     )
     constructor = PortfolioConstructor()
     names = ["AAA", "BBB", "CCC"]
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol=s, target_weight_pct=4.0,
-                                conviction="high", thesis="t") for s in names],
-        positions=[], analyses=[_analysis(s) for s in names],
-        total_value=100_000, price_map={s: 100.0 for s in names},
+        targets=[TargetPosition(symbol=s, target_weight_pct=4.0, conviction="high", thesis="t") for s in names],
+        positions=[],
+        analyses=[_analysis(s) for s in names],
+        total_value=100_000,
+        price_map={s: 100.0 for s in names},
         unpriceable_symbols={},
     )
     built = [d for d in decisions if d.action == "BUY"]
@@ -334,8 +359,10 @@ def test_a_real_construct_orders_run_lands_a_populated_row_in_the_store(
 
     pipeline = SimpleNamespace(db=db, portfolio_constructor=constructor)
     _record_realised_sector_weights(
-        pipeline, SimpleNamespace(run_id="run-e2e"),
-        SimpleNamespace(decisions=decisions), 100_000,
+        pipeline,
+        SimpleNamespace(run_id="run-e2e"),
+        SimpleNamespace(decisions=decisions),
+        100_000,
     )
 
     rows = _row(db)

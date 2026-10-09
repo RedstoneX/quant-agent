@@ -11,6 +11,7 @@ rehearsal broker and reads the row back from the real database.
 `stop_rule=None` for a stop with no level behind it, and recording a
 substitute there would be a fabricated audit value.
 """
+
 from __future__ import annotations
 
 from src.models import TradeDecision
@@ -31,10 +32,14 @@ def test_buy_row_carries_the_constructors_measured_ceiling(tmp_path, monkeypatch
 
     def _insert(self, *a, **k):
         row_id = real_insert(self, *a, **k)
-        rows.append(tuple(self.conn.execute(
-            "SELECT symbol, action, fill_status, structural_ceiling, entry_atr "
-            "FROM trades WHERE id = ?", (row_id,),
-        ).fetchone()))
+        rows.append(
+            tuple(
+                self.conn.execute(
+                    "SELECT symbol, action, fill_status, structural_ceiling, entry_atr FROM trades WHERE id = ?",
+                    (row_id,),
+                ).fetchone()
+            )
+        )
         return row_id
 
     monkeypatch.setattr(TradeDecision, "__init__", _init)
@@ -49,9 +54,7 @@ def test_buy_row_carries_the_constructors_measured_ceiling(tmp_path, monkeypatch
     assert constructed and all(isinstance(v, bool) for v in constructed), (
         f"the constructor must emit a real boolean verdict, got {constructed}"
     )
-    assert stored is not None, (
-        "structural_ceiling was lost between the constructor and the trade row"
-    )
+    assert stored is not None, "structural_ceiling was lost between the constructor and the trade row"
     assert bool(stored) == constructed[0]
     assert entry_atr is not None, "entry_atr must reach the same row"
 
@@ -62,24 +65,35 @@ def _add_to_held_name(monkeypatch, prior_row):
     from types import SimpleNamespace  # noqa: F401
     import src.execution.scale_in as scale_in
     from tests.test_item_120_buy_price_sizing import (
-        _exec_pipeline_with_print, _run_exec,
+        _exec_pipeline_with_print,
+        _run_exec,
     )
+
     monkeypatch.setattr(
-        scale_in, "prepare_long_add",
+        scale_in,
+        "prepare_long_add",
         lambda **k: scale_in.LongAddPrep(
-            is_scale_in=True, intended_stop=k["intended_stop"],
+            is_scale_in=True,
+            intended_stop=k["intended_stop"],
         ),
     )
     pipeline = _exec_pipeline_with_print(100.0)
     pipeline.db.get_symbol_last_buy.return_value = prior_row
     buy = TradeDecision(
-        action="BUY", symbol="TSLA", allocation_pct=10, entry_price=100.0,
-        stop_loss=94.0, take_profit=118.0, reasoning="add", setup_type="range",
+        action="BUY",
+        symbol="TSLA",
+        allocation_pct=10,
+        entry_price=100.0,
+        stop_loss=94.0,
+        take_profit=118.0,
+        reasoning="add",
+        setup_type="range",
         structural_ceiling=True,
     )
     _run_exec(pipeline, buy, monkeypatch)
-    calls = [c.kwargs for c in pipeline.db.insert_trade.call_args_list
-             if c.kwargs.get("fill_status") == "pending_submit"]
+    calls = [
+        c.kwargs for c in pipeline.db.insert_trade.call_args_list if c.kwargs.get("fill_status") == "pending_submit"
+    ]
     assert len(calls) == 1
     return calls[0]
 
@@ -95,7 +109,8 @@ def test_an_add_to_a_legacy_unmeasured_position_records_null_not_a_made_up_verdi
     value instead would silently reclassify a held position, so NULL is the
     honest record."""
     kwargs = _add_to_held_name(
-        monkeypatch, {"setup_type": "range", "structural_ceiling": None},
+        monkeypatch,
+        {"setup_type": "range", "structural_ceiling": None},
     )
     assert kwargs["structural_ceiling"] is None
 
@@ -104,6 +119,7 @@ def test_an_add_to_a_measured_position_carries_the_positions_own_verdict(
     monkeypatch,
 ):
     kwargs = _add_to_held_name(
-        monkeypatch, {"setup_type": "range", "structural_ceiling": 0},
+        monkeypatch,
+        {"setup_type": "range", "structural_ceiling": 0},
     )
     assert kwargs["structural_ceiling"] is False

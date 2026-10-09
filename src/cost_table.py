@@ -63,6 +63,7 @@ correct rates differ for cache-write (1.25×) and cache-read (0.1×).
 Currently we don't use caching, so the simple input/output table
 is sufficient.
 """
+
 from __future__ import annotations
 
 import json
@@ -74,10 +75,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # === LiteLLM remote pricing source ===
-_LITELLM_PRICING_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-    "model_prices_and_context_window.json"
-)
+_LITELLM_PRICING_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 _CACHE_PATH = Path("data/pricing_cache.json")
 _CACHE_MAX_AGE_SECONDS = 24 * 3600  # auto-refresh after 24h
 _FETCH_TIMEOUT_S = 10.0
@@ -95,17 +93,19 @@ _OPENROUTER_CACHE_PATH = Path("data/openrouter_pricing_cache.json")
 # appear in config/settings.yaml.
 _PRICING_FALLBACK: dict[str, dict[str, float]] = {
     # Anthropic
-    "claude-opus-4-8":     {"input":  5.00, "output": 25.00},  # verified LiteLLM 2026-06-05
-    "claude-opus-4-7":     {"input":  5.00, "output": 25.00},  # inherited failover model, retired 2026-08-31 (see llm.fallback_model)
-    "claude-sonnet-4-7":   {"input":  3.00, "output": 15.00},
-    "claude-sonnet-4-6":   {"input":  3.00, "output": 15.00},
-    "claude-haiku-4-5":    {"input":  1.00, "output":  5.00},
-
+    "claude-opus-4-8": {"input": 5.00, "output": 25.00},  # verified LiteLLM 2026-06-05
+    "claude-opus-4-7": {
+        "input": 5.00,
+        "output": 25.00,
+    },  # inherited failover model, retired 2026-08-31 (see llm.fallback_model)
+    "claude-sonnet-4-7": {"input": 3.00, "output": 15.00},
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
     # OpenAI
-    "gpt-5.5":             {"input":  5.00, "output": 30.00},  # verified LiteLLM 2026-06-05 (current primary)
-    "gpt-5.4":             {"input":  2.50, "output": 15.00},
-    "gpt-5.2":             {"input":  1.75, "output": 14.00},
-    "o4-mini":             {"input":  1.10, "output":  4.40},
+    "gpt-5.5": {"input": 5.00, "output": 30.00},  # verified LiteLLM 2026-06-05 (current primary)
+    "gpt-5.4": {"input": 2.50, "output": 15.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "o4-mini": {"input": 1.10, "output": 4.40},
 }
 
 # === Pinned overrides — verified-official rates that must BEAT LiteLLM ===
@@ -124,11 +124,10 @@ _PRICING_FALLBACK: dict[str, dict[str, float]] = {
 # DeepSeek's large context-cache discount (cache-hit input = $0.0028/M) → these
 # rows OVER-estimate on cache-heavy runs. Conservative on purpose.
 _PRICING_PINNED: dict[str, dict[str, float]] = {
-    "deepseek-v4-flash":   {"input": 0.14,  "output": 0.28},
-    "deepseek-v4-pro":     {"input": 0.435, "output": 0.87},
-    "deepseek-chat":       {"input": 0.14,  "output": 0.28},   # legacy alias -> v4-flash
-    "deepseek-reasoner":   {"input": 0.14,  "output": 0.28},   # legacy alias -> v4-flash
-
+    "deepseek-v4-flash": {"input": 0.14, "output": 0.28},
+    "deepseek-v4-pro": {"input": 0.435, "output": 0.87},
+    "deepseek-chat": {"input": 0.14, "output": 0.28},  # legacy alias -> v4-flash
+    "deepseek-reasoner": {"input": 0.14, "output": 0.28},  # legacy alias -> v4-flash
     # Google AI Studio DIRECT, project qamc-gemini, FREE TIER (2026-08-31
     # owner decision: gemini-3.5-flash-lite direct becomes the PRIMARY route
     # for the eight specialist/review seats — see config/settings.yaml and
@@ -196,21 +195,21 @@ _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
     # 3x the input / 6.25x the output of gemini-2.5-flash-lite (the model
     # this replaces below) — expected of a paid BACKUP route behind a free
     # PRIMARY, not a pricing error.
-    "google/gemini-3.5-flash-lite":    {"input": 0.300, "output":  2.500},
+    "google/gemini-3.5-flash-lite": {"input": 0.300, "output": 2.500},
     # Retained for the position_reviewer seat, which is held back from the
     # Gemini-direct migration until it has a benchmark at its own scenario
     # (see tests/test_model_routing_policy.py OPENROUTER_SEATS). Removing this
     # row while a seat still routes to the model makes the call unpriceable,
     # which reads to the cost circuit as unknown-cost and latches paid
     # analysis — verified by test_every_routed_model_is_priceable_offline.
-    "google/gemini-2.5-flash-lite":    {"input": 0.100, "output":  0.400},
+    "google/gemini-2.5-flash-lite": {"input": 0.100, "output": 0.400},
     # risk_manager only — held apart from PM's model for decision-chain
     # independence at measured-equal quality. Note the input rate is BELOW
     # gemini's: independence here costs nothing.
-    "qwen/qwen3-235b-a22b-2507":       {"input": 0.090, "output":  0.550},
+    "qwen/qwen3-235b-a22b-2507": {"input": 0.090, "output": 0.550},
     # Commissioning baseline. Retained because it is what the cost reduction
     # is measured against, and pricing it is what makes that measurable.
-    "openai/gpt-5.5":                  {"input": 5.000, "output": 30.000},
+    "openai/gpt-5.5": {"input": 5.000, "output": 30.000},
     # TERTIARY route (`llm.tertiary_model`) — the third rung of the failover
     # ladder and the first one that is a genuinely DIFFERENT model rather
     # than the same model on a different road. Reached only when the primary
@@ -233,14 +232,16 @@ _PRICING_OPENROUTER: dict[str, dict[str, float]] = {
     # 3.33x the input and 2.0x the output of the secondary
     # (google/gemini-3.5-flash-lite at 0.300/2.500), and unbounded against
     # the PRIMARY, which is Google AI Studio's free tier at $0.00/$0.00.
-    "anthropic/claude-haiku-4.5":      {"input": 1.000, "output":  5.000},
+    "anthropic/claude-haiku-4.5": {"input": 1.000, "output": 5.000},
 }
 
 # Active PRICING — populated below from cache or fallback at module
 # import time. Mutated in-place by refresh_pricing() so callers
 # that imported the name `PRICING` see the latest values.
 PRICING: dict[str, dict[str, float]] = {
-    **_PRICING_FALLBACK, **_PRICING_PINNED, **_PRICING_OPENROUTER,
+    **_PRICING_FALLBACK,
+    **_PRICING_PINNED,
+    **_PRICING_OPENROUTER,
 }
 
 
@@ -306,12 +307,14 @@ def _apply_litellm_data(data: dict) -> int:
             logger.warning(
                 "LiteLLM rate for %s has non-positive value(s) "
                 "(input=%s, output=%s) — skipping (would zero cost reporting)",
-                our_name, in_rate, out_rate,
+                our_name,
+                in_rate,
+                out_rate,
             )
             continue
         # LiteLLM stores per-TOKEN; convert to per-MILLION-tokens.
         PRICING[our_name] = {
-            "input":  in_rate * 1_000_000,
+            "input": in_rate * 1_000_000,
             "output": out_rate * 1_000_000,
         }
         updated += 1
@@ -333,7 +336,8 @@ def _load_cache() -> bool:
         age_h = (time.time() - _CACHE_PATH.stat().st_mtime) / 3600
         logger.info(
             "Loaded pricing from cache (%d models, cache age %.1fh)",
-            n, age_h,
+            n,
+            age_h,
         )
     return n > 0
 
@@ -348,6 +352,7 @@ def _cache_is_fresh() -> bool:
 def http_get_json(url: str, headers: dict | None = None):
     """The one outbound GET in this module (replay seam). Raises on failure."""
     import requests  # lazy: no network setup needed at import time
+
     resp = requests.get(url, headers=headers, timeout=_FETCH_TIMEOUT_S)
     resp.raise_for_status()
     return resp.json()
@@ -406,8 +411,7 @@ def refresh_pricing(force: bool = False) -> bool:
             return _load_cache()
         return False
     n = _apply_litellm_data(data)
-    logger.info("Refreshed pricing from LiteLLM (%d/%d models matched)",
-                n, len(_PRICING_FALLBACK))
+    logger.info("Refreshed pricing from LiteLLM (%d/%d models matched)", n, len(_PRICING_FALLBACK))
     return n > 0
 
 
@@ -649,10 +653,7 @@ def refresh_openrouter_pricing(
             rates = _read_openrouter_cache()
             stale_but_in_grace = rates is not None
     if rates is None:
-        logger.error(
-            "OpenRouter pricing provenance unavailable; paid routed calls "
-            "cannot be budgeted safely"
-        )
+        logger.error("OpenRouter pricing provenance unavailable; paid routed calls cannot be budgeted safely")
         return False
     # A catalog we could read, that simply does not price one accepted
     # model, used to return False here -- i.e. the same durable
@@ -678,10 +679,7 @@ def refresh_openrouter_pricing(
     # And a model genuinely withdrawn from OpenRouter answers 404, which
     # `cost_circuit._is_known_zero_cost_failure` already accounts at $0 --
     # so the seat fails safely per-call while the desk keeps trading.
-    unpriced = [
-        model for model in _PRICING_OPENROUTER
-        if not _valid_rates(rates.get(model))
-    ]
+    unpriced = [model for model in _PRICING_OPENROUTER if not _valid_rates(rates.get(model))]
     if unpriced:
         logger.error(
             "OpenRouter catalog lacks valid rates for %s -- pricing %s from the "
@@ -708,8 +706,11 @@ def refresh_openrouter_pricing(
             "boundary). Reservations are widened toward %.2fx to compensate; "
             "trading continues. This is NOT the pre-2026-08-28 latch behaviour "
             "and is expected to self-clear on the next successful catalog fetch.",
-            len(_PRICING_OPENROUTER), age_hours, grace_period_hours,
-            _CACHE_MAX_AGE_SECONDS / 3600.0, max_stale_multiplier,
+            len(_PRICING_OPENROUTER),
+            age_hours,
+            grace_period_hours,
+            _CACHE_MAX_AGE_SECONDS / 3600.0,
+            max_stale_multiplier,
         )
     else:
         logger.info(
@@ -771,7 +772,10 @@ def _memoise(model: str, rates: dict, source: str) -> dict[str, float]:
     PRICING[model] = {"input": float(rates["input"]), "output": float(rates["output"])}
     logger.info(
         "Resolved pricing for %s from %s: in=$%.3f/M out=$%.3f/M",
-        model, source, PRICING[model]["input"], PRICING[model]["output"],
+        model,
+        source,
+        PRICING[model]["input"],
+        PRICING[model]["output"],
     )
     return PRICING[model]
 
@@ -823,9 +827,9 @@ def _resolve_openrouter_model_status(
     rates = cached.get(model)
     if _valid_rates(rates):
         logger.warning(
-            "OpenRouter catalog unreachable — pricing %s from a STALE cache "
-            "(older than %dh); cost may be inaccurate",
-            model, _CACHE_MAX_AGE_SECONDS // 3600,
+            "OpenRouter catalog unreachable — pricing %s from a STALE cache (older than %dh); cost may be inaccurate",
+            model,
+            _CACHE_MAX_AGE_SECONDS // 3600,
         )
         return _memoise(model, rates, "stale OpenRouter cache"), False
     return None, False
@@ -891,8 +895,10 @@ def _resolve_unknown_model(model: str) -> dict[str, float] | None:
         if rates is not None:
             PRICING[model] = rates
             logger.info(
-                "Resolved pricing for %s from cached LiteLLM data: "
-                "in=$%.2f/M out=$%.2f/M", model, rates["input"], rates["output"],
+                "Resolved pricing for %s from cached LiteLLM data: in=$%.2f/M out=$%.2f/M",
+                model,
+                rates["input"],
+                rates["output"],
             )
             return rates
     # 2. One live fetch — only if the cache is stale/missing (else re-fetching
@@ -905,8 +911,10 @@ def _resolve_unknown_model(model: str) -> dict[str, float] | None:
             if rates is not None:
                 PRICING[model] = rates
                 logger.info(
-                    "Resolved pricing for %s via live LiteLLM fetch: "
-                    "in=$%.2f/M out=$%.2f/M", model, rates["input"], rates["output"],
+                    "Resolved pricing for %s via live LiteLLM fetch: in=$%.2f/M out=$%.2f/M",
+                    model,
+                    rates["input"],
+                    rates["output"],
                 )
                 return rates
     if saw_dataset:
@@ -953,10 +961,7 @@ def estimate_cost(
         rates = _resolve_unknown_model(model)
     if rates is None:
         return None
-    return (
-        input_tokens * rates["input"]
-        + output_tokens * rates["output"]
-    ) / 1_000_000.0
+    return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000.0
 
 
 def fmt_cost(cost_usd: float | None) -> str:

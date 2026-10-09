@@ -26,8 +26,12 @@ from src.models import TechAnalysisResult
 logger = logging.getLogger(__name__)
 
 _PARAMS = (
-    "symbols_data", "prior_ratings", "valuations", "prior_macro_regime",
-    "prior_macro_outlook", "intraday_context",
+    "symbols_data",
+    "prior_ratings",
+    "valuations",
+    "prior_macro_regime",
+    "prior_macro_outlook",
+    "intraday_context",
 )
 
 
@@ -36,9 +40,15 @@ class TechReread:
         self._ask = ask
         self._state = state
 
-    def analyze_batch(self, symbols_data, prior_ratings=None, valuations=None,
-                      prior_macro_regime=None, prior_macro_outlook=None,
-                      intraday_context=None):
+    def analyze_batch(
+        self,
+        symbols_data,
+        prior_ratings=None,
+        valuations=None,
+        prior_macro_regime=None,
+        prior_macro_outlook=None,
+        intraday_context=None,
+    ):
         """Ask the seat, except about a symbol whose every input is unchanged.
 
         The technical seat re-reads each held name once per half-hourly check;
@@ -65,7 +75,8 @@ class TechReread:
             sym = item.get("symbol") if isinstance(item, dict) else None
             if sym:
                 fingerprints[sym] = tech_input_fingerprint(
-                    sym, symbol_data=item,
+                    sym,
+                    symbol_data=item,
                     prior_rating=prior_ratings.get(sym),
                     valuation=(valuations or {}).get(sym),
                     intraday=(intraday_context or {}).get(sym),
@@ -76,29 +87,27 @@ class TechReread:
         allowed = set(TechAnalysisResult.model_fields)
         for sym, dump in carry_unchanged_tech_reads(fingerprints, prior_ratings).items():
             try:
-                result = TechAnalysisResult(
-                    **{k: v for k, v in dump.items() if k in allowed}
-                )
+                result = TechAnalysisResult(**{k: v for k, v in dump.items() if k in allowed})
             except Exception as exc:
                 # Unreadable prior read -> ask. Never reuse a verdict the desk
                 # cannot reconstruct in full.
                 logger.info(
-                    "tech re-read cache: stored verdict for %s is unreadable "
-                    "(%s) — asking the seat", sym, exc,
+                    "tech re-read cache: stored verdict for %s is unreadable (%s) — asking the seat",
+                    sym,
+                    exc,
                 )
                 continue
             result.input_fingerprint = fingerprints.get(sym)
             result.read_state = READ_CARRIED
             carried[sym] = result
 
-        to_ask = [
-            i for i in items
-            if not (isinstance(i, dict) and i.get("symbol") in carried)
-        ]
+        to_ask = [i for i in items if not (isinstance(i, dict) and i.get("symbol") in carried)]
         if carried:
             logger.info(
-                "tech seat: %d symbol(s) carried forward unchanged (%s); "
-                "%d asked", len(carried), ", ".join(sorted(carried)), len(to_ask),
+                "tech seat: %d symbol(s) carried forward unchanged (%s); %d asked",
+                len(carried),
+                ", ".join(sorted(carried)),
+                len(to_ask),
             )
         if carried and not to_ask:
             # Nothing moved for anybody: no call is made at all.
@@ -108,7 +117,9 @@ class TechReread:
             return dict(carried), None
 
         out, agent_result = self._ask()(
-            to_ask, prior_ratings=prior_ratings or None, valuations=valuations,
+            to_ask,
+            prior_ratings=prior_ratings or None,
+            valuations=valuations,
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
             intraday_context=intraday_context,
@@ -128,9 +139,11 @@ def hold_tech_reread(owner_cls: type) -> type:
     `__init__`) still answers, and `_analyze_batch_uncached` is read off the
     instance at call time, never captured.
     """
+
     def analyze_batch(self, *args, **kwargs):
         """Thin shim: body lives in src/agents/tech_reread.py (`TechReread`)."""
         part = TechReread(ask=lambda: self._analyze_batch_uncached, state=self)
         return part.analyze_batch(*args, **kwargs)
+
     owner_cls.analyze_batch = analyze_batch
     return owner_cls

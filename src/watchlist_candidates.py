@@ -43,15 +43,18 @@ def build_watchlist_candidates(rows: list[dict], lookback_days: int) -> list[dic
             sym = (m.get("symbol") or "").strip().upper()
             if not sym:
                 continue
-            bucket = by_symbol.setdefault(sym, {
-                "symbol": sym,
-                "add_count": 0,
-                "watch_count": 0,
-                "dates": [],
-                "themes": set(),
-                "latest_reason": "",
-                "latest_miss_category": "",
-            })
+            bucket = by_symbol.setdefault(
+                sym,
+                {
+                    "symbol": sym,
+                    "add_count": 0,
+                    "watch_count": 0,
+                    "dates": [],
+                    "themes": set(),
+                    "latest_reason": "",
+                    "latest_miss_category": "",
+                },
+            )
             if rec == "add":
                 bucket["add_count"] += 1
             else:
@@ -80,7 +83,9 @@ def build_watchlist_candidates(rows: list[dict], lookback_days: int) -> list[dic
         results.append(bucket)
     results.sort(
         key=lambda b: (
-            -b["add_count"], -b["watch_count"], -b["total_flags"],
+            -b["add_count"],
+            -b["watch_count"],
+            -b["total_flags"],
             b["symbol"],
         ),
     )

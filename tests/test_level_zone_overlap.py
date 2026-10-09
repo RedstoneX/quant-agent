@@ -6,6 +6,7 @@ level when the price ranges their bars actually traded overlap, the level's
 zone is those bars' own combined span, and a level with no recorded zone
 falls back to the old percentage rather than losing its zone entirely.
 """
+
 import math
 
 import pytest
@@ -48,10 +49,8 @@ def _assert_complete_linkage(groups):
     for g in groups:
         measurable = [p for p in g if math.isfinite(p[3]) and math.isfinite(p[4])]
         for i, a in enumerate(measurable):
-            for b in measurable[i + 1:]:
-                assert _pairwise_overlap(a, b), (
-                    f"{a} and {b} are in one level but never traded the same price"
-                )
+            for b in measurable[i + 1 :]:
+                assert _pairwise_overlap(a, b), f"{a} and {b} are in one level but never traded the same price"
 
 
 def test_one_tall_bar_cannot_weld_two_shelves_together():
@@ -110,8 +109,8 @@ def test_unevaluable_range_falls_back_to_the_percentage_rule():
     """A pivot whose bar range is not a number still gets grouped, not dropped."""
     nan = float("nan")
     a = pivot(0, 100.0, "S", 99.9, 100.1)
-    b = pivot(9, 100.5, "R", nan, nan)          # within the old 1% of 100.0
-    c = pivot(18, 140.0, "R", nan, nan)         # far outside it
+    b = pivot(9, 100.5, "R", nan, nan)  # within the old 1% of 100.0
+    c = pivot(18, 140.0, "R", nan, nan)  # far outside it
     groups = _cluster([a, b, c])
     assert len(groups) == 2
     assert b in groups[0], "unmeasurable range keeps yesterday's answer"
@@ -132,10 +131,16 @@ def test_levels_built_from_bars_carry_their_measured_zone():
     bars = []
     for i in range(160):
         base = 100.0 + (3.0 if i % 20 < 10 else -3.0)
-        bars.append(OHLCV(
-            date=start + timedelta(days=i),
-            open=base, high=base + 1.5, low=base - 1.5, close=base, volume=1_000_000,
-        ))
+        bars.append(
+            OHLCV(
+                date=start + timedelta(days=i),
+                open=base,
+                high=base + 1.5,
+                low=base - 1.5,
+                close=base,
+                volume=1_000_000,
+            )
+        )
     sup, res = find_structural_levels(bars)
     found = sup + res
     assert found, "the fixture must produce levels or it pins nothing"

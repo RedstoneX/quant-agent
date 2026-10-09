@@ -23,7 +23,8 @@ class CoverageRepair:
     """The blind stop-coverage repair and the kill-switch block recorder; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         broker=None,
         db=None,
         alert_owner_kill_switch_blocked=None,
@@ -34,8 +35,13 @@ class CoverageRepair:
             self._alert_owner_kill_switch_blocked = alert_owner_kill_switch_blocked  # else: this part's own body
 
     def _repair_stop_coverage(
-        self, symbol: str, uncovered_qty: float, *, is_short: bool,
-        outcome: dict | None = None, resting_stops: list | None = None,
+        self,
+        symbol: str,
+        uncovered_qty: float,
+        *,
+        is_short: bool,
+        outcome: dict | None = None,
+        resting_stops: list | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
@@ -70,7 +76,9 @@ class CoverageRepair:
             # executed predicate the repair either no-op'd or read a months-
             # old prior row's stop level (audit round 2).
             last_buy=lambda sym, action=opening: self.db.get_symbol_last_buy(
-                sym, include_in_flight=True, action=action,
+                sym,
+                include_in_flight=True,
+                action=action,
             ),
             symbol=symbol,
             uncovered_qty=uncovered_qty,
@@ -100,8 +108,13 @@ class CoverageRepair:
 
     @staticmethod
     def _alert_owner_kill_switch_blocked(
-        *, symbol: str, qty: float = 0.0, stop_price: float = 0.0,
-        side: str = "", kill_switch_path: str = "", **_ignored,
+        *,
+        symbol: str,
+        qty: float = 0.0,
+        stop_price: float = 0.0,
+        side: str = "",
+        kill_switch_path: str = "",
+        **_ignored,
     ) -> None:
         """Page the owner the first time today the desk's own kill switch
         blocks a protective stop for `symbol`. Never raises — see
@@ -134,7 +147,9 @@ class CoverageRepair:
         except Exception as exc:  # noqa: BLE001
             record_protection_fault(None, "coverage_repair.kill_switch_alert", exc, symbol=symbol)
             logger.error(
-                "kill-switch-block owner alert failed for %s: %s", symbol, exc,
+                "kill-switch-block owner alert failed for %s: %s",
+                symbol,
+                exc,
             )
 
 
@@ -142,7 +157,8 @@ class ExDividends:
     """The ex-dividend stop shift; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         broker=None,
         db=None,
         market=None,
@@ -170,6 +186,7 @@ class ExDividends:
         in ET.
         """
         from datetime import timedelta as _td
+
         orders: list[dict] = []
         today = self._today()
         # NEXT TRADING day, not calendar tomorrow (2026-07-16 audit): sessions
@@ -185,8 +202,7 @@ class ExDividends:
                     break
             except Exception as e:  # noqa: BLE001
                 record_protection_fault(self, "exdiv.is_trading_day", e)
-                logger.warning("ex-div: is_trading_day failed (%s) — falling back "
-                               "to calendar+1", e)
+                logger.warning("ex-div: is_trading_day failed (%s) — falling back to calendar+1", e)
                 next_trading_day = today + _td(days=1)
                 break
             next_trading_day += _td(days=1)
@@ -202,15 +218,16 @@ class ExDividends:
             # Check today's trades for a prior ex-div adjustment — idempotent
             try:
                 today_trades = self.db.get_trades(
-                    symbol=p.symbol, today_only=True, limit=20,
+                    symbol=p.symbol,
+                    today_only=True,
+                    limit=20,
                 )
             except Exception as e:
                 record_protection_fault(self, "exdiv.trades_lookup", e, symbol=p.symbol)
                 logger.warning("ex-div: today trades lookup failed for %s: %s", p.symbol, e)
                 continue
             already = any(
-                (t.get("action") or "").upper() == "TRAIL_STOP"
-                and "ex-div" in (t.get("reasoning") or "").lower()
+                (t.get("action") or "").upper() == "TRAIL_STOP" and "ex-div" in (t.get("reasoning") or "").lower()
                 for t in today_trades
             )
             if already:
@@ -238,11 +255,19 @@ class ExDividends:
 
             from src.execution.stop_read import read_stop, repair_for
             from src.execution.exit_path_records import (
-                record_shift_outcome, record_stop_shift_legs,
+                record_shift_outcome,
+                record_stop_shift_legs,
             )
             from src.execution.stop_records import record_unprotected_windows
-            stop_read = read_stop(self.broker, p.symbol, db=self.db,
-                                  run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
+
+            stop_read = read_stop(
+                self.broker,
+                p.symbol,
+                db=self.db,
+                run_id=run_id,
+                context="ex-div shift",
+                establish=repair_for(self._repair_stop_coverage, p),
+            )
             if stop_read.unreadable or stop_read.absent:
                 continue  # unreadable was recorded+alerted; absent = nothing to adjust
             current_stop = stop_read.price
@@ -250,7 +275,9 @@ class ExDividends:
             if new_stop <= 0 or new_stop >= p.current_price:
                 logger.warning(
                     "ex-div: %s skipped — new_stop $%.2f not protective vs current $%.2f",
-                    p.symbol, new_stop, p.current_price,
+                    p.symbol,
+                    new_stop,
+                    p.current_price,
                 )
                 continue
             try:
@@ -266,15 +293,18 @@ class ExDividends:
             finally:
                 record_unprotected_windows(self.broker, self.db, p.symbol, run_id=run_id, caller="exdiv_shift")
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+
             if isinstance(order, dict):
                 record_shift_outcome(
-                    self.db, p.symbol, amount, order, run_id,
+                    self.db,
+                    p.symbol,
+                    amount,
+                    order,
+                    run_id,
                     lambda stage, exc: record_protection_fault(self, stage, exc, symbol=p.symbol),
                     record_stop_shift_legs,
                 )
-            if not order or (
-                isinstance(order, dict) and not accepted_stop_order(order)
-            ):
+            if not order or (isinstance(order, dict) and not accepted_stop_order(order)):
                 # A partial, a refusal or an unknown carries no order id, so no
                 # stop level is written back and no TRAIL_STOP row is filed —
                 # the desk must not record a stop it did not confirm moving.
@@ -286,7 +316,9 @@ class ExDividends:
                 logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
             try:
                 self.db.insert_trade(
-                    symbol=p.symbol, action="TRAIL_STOP", qty=p.qty,
+                    symbol=p.symbol,
+                    action="TRAIL_STOP",
+                    qty=p.qty,
                     price=new_stop,
                     reasoning=(
                         f"ex-div adjustment: ex-div {div['date']}, div ${amount:.4f}/share. "
@@ -307,6 +339,10 @@ class ExDividends:
             orders.append(order)
             logger.info(
                 "Ex-div adjust: %s ex-div %s div $%.4f → stop $%.2f → $%.2f",
-                p.symbol, div["date"], amount, current_stop, new_stop,
+                p.symbol,
+                div["date"],
+                amount,
+                current_stop,
+                new_stop,
             )
         return orders

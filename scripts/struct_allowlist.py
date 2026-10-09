@@ -9,6 +9,7 @@ only. A check fails on (a) any violation not listed and (b) any listed entry tha
 no longer occurs, so the list can only be edited down by fixing code, and every
 addition shows in the diff with its ``Guard-rule-change:`` justification.
 """
+
 from __future__ import annotations
 
 from collections import Counter

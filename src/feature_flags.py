@@ -85,6 +85,7 @@ WHAT THIS STRUCTURALLY CANNOT CATCH:
     documentation pass, same as `docs/qamc_trading_desk_workflow.html` needed
     here.
 """
+
 from __future__ import annotations
 
 import ast
@@ -134,6 +135,7 @@ def _modules_at(location: Path) -> list[Path]:
         return [location]
     raise FileNotFoundError(f"no configuration at {location}")
 
+
 #: Sentinel for the one thing the suffix/annotation scan structurally cannot
 #: see: a `bool | None` tri-state switch (absent/true/false, a different
 #: shape than a plain bool). None exist today — measured by this same scan,
@@ -181,9 +183,7 @@ def _bool_default(node: ast.AST | None) -> tuple[bool, bool | None]:
         return True, node.value
     if isinstance(node, ast.Call):
         for kw in node.keywords:
-            if kw.arg == "default" and isinstance(kw.value, ast.Constant) and isinstance(
-                kw.value.value, bool
-            ):
+            if kw.arg == "default" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
                 return True, kw.value.value
         return True, None
     return True, None
@@ -262,10 +262,7 @@ def _appconfig_sections(root: Path | None = None) -> dict[str, str]:
     desynchronise this check from the loader it is checking.
     """
     base = root or REPO_ROOT
-    nodes = [
-        n for path in config_modules(base)
-        for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-    ]
+    nodes = [n for path in config_modules(base) for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))]
     for node in nodes:
         if not isinstance(node, ast.ClassDef) or node.name != "AppConfig":
             continue
@@ -301,9 +298,7 @@ def effective_values(root: Path | None = None) -> dict[str, bool]:
     for site in collect_switches(config_location(base)):
         section = class_to_section.get(site.class_name)
         block = raw.get(section) if section else None
-        if isinstance(block, dict) and site.field in block and isinstance(
-            block[site.field], bool
-        ):
+        if isinstance(block, dict) and site.field in block and isinstance(block[site.field], bool):
             out[site.flag_id] = block[site.field]
         elif site.code_default is not None:
             out[site.flag_id] = site.code_default
@@ -388,8 +383,7 @@ def audit(root: Path | None = None) -> list[FlagProblem]:
                 FlagProblem(
                     "no-intentional",
                     site.flag_id,
-                    "requires `intentional:` (true/false) — was this value "
-                    "chosen, or just never revisited?",
+                    "requires `intentional:` (true/false) — was this value chosen, or just never revisited?",
                 )
             )
 

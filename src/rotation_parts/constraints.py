@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-
 def rotation_binding_constraints(
     *,
     headroom_pct: float,
@@ -48,7 +47,8 @@ def rotation_binding_constraints(
 
 
 def funding_view_measured(
-    entry_budget_usd: float | None, min_order_usd: float | None,
+    entry_budget_usd: float | None,
+    min_order_usd: float | None,
 ) -> bool:
     """Was the funding constraint actually READ this session?
 
@@ -75,7 +75,8 @@ def funding_view_measured(
 
 
 def holdings_below_entry_bar(
-    blocked: dict[str, list[str]], held_symbols: set[str],
+    blocked: dict[str, list[str]],
+    held_symbols: set[str],
 ) -> tuple[str, ...]:
     """Which currently-held names would NOT be bought today.
 
@@ -98,7 +99,4 @@ def holdings_below_entry_bar(
     number (board item 39(a) stays untouched).
     """
     held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
-    return tuple(sorted(
-        sym.upper() for sym, reasons in blocked.items()
-        if reasons and sym.upper() in held
-    ))
+    return tuple(sorted(sym.upper() for sym, reasons in blocked.items() if reasons and sym.upper() in held))

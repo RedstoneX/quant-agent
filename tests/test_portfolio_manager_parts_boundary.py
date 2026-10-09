@@ -6,6 +6,7 @@ Every collaborator is an explicit keyword-only constructor argument, so the clas
 is built from stubs alone (clause 5 of tests/boundary_harness.py). Follows
 tests/test_cost_circuit_parts_boundary.py.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -45,12 +46,15 @@ def test_every_lifted_piece_is_constructible_from_stubs(cls):
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
 
 
-@pytest.mark.parametrize("module", [
-    "src.agents.portfolio_manager.decision_grounding",
-    "src.agents.portfolio_manager.evidence_prompting",
-    "src.agents.portfolio_manager.rotation_rendering",
-    "src.agents.portfolio_manager.candidate_ranking",
-])
+@pytest.mark.parametrize(
+    "module",
+    [
+        "src.agents.portfolio_manager.decision_grounding",
+        "src.agents.portfolio_manager.evidence_prompting",
+        "src.agents.portfolio_manager.rotation_rendering",
+        "src.agents.portfolio_manager.candidate_ranking",
+    ],
+)
 def test_every_lifted_module_passes_the_boundary_check(module):
     verdict = check_boundary(module)
     assert verdict.passed, verdict.failures
@@ -85,6 +89,7 @@ def test_aliases_are_read_live_off_the_host_not_the_part():
 
 # --- Instalment 2: prompt evidence, rotation section, candidate ranking ----------
 
+
 def _ranking_part(**overrides):
     kwargs = dict(
         get_macro_parse_failures=lambda: None,
@@ -107,8 +112,9 @@ def test_prompt_text_is_the_same_through_the_shim_and_the_part():
     """Prompt text is code that can rot: the mixin's shim and the bare part must
     render byte-identical text (the lift moved the bodies verbatim)."""
     rows: list[dict] = []  # the empty roll-up; richer rows need a fixture the proof script covers
-    assert (PortfolioManagerAgent._render_earnings_no_call_rollup(rows)
-            == PromptEvidence()._render_earnings_no_call_rollup(rows))
+    assert PortfolioManagerAgent._render_earnings_no_call_rollup(
+        rows
+    ) == PromptEvidence()._render_earnings_no_call_rollup(rows)
 
 
 def test_rotation_part_runs_with_nothing_behind_it():
@@ -151,6 +157,7 @@ def test_ranking_part_wires_the_host_state_from_its_arguments():
 
 # --- The agent HOLDS its parts; it inherits none of them --------------------------
 
+
 def test_agent_holds_prompt_evidence_instead_of_inheriting():
     assert not any(c.__name__ == "PromptEvidenceMixin" for c in PortfolioManagerAgent.__mro__)
     assert type(PortfolioManagerAgent._prompt_evidence) is PromptEvidence
@@ -162,6 +169,7 @@ def test_agent_holds_prompt_evidence_instead_of_inheriting():
 
 def test_prompt_evidence_part_is_built_and_exercised_without_the_agent():
     """Constructed from nothing, exercised, and held on a bare class: no agent built."""
+
     class Bare:
         pass
 
@@ -174,8 +182,11 @@ def test_prompt_evidence_part_is_built_and_exercised_without_the_agent():
 
 
 def test_delegates_cover_every_prompt_evidence_body():
-    bodies = {n for n, f in vars(PromptEvidence).items()
-              if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))}
+    bodies = {
+        n
+        for n, f in vars(PromptEvidence).items()
+        if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))
+    }
     assert bodies == set(prompt_evidence.DELEGATED)
 
 
@@ -196,7 +207,11 @@ def _hold_fn(module):
 
 def test_agent_inherits_no_mixin_and_holds_every_part():
     assert not any(c.__name__ in _MIXINS for c in PortfolioManagerAgent.__mro__)
-    assert [c.__name__ for c in PortfolioManagerAgent.__mro__][:3] == ["PortfolioManagerAgent", "LiveLimitPrompt", "BaseAgent"]
+    assert [c.__name__ for c in PortfolioManagerAgent.__mro__][:3] == [
+        "PortfolioManagerAgent",
+        "LiveLimitPrompt",
+        "BaseAgent",
+    ]
     for module, part, holder, _ in _HELD:
         assert type(getattr(PortfolioManagerAgent, holder)) is part
         for name in module.DELEGATED:
@@ -215,6 +230,7 @@ def test_delegates_cover_every_body_and_live_bodies_are_delegated(module, part, 
 def test_part_is_built_held_and_run_on_a_bare_class_with_no_agent(module, part, holder, body):
     """Constructed from a bare class, exercised through the delegates, and the held
     part's own body runs when nothing is swapped: no agent object is built."""
+
     class Bare:
         build_evidence_registry = staticmethod(lambda *a, **k: {})
         _macro_sectors = staticmethod(lambda *a, **k: [])

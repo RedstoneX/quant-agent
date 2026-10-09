@@ -97,9 +97,7 @@ class DeleverConviction:
         """
         registry = getattr(ctx, "evidence_registry", None) or {}
         stale = getattr(ctx, "evidence_stale_sources", None) or {}
-        non_corroborating = (
-            getattr(ctx, "evidence_non_corroborating_sources", None) or {}
-        )
+        non_corroborating = getattr(ctx, "evidence_non_corroborating_sources", None) or {}
         verdicts = list(getattr(ctx, "seat_verdicts", None) or [])
         strength_of: dict[tuple[str, str], int] = {}
         if verdicts:
@@ -126,7 +124,10 @@ class DeleverConviction:
             sources = registry.get(symbol) or {}
             ignored = stale.get(symbol)
             opposed = count_opposing_sources(
-                symbol, sources, side, ignored_sources=ignored,
+                symbol,
+                sources,
+                side,
+                ignored_sources=ignored,
             )
             # ONE-SIDED (item 109, owner ruling 2026-09-25 "macro weighted,
             # never solo"): a macro stance BROADCAST onto a name whose sector
@@ -135,16 +136,17 @@ class DeleverConviction:
             # Its dissent above is untouched, so the removal can only ever
             # move a name EARLIER in the cut, never later.
             aligned = count_aligned_sources(
-                symbol, sources, side,
-                ignored_sources=(ignored or frozenset())
-                | (non_corroborating.get(symbol) or frozenset()),
+                symbol,
+                sources,
+                side,
+                ignored_sources=(ignored or frozenset()) | (non_corroborating.get(symbol) or frozenset()),
             )
             if opposed > 0:
-                bucket = 0      # OPPOSED — cut first
+                bucket = 0  # OPPOSED — cut first
             elif aligned > 0:
-                bucket = 2      # SUPPORTED — cut last
+                bucket = 2  # SUPPORTED — cut last
             else:
-                bucket = 1      # NO COVERAGE — between the two, never first
+                bucket = 1  # NO COVERAGE — between the two, never first
                 uncovered.append(symbol)
             order[symbol] = (bucket, strength_of.get((symbol, wanted), 0))
         if uncovered:

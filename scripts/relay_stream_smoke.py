@@ -27,7 +27,7 @@ def _load_env_file() -> None:
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if line.startswith("export "):
-            line = line[len("export "):]
+            line = line[len("export ") :]
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
@@ -92,8 +92,8 @@ def main() -> int:
     )
     print(
         "RESULT: PASS — relay supports streaming + exact usage"
-        if ok else
-        "RESULT: FAIL — content, finish reason, or exact usage was missing"
+        if ok
+        else "RESULT: FAIL — content, finish reason, or exact usage was missing"
     )
     return 0 if ok else 1
 

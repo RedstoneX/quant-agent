@@ -6,6 +6,7 @@ mutate in place. `AlpacaBroker` keeps same-named thin shims that build one per
 call, so a test that swaps the client after construction still hits the swap,
 and the caches stay the broker's own dicts (the same objects, mutated here).
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,6 +16,7 @@ from datetime import date
 from alpaca.trading.enums import QueryOrderStatus
 
 from src.execution.broker_parts.stop_place import _alpaca_symbol, _internal_symbol
+
 # No ledger handle on this per-call object: traceback is logged, the counted row is skipped until
 # one is lent (flagged, no new channel).
 from src.sentinel.guarded import record_guarded_pass
@@ -35,7 +37,8 @@ class AccountReads(AssetEligibilityReads):
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         client,
         shortable_cache,
         fractionable_cache,
@@ -71,9 +74,7 @@ class AccountReads(AssetEligibilityReads):
         # spend right now, no margin" number for a cash-only design (2026-
         # 08-19 SGOV/deployable-liquidity forensic).
         raw_nmbp = getattr(acct, "non_marginable_buying_power", None)
-        non_marginable_buying_power = (
-            float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)
-        )
+        non_marginable_buying_power = float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)
         return {
             "cash": float(acct.cash),
             "portfolio_value": portfolio_value,
@@ -127,12 +128,14 @@ class AccountReads(AssetEligibilityReads):
             try:
                 if not isinstance(item, dict):
                     continue
-                out.append({
-                    "date": item.get("date"),
-                    "net_amount": float(item.get("net_amount") or 0.0),
-                    "description": item.get("description", ""),
-                    "activity_type": item.get("activity_type", "INT"),
-                })
+                out.append(
+                    {
+                        "date": item.get("date"),
+                        "net_amount": float(item.get("net_amount") or 0.0),
+                        "description": item.get("description", ""),
+                        "activity_type": item.get("activity_type", "INT"),
+                    }
+                )
             except (TypeError, ValueError):
                 continue
         return out
@@ -178,7 +181,9 @@ class AccountReads(AssetEligibilityReads):
                     break
                 page_token = last_id
             record_guarded_pass(
-                self, "account_reads.all_account_activities", context={"rows_before_failure": len(activities)},
+                self,
+                "account_reads.all_account_activities",
+                context={"rows_before_failure": len(activities)},
             )
         except Exception as exc:
             record_guarded_pass(
@@ -230,8 +235,15 @@ class AccountReads(AssetEligibilityReads):
         name = str(_field("name", "") or "").strip()
         name_lower = name.casefold()
         unsupported_name_terms = (
-            " exchange traded fund", " etf", "fund shares", "warrant",
-            "preferred", "depositary", " american deposit", " unit", " rights",
+            " exchange traded fund",
+            " etf",
+            "fund shares",
+            "warrant",
+            "preferred",
+            "depositary",
+            " american deposit",
+            " unit",
+            " rights",
         )
 
         reason = None
@@ -242,9 +254,16 @@ class AccountReads(AssetEligibilityReads):
         elif not tradable:
             reason = "asset_not_tradable"
         elif exchange not in {
-            "nyse", "nasdaq", "amex", "arca", "bats",
-            "assetexchange.nyse", "assetexchange.nasdaq",
-            "assetexchange.amex", "assetexchange.arca", "assetexchange.bats",
+            "nyse",
+            "nasdaq",
+            "amex",
+            "arca",
+            "bats",
+            "assetexchange.nyse",
+            "assetexchange.nasdaq",
+            "assetexchange.amex",
+            "assetexchange.arca",
+            "assetexchange.bats",
         }:
             reason = "unsupported_exchange"
         elif any(term in name_lower for term in unsupported_name_terms):
@@ -271,7 +290,8 @@ class AccountReads(AssetEligibilityReads):
         delisted", which it is not.
         """
         raw = self.client.get(
-            "/assets", {"status": "active", "asset_class": "us_equity"},
+            "/assets",
+            {"status": "active", "asset_class": "us_equity"},
         )
         if not isinstance(raw, list):
             raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
@@ -308,12 +328,16 @@ class AccountReads(AssetEligibilityReads):
         """
         from datetime import datetime, timedelta, timezone
         from src.util.time import ET
+
         try:
             from alpaca.trading.requests import GetPortfolioHistoryRequest
+
             now = datetime.now(timezone.utc)
             req = GetPortfolioHistoryRequest(
-                timeframe="1D", extended_hours=False,
-                start=now - timedelta(days=lookback_days * 2 + 10), end=now,
+                timeframe="1D",
+                extended_hours=False,
+                start=now - timedelta(days=lookback_days * 2 + 10),
+                end=now,
             )
             history = self.client.get_portfolio_history(history_filter=req)
             record_guarded_pass(self, "account_reads.recent_daily_closes", context={})
@@ -348,12 +372,16 @@ class AccountReads(AssetEligibilityReads):
         """
         from datetime import datetime, timedelta, timezone
         from src.util.time import ET
+
         try:
             from alpaca.trading.requests import GetPortfolioHistoryRequest
+
             now = datetime.now(timezone.utc)
             req = GetPortfolioHistoryRequest(
-                timeframe="1D", extended_hours=False,
-                start=now - timedelta(days=365 * 5), end=now,
+                timeframe="1D",
+                extended_hours=False,
+                start=now - timedelta(days=365 * 5),
+                end=now,
             )
             history = self.client.get_portfolio_history(history_filter=req)
             record_guarded_pass(self, "account_reads.full_portfolio_history", context={})
@@ -384,6 +412,7 @@ class AccountReads(AssetEligibilityReads):
 
     def is_trading_day(self, on_date: date | None = None) -> bool:
         from src.util.time import et_today
+
         target_date = on_date or et_today()  # ET trading-day, not host-local
         # Per-date result cache. is_trading_day is hit on every session
         # entry, in scheduler `_run_safe`, in some agent helpers — easily
@@ -397,9 +426,7 @@ class AccountReads(AssetEligibilityReads):
         try:
             from alpaca.trading.requests import GetCalendarRequest
 
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
+            calendar = self.client.get_calendar(GetCalendarRequest(start=target_date, end=target_date))
             result = bool(calendar)
             record_guarded_pass(self, "account_reads.trading_calendar_confirm", context={"date": str(target_date)})
         except Exception:
@@ -442,11 +469,11 @@ class AccountReads(AssetEligibilityReads):
 
         query_start = start + _td(days=1)
         try:
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=query_start, end=end)
-            ) or []
+            calendar = self.client.get_calendar(GetCalendarRequest(start=query_start, end=end)) or []
             record_guarded_pass(
-                self, "account_reads.trading_sessions_held", context={"start": str(start), "end": str(end)},
+                self,
+                "account_reads.trading_sessions_held",
+                context={"start": str(start), "end": str(end)},
             )
             return len(calendar)
         except Exception as exc:  # noqa: BLE001
@@ -460,6 +487,7 @@ class AccountReads(AssetEligibilityReads):
             from src.trading_calendar import (
                 trading_sessions_held as _weekday_sessions_held,
             )
+
             return _weekday_sessions_held(start, end)
 
     def is_last_trading_day_of_quarter(self, on_date: date | None = None) -> bool:
@@ -478,6 +506,7 @@ class AccountReads(AssetEligibilityReads):
         """
         from src.trading_calendar import _QUARTER_END_MONTHS, et_today
         from datetime import date as _date, timedelta as _td
+
         target = on_date or et_today()
         if target.month not in _QUARTER_END_MONTHS:
             return False
@@ -489,9 +518,8 @@ class AccountReads(AssetEligibilityReads):
         month_end = next_month_start - _td(days=1)
         try:
             from alpaca.trading.requests import GetCalendarRequest
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target, end=month_end)
-            ) or []
+
+            calendar = self.client.get_calendar(GetCalendarRequest(start=target, end=month_end)) or []
             record_guarded_pass(self, "account_reads.last_trading_day_of_quarter", context={"target": str(target)})
         except Exception as exc:
             record_guarded_pass(
@@ -547,15 +575,16 @@ class AccountReads(AssetEligibilityReads):
         for the naive-datetime bug below to be fixed in."""
         from src.trading_calendar import ET, et_today
         from datetime import datetime as _dt
+
         target_date = on_date or et_today()
         try:
             from alpaca.trading.requests import GetCalendarRequest
 
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
+            calendar = self.client.get_calendar(GetCalendarRequest(start=target_date, end=target_date))
             record_guarded_pass(
-                self, "account_reads.session_edge_calendar", context={"attr": attr, "date": str(target_date)},
+                self,
+                "account_reads.session_edge_calendar",
+                context={"attr": attr, "date": str(target_date)},
             )
         except Exception as exc:
             record_guarded_pass(
@@ -588,7 +617,9 @@ class AccountReads(AssetEligibilityReads):
             else:
                 result = _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
             record_guarded_pass(
-                self, "account_reads.session_edge_resolve", context={"attr": attr, "date": str(entry_date)},
+                self,
+                "account_reads.session_edge_resolve",
+                context={"attr": attr, "date": str(entry_date)},
             )
             return result
         except Exception as exc:
@@ -621,15 +652,14 @@ class AccountReads(AssetEligibilityReads):
         """
         from src.trading_calendar import ET, et_today
         from datetime import datetime as _dt
+
         target_date = on_date or et_today()
         if target_date in self._session_open_cache:
             return self._session_open_cache[target_date]
         try:
             from alpaca.trading.requests import GetCalendarRequest
 
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
+            calendar = self.client.get_calendar(GetCalendarRequest(start=target_date, end=target_date))
             record_guarded_pass(self, "account_reads.session_open_calendar", context={"date": str(target_date)})
         except Exception as exc:
             record_guarded_pass(
@@ -686,10 +716,12 @@ class AccountReads(AssetEligibilityReads):
         """
         try:
             from alpaca.trading.requests import GetOrdersRequest
+
             orders = self.client.get_orders(
                 filter=GetOrdersRequest(
                     status=QueryOrderStatus.OPEN,
-                    symbols=[_alpaca_symbol(symbol)], nested=True,
+                    symbols=[_alpaca_symbol(symbol)],
+                    nested=True,
                 )
             )
         except Exception as exc:

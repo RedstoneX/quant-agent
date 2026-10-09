@@ -49,6 +49,7 @@ def test_save_then_load_round_trip(tmp_path):
     assert "date" in loaded
     from src.seat_heal import coerce_macro_shape
     from src.models import MacroAnalysis
+
     coerced, _fixes = coerce_macro_shape(loaded)
     parsed = MacroAnalysis.model_validate(coerced)
     assert parsed.regime == "risk-on"
@@ -82,6 +83,7 @@ def test_save_non_dict_is_noop(tmp_path):
 # whatever the LLM returns — a separate prompt-level concern.
 # ============================================================================
 
+
 def test_macro_store_first_day_load_returns_none_so_prompt_says_first_run(tmp_path):
     """First trading day ever (or fresh data dir) must surface None so the
     macro_analyst prompt renders the 'No prior state on file (first run)'
@@ -97,11 +99,15 @@ def test_macro_store_regime_change_observable_across_days(tmp_path):
     overwrites today's slot)."""
     store = MacroStore(data_dir=str(tmp_path / "macro"))
 
-    store.save_last_state({
-        "regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
-        "summary": "Tight credit + soft VIX.",
-        "position_guidance": {"target_invested_pct": 80, "cash_recommendation_pct": 20, "reasoning": "x"},
-    })
+    store.save_last_state(
+        {
+            "regime": "risk-on",
+            "confidence": "high",
+            "equity_outlook": "bullish",
+            "summary": "Tight credit + soft VIX.",
+            "position_guidance": {"target_invested_pct": 80, "cash_recommendation_pct": 20, "reasoning": "x"},
+        }
+    )
     day1 = store.load_last_state()
     assert day1["regime"] == "risk-on"
 
@@ -113,11 +119,15 @@ def test_macro_store_regime_change_observable_across_days(tmp_path):
     raw[0]["date"] = "2026-04-30"  # yesterday
     history_path.write_text(json.dumps(raw))
 
-    store.save_last_state({
-        "regime": "risk-off", "confidence": "high", "equity_outlook": "bearish",
-        "summary": "Credit widening + VIX > 25.",
-        "position_guidance": {"target_invested_pct": 30, "cash_recommendation_pct": 70, "reasoning": "x"},
-    })
+    store.save_last_state(
+        {
+            "regime": "risk-off",
+            "confidence": "high",
+            "equity_outlook": "bearish",
+            "summary": "Credit widening + VIX > 25.",
+            "position_guidance": {"target_invested_pct": 30, "cash_recommendation_pct": 70, "reasoning": "x"},
+        }
+    )
     day2 = store.load_last_state()
     assert day2["regime"] == "risk-off"
 
@@ -133,7 +143,9 @@ def test_macro_store_regime_change_observable_across_days(tmp_path):
 
 def test_series_prints_are_persisted_and_detect_value_change(tmp_path):
     from src.data.macro_store import (
-        MacroStore, series_prints_changed, series_prints_from_summary,
+        MacroStore,
+        series_prints_changed,
+        series_prints_from_summary,
     )
 
     summary = {
@@ -148,18 +160,24 @@ def test_series_prints_are_persisted_and_detect_value_change(tmp_path):
 
     store = MacroStore(data_dir=str(tmp_path / "macro"))
     store.save_last_state(
-        {"regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
-         "summary": "x", "position_guidance": {"target_invested_pct": 80,
-         "cash_recommendation_pct": 20, "reasoning": "x"}},
+        {
+            "regime": "risk-on",
+            "confidence": "high",
+            "equity_outlook": "bullish",
+            "summary": "x",
+            "position_guidance": {"target_invested_pct": 80, "cash_recommendation_pct": 20, "reasoning": "x"},
+        },
         series_prints=prints,
     )
     loaded = store.load_last_state()
     assert loaded["series_prints"]["values"]["inflation.core_cpi_yoy"] == 3.1
 
-    live = series_prints_from_summary({
-        "vix": {"current": 16.2},
-        "inflation": {"core_cpi_yoy": 3.4},
-    })
+    live = series_prints_from_summary(
+        {
+            "vix": {"current": 16.2},
+            "inflation": {"core_cpi_yoy": 3.4},
+        }
+    )
     assert series_prints_changed(prints, live) is True
     assert series_prints_changed(prints, prints) is False
     assert series_prints_changed({}, live) is False

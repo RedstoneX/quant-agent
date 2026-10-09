@@ -4,6 +4,7 @@ Bodies moved verbatim from `PortfolioConstructor`; the config and the refusal
 recorder are passed in, and `_accrue_sector` mutates the caller's
 `last_order_sectors` dict in place.
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,7 +17,8 @@ logger = logging.getLogger("src.portfolio_constructor")
 
 
 def _current_weights(
-    positions: list[Position], total_value: float,
+    positions: list[Position],
+    total_value: float,
 ) -> dict[str, float]:
     """Current-position weights as gross-leverage percentages.
 
@@ -40,6 +42,7 @@ def _current_weights(
     # Local import to avoid the cyclic risk -> portfolio_constructor
     # import chain at module load.
     from src.risk.rules import position_weight_pct
+
     # SIGNED, not absolute. A short has a negative qty and a negative
     # market_value (Alpaca convention), so it lands in the map as a
     # NEGATIVE weight. Signed is the correct choice because every consumer
@@ -56,11 +59,7 @@ def _current_weights(
     # whole question. The previous `p.qty > 0` filter dropped shorts from
     # the map entirely, so `current_weights.get(sym, 0.0)` reported a held
     # short as unheld and the delta loop would re-open it every session.
-    return {
-        p.symbol: position_weight_pct(p, total_value)
-        for p in positions
-        if p.qty != 0
-    }
+    return {p.symbol: position_weight_pct(p, total_value) for p in positions if p.qty != 0}
 
 
 def _apply_sector_dial(
@@ -91,7 +90,9 @@ def _apply_sector_dial(
     worth trading. The callers already treat `<= 0` as no order.
     """
     from src.risk.rules import (
-        _gross_multiplier, decision_side, sector_allowance_pct,
+        _gross_multiplier,
+        decision_side,
+        sector_allowance_pct,
         sector_size_scale,
     )
     from src.sector_reference import _get_sector
@@ -140,7 +141,8 @@ def _apply_sector_dial(
         # sites in the builders, because only this method knows WHICH
         # of the two ends fired.
         note_refusal(
-            symbol, "short" if side == "short" else "long",
+            symbol,
+            "short" if side == "short" else "long",
             STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
             f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
             f"equity, at or past the {cfg.max_sector_hard_pct:.0f}% "
@@ -172,8 +174,14 @@ def _apply_sector_dial(
         "Constructor: %s size scaled for sector crowding "
         "(%.2f%% → %.2f%%; sector '%s' at %.1f%% gross, target %.0f%%, "
         "ceiling %.0f%%, dial %.2f)",
-        symbol, allocation_pct, final, sector, current_pct,
-        cfg.max_sector_pct, cfg.max_sector_hard_pct, scale,
+        symbol,
+        allocation_pct,
+        final,
+        sector,
+        current_pct,
+        cfg.max_sector_pct,
+        cfg.max_sector_hard_pct,
+        scale,
     )
     # Provenance for the AI Risk Manager and the owner. A smaller position
     # than the PM asked for must never be silently applied — someone
@@ -205,20 +213,17 @@ def _accrue_sector(
     """
     from src.risk.rules import _gross_multiplier, decision_side
     from src.sector_reference import _get_sector
+
     if decision.action not in ("BUY", "SHORT"):
         return
     sector = _get_sector(decision.symbol)
     # Board item 224 recording: keep what this lookup said, including
     # that it said nothing. None means "could not determine", and the
     # realised-weights row stores it as NULL rather than as a bucket.
-    last_order_sectors[decision.symbol] = (
-        sector if sector and sector != "Unknown" else None
-    )
+    last_order_sectors[decision.symbol] = sector if sector and sector != "Unknown" else None
     if not sector or sector == "Unknown":
         return
     # Spec §12.2 — into THIS order's side. A SHORT booked into the long
     # bucket would shrink the next long for crowding that is not there.
     key = (sector, decision_side(decision.action))
-    sector_weights[key] = sector_weights.get(key, 0.0) + (
-        decision.allocation_pct * _gross_multiplier(decision.symbol)
-    )
+    sector_weights[key] = sector_weights.get(key, 0.0) + (decision.allocation_pct * _gross_multiplier(decision.symbol))

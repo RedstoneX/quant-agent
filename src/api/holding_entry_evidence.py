@@ -39,16 +39,13 @@ _RUN_EVIDENCE_SQL = (
 #: The opening run's rows only. No review cutoff here: the later-review
 #: rows are already carried by the query above, and repeating them would
 #: duplicate every review line on the page.
-_OPENING_EVIDENCE_SQL = (
-    "SELECT * FROM specialist_evidence WHERE symbol = ? AND run_id = ? ORDER BY id"
-)
+_OPENING_EVIDENCE_SQL = "SELECT * FROM specialist_evidence WHERE symbol = ? AND run_id = ? ORDER BY id"
 
 #: The earliest entry row written against the same position. `position_id`
 #: is what ties an add back to the open; without one there is nothing to
 #: tie and the opening run is simply the entry's own.
 _OPENING_TRADE_SQL = (
-    "SELECT run_id FROM trades WHERE position_id = ? AND action IN ('BUY', 'SHORT') "
-    "ORDER BY timestamp, id LIMIT 1"
+    "SELECT run_id FROM trades WHERE position_id = ? AND action IN ('BUY', 'SHORT') ORDER BY timestamp, id LIMIT 1"
 )
 
 
@@ -69,7 +66,8 @@ def opening_run_id(conn: sqlite3.Connection, entry: dict) -> str | None:
 def entry_evidence(conn: sqlite3.Connection, symbol: str, entry: dict) -> list[dict]:
     """The entry run's evidence, then the opening run's, de-duplicated by id."""
     rows = [
-        dict(row) for row in conn.execute(
+        dict(row)
+        for row in conn.execute(
             _RUN_EVIDENCE_SQL,
             (symbol, entry.get("run_id") or "", entry.get("timestamp") or ""),
         ).fetchall()
@@ -79,7 +77,6 @@ def entry_evidence(conn: sqlite3.Connection, symbol: str, entry: dict) -> list[d
         return rows
     seen = {row.get("id") for row in rows}
     rows.extend(
-        dict(row) for row in conn.execute(_OPENING_EVIDENCE_SQL, (symbol, opening))
-        if dict(row).get("id") not in seen
+        dict(row) for row in conn.execute(_OPENING_EVIDENCE_SQL, (symbol, opening)) if dict(row).get("id") not in seen
     )
     return rows

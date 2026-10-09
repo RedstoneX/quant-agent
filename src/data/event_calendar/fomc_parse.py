@@ -15,11 +15,22 @@ logger = logging.getLogger(__name__)
 
 _FOMC_DURATION_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
 _FOMC_DURATION_RE = re.compile(
-    r"\b(one|two|three|four)[-\s]day\s+meeting\b", re.IGNORECASE,
+    r"\b(one|two|three|four)[-\s]day\s+meeting\b",
+    re.IGNORECASE,
 )
 _FOMC_MONTHS = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }
 
 
@@ -46,14 +57,12 @@ def parse_fomc_meetings_from_json(payload) -> list[FOMCMeeting]:
     """
     if not isinstance(payload, dict):
         raise FOMCCalendarParseError(
-            f"Fed JSON calendar: expected a JSON object, got "
-            f"{type(payload).__name__} — the feed's shape has changed"
+            f"Fed JSON calendar: expected a JSON object, got {type(payload).__name__} — the feed's shape has changed"
         )
     events = payload.get("events")
     if not isinstance(events, list):
         raise FOMCCalendarParseError(
-            "Fed JSON calendar: no 'events' list in the payload — the feed's "
-            "shape has changed"
+            "Fed JSON calendar: no 'events' list in the payload — the feed's shape has changed"
         )
 
     meetings: list[FOMCMeeting] = []
@@ -106,9 +115,7 @@ _FOMC_HTML_DAYS_RE = re.compile(r"(\d{1,2})\s*(?:[-–—]\s*(\d{1,2}))?")
 
 
 def _fomc_html_text(fragment: str) -> str:
-    return " ".join(
-        html_module.unescape(_FOMC_HTML_TAG_RE.sub(" ", fragment)).split()
-    )
+    return " ".join(html_module.unescape(_FOMC_HTML_TAG_RE.sub(" ", fragment)).split())
 
 
 def parse_fomc_meetings_from_html(document: str) -> list[FOMCMeeting]:
@@ -133,8 +140,7 @@ def parse_fomc_meetings_from_html(document: str) -> list[FOMCMeeting]:
     headings = [(m.start(), int(m.group(1))) for m in _FOMC_HTML_YEAR_RE.finditer(text)]
     if not headings:
         raise FOMCCalendarParseError(
-            "Fed FOMC calendar page: no 'NNNN FOMC Meetings' year panel found "
-            "— the page layout has changed"
+            "Fed FOMC calendar page: no 'NNNN FOMC Meetings' year panel found — the page layout has changed"
         )
 
     meetings: list[FOMCMeeting] = []
@@ -150,10 +156,7 @@ def parse_fomc_meetings_from_html(document: str) -> list[FOMCMeeting]:
 
         month_text = _fomc_html_text(row.group("month"))
         day_text = _fomc_html_text(row.group("date"))
-        months = [
-            _FOMC_MONTHS.get(part.strip()[:3].lower())
-            for part in month_text.split("/") if part.strip()
-        ]
+        months = [_FOMC_MONTHS.get(part.strip()[:3].lower()) for part in month_text.split("/") if part.strip()]
         if not months or any(m is None for m in months) or len(months) > 2:
             continue
         day_match = _FOMC_HTML_DAYS_RE.search(day_text)
@@ -178,15 +181,18 @@ def parse_fomc_meetings_from_html(document: str) -> list[FOMCMeeting]:
             # A plausible-looking but wrong parse. Dropping it is mandatory:
             # a fabricated meeting block is worse than a missing one.
             logger.warning(
-                "Fed FOMC page: discarding implausible %d-day block %s..%s "
-                "(from %r / %r)", span, start, end, month_text, day_text,
+                "Fed FOMC page: discarding implausible %d-day block %s..%s (from %r / %r)",
+                span,
+                start,
+                end,
+                month_text,
+                day_text,
             )
             continue
         meetings.append(FOMCMeeting(start, end, True))
 
     if not meetings:
         raise FOMCCalendarParseError(
-            "Fed FOMC calendar page: year panels found but no readable meeting "
-            "row — the page layout has changed"
+            "Fed FOMC calendar page: year panels found but no readable meeting row — the page layout has changed"
         )
     return _fomc_sorted(meetings)

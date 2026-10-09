@@ -22,9 +22,15 @@ _SERIES_PRINT_FIELDS: tuple[tuple[str, str], ...] = (
     ("unemployment", "current"),
     ("jobless_claims", "current"),
 )
-_SERIES_PRINT_IDS = frozenset({
-    "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "ICSA",
-})
+_SERIES_PRINT_IDS = frozenset(
+    {
+        "CPIAUCSL",
+        "CPILFESL",
+        "PCEPI",
+        "UNRATE",
+        "ICSA",
+    }
+)
 
 
 def series_prints_from_summary(summary, freshness=None) -> dict:
@@ -189,9 +195,7 @@ class MacroStore:
             "coverage_state": analysis.get("coverage_state") or "unknown",
             "coverage_note": analysis.get("coverage_note") or "",
         }
-        if isinstance(series_prints, dict) and (
-            series_prints.get("values") or series_prints.get("observations")
-        ):
+        if isinstance(series_prints, dict) and (series_prints.get("values") or series_prints.get("observations")):
             snapshot["series_prints"] = {
                 "values": dict(series_prints.get("values") or {}),
                 "observations": dict(series_prints.get("observations") or {}),
@@ -208,8 +212,10 @@ class MacroStore:
                 {
                     "sector": sector,
                     "stance": (
-                        "overweight" if direction == "bullish"
-                        else "underweight" if direction == "bearish"
+                        "overweight"
+                        if direction == "bullish"
+                        else "underweight"
+                        if direction == "bearish"
                         else "neutral"
                     ),
                     "reason": "",
@@ -218,8 +224,7 @@ class MacroStore:
                 if isinstance(direction, str)
             ]
         _atomic_write(self.last_state_path, json.dumps(snapshot, indent=2, ensure_ascii=False))
-        logger.info("Saved macro last state → %s (regime=%s)",
-                    self.last_state_path, snapshot.get("regime"))
+        logger.info("Saved macro last state → %s (regime=%s)", self.last_state_path, snapshot.get("regime"))
         # Append to history so future PM runs can see the 7-day regime trajectory.
         self._append_history(snapshot)
 

@@ -130,10 +130,6 @@ from src.agents.llm_attempts import (  # noqa: F401
 )
 
 
-
-
-
-
 @dataclass
 class AgentResult:
     raw_text: str
@@ -221,7 +217,9 @@ class AgentResult:
     _repair_unquoted_keys = staticmethod(repair_unquoted_keys)
 
     def parse_json_rows(
-        self, key_field: str = "symbol", list_field: str | None = None,
+        self,
+        key_field: str = "symbol",
+        list_field: str | None = None,
     ) -> RowSalvage | None:
         return parse_json_rows_text(
             self.raw_text,
@@ -231,8 +229,7 @@ class AgentResult:
         )
 
 
-def usage_telemetry_word(input_tokens, output_tokens, cost_usd,
-                         provider_requests) -> str | None:
+def usage_telemetry_word(input_tokens, output_tokens, cost_usd, provider_requests) -> str | None:
     """Did the provider's answer carry usage information? — recorded, never inferred.
 
     A response with no token counts used to be stored as 0 tokens and a NULL
@@ -242,8 +239,10 @@ def usage_telemetry_word(input_tokens, output_tokens, cost_usd,
     or the values are not numbers (legacy/replay fixtures): unknown, not guessed.
     Recording only; nothing reads it to decide anything.
     """
+
     def num(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
+
     if provider_requests == 0 or not (num(input_tokens) and num(output_tokens)):
         return None
     if input_tokens == 0 and output_tokens == 0:
@@ -256,13 +255,12 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     derived from an AgentResult. Callers add agent_name/run_id/decision_id
     and the summary/response fields on top. Centralized so all nine call
     sites stay consistent instead of re-deriving `status` etc. independently."""
+
     def text_or_none(value):
         return value if isinstance(value, str) and value else None
 
     provider_requests = getattr(result, "provider_requests", 1)
-    if (not isinstance(provider_requests, int)
-            or isinstance(provider_requests, bool)
-            or provider_requests < 0):
+    if not isinstance(provider_requests, int) or isinstance(provider_requests, bool) or provider_requests < 0:
         # Compatibility for old test/replay fixtures built as open-ended
         # MagicMocks and for any legacy caller that predates this field.
         provider_requests = 1
@@ -318,15 +316,15 @@ def seat_acceptance_kwargs(refusal_reason: str | None, result=None) -> dict:
     decision, and they must never be swept for a threshold.
     """
     from src.refusal_signature import (
-        SEAT_ACCEPTED, SEAT_REFUSED, SEAT_REFUSAL_REASONS,
+        SEAT_ACCEPTED,
+        SEAT_REFUSED,
+        SEAT_REFUSAL_REASONS,
     )
+
     if not refusal_reason:
         return {"acceptance": SEAT_ACCEPTED, "acceptance_reason": None}
     gate_reason = getattr(result, "gate_reason", None)
-    reason = (
-        gate_reason if isinstance(gate_reason, str) and gate_reason
-        else str(refusal_reason)
-    )
+    reason = gate_reason if isinstance(gate_reason, str) and gate_reason else str(refusal_reason)
     if reason not in SEAT_REFUSAL_REASONS:
         # An unregistered word must not silently enter the column: record the
         # refusal (true, and the load-bearing half) and flag the reason rather
@@ -354,24 +352,25 @@ def _build_llm_client(provider: str, api_key: str):
     if provider == "deepseek":
         # OpenAI-compatible endpoint at a custom base_url with the DeepSeek key.
         from openai import OpenAI
-        return OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL,
-                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+
+        return OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
     if provider == "openrouter":
         # Also OpenAI-API-compatible — identical shape to the DeepSeek branch
         # above, just a different base_url + key. Reuses _openai_wire_call()
         # unmodified (see there): zero new call code.
         from openai import OpenAI
-        return OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL,
-                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+
+        return OpenAI(api_key=api_key, base_url=_OPENROUTER_BASE_URL, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
     if provider == "google":
         # Google AI Studio's OpenAI-compatible endpoint — same shape again.
         # The credential is injected as `Authorization: Bearer {value}`,
         # which the OpenAI SDK's `api_key=` already sends natively.
         from openai import OpenAI
-        return OpenAI(api_key=api_key, base_url=_GOOGLE_BASE_URL,
-                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+
+        return OpenAI(api_key=api_key, base_url=_GOOGLE_BASE_URL, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
     if provider == "openai":
         from openai import OpenAI
+
         # OPENAI_BASE_URL lets OpenAI traffic go through an OpenAI-compatible
         # relay/proxy (a "中转站") instead of api.openai.com — same chat/
         # completions wire format, just a different host + key. Empty/unset
@@ -390,15 +389,17 @@ def _build_llm_client(provider: str, api_key: str):
         ca_bundle = os.environ.get("OPENAI_CA_BUNDLE", "").strip()
         if ca_bundle:
             import httpx
+
             return OpenAI(
-                api_key=api_key, base_url=base_url,
+                api_key=api_key,
+                base_url=base_url,
                 http_client=httpx.Client(verify=ca_bundle, timeout=_LLM_HTTP_TIMEOUT),
                 max_retries=0,
             )
-        return OpenAI(api_key=api_key, base_url=base_url,
-                      timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
+        return OpenAI(api_key=api_key, base_url=base_url, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
     # anthropic (default)
     from anthropic import Anthropic
+
     return Anthropic(api_key=api_key, timeout=_LLM_HTTP_TIMEOUT, max_retries=0)
 
 
@@ -416,19 +417,25 @@ class BaseAgent(ABC):
     # each subclass's own comment for why that model was chosen.
     result_model: type | None = None
 
-    def __init__(self, api_key: str, model: str, max_tokens: int = 4096,
-                 fallback_api_key: str = "", provider: str | None = None,
-                 provider_order: list[str] | None = None,
-                 fallback_provider: str = _DEFAULT_FALLBACK_PROVIDER,
-                 fallback_model: str = _DEFAULT_FALLBACK_MODEL,
-                 tertiary_api_key: str = "",
-                 tertiary_provider: str = _DEFAULT_TERTIARY_PROVIDER,
-                 tertiary_model: str = _DEFAULT_TERTIARY_MODEL,
-                 tertiary_alt_api_key: str = "",
-                 tertiary_alt_provider: str = _DEFAULT_TERTIARY_ALT_PROVIDER,
-                 tertiary_alt_model: str = _DEFAULT_TERTIARY_ALT_MODEL,
-                 reasoning_effort: str = "medium",
-                 structured_output: bool = True):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        max_tokens: int = 4096,
+        fallback_api_key: str = "",
+        provider: str | None = None,
+        provider_order: list[str] | None = None,
+        fallback_provider: str = _DEFAULT_FALLBACK_PROVIDER,
+        fallback_model: str = _DEFAULT_FALLBACK_MODEL,
+        tertiary_api_key: str = "",
+        tertiary_provider: str = _DEFAULT_TERTIARY_PROVIDER,
+        tertiary_model: str = _DEFAULT_TERTIARY_MODEL,
+        tertiary_alt_api_key: str = "",
+        tertiary_alt_provider: str = _DEFAULT_TERTIARY_ALT_PROVIDER,
+        tertiary_alt_model: str = _DEFAULT_TERTIARY_ALT_MODEL,
+        reasoning_effort: str = "medium",
+        structured_output: bool = True,
+    ):
         self.model = model
         self.max_tokens = max_tokens
         # Uniform-testing settings (owner requirement, 2026-09-14): every
@@ -477,8 +484,7 @@ class BaseAgent(ABC):
         # computing this and drifting apart is what caused the 2026-08-31
         # outage (see provider_attempt_budget's docstring).
         self._failover_reachable = bool(self._fallback_api_key) and (
-            (self._fallback_provider, self._fallback_model)
-            != (self._provider, self.model)
+            (self._fallback_provider, self._fallback_model) != (self._provider, self.model)
         )
         # Route 3 (which pair, which key, whether reachable, and whether it
         # was swapped for the second-road substitute) is resolved in
@@ -487,7 +493,8 @@ class BaseAgent(ABC):
             primary=(self._provider, self.model),
             fallback=(self._fallback_provider, self._fallback_model),
             failover_reachable=self._failover_reachable,
-            tertiary_provider=tertiary_provider, tertiary_model=tertiary_model,
+            tertiary_provider=tertiary_provider,
+            tertiary_model=tertiary_model,
             tertiary_api_key=tertiary_api_key,
             tertiary_alt_provider=tertiary_alt_provider,
             tertiary_alt_model=tertiary_alt_model,
@@ -522,17 +529,14 @@ class BaseAgent(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def system_prompt(self) -> str:
-        ...
+    def system_prompt(self) -> str: ...
 
     @abstractmethod
-    def build_user_message(self, **kwargs) -> str:
-        ...
+    def build_user_message(self, **kwargs) -> str: ...
 
     def run(self, **kwargs) -> AgentResult:
         user_message = self.build_user_message(**kwargs)
@@ -587,7 +591,8 @@ class BaseAgent(ABC):
         )
         logger.warning(
             "Agent %s: %s validation failed — attempting one repair reprompt",
-            self.name, schema_name,
+            self.name,
+            schema_name,
         )
         return self._execute(failed.user_message + coda, retry_kind="schema_repair")
 
@@ -607,10 +612,7 @@ class BaseAgent(ABC):
             errors = error.errors()
         except AttributeError:
             return False
-        return any(
-            err.get("loc", (None,))[:1] and err["loc"][0] in field_names
-            for err in errors
-        )
+        return any(err.get("loc", (None,))[:1] and err["loc"][0] in field_names for err in errors)
 
     def _execute(
         self,
@@ -665,10 +667,12 @@ class BaseAgent(ABC):
                 except Exception as marker_exc:  # the fallback alert must not leak
                     logger.critical(
                         "Cost-circuit failure marker also failed: %s",
-                        marker_exc, exc_info=True,
+                        marker_exc,
+                        exc_info=True,
                     )
             sentinel = UnavailableLLMCostCircuit(
-                exc, notifier=getattr(self._cost_circuit, "notifier", None),
+                exc,
+                notifier=getattr(self._cost_circuit, "notifier", None),
             )
             return sentinel.activate_session(
                 getattr(reservation, "run_id", "unscoped"),
@@ -698,17 +702,19 @@ class BaseAgent(ABC):
                 attempt_errors.append(exc)
             try:
                 self._cost_circuit.fail_call(
-                    reservation, exc, attempt_errors=list(attempt_errors),
+                    reservation,
+                    exc,
+                    attempt_errors=list(attempt_errors),
                 )
             except Exception as accounting_exc:
                 logger.critical(
                     "Cost-circuit failure accounting failed closed: %s",
-                    accounting_exc, exc_info=True,
+                    accounting_exc,
+                    exc_info=True,
                 )
                 _mark_circuit_unavailable(accounting_exc)
 
-        def _govern(model: str, *, is_failover: bool = False,
-                    is_tertiary: bool = False) -> None:
+        def _govern(model: str, *, is_failover: bool = False, is_tertiary: bool = False) -> None:
             """Pace this request so the desk never floods a provider.
 
             Deliberately placed AFTER the cost circuit has authorized the
@@ -723,7 +729,10 @@ class BaseAgent(ABC):
             """
             nonlocal governed_estimate, governed_provider
             governed_provider = _governor_domain_for(
-                model, self, is_failover=is_failover, is_tertiary=is_tertiary,
+                model,
+                self,
+                is_failover=is_failover,
+                is_tertiary=is_tertiary,
             )
             governor = _TOKEN_GOVERNORS.get(governed_provider)
             if governor is None:
@@ -733,8 +742,7 @@ class BaseAgent(ABC):
             governed_estimate = int(chars / _GOVERNOR_CHARS_PER_TOKEN) + self.max_tokens
             governor.charge(governed_estimate)
 
-        def _authorize(model: str, *, is_failover: bool = False,
-                       is_tertiary: bool = False) -> None:
+        def _authorize(model: str, *, is_failover: bool = False, is_tertiary: bool = False) -> None:
             nonlocal provider_requests
             if self._cost_circuit is None:
                 _govern(model, is_failover=is_failover, is_tertiary=is_tertiary)
@@ -817,14 +825,19 @@ class BaseAgent(ABC):
             max_retries = 1
             logger.warning(
                 "Agent %s: HALF-OPEN probe of demoted primary %s/%s.",
-                self.name, self._provider, self.model,
+                self.name,
+                self._provider,
+                self.model,
             )
             in_price, out_price = _route_price(self.model)
             llm_route_journal.record(
-                "probe_primary", agent_name=self.name,
+                "probe_primary",
+                agent_name=self.name,
                 run_id=pinned_evidence(reservation, "run_id"),
-                route=f"{self._provider}/{self.model}", tier=1,
-                input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
+                route=f"{self._provider}/{self.model}",
+                tier=1,
+                input_usd_per_mtok=in_price,
+                output_usd_per_mtok=out_price,
                 detail="cooldown elapsed; probing whether the primary recovered",
             )
         elif not primary_allowed:
@@ -832,7 +845,9 @@ class BaseAgent(ABC):
             logger.warning(
                 "Agent %s: primary %s/%s is DEMOTED (cooling down) — starting "
                 "at the secondary route without attempting it.",
-                self.name, self._provider, self.model,
+                self.name,
+                self._provider,
+                self.model,
             )
         # One-shot latch for the 402 shrink-retry below, and the ask we
         # restore afterwards so a single poor-balance call cannot silently
@@ -842,28 +857,28 @@ class BaseAgent(ABC):
         for attempt in itertools.count():
             try:
                 if self._use_deepseek:
-                    (raw_text, input_tokens, output_tokens, finish_reason,
-                     reported_cost) = self._call_deepseek(
-                        user_message, authorize=_authorize,
+                    (raw_text, input_tokens, output_tokens, finish_reason, reported_cost) = self._call_deepseek(
+                        user_message,
+                        authorize=_authorize,
                     )
                 elif self._use_openrouter or self._use_google:
                     # OpenRouter and Google AI Studio's compat endpoint are
                     # both OpenAI-wire-compatible — reuse _call_openai
                     # unmodified rather than duplicating the streaming/usage/
                     # empty-content logic.
-                    (raw_text, input_tokens, output_tokens, finish_reason,
-                     reported_cost) = self._call_openai(
-                        user_message, authorize=_authorize,
+                    (raw_text, input_tokens, output_tokens, finish_reason, reported_cost) = self._call_openai(
+                        user_message,
+                        authorize=_authorize,
                     )
                 elif self._use_openai:
-                    (raw_text, input_tokens, output_tokens, finish_reason,
-                     reported_cost) = self._call_openai(
-                        user_message, authorize=_authorize,
+                    (raw_text, input_tokens, output_tokens, finish_reason, reported_cost) = self._call_openai(
+                        user_message,
+                        authorize=_authorize,
                     )
                 else:
-                    (raw_text, input_tokens, output_tokens, finish_reason,
-                     reported_cost) = self._call_anthropic(
-                        user_message, authorize=_authorize,
+                    (raw_text, input_tokens, output_tokens, finish_reason, reported_cost) = self._call_anthropic(
+                        user_message,
+                        authorize=_authorize,
                     )
                 primary_error = None
                 # The primary answered. If it was demoted, this un-demotes it
@@ -872,14 +887,17 @@ class BaseAgent(ABC):
                 if self._route_breaker.record_success():
                     in_price, out_price = _route_price(self.model)
                     logger.warning(
-                        "Agent %s: primary %s/%s RESTORED — the desk is back "
-                        "on its configured route.",
-                        self.name, self._provider, self.model,
+                        "Agent %s: primary %s/%s RESTORED — the desk is back on its configured route.",
+                        self.name,
+                        self._provider,
+                        self.model,
                     )
                     llm_route_journal.record(
-                        "route_restored", agent_name=self.name,
+                        "route_restored",
+                        agent_name=self.name,
                         run_id=pinned_evidence(reservation, "run_id"),
-                        route=f"{self._provider}/{self.model}", tier=1,
+                        route=f"{self._provider}/{self.model}",
+                        tier=1,
                         input_usd_per_mtok=in_price,
                         output_usd_per_mtok=out_price,
                         detail="half-open probe succeeded; breaker closed",
@@ -899,9 +917,12 @@ class BaseAgent(ABC):
                 # treating the call as dead. One shot only, and only
                 # downwards. See `_affordable_max_tokens`.
                 affordable = _affordable_max_tokens(e)
-                if (affordable is not None and not shrunk_for_credit
-                        and affordable < self.max_tokens
-                        and attempt < max_retries - 1):
+                if (
+                    affordable is not None
+                    and not shrunk_for_credit
+                    and affordable < self.max_tokens
+                    and attempt < max_retries - 1
+                ):
                     shrunk_for_credit = True
                     logger.warning(
                         "Agent %s attempt %d: provider refused for "
@@ -909,7 +930,10 @@ class BaseAgent(ABC):
                         "%d output tokens (we asked for %d). Retrying once "
                         "at the provider's stated allowance. A cut-off "
                         "answer is still discarded unused.",
-                        self.name, attempt + 1, affordable, self.max_tokens,
+                        self.name,
+                        attempt + 1,
+                        affordable,
+                        self.max_tokens,
                     )
                     self.max_tokens = affordable
                     continue
@@ -929,14 +953,19 @@ class BaseAgent(ABC):
                             "Agent %s attempt %d: the paid research account is "
                             "OUT OF CREDIT — the provider refused to serve the "
                             "call%s. Not retrying; topping the account up is "
-                            "the only fix. %s (%s)", self.name, attempt + 1,
+                            "the only fix. %s (%s)",
+                            self.name,
+                            attempt + 1,
                             "" if affordable is not None else " and named no allowance it would serve",
-                            _balance_line(), e,
+                            _balance_line(),
+                            e,
                         )
                     else:
                         logger.warning(
-                            "Agent %s attempt %d hit a non-retryable error: %s. "
-                            "No more retries.", self.name, attempt + 1, e,
+                            "Agent %s attempt %d hit a non-retryable error: %s. No more retries.",
+                            self.name,
+                            attempt + 1,
+                            e,
                         )
                     break
                 # Attempt budget. For a CAPACITY refusal (429/5xx — the
@@ -957,13 +986,10 @@ class BaseAgent(ABC):
                 # original count, unchanged. The growing
                 # full-jitter sleep and the existing deadline bound this; no
                 # new number is introduced.
-                capacity_class = (is_capacity_refusal(e)
-                                  and not single_provider_attempt)
-                attempt_cap = (capacity_max_attempts() if capacity_class
-                               else max_retries)
+                capacity_class = is_capacity_refusal(e) and not single_provider_attempt
+                attempt_cap = capacity_max_attempts() if capacity_class else max_retries
                 if attempt >= attempt_cap - 1:
-                    logger.warning("Agent %s attempt %d failed: %s. Primary exhausted.",
-                                   self.name, attempt + 1, e)
+                    logger.warning("Agent %s attempt %d failed: %s. Primary exhausted.", self.name, attempt + 1, e)
                     break
                 # Wall-clock deadline: the attempt budget alone doesn't bound
                 # time (each attempt can burn 120-380s in the relay-524 mode),
@@ -977,7 +1003,11 @@ class BaseAgent(ABC):
                         "Agent %s attempt %d failed: %s. Retry deadline %.0fs "
                         "exceeded (elapsed %.0fs) — abandoning primary, "
                         "proceeding to failover if configured.",
-                        self.name, attempt + 1, e, deadline_s, elapsed,
+                        self.name,
+                        attempt + 1,
+                        e,
+                        deadline_s,
+                        elapsed,
                     )
                     break
                 # Error-AWARE backoff (see error_aware_backoff_seconds): a
@@ -991,28 +1021,37 @@ class BaseAgent(ABC):
                 wait = error_aware_backoff_seconds(attempt, e)
                 if wait is None:
                     logger.warning(
-                        "Agent %s attempt %d: %s classified non-retryable by "
-                        "the backoff taxonomy. Stopping.",
-                        self.name, attempt + 1, e,
+                        "Agent %s attempt %d: %s classified non-retryable by the backoff taxonomy. Stopping.",
+                        self.name,
+                        attempt + 1,
+                        e,
                     )
                     break
                 if kind == BACKOFF_RETRY_AFTER:
                     logger.warning(
-                        "Agent %s attempt %d failed: %s. Server stated "
-                        "Retry-After — honouring %.1fs.",
-                        self.name, attempt + 1, e, wait,
+                        "Agent %s attempt %d failed: %s. Server stated Retry-After — honouring %.1fs.",
+                        self.name,
+                        attempt + 1,
+                        e,
+                        wait,
                     )
                     llm_route_journal.record(
-                        "retry_after", agent_name=self.name,
+                        "retry_after",
+                        agent_name=self.name,
                         run_id=pinned_evidence(reservation, "run_id"),
-                        route=f"{self._provider}/{self.model}", tier=1,
-                        wait_s=wait, error=e,
+                        route=f"{self._provider}/{self.model}",
+                        tier=1,
+                        wait_s=wait,
+                        error=e,
                         detail="honoured the server's own Retry-After",
                     )
                 else:
                     logger.warning(
-                        "Agent %s attempt %d failed: %s. Full-jitter backoff "
-                        "%.1fs...", self.name, attempt + 1, e, wait,
+                        "Agent %s attempt %d failed: %s. Full-jitter backoff %.1fs...",
+                        self.name,
+                        attempt + 1,
+                        e,
+                        wait,
                     )
                 time.sleep(wait)
 
@@ -1032,14 +1071,17 @@ class BaseAgent(ABC):
             cooldown = self._route_breaker.record_failure()
             in_price, out_price = _route_price(self.model)
             llm_route_journal.record(
-                "route_demoted", agent_name=self.name,
+                "route_demoted",
+                agent_name=self.name,
                 run_id=pinned_evidence(reservation, "run_id"),
-                route=f"{self._provider}/{self.model}", tier=1,
-                input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
-                wait_s=cooldown, error=primary_error,
+                route=f"{self._provider}/{self.model}",
+                tier=1,
+                input_usd_per_mtok=in_price,
+                output_usd_per_mtok=out_price,
+                wait_s=cooldown,
+                error=primary_error,
                 detail=(
-                    f"account out of credit; demoted for {cooldown:.0f}s "
-                    f"without further attempts. {_balance_line()}"
+                    f"account out of credit; demoted for {cooldown:.0f}s without further attempts. {_balance_line()}"
                     if is_payment_refusal(primary_error)
                     else f"primary exhausted; demoted for {cooldown:.0f}s"
                 ),
@@ -1065,33 +1107,36 @@ class BaseAgent(ABC):
             # is skipped instead of being paid for out of the attempt budget
             # the circuit then has to account for. Keyed on the status code
             # (see `is_payment_refusal`), never on the provider's wording.
-            refused_providers: set[str] = {
-                self._provider for exc in attempt_errors
-                if is_payment_refusal(exc)
-            }
+            refused_providers: set[str] = {self._provider for exc in attempt_errors if is_payment_refusal(exc)}
             # Skip route 2 when ITS provider is inside a cooldown: paying a
             # call to an account that refused one minutes ago is the same
             # waste the primary skip removes, one rung down.
             secondary_open = not self._fallback_breaker.demoted()
             if not secondary_open:
                 logger.warning(
-                    "Agent %s: secondary provider %s is DEMOTED — skipping "
-                    "route 2 and going straight to the tertiary.",
-                    self.name, self._fallback_provider,
+                    "Agent %s: secondary provider %s is DEMOTED — skipping route 2 and going straight to the tertiary.",
+                    self.name,
+                    self._fallback_provider,
                 )
             if self._fallback_provider in refused_providers:
                 logger.error(
                     "Agent %s: skipping route 2 — %s has already refused this "
                     "call because the account is out of credit, and another "
                     "attempt on the same account cannot succeed.",
-                    self.name, self._fallback_provider,
+                    self.name,
+                    self._fallback_provider,
                 )
-            if (not single_provider_attempt and self._failover_reachable
-                    and secondary_open
-                    and self._fallback_provider not in refused_providers):
+            if (
+                not single_provider_attempt
+                and self._failover_reachable
+                and secondary_open
+                and self._fallback_provider not in refused_providers
+            ):
                 try:
                     failover = self._try_failover(
-                        user_message, primary_error, authorize=_authorize_failover,
+                        user_message,
+                        primary_error,
+                        authorize=_authorize_failover,
                         on_failure=_record_attempt_failure,
                     )
                 except PaidAnalysisSuspended as exc:
@@ -1108,14 +1153,16 @@ class BaseAgent(ABC):
                 actual_route_provider = self._fallback_provider
                 in_price, out_price = _route_price(self._fallback_model)
                 llm_route_journal.record(
-                    "route_switch", agent_name=self.name,
+                    "route_switch",
+                    agent_name=self.name,
                     run_id=pinned_evidence(reservation, "run_id"),
                     route=f"{self._fallback_provider}/{self._fallback_model}",
-                    from_route=f"{self._provider}/{self.model}", tier=2,
-                    input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
+                    from_route=f"{self._provider}/{self.model}",
+                    tier=2,
+                    input_usd_per_mtok=in_price,
+                    output_usd_per_mtok=out_price,
                     error=primary_error,
-                    detail="secondary route carried the call (same model, "
-                           "different road)",
+                    detail="secondary route carried the call (same model, different road)",
                 )
             else:
                 # Route 3. Only reached when the same model on two roads has
@@ -1125,7 +1172,8 @@ class BaseAgent(ABC):
                 # Board item 188: a decision seat declines the last rung when
                 # it is the unmeasured substitute. src/agents/llm_route3_policy.py
                 seat_refusal = refuse_unmeasured_route(
-                    seat_name=self.name, on_alt_road=self._tertiary_on_alt_road,
+                    seat_name=self.name,
+                    on_alt_road=self._tertiary_on_alt_road,
                     tertiary=(self._tertiary_provider, self._tertiary_model),
                     primary=(self._provider, self.model),
                     run_id=pinned_evidence(reservation, "run_id"),
@@ -1141,14 +1189,20 @@ class BaseAgent(ABC):
                     logger.error(
                         "Agent %s: skipping route 3 — %s is out of credit, so "
                         "the last rung cannot answer either. The account needs "
-                        "topping up.", self.name, self._tertiary_provider,
+                        "topping up.",
+                        self.name,
+                        self._tertiary_provider,
                     )
-                if (not single_provider_attempt and self._tertiary_reachable
-                        and seat_refusal is None
-                        and self._tertiary_provider not in refused_providers):
+                if (
+                    not single_provider_attempt
+                    and self._tertiary_reachable
+                    and seat_refusal is None
+                    and self._tertiary_provider not in refused_providers
+                ):
                     try:
                         tertiary = self._try_tertiary(
-                            user_message, authorize=_authorize_tertiary,
+                            user_message,
+                            authorize=_authorize_tertiary,
                             on_failure=_record_attempt_failure,
                         )
                     except PaidAnalysisSuspended as exc:
@@ -1164,7 +1218,8 @@ class BaseAgent(ABC):
                     actual_route_provider = self._tertiary_provider
                     in_price, out_price = _route_price(self._tertiary_model)
                     llm_route_journal.record(
-                        "route_switch", agent_name=self.name,
+                        "route_switch",
+                        agent_name=self.name,
                         run_id=pinned_evidence(reservation, "run_id"),
                         route=f"{self._tertiary_provider}/{self._tertiary_model}",
                         from_route=f"{self._fallback_provider}/{self._fallback_model}",
@@ -1176,8 +1231,8 @@ class BaseAgent(ABC):
                             "tertiary route carried the call (DIFFERENT ROAD "
                             "— routes 1 and 2 shared one provider and it was "
                             "down)"
-                            if self._tertiary_on_alt_road else
-                            "tertiary route carried the call (DIFFERENT "
+                            if self._tertiary_on_alt_road
+                            else "tertiary route carried the call (DIFFERENT "
                             "model — both routes on the primary model failed)"
                         ),
                     )
@@ -1204,8 +1259,7 @@ class BaseAgent(ABC):
                     )
                 _safe_fail_reservation(last_route_error)
                 raise last_route_error
-            (raw_text, input_tokens, output_tokens, finish_reason,
-             reported_cost) = failover
+            (raw_text, input_tokens, output_tokens, finish_reason, reported_cost) = failover
 
         # Truncation detection: a max_tokens / length cutoff means the output
         # is incomplete, NOT a deliberate "no action". Flag + log loudly so a
@@ -1213,14 +1267,15 @@ class BaseAgent(ABC):
         # max_tokens (Anthropic) / length (OpenAI+DeepSeek) = hit the ceiling;
         # insufficient_system_resource = DeepSeek cut-off-on-200. Shared
         # constant with the empty-content guards in the _call_* paths.
-        truncated = (isinstance(finish_reason, str)
-                     and finish_reason.lower() in _TRUNCATION_FINISH_REASONS)
+        truncated = isinstance(finish_reason, str) and finish_reason.lower() in _TRUNCATION_FINISH_REASONS
         if truncated:
             logger.warning(
                 "Agent %s response was TRUNCATED (finish_reason=%s) — output is "
                 "incomplete, likely hit max_tokens=%d. Treat downstream None as "
                 "'cut off', not 'no signal'.",
-                self.name, finish_reason, self.max_tokens,
+                self.name,
+                finish_reason,
+                self.max_tokens,
             )
 
         # The governor's window must reflect what was really sent, not what
@@ -1270,15 +1325,20 @@ class BaseAgent(ABC):
                         "figure is authoritative and is what was recorded, but "
                         "the pinned rate for this model no longer reflects the "
                         "endpoint serving it.",
-                        self.name, fmt_cost(cost), fmt_cost(estimated),
-                        ratio, actual_model,
+                        self.name,
+                        fmt_cost(cost),
+                        fmt_cost(estimated),
+                        ratio,
+                        actual_model,
                     )
         else:
             cost = estimate_cost(actual_model, input_tokens, output_tokens)
         if self._cost_circuit is not None and reservation is not None:
             try:
                 self._cost_circuit.complete_call(
-                    reservation, cost, actual_model=actual_model,
+                    reservation,
+                    cost,
+                    actual_model=actual_model,
                     # Every attempt that did NOT produce this response.
                     # Empty on a clean first-attempt success; on a retry or a
                     # successful failover it names what the earlier attempts
@@ -1297,8 +1357,12 @@ class BaseAgent(ABC):
                 ) from exc
         logger.info(
             "Agent %s completed | tokens in=%d out=%d total=%d | cost=%s | model=%s",
-            self.name, input_tokens, output_tokens, tokens,
-            fmt_cost(cost), actual_model,
+            self.name,
+            input_tokens,
+            output_tokens,
+            tokens,
+            fmt_cost(cost),
+            actual_model,
         )
         logger.info("Agent %s output:\n%s", self.name, raw_text)
         # "A backup answered", which is now true on tier 2 OR tier 3, and
@@ -1333,7 +1397,12 @@ class BaseAgent(ABC):
         )
 
     def _anthropic_call(
-        self, client, model: str, user_message: str, *, authorize=None,
+        self,
+        client,
+        model: str,
+        user_message: str,
+        *,
+        authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
         """One Anthropic messages.create against an arbitrary client+model.
 
@@ -1365,20 +1434,23 @@ class BaseAgent(ABC):
                 # surface as truncated '', don't retry/fail over.
                 logger.warning("Anthropic returned empty content (stop_reason=%s)", finish_reason)
                 return ("", in_tok, out_tok, finish_reason, None)
-            raise LLMEmptyResponseError(
-                f"Anthropic returned empty content (stop_reason={finish_reason})"
-            )
+            raise LLMEmptyResponseError(f"Anthropic returned empty content (stop_reason={finish_reason})")
         return (response.content[0].text, in_tok, out_tok, finish_reason, None)
 
     def _call_anthropic(
-        self, user_message: str, *, authorize=None,
+        self,
+        user_message: str,
+        *,
+        authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
         return self._anthropic_call(
-            self.client, self.model, user_message, authorize=authorize,
+            self.client,
+            self.model,
+            user_message,
+            authorize=authorize,
         )
 
-    def _try_failover(self, user_message: str, primary_error: Exception, *,
-                      authorize=None, on_failure=None):
+    def _try_failover(self, user_message: str, primary_error: Exception, *, authorize=None, on_failure=None):
         """Primary provider exhausted its retries → attempt ONE call on the
         configured fallback (provider, model). Returns the (text, in_tok,
         out_tok, finish_reason, reported_cost) tuple on success, or None on
@@ -1395,34 +1467,49 @@ class BaseAgent(ABC):
         OpenRouter, or Google all speak that same chat.completions shape.
         """
         logger.error(
-            "Agent %s: primary %s/%s failed after retries (%s) — failing over "
-            "to %s/%s.", self.name, self._provider, self.model, primary_error,
-            self._fallback_provider, self._fallback_model,
+            "Agent %s: primary %s/%s failed after retries (%s) — failing over to %s/%s.",
+            self.name,
+            self._provider,
+            self.model,
+            primary_error,
+            self._fallback_provider,
+            self._fallback_model,
         )
         try:
             client = _build_llm_client(self._fallback_provider, self._fallback_api_key)
             if self._fallback_provider == "anthropic":
                 result = self._anthropic_call(
-                    client, self._fallback_model, user_message, authorize=authorize,
+                    client,
+                    self._fallback_model,
+                    user_message,
+                    authorize=authorize,
                 )
             else:
                 result = self._openai_wire_call(
-                    client, self._fallback_model, self._fallback_provider,
-                    user_message, authorize=authorize,
+                    client,
+                    self._fallback_model,
+                    self._fallback_provider,
+                    user_message,
+                    authorize=authorize,
                 )
             logger.warning(
-                "Agent %s: FAILOVER to %s/%s SUCCEEDED (in=%d out=%d) — "
-                "session continues.", self.name, self._fallback_provider,
-                self._fallback_model, result[1], result[2],
+                "Agent %s: FAILOVER to %s/%s SUCCEEDED (in=%d out=%d) — session continues.",
+                self.name,
+                self._fallback_provider,
+                self._fallback_model,
+                result[1],
+                result[2],
             )
             return result
         except PaidAnalysisSuspended:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "Agent %s: failover to %s/%s also FAILED: %s. Re-raising the "
-                "original primary error.", self.name, self._fallback_provider,
-                self._fallback_model, exc,
+                "Agent %s: failover to %s/%s also FAILED: %s. Re-raising the original primary error.",
+                self.name,
+                self._fallback_provider,
+                self._fallback_model,
+                exc,
             )
             if on_failure is not None:
                 on_failure(exc)
@@ -1442,27 +1529,37 @@ class BaseAgent(ABC):
         the two cannot drift. Returns the result tuple or None.
         """
         logger.error(
-            "Agent %s: primary AND secondary both failed — escalating to the "
-            "TERTIARY route %s/%s (a DIFFERENT model).",
-            self.name, self._tertiary_provider, self._tertiary_model,
+            "Agent %s: primary AND secondary both failed — escalating to the TERTIARY route %s/%s (a DIFFERENT model).",
+            self.name,
+            self._tertiary_provider,
+            self._tertiary_model,
         )
         try:
             client = _build_llm_client(self._tertiary_provider, self._tertiary_api_key)
             if self._tertiary_provider == "anthropic":
                 result = self._anthropic_call(
-                    client, self._tertiary_model, user_message, authorize=authorize,
+                    client,
+                    self._tertiary_model,
+                    user_message,
+                    authorize=authorize,
                 )
             else:
                 result = self._openai_wire_call(
-                    client, self._tertiary_model, self._tertiary_provider,
-                    user_message, authorize=authorize,
+                    client,
+                    self._tertiary_model,
+                    self._tertiary_provider,
+                    user_message,
+                    authorize=authorize,
                 )
             logger.warning(
                 "Agent %s: TERTIARY %s/%s SUCCEEDED (in=%d out=%d) — the desk "
                 "continues on a different model. Treat this answer as coming "
                 "from a model the seat was not measured on.",
-                self.name, self._tertiary_provider, self._tertiary_model,
-                result[1], result[2],
+                self.name,
+                self._tertiary_provider,
+                self._tertiary_model,
+                result[1],
+                result[2],
             )
             return result
         except PaidAnalysisSuspended:
@@ -1470,15 +1567,24 @@ class BaseAgent(ABC):
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Agent %s: tertiary %s/%s also FAILED: %s. Every route is down.",
-                self.name, self._tertiary_provider, self._tertiary_model, exc,
+                self.name,
+                self._tertiary_provider,
+                self._tertiary_model,
+                exc,
             )
             if on_failure is not None:
                 on_failure(exc)
             return None
 
     def _openai_wire_call(
-        self, client, model: str, provider: str, user_message: str, *,
-        provider_order: list[str] | None = None, authorize=None,
+        self,
+        client,
+        model: str,
+        provider: str,
+        user_message: str,
+        *,
+        provider_order: list[str] | None = None,
+        authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
         """One streamed chat.completions call against an arbitrary
         client+model+provider. Shared by every OpenAI-wire-compatible
@@ -1556,7 +1662,8 @@ class BaseAgent(ABC):
                     "AI Studio equivalent (see https://ai.google.dev/gemini-"
                     "api/docs/openai) — leaving thinking level UNSET for "
                     "this call rather than inventing one.",
-                    self.name, self._reasoning_effort,
+                    self.name,
+                    self._reasoning_effort,
                 )
             if self._structured_output and self.result_model is not None:
                 extra_body["response_format"] = _response_format_for(self.result_model)
@@ -1619,12 +1726,15 @@ class BaseAgent(ABC):
                         "Agent %s: provider error INSIDE the stream "
                         "(code=%s type=%s): %s — surfacing with its status so "
                         "the cost circuit can judge whether it billed.",
-                        self.name, status, etype, message,
+                        self.name,
+                        status,
+                        etype,
+                        message,
                     )
                     raise LLMStreamErrorChunk(
-                        f"provider error mid-stream (code={status}, "
-                        f"type={etype}): {message}",
-                        status_code=status, error_type=etype,
+                        f"provider error mid-stream (code={status}, type={etype}): {message}",
+                        status_code=status,
+                        error_type=etype,
                     )
                 # include_usage delivers usage on a final extra chunk whose
                 # choices list is empty.
@@ -1657,9 +1767,7 @@ class BaseAgent(ABC):
             # entering the retry → failover machinery beats masquerading as a
             # clean no-signal. Truncation-family reasons are exempt — an empty
             # body there is a legit ceiling hit, flagged via truncated=True.
-            raise LLMEmptyResponseError(
-                f"OpenAI-wire call returned empty content (finish_reason={finish_reason})"
-            )
+            raise LLMEmptyResponseError(f"OpenAI-wire call returned empty content (finish_reason={finish_reason})")
         if usage is not None:
             in_tok = _coerce_token_count(getattr(usage, "prompt_tokens", 0))
             out_tok = _coerce_token_count(getattr(usage, "completion_tokens", 0))
@@ -1675,7 +1783,9 @@ class BaseAgent(ABC):
             recovered = None
             if self._use_openrouter and generation_id:
                 recovered = _recover_openrouter_generation(
-                    generation_id, self.client.api_key, self.name,
+                    generation_id,
+                    self.client.api_key,
+                    self.name,
                 )
             if recovered is not None:
                 in_tok, out_tok, reported_cost = recovered
@@ -1685,8 +1795,11 @@ class BaseAgent(ABC):
                     "the real billing after the fact — cost=%s tokens_in=%d "
                     "tokens_out=%d. This REPLACES what would otherwise have "
                     "settled as a full conservative reservation charge.",
-                    self.name, generation_id, fmt_cost(reported_cost),
-                    in_tok, out_tok,
+                    self.name,
+                    generation_id,
+                    fmt_cost(reported_cost),
+                    in_tok,
+                    out_tok,
                 )
             else:
                 # Either not OpenRouter, no generation id was ever seen on
@@ -1704,14 +1817,21 @@ class BaseAgent(ABC):
         return (content, in_tok, out_tok, finish_reason, reported_cost)
 
     def _call_openai(
-        self, user_message: str, *, authorize=None,
+        self,
+        user_message: str,
+        *,
+        authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
         """Primary-path entry point for every OpenAI-wire-compatible
         provider (OpenAI, OpenRouter, Google) — delegates to
         `_openai_wire_call` with this agent's own client/model/provider."""
         return self._openai_wire_call(
-            self.client, self.model, self._provider, user_message,
-            provider_order=self._provider_order, authorize=authorize,
+            self.client,
+            self.model,
+            self._provider,
+            user_message,
+            provider_order=self._provider_order,
+            authorize=authorize,
         )
 
     def _deepseek_max_output(self) -> int:
@@ -1720,7 +1840,10 @@ class BaseAgent(ABC):
         return _DEEPSEEK_MAX_OUTPUT.get(self.model, _DEEPSEEK_DEFAULT_CEILING)
 
     def _call_deepseek(
-        self, user_message: str, *, authorize=None,
+        self,
+        user_message: str,
+        *,
+        authorize=None,
     ) -> tuple[str, int, int, str | None, float | None]:
         """DeepSeek via the OpenAI SDK (custom base_url). Three deltas vs
         _call_openai:
@@ -1763,7 +1886,8 @@ class BaseAgent(ABC):
             # legit empty, surfaced via truncated=True downstream.
             logger.warning(
                 "DeepSeek returned empty content (finish_reason=%s, reasoning_content present=%s)",
-                finish_reason, bool(reasoning),
+                finish_reason,
+                bool(reasoning),
             )
         in_tok, out_tok = _extract_openai_usage(response, self.name)
         return (content, in_tok, out_tok, finish_reason, None)
@@ -1779,6 +1903,7 @@ class BaseAgent(ABC):
 # this layer would need a corresponding rate adjustment in cost_table
 # (cache writes = 1.25x input rate, cache reads = 0.1x) — until then
 # the simple sum is harmless and forward-compatible.
+
 
 def _coerce_token_count(value) -> int:
     """Return value as int iff it really IS an int (numpy.int64 subclasses
@@ -1828,8 +1953,9 @@ def _reported_cost_usd(usage, agent_name: str) -> float | None:
         return None
     if not math.isfinite(value) or value < 0:
         logger.warning(
-            "Agent %s: OpenRouter reported an unusable cost (%r) — falling "
-            "back to the pinned-rate estimate.", agent_name, value,
+            "Agent %s: OpenRouter reported an unusable cost (%r) — falling back to the pinned-rate estimate.",
+            agent_name,
+            value,
         )
         return None
     return float(value)
@@ -1854,7 +1980,9 @@ _OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
 
 
 def _recover_openrouter_generation(
-    generation_id: str, api_key: str, agent_name: str,
+    generation_id: str,
+    api_key: str,
+    agent_name: str,
 ) -> tuple[int, int, float] | None:
     """Best-effort recovery of the real cost/tokens for a streamed
     OpenRouter call whose stream carried no usage chunk (e.g. a relay that
@@ -1897,17 +2025,13 @@ def _recover_openrouter_generation(
                     tok_in = data.get("tokens_prompt")
                     tok_out = data.get("tokens_completion")
                     cost_ok = (
-                        isinstance(cost, (int, float)) and not isinstance(cost, bool)
-                        and math.isfinite(cost) and cost >= 0
+                        isinstance(cost, (int, float))
+                        and not isinstance(cost, bool)
+                        and math.isfinite(cost)
+                        and cost >= 0
                     )
-                    tok_in_ok = (
-                        isinstance(tok_in, int) and not isinstance(tok_in, bool)
-                        and tok_in >= 0
-                    )
-                    tok_out_ok = (
-                        isinstance(tok_out, int) and not isinstance(tok_out, bool)
-                        and tok_out >= 0
-                    )
+                    tok_in_ok = isinstance(tok_in, int) and not isinstance(tok_in, bool) and tok_in >= 0
+                    tok_out_ok = isinstance(tok_out, int) and not isinstance(tok_out, bool) and tok_out >= 0
                     if cost_ok and tok_in_ok and tok_out_ok:
                         return (tok_in, tok_out, float(cost))
                     last_reason = f"unusable fields in response: {data!r}"
@@ -1919,7 +2043,9 @@ def _recover_openrouter_generation(
         "Agent %s: OpenRouter generation lookup for %s did not recover "
         "billing after %d attempt(s) — %s. Cost stays unknown; this call "
         "will settle at the full conservative reservation.",
-        agent_name, generation_id, _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS,
+        agent_name,
+        generation_id,
+        _OPENROUTER_GENERATION_LOOKUP_ATTEMPTS,
         last_reason,
     )
     return None
@@ -1968,7 +2094,9 @@ def _extract_openai_usage(response, agent_name: str) -> tuple[int, int]:
         logger.info(
             "Agent %s: %d of %d prompt tokens served from the provider's cache "
             "(%.0f%%) — repeated system prompts are being discounted.",
-            agent_name, cached, prompt_tokens,
+            agent_name,
+            cached,
+            prompt_tokens,
             (cached / prompt_tokens * 100) if prompt_tokens else 0.0,
         )
     return (

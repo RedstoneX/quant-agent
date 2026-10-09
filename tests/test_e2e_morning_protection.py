@@ -31,6 +31,7 @@ rotation, de-levering, stop ratchets, the re-protect path); partial or
 unfilled fills; shorts; provider failover under fault; anything a model
 seat says — every seat answers from a script.
 """
+
 from __future__ import annotations
 
 import math
@@ -39,8 +40,8 @@ from pathlib import Path
 
 from tests.test_e2e_morning_session import SYMBOL, _assert_full_shape, _run_session
 
-CASH = 10_000.0                      # the harness's broker snapshot
-TARGET_WEIGHT_PCT = 10.0             # what the scripted PM asks for
+CASH = 10_000.0  # the harness's broker snapshot
+TARGET_WEIGHT_PCT = 10.0  # what the scripted PM asks for
 
 
 def _seed_company_profile_cache(tmp_path: Path) -> None:
@@ -89,30 +90,24 @@ def _assert_decision_and_protection(result: dict, trading) -> None:
     stop = stops[0]
     assert str(stop.side).lower().endswith("sell"), stop.as_plain()
     assert stop.symbol == buy.symbol, stop.as_plain()
-    assert float(stop.qty) == float(buy.qty), (
-        f"stop covers {stop.qty} of {buy.qty} held: {stop.as_plain()}"
-    )
+    assert float(stop.qty) == float(buy.qty), f"stop covers {stop.qty} of {buy.qty} held: {stop.as_plain()}"
     assert str(stop.time_in_force).lower() == "gtc", stop.as_plain()
     assert stop.stop_price is not None and 0 < stop.stop_price < buy.limit_price, (
         f"a long's stop must sit below its entry {buy.limit_price}: {stop.as_plain()}"
     )
-    assert submitted.index(stop) > submitted.index(buy), (
-        "the protective stop must follow the fill it protects"
-    )
+    assert submitted.index(stop) > submitted.index(buy), "the protective stop must follow the fill it protects"
     recorded = result["orders"][0]
     assert recorded["symbol"] == buy.symbol and recorded["status"] == "filled", recorded
     assert float(recorded["qty"]) == float(buy.qty), recorded
     assert recorded["stop_loss_price"] == stop.stop_price, (
-        f"session recorded stop {recorded.get('stop_loss_price')} but the "
-        f"broker was sent {stop.stop_price}"
+        f"session recorded stop {recorded.get('stop_loss_price')} but the broker was sent {stop.stop_price}"
     )
-    assert result["stop_coverage_gaps"] == [], (
-        f"broker-truth coverage audit found gaps: {result['stop_coverage_gaps']}"
-    )
+    assert result["stop_coverage_gaps"] == [], f"broker-truth coverage audit found gaps: {result['stop_coverage_gaps']}"
 
 
 def test_morning_session_sizes_the_buy_and_protects_it_without_leaving_the_box(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     from ops.rehearsal.network_wall import no_network
 

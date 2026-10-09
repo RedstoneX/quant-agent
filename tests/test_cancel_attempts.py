@@ -1,4 +1,5 @@
 """Cancels are counted: every broker cancel writes one order_attempts row, failures included (real sqlite)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -84,8 +85,11 @@ def test_adapter_does_not_surface_the_client_order_id():
     """Why the column is NULL: the desk now sends a derived key on submits (src/execution/order_idempotency.py)
     but no adapter result dict carries it back, so the funnel has nothing to record. If one ever does, the
     column fills in and this test must be updated with that change."""
-    src = "".join(p.read_text() for p in (Path(__file__).parent.parent / "src").rglob("*.py")
-                  if "sentinel" not in p.parts and "storage" not in p.parts)
+    src = "".join(
+        p.read_text()
+        for p in (Path(__file__).parent.parent / "src").rglob("*.py")
+        if "sentinel" not in p.parts and "storage" not in p.parts
+    )
     assert '"client_order_id"' not in src and "'client_order_id'" not in src
 
 

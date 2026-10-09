@@ -56,8 +56,7 @@ def test_distinct_identities_stay_distinct_and_a_single_is_a_recorded_one():
     by_key = {(r["symbol"], bool(r["healed"])): r["occurrences"] for r in rows}
 
     assert dropped == 0
-    assert by_key == {("aaa", False): 2, ("BBB", False): 1, ("BBB", True): 1,
-                      (None, False): 1}
+    assert by_key == {("aaa", False): 2, ("BBB", False): 1, ("BBB", True): 1, (None, False): 1}
     assert all(r["occurrences"] >= 1 for r in rows), "1 is a recorded count"
 
 
@@ -112,8 +111,8 @@ def test_migration_backfills_existing_rows_to_exactly_one_occurrence(tmp_path):
         " healed INTEGER, source TEXT, dropped_before INTEGER)"
     )
     conn.executemany(
-        "INSERT INTO soft_exit_heal_restores (timestamp, blank_found, healed)"
-        " VALUES (?,1,0)", [("2026-10-05T00:00:00Z",)] * 3,
+        "INSERT INTO soft_exit_heal_restores (timestamp, blank_found, healed) VALUES (?,1,0)",
+        [("2026-10-05T00:00:00Z",)] * 3,
     )
     conn.commit()
     conn.close()
@@ -122,9 +121,10 @@ def test_migration_backfills_existing_rows_to_exactly_one_occurrence(tmp_path):
 
     db = Database(str(path))
     db.initialize()
-    counts = [tuple(r) for r in db.conn.execute(
-        "SELECT occurrences, COUNT(*) FROM soft_exit_heal_restores GROUP BY 1"
-    ).fetchall()]
+    counts = [
+        tuple(r)
+        for r in db.conn.execute("SELECT occurrences, COUNT(*) FROM soft_exit_heal_restores GROUP BY 1").fetchall()
+    ]
 
     assert counts == [(1, 3)], "existing rows are one occurrence each"
 
@@ -135,14 +135,12 @@ def test_the_writer_stores_the_occurrence_count(tmp_path):
     db = Database(str(tmp_path / "fresh.db"))
     db.initialize()
     written = db.record_soft_exit_heal_restores(
-        observations=[{"symbol": "ZZZ", "blank_found": 1, "healed": 0,
-                       "occurrences": 4211}],
-        run_id="run-eeeeeeee", dropped=0,
+        observations=[{"symbol": "ZZZ", "blank_found": 1, "healed": 0, "occurrences": 4211}],
+        run_id="run-eeeeeeee",
+        dropped=0,
     )
 
-    row = tuple(db.conn.execute(
-        "SELECT occurrences, dropped_before FROM soft_exit_heal_restores"
-    ).fetchone())
+    row = tuple(db.conn.execute("SELECT occurrences, dropped_before FROM soft_exit_heal_restores").fetchone())
 
     assert written == 1
     assert row == (4211, 0)

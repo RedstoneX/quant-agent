@@ -1,4 +1,5 @@
 """Clause-5 witness for src.pipeline_candidate_records: exercised with stand-ins, no trading pipeline built."""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -10,8 +11,14 @@ from src.pipeline_candidate_records import (
     _record_pipeline_event,
 )
 
-MOVED = ("_record_execution_skip", "_record_pipeline_event", "_PM_ACCOUNTING_SEAT",
-         "_record_accounted_candidate", "_account_for_pm_candidates", "_record_heal_safely")
+MOVED = (
+    "_record_execution_skip",
+    "_record_pipeline_event",
+    "_PM_ACCOUNTING_SEAT",
+    "_record_accounted_candidate",
+    "_account_for_pm_candidates",
+    "_record_heal_safely",
+)
 
 
 def _ctx(**kw):
@@ -51,10 +58,21 @@ def test_heal_record_calls_the_host_recorder_and_never_raises_when_it_fails():
 
 
 def test_candidate_accounting_with_nothing_to_account_asks_the_seat_nothing():
-    host = SimpleNamespace(db=MagicMock(name="db"), portfolio_manager=MagicMock(name="pm"),
-                           _require_paid_analysis=MagicMock(name="paid"), _record_heal=MagicMock(name="heal"))
-    _account_for_pm_candidates(host, _ctx(), run_id="run-1", analyses=[], positions=[],
-                               decision=SimpleNamespace(targets=[], rejections=[]), pm_decide_kwargs={})
+    host = SimpleNamespace(
+        db=MagicMock(name="db"),
+        portfolio_manager=MagicMock(name="pm"),
+        _require_paid_analysis=MagicMock(name="paid"),
+        _record_heal=MagicMock(name="heal"),
+    )
+    _account_for_pm_candidates(
+        host,
+        _ctx(),
+        run_id="run-1",
+        analyses=[],
+        positions=[],
+        decision=SimpleNamespace(targets=[], rejections=[]),
+        pm_decide_kwargs={},
+    )
     host.portfolio_manager.decide.assert_not_called()
     host._require_paid_analysis.assert_not_called()
 

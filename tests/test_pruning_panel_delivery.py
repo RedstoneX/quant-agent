@@ -3,6 +3,7 @@
 Seeds stored runs and reads them back through the real route, including the
 pruned-nothing case, and proves the delivery path is read-only.
 """
+
 import sqlite3
 from pathlib import Path
 
@@ -24,12 +25,23 @@ def _point_api_at(db, monkeypatch):
 
 
 def _precheck(db, run, **extra):
-    _evidence(db, run, "pipeline", "pipeline_event", {
-        "stage": "rotation", "outcome": "precheck",
-        "reason": "full_nothing_outranked_a_holding",
-        "headroom_pct": 0.09, "ceiling_pct": 25.0, "floor_pct": 0.5,
-        "execute_enabled": True, "ranked_margin_enabled": False, **extra,
-    })
+    _evidence(
+        db,
+        run,
+        "pipeline",
+        "pipeline_event",
+        {
+            "stage": "rotation",
+            "outcome": "precheck",
+            "reason": "full_nothing_outranked_a_holding",
+            "headroom_pct": 0.09,
+            "ceiling_pct": 25.0,
+            "floor_pct": 0.5,
+            "execute_enabled": True,
+            "ranked_margin_enabled": False,
+            **extra,
+        },
+    )
 
 
 def test_cut_and_kept_names_each_carry_a_verdict_and_reason(tmp_path, monkeypatch):
@@ -48,9 +60,15 @@ def test_cut_and_kept_names_each_carry_a_verdict_and_reason(tmp_path, monkeypatc
 def test_pruned_nothing_run_still_shows_what_it_looked_at(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     _precheck(
-        db, "run-b", tier="", held_symbol="", held_reasons="",
-        held_examined="AAA,BBB", held_examined_count=2,
-        held_below_entry_bar="", held_below_entry_bar_count=0,
+        db,
+        "run-b",
+        tier="",
+        held_symbol="",
+        held_reasons="",
+        held_examined="AAA,BBB",
+        held_examined_count=2,
+        held_below_entry_bar="",
+        held_below_entry_bar_count=0,
     )
     _point_api_at(db, monkeypatch)
     p = get_pruning_passes().passes[0]
@@ -70,6 +88,7 @@ def test_delivery_is_read_only_and_wired():
     import inspect
 
     from src.api.server import create_app  # noqa: F401
+
     src = inspect.getsource(routes_pruning)
     for banned in ("INSERT", "UPDATE", "DELETE", ".commit(", "@router.post", "@router.put"):
         assert banned not in src
@@ -81,19 +100,31 @@ def test_delivery_is_read_only_and_wired():
 
 
 def _event(db, run, outcome, reason, symbol=None, **extra):
-    _evidence(db, run, "pipeline", "pipeline_event",
-              {"stage": "rotation", "outcome": outcome, "reason": reason, **extra},
-              symbol=symbol)
+    _evidence(
+        db,
+        run,
+        "pipeline",
+        "pipeline_event",
+        {"stage": "rotation", "outcome": outcome, "reason": reason, **extra},
+        symbol=symbol,
+    )
 
 
 def test_kept_below_bar_name_carries_its_reason_to_the_panel(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
-    _precheck(db, "run-c", **{**_ROW, "held_below_entry_bar": "BBB,CCC,DDD",
-                             "held_examined": "AAA,BBB,CCC,DDD",
-                             "held_examined_count": 4})
-    _event(db, "run-c", "dispositions", "below_bar_names",
-           below_bar_reasons="BBB=technical rule failed|CCC=rating too low|DDD=rating too low",
-           not_reached="DDD=not reached: the pass closes one below-bar name per run and BBB was closed first")
+    _precheck(
+        db,
+        "run-c",
+        **{**_ROW, "held_below_entry_bar": "BBB,CCC,DDD", "held_examined": "AAA,BBB,CCC,DDD", "held_examined_count": 4},
+    )
+    _event(
+        db,
+        "run-c",
+        "dispositions",
+        "below_bar_names",
+        below_bar_reasons="BBB=technical rule failed|CCC=rating too low|DDD=rating too low",
+        not_reached="DDD=not reached: the pass closes one below-bar name per run and BBB was closed first",
+    )
     _event(db, "run-c", "skipped", "held_symbol_structurally_protected", symbol="CCC")
     _point_api_at(db, monkeypatch)
     by = {v.symbol: v for v in get_pruning_passes().passes[0].verdicts}

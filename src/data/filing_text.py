@@ -22,9 +22,7 @@ logger = logging.getLogger(__name__)
 #: whether extracted sections are worth keeping, and the search for the
 #: densest region to fall back to. When those two disagreed, structured
 #: extraction could pass a bar the fallback would have failed it on.
-FINANCIAL_FIGURE_RE = re.compile(
-    r"\$[\d,]+(?:\.\d+)?|\d{1,3}(?:,\d{3})+|\(\d{1,3}(?:,\d{3})*\)"
-)
+FINANCIAL_FIGURE_RE = re.compile(r"\$[\d,]+(?:\.\d+)?|\d{1,3}(?:,\d{3})+|\(\d{1,3}(?:,\d{3})*\)")
 
 
 def extract_text(html_path: str, max_chars: int = 30000) -> str:
@@ -106,15 +104,13 @@ def extract_text(html_path: str, max_chars: int = 30000) -> str:
     MIN_STRUCTURED_SIZE = 3000
     MIN_STRUCTURED_FIGURES = 40
     figure_count = len(FINANCIAL_FIGURE_RE.findall(structured_output))
-    if (
-        structured_output
-        and len(structured_output) >= MIN_STRUCTURED_SIZE
-        and figure_count >= MIN_STRUCTURED_FIGURES
-    ):
+    if structured_output and len(structured_output) >= MIN_STRUCTURED_SIZE and figure_count >= MIN_STRUCTURED_FIGURES:
         logger.info(
-            "Extracted %d section(s) from filing → %d chars, %d figures "
-            "(down from %d)",
-            len(sections), len(structured_output), figure_count, len(text),
+            "Extracted %d section(s) from filing → %d chars, %d figures (down from %d)",
+            len(sections),
+            len(structured_output),
+            figure_count,
+            len(text),
         )
         return structured_output
 
@@ -123,7 +119,9 @@ def extract_text(html_path: str, max_chars: int = 30000) -> str:
             "Structured extraction produced %d chars but only %d financial "
             "figures (need %d) — this is narrative, not statements. "
             "Falling back to the density-seeking slice.",
-            len(structured_output), figure_count, MIN_STRUCTURED_FIGURES,
+            len(structured_output),
+            figure_count,
+            MIN_STRUCTURED_FIGURES,
         )
 
     # Fallback: truncated full text. The naive "first max_chars" slice
@@ -139,10 +137,14 @@ def extract_text(html_path: str, max_chars: int = 30000) -> str:
         logger.info(
             "Structured extraction too sparse (%d chars); falling back to truncated full text "
             "(%d → %d chars, slice @ %d)",
-            len(structured_output), len(text), max_chars, slice_start,
+            len(structured_output),
+            len(text),
+            max_chars,
+            slice_start,
         )
-        text = text[slice_start:slice_start + max_chars] + "\n\n[... truncated ...]"
+        text = text[slice_start : slice_start + max_chars] + "\n\n[... truncated ...]"
     return text
+
 
 def find_financial_dense_region(text: str, window: int) -> int:
     """Return the start index of the `window`-char slice with the
@@ -165,7 +167,7 @@ def find_financial_dense_region(text: str, window: int) -> int:
     step = max(window // 10, 1000)
     scores: list[tuple[int, int]] = []  # (count, start)
     for start in range(0, len(text) - window + 1, step):
-        chunk = text[start:start + window]
+        chunk = text[start : start + window]
         scores.append((len(pattern.findall(chunk)), start))
     if not scores:
         return 0
@@ -179,6 +181,7 @@ def find_financial_dense_region(text: str, window: int) -> int:
     if best_count >= 2 * max(head_count, 5):
         return best_start
     return 0
+
 
 def extract_key_sections(text: str) -> dict[str, str]:
     """Locate financial / MD&A / risk-factor section bodies via regex.
@@ -204,17 +207,21 @@ def extract_key_sections(text: str) -> dict[str, str]:
     #               Operations" before the real section started. Switched
     #               to skip_toc so we land on the actual table.
     patterns = [
-        ("financial_statements", re.compile(
-            r"(?im)(?:condensed\s+)?consolidated\s+statements?\s+of\s+(?:operations?|income|earnings)\b"
-        ), "skip_toc"),
-        ("mdna", re.compile(
-            # [\u2019'] accepts both ASCII apostrophe and the curly
-            # quote U+2019 that SEC HTML filings commonly use.
-            r"(?im)^\s*(?:item\s*[27]\.?)\s*management[\u2019']?s?\s+discussion"
-        ), "skip_toc"),
-        ("risk_factors", re.compile(
-            r"(?im)^\s*(?:item\s*1a\.?)\s*risk\s+factors"
-        ), "skip_toc"),
+        (
+            "financial_statements",
+            re.compile(r"(?im)(?:condensed\s+)?consolidated\s+statements?\s+of\s+(?:operations?|income|earnings)\b"),
+            "skip_toc",
+        ),
+        (
+            "mdna",
+            re.compile(
+                # [\u2019'] accepts both ASCII apostrophe and the curly
+                # quote U+2019 that SEC HTML filings commonly use.
+                r"(?im)^\s*(?:item\s*[27]\.?)\s*management[\u2019']?s?\s+discussion"
+            ),
+            "skip_toc",
+        ),
+        ("risk_factors", re.compile(r"(?im)^\s*(?:item\s*1a\.?)\s*risk\s+factors"), "skip_toc"),
     ]
     stop_pattern = re.compile(
         r"(?im)^\s*(?:item\s*\d+[a-z]?\.?\s|"
@@ -244,10 +251,7 @@ def extract_key_sections(text: str) -> dict[str, str]:
             if stop > body_start + 200:
                 next_stop = stop
                 break
-        body = (
-            text[body_start:next_stop].strip()
-            if next_stop else text[body_start:].strip()
-        )
+        body = text[body_start:next_stop].strip() if next_stop else text[body_start:].strip()
         # Low threshold — 10-Q Risk Factors sections often read "No
         # material changes from 10-K" in ~200-400 chars, which is still
         # useful information (confirms no new risks flagged). Below 150

@@ -12,6 +12,7 @@ fetched, which the heal path later re-asks with -- lives behind the
 `last_news_peek_items` property so the host can keep it where it always kept it
 (`_last_news_peek_items` on the pipeline); standalone it is an in-memory slot.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,8 @@ class ResearchChangeDetectors:
     """Macro regime/print change detection and the news-wire peek for research reuse."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         macro_store,
         macro,
         news_provider,
@@ -116,7 +118,13 @@ class ResearchChangeDetectors:
         latest_regime = str(latest.get("regime") or "").strip()
         latest_date = str(latest.get("date") or "").strip()[:10]
         stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
-        if latest_date and stored_date and latest_date > stored_date and latest_regime and latest_regime != stored_regime:
+        if (
+            latest_date
+            and stored_date
+            and latest_date > stored_date
+            and latest_regime
+            and latest_regime != stored_regime
+        ):
             return True
         return False
 
@@ -128,6 +136,7 @@ class ResearchChangeDetectors:
         the morning side-channel a later reader still needs.
         """
         from src.data.macro_store import series_prints_from_summary
+
         provider = getattr(self, "macro", None)
         getter = getattr(provider, "get_macro_summary", None)
         if not callable(getter):
@@ -143,9 +152,7 @@ class ResearchChangeDetectors:
                 summary = getter()
                 freshness = getattr(provider, "_run_freshness", None)
             except Exception:  # noqa: BLE001 — failed fetch ≠ print change
-                record_swallowed_here(
-                    "research_continuity.change_detectors._live_macro_series_prints", log=logger
-                )
+                record_swallowed_here("research_continuity.change_detectors._live_macro_series_prints", log=logger)
                 return None
             if not isinstance(summary, dict) or not summary:
                 return None
@@ -164,10 +171,9 @@ class ResearchChangeDetectors:
         churn. Failed live fetch is not a change.
         """
         from src.data.macro_store import series_prints_changed
+
         stored = state.get("series_prints")
-        if not isinstance(stored, dict) or not (
-            stored.get("values") or stored.get("observations")
-        ):
+        if not isinstance(stored, dict) or not (stored.get("values") or stored.get("observations")):
             return False
         live = self._live_macro_series_prints()
         if not live:
@@ -213,6 +219,7 @@ class ResearchChangeDetectors:
         different 15 names and invent new titles.
         """
         from src.evidence_kind import headline_mentions_symbols
+
         self.last_news_peek_items = []
         provider = getattr(self, "news_provider", None)
         fetch = getattr(provider, "fetch_news", None)
@@ -284,6 +291,7 @@ class ResearchChangeDetectors:
         news seat.
         """
         from src.evidence_kind import covered_news_headlines, newer_material_wire
+
         covered = set(covered_news_headlines(report))
         load_raw = getattr(getattr(self, "news_store", None), "load_raw_headlines", None)
         if callable(load_raw):
@@ -299,8 +307,6 @@ class ResearchChangeDetectors:
         try:
             fetched = self._peek_news_headlines(report) or []
         except Exception:  # noqa: BLE001
-            record_swallowed_here(
-                "research_continuity.change_detectors._news_has_newer_material_wire", log=logger
-            )
+            record_swallowed_here("research_continuity.change_detectors._news_has_newer_material_wire", log=logger)
             return False
         return newer_material_wire(frozenset(covered), fetched)

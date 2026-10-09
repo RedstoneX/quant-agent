@@ -36,6 +36,7 @@ knows the strength of.
 
 Nothing here touches the network, a real broker, or a real chat.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -81,16 +82,20 @@ def _run(pipe, *, market_open=False):
         alerts.append((text, list(symbols or [])))
         return True
 
-    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open), \
-         patch.object(TradingPipeline, "_sweeper", return_value=None), \
-         patch.object(
-             TradingPipeline, "_retired_cash_park_symbol", return_value=None,
-         ), \
-         patch("src.notifier.send_owner_alert", side_effect=_send), \
-         patch(
-             "src.coverage_watchdog.claim_unreadable_stop_alert",
-             side_effect=lambda syms, **_kw: list(syms),
-         ):
+    with (
+        patch("src.pipeline_protection._market_is_open_now", return_value=market_open),
+        patch.object(TradingPipeline, "_sweeper", return_value=None),
+        patch.object(
+            TradingPipeline,
+            "_retired_cash_park_symbol",
+            return_value=None,
+        ),
+        patch("src.notifier.send_owner_alert", side_effect=_send),
+        patch(
+            "src.coverage_watchdog.claim_unreadable_stop_alert",
+            side_effect=lambda syms, **_kw: list(syms),
+        ),
+    ):
         gaps = pipe._reconcile_stop_coverage()
     return gaps, alerts
 
@@ -99,17 +104,21 @@ def _run(pipe, *, market_open=False):
 # 1. the session reconciler: one symbol raises
 # ===========================================================================
 
+
 def test_a_raising_broker_produces_an_unreadable_row_and_pages_by_symbol():
     """The exact defect. AAPL's stop query raises; the owner is told, by
     name, that coverage is UNKNOWN — not that the stop is missing."""
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
             raise RuntimeError("upstream 503 from the broker")
         return (True, [{"id": "s", "qty": 5.0}])
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+        ],
         _snap,
     )
     gaps, alerts = _run(pipe)
@@ -117,9 +126,7 @@ def test_a_raising_broker_produces_an_unreadable_row_and_pages_by_symbol():
     rows = [g for g in gaps if g["symbol"] == "AAPL"]
     assert len(rows) == 1, "the unreadable symbol must not vanish from the gaps"
     assert rows[0]["coverage"] == "unreadable"
-    assert rows[0]["covered_qty"] is None, (
-        "no quantity was established; claiming one would invent a fact"
-    )
+    assert rows[0]["covered_qty"] is None, "no quantity was established; claiming one would invent a fact"
     assert rows[0]["repaired"] is False
     assert "503" in rows[0]["read_error"]
     # MSFT reads fine and is not a gap: one symbol's failure did not end the
@@ -144,31 +151,36 @@ def test_a_swallowed_listing_error_is_unreadable_not_a_naked_position():
     stop on top of a live stop it could not see. `snapshot_protective_stops`
     now returns `ok=False` and both readers honour it.
     """
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
-            return (False, [])          # listing failed, nothing raised
+            return (False, [])  # listing failed, nothing raised
         return (True, [{"id": "s", "qty": 5.0}])
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+        ],
         _snap,
     )
-    with patch.object(
-        TradingPipeline, "_repair_stop_coverage", return_value=False,
-    ) as repair, patch.object(
-        TradingPipeline, "_alert_owner_no_stop",
-    ) as naked_alert:
+    with (
+        patch.object(
+            TradingPipeline,
+            "_repair_stop_coverage",
+            return_value=False,
+        ) as repair,
+        patch.object(
+            TradingPipeline,
+            "_alert_owner_no_stop",
+        ) as naked_alert,
+    ):
         gaps, alerts = _run(pipe)
 
     assert [g["symbol"] for g in gaps] == ["AAPL"]
     assert gaps[0]["coverage"] == "unreadable"
-    assert not naked_alert.called, (
-        "a broker outage must never be reported as a confirmed naked position"
-    )
-    assert not repair.called, (
-        "nothing may be placed over a stop the desk could not see"
-    )
+    assert not naked_alert.called, "a broker outage must never be reported as a confirmed naked position"
+    assert not repair.called, "nothing may be placed over a stop the desk could not see"
     assert alerts and alerts[0][1] == ["AAPL"]
 
 
@@ -184,7 +196,9 @@ def test_the_broker_itself_reports_a_listing_failure_as_not_ok():
 
     for side in ("sell", "buy"):
         ok, specs = AlpacaBroker.snapshot_protective_stops(
-            broker, "AAPL", side=side,
+            broker,
+            "AAPL",
+            side=side,
         )
         assert ok is False, f"{side}: a listing failure is not a clean read"
         assert specs == []
@@ -207,14 +221,17 @@ def test_a_snapshot_in_an_unusable_shape_does_not_kill_the_whole_sweep():
     """`for s in (specs or [])` over a non-iterable raises OUTSIDE the inner
     try, propagating out of the reconciler and taking every other position
     with it — the exact failure mode this item is about."""
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
-            return (True, 7)            # not a list, not None
+            return (True, 7)  # not a list, not None
         return (True, [{"id": "s", "qty": 5.0}])
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+        ],
         _snap,
     )
     gaps, alerts = _run(pipe)
@@ -224,7 +241,8 @@ def test_a_snapshot_in_an_unusable_shape_does_not_kill_the_whole_sweep():
 
     unreadable: list[coverage_watchdog.UnreadableStop] = []
     wd_gaps, error = coverage_watchdog.uncovered_positions(
-        _wd_broker(_snap), unreadable=unreadable,
+        _wd_broker(_snap),
+        unreadable=unreadable,
     )
     assert error is None
     assert [r.symbol for r in unreadable] == ["AAPL"]
@@ -239,7 +257,8 @@ def test_the_watchdog_also_honours_a_swallowed_listing_error():
 
     unreadable: list[coverage_watchdog.UnreadableStop] = []
     gaps, error = coverage_watchdog.uncovered_positions(
-        _wd_broker(_snap), unreadable=unreadable,
+        _wd_broker(_snap),
+        unreadable=unreadable,
     )
     assert error is None
     assert [r.symbol for r in unreadable] == ["AAPL"]
@@ -257,9 +276,13 @@ def test_a_mixed_case_symbol_is_still_deduped(state_path):
 def test_the_owner_message_never_claims_the_position_is_unprotected():
     """The whole finding is the UNKNOWN. A message that resolved it either
     way would be stating something nobody established."""
-    rows = [coverage_watchdog.UnreadableStop(
-        symbol="AMD", held_qty=1.77, reason="snapshot raised: timeout",
-    )]
+    rows = [
+        coverage_watchdog.UnreadableStop(
+            symbol="AMD",
+            held_qty=1.77,
+            reason="snapshot raised: timeout",
+        )
+    ]
     text = coverage_watchdog.unreadable_stop_text(rows)
     assert "NOT a report that they are unprotected" in text
     assert "does not know" in text
@@ -273,13 +296,16 @@ def test_the_owner_message_never_claims_the_position_is_unprotected():
 def test_every_symbol_raising_reports_every_symbol():
     """A broker that is down for the whole book names the whole book, and
     the pass still completes rather than aborting on the first one."""
+
     def _snap(sym, side="sell"):
         raise RuntimeError("broker unreachable")
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
-         SimpleNamespace(symbol="NVDA", qty=3.0, current_price=170.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+            SimpleNamespace(symbol="NVDA", qty=3.0, current_price=170.0),
+        ],
         _snap,
     )
     gaps, alerts = _run(pipe)
@@ -292,28 +318,34 @@ def test_every_symbol_raising_reports_every_symbol():
 def test_one_symbols_read_failure_cannot_hide_a_naked_position_behind_it():
     """Item 172 criterion 3, and the sharpest version of the old defect: the
     naked name is LATER in the list than the raising one."""
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
             raise RuntimeError("broker said no")
         if sym == "NVDA":
-            return (True, [])          # genuinely nothing standing watch
+            return (True, [])  # genuinely nothing standing watch
         return (True, [{"id": "s", "qty": 5.0}])
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
-         SimpleNamespace(symbol="NVDA", qty=3.0, current_price=170.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+            SimpleNamespace(symbol="NVDA", qty=3.0, current_price=170.0),
+        ],
         _snap,
     )
-    with patch.object(
-        TradingPipeline, "_repair_stop_coverage", return_value=False,
-    ), patch.object(TradingPipeline, "_alert_owner_no_stop") as naked_alert:
+    with (
+        patch.object(
+            TradingPipeline,
+            "_repair_stop_coverage",
+            return_value=False,
+        ),
+        patch.object(TradingPipeline, "_alert_owner_no_stop") as naked_alert,
+    ):
         gaps, alerts = _run(pipe)
 
     by_symbol = {g["symbol"]: g for g in gaps}
-    assert by_symbol["NVDA"]["coverage"] == "none", (
-        "the naked position behind the raising one must still be found"
-    )
+    assert by_symbol["NVDA"]["coverage"] == "none", "the naked position behind the raising one must still be found"
     assert by_symbol["AAPL"]["coverage"] == "unreadable"
     assert naked_alert.called, "NO STOP AT ALL must still escalate"
     assert [r["symbol"] for r in naked_alert.call_args[0][0]] == ["NVDA"]
@@ -327,26 +359,29 @@ def test_a_malformed_stop_quantity_is_unreadable_not_zero_coverage():
     invent coverage. Before this change the unguarded `sum(...)` raised
     straight out of the method and took the whole sweep with it.
     """
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
             return (True, [{"id": "s", "qty": "not-a-number"}])
         return (True, [{"id": "s", "qty": 5.0}])
 
     pipe = _pipe(
-        [SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
-         SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0)],
+        [
+            SimpleNamespace(symbol="AAPL", qty=9.0, current_price=250.0),
+            SimpleNamespace(symbol="MSFT", qty=5.0, current_price=400.0),
+        ],
         _snap,
     )
     with patch.object(
-        TradingPipeline, "_repair_stop_coverage", return_value=False,
+        TradingPipeline,
+        "_repair_stop_coverage",
+        return_value=False,
     ) as repair:
         gaps, alerts = _run(pipe)
 
     assert [g["symbol"] for g in gaps] == ["AAPL"]
     assert gaps[0]["coverage"] == "unreadable"
-    assert not repair.called, (
-        "nothing may be placed against a coverage figure that was never read"
-    )
+    assert not repair.called, "nothing may be placed against a coverage figure that was never read"
     assert alerts and alerts[0][1] == ["AAPL"]
 
 
@@ -359,9 +394,14 @@ def test_an_empty_snapshot_is_a_readable_answer_meaning_no_stop():
         [SimpleNamespace(symbol="NVDA", qty=3.0, current_price=170.0)],
         lambda sym, side="sell": (True, []),
     )
-    with patch.object(
-        TradingPipeline, "_repair_stop_coverage", return_value=False,
-    ), patch.object(TradingPipeline, "_alert_owner_no_stop") as naked_alert:
+    with (
+        patch.object(
+            TradingPipeline,
+            "_repair_stop_coverage",
+            return_value=False,
+        ),
+        patch.object(TradingPipeline, "_alert_owner_no_stop") as naked_alert,
+    ):
         gaps, _alerts = _run(pipe)
 
     assert gaps[0]["coverage"] == "none"
@@ -371,6 +411,7 @@ def test_an_empty_snapshot_is_a_readable_answer_meaning_no_stop():
 # ===========================================================================
 # 2. THE NEGATIVE TEST — the accepted fractional gap must not be flooded
 # ===========================================================================
+
 
 def test_the_overnight_fractional_remainder_is_never_reported_as_unreadable():
     """Item 172 criterion 1's other half, and the reason this fix could have
@@ -382,7 +423,8 @@ def test_the_overnight_fractional_remainder_is_never_reported_as_unreadable():
     positions = [
         SimpleNamespace(symbol=sym, qty=qty, current_price=price)
         for sym, qty, price in (
-            ("AAPL", 9.763, 250.0), ("AMD", 1.7662, 623.0),
+            ("AAPL", 9.763, 250.0),
+            ("AMD", 1.7662, 623.0),
             ("BRK-B", 1.4393, 503.0),
         )
     ]
@@ -391,6 +433,7 @@ def test_the_overnight_fractional_remainder_is_never_reported_as_unreadable():
         # The durable whole-share GTC leg is intact; the sub-share DAY leg
         # expired at 16:00 ET exactly as the design intends.
         import math
+
         held = {"AAPL": 9.763, "AMD": 1.7662, "BRK-B": 1.4393}[sym]
         return (True, [{"id": "gtc", "qty": math.floor(held)}])
 
@@ -399,9 +442,7 @@ def test_the_overnight_fractional_remainder_is_never_reported_as_unreadable():
 
     assert {g["coverage"] for g in gaps} == {"fractional_overnight"}
     assert not any(g["coverage"] == "unreadable" for g in gaps)
-    assert alerts == [], (
-        "the accepted overnight remainder must not page the owner"
-    )
+    assert alerts == [], "the accepted overnight remainder must not page the owner"
     # Still reported as a measured number, unchanged by this work.
     assert all(g["unprotected_value"] > 0 for g in gaps)
 
@@ -410,6 +451,7 @@ def test_a_fractional_position_whose_read_fails_is_unreadable_not_overnight():
     """The mirror of the test above, and the one that would catch a fix that
     suppressed too much: a fractional name is not exempt from the unreadable
     report just for being fractional."""
+
     def _snap(sym, side="sell"):
         raise RuntimeError("broker said no")
 
@@ -426,6 +468,7 @@ def test_a_fractional_position_whose_read_fails_is_unreadable_not_overnight():
 # 3. the standalone watchdog: one symbol must not end the pass
 # ===========================================================================
 
+
 def _wd_broker(snapshot):
     broker = MagicMock()
     broker.get_positions.return_value = [
@@ -440,6 +483,7 @@ def test_the_watchdog_no_longer_throws_the_whole_pass_away_on_one_symbol():
     """It used to `return [], error` on the first raise, so the naked NVDA
     behind the raising AAPL was never found and the run reported only
     'could not check'."""
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
             raise RuntimeError("broker said no")
@@ -447,7 +491,8 @@ def test_the_watchdog_no_longer_throws_the_whole_pass_away_on_one_symbol():
 
     unreadable: list[coverage_watchdog.UnreadableStop] = []
     gaps, error = coverage_watchdog.uncovered_positions(
-        _wd_broker(_snap), unreadable=unreadable,
+        _wd_broker(_snap),
+        unreadable=unreadable,
     )
     assert error is None, "one symbol is not a whole-pass failure"
     assert [g.symbol for g in gaps] == ["NVDA"]
@@ -467,19 +512,27 @@ def test_the_watchdog_still_fails_the_whole_pass_when_positions_cannot_be_read()
 def test_a_watchdog_pass_holding_an_unreadable_symbol_never_reads_as_clean():
     """`clean` is the one word that must not describe a run with an
     unanswered question about loss protection behind it."""
+
     def _snap(sym, side="sell"):
         if sym == "AAPL":
             raise RuntimeError("broker said no")
         return (True, [{"id": "s", "qty": 3.0}])
 
     status = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=True,
-        unreadable=[coverage_watchdog.UnreadableStop(
-            symbol="AAPL", held_qty=9.0, reason="snapshot raised",
-        )],
+        trading_day="2026-09-23",
+        session_ran=True,
+        unreadable=[
+            coverage_watchdog.UnreadableStop(
+                symbol="AAPL",
+                held_qty=9.0,
+                reason="snapshot raised",
+            )
+        ],
     )
     summary = coverage_watchdog.sweep_summary(
-        status, entry="unit", run_id="r1",
+        status,
+        entry="unit",
+        run_id="r1",
     )
     assert summary["outcome"] == "unreadable_stops"
     assert summary["unreadable_symbols"] == ["AAPL"]
@@ -501,7 +554,8 @@ def test_the_watchdog_alerts_once_per_symbol_per_day_then_stays_quiet(state_path
     # A DIFFERENT name failing later the same day is a new finding and is
     # NOT swallowed by the first — the defect this mirrors one level down.
     other = coverage_watchdog.claim_unreadable_stop_alert(
-        ["AAPL", "NVDA"], now=_NOW,
+        ["AAPL", "NVDA"],
+        now=_NOW,
     )
     assert other == ["NVDA"]
 
@@ -529,23 +583,32 @@ def test_the_standalone_sweeps_own_gate_is_what_decides_it_pages():
     a session to have its chance would only delay the report.
     """
     row = coverage_watchdog.UnreadableStop(
-        symbol="AAPL", held_qty=9.0, reason="snapshot raised",
+        symbol="AAPL",
+        held_qty=9.0,
+        reason="snapshot raised",
     )
     fires = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=True, unreadable=[row],
+        trading_day="2026-09-23",
+        session_ran=True,
+        unreadable=[row],
     )
     assert fires.should_alert_unreadable is True
     no_session = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=False, unreadable=[row],
+        trading_day="2026-09-23",
+        session_ran=False,
+        unreadable=[row],
     )
     assert no_session.should_alert_unreadable is True
     already = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=True, unreadable=[row],
+        trading_day="2026-09-23",
+        session_ran=True,
+        unreadable=[row],
         already_alerted_unreadable_for_day=True,
     )
     assert already.should_alert_unreadable is False
     nothing = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=True,
+        trading_day="2026-09-23",
+        session_ran=True,
     )
     assert nothing.should_alert_unreadable is False
 
@@ -558,25 +621,29 @@ def test_the_standalone_sweep_actually_pages_the_owner_by_symbol(state_path):
     import scripts.alert_heartbeat as hb
 
     status = coverage_watchdog.CoverageStatus(
-        trading_day="2026-09-23", session_ran=True,
-        unreadable=[coverage_watchdog.UnreadableStop(
-            symbol="AAPL", held_qty=9.0,
-            reason="snapshot_protective_stops raised: 503",
-        )],
+        trading_day="2026-09-23",
+        session_ran=True,
+        unreadable=[
+            coverage_watchdog.UnreadableStop(
+                symbol="AAPL",
+                held_qty=9.0,
+                reason="snapshot_protective_stops raised: 503",
+            )
+        ],
     )
     sent: list[tuple[str, list]] = []
 
-    with patch.object(hb, "_build_broker", return_value=MagicMock()), \
-         patch.object(hb, "_cash_sweep_symbol", return_value="SGOV"), \
-         patch.object(hb, "_coverage_db_and_last_buy", return_value=(None, None)), \
-         patch("src.coverage_watchdog.check_coverage", return_value=status), \
-         patch("src.coverage_watchdog.record_sweep_run"), \
-         patch(
-             "src.notifier.send_owner_alert",
-             side_effect=lambda text, symbols=None, **_kw: (
-                 sent.append((text, list(symbols or []))) or True
-             ),
-         ):
+    with (
+        patch.object(hb, "_build_broker", return_value=MagicMock()),
+        patch.object(hb, "_cash_sweep_symbol", return_value="SGOV"),
+        patch.object(hb, "_coverage_db_and_last_buy", return_value=(None, None)),
+        patch("src.coverage_watchdog.check_coverage", return_value=status),
+        patch("src.coverage_watchdog.record_sweep_run"),
+        patch(
+            "src.notifier.send_owner_alert",
+            side_effect=lambda text, symbols=None, **_kw: sent.append((text, list(symbols or []))) or True,
+        ),
+    ):
         line = hb.run_coverage_check(now=_NOW)
 
     assert len(sent) == 1, "exactly one alert, and it is the unreadable one"
@@ -586,8 +653,7 @@ def test_the_standalone_sweep_actually_pages_the_owner_by_symbol(state_path):
     assert "unreadable-stop alert delivered" in line
 
 
-def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(
-        state_path):
+def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(state_path):
     """The owner-facing text promises "at most once per symbol per trading
     day". The gate correctly re-opens when a NEW name becomes unreadable —
     that is the swallowing defect fixed one level down — but the message
@@ -599,8 +665,7 @@ def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(
     """
     import scripts.alert_heartbeat as hb
 
-    assert coverage_watchdog.claim_unreadable_stop_alert(
-        ["AAPL"], now=_NOW) == ["AAPL"]
+    assert coverage_watchdog.claim_unreadable_stop_alert(["AAPL"], now=_NOW) == ["AAPL"]
 
     def _snap(sym, side="sell"):
         if sym in ("AAPL", "NVDA"):
@@ -608,7 +673,9 @@ def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(
         return (True, [{"id": "s", "qty": 3.0}])
 
     status = coverage_watchdog.check_coverage(
-        _wd_broker(_snap), now=_NOW, db=None,
+        _wd_broker(_snap),
+        now=_NOW,
+        db=None,
     )
     assert {r.symbol for r in status.unreadable} == {"AAPL", "NVDA"}, (
         "both are still unreadable — the filter is about what we SAY"
@@ -617,17 +684,17 @@ def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(
     assert status.should_alert_unreadable is True
 
     sent: list[tuple[str, list]] = []
-    with patch.object(hb, "_build_broker", return_value=MagicMock()), \
-         patch.object(hb, "_cash_sweep_symbol", return_value="SGOV"), \
-         patch.object(hb, "_coverage_db_and_last_buy", return_value=(None, None)), \
-         patch("src.coverage_watchdog.check_coverage", return_value=status), \
-         patch("src.coverage_watchdog.record_sweep_run"), \
-         patch(
-             "src.notifier.send_owner_alert",
-             side_effect=lambda text, symbols=None, **_kw: (
-                 sent.append((text, list(symbols or []))) or True
-             ),
-         ):
+    with (
+        patch.object(hb, "_build_broker", return_value=MagicMock()),
+        patch.object(hb, "_cash_sweep_symbol", return_value="SGOV"),
+        patch.object(hb, "_coverage_db_and_last_buy", return_value=(None, None)),
+        patch("src.coverage_watchdog.check_coverage", return_value=status),
+        patch("src.coverage_watchdog.record_sweep_run"),
+        patch(
+            "src.notifier.send_owner_alert",
+            side_effect=lambda text, symbols=None, **_kw: sent.append((text, list(symbols or []))) or True,
+        ),
+    ):
         hb.run_coverage_check(now=_NOW)
 
     assert len(sent) == 1
@@ -635,8 +702,7 @@ def test_a_newly_failing_symbol_does_not_re_page_the_ones_already_reported(
     assert symbols == ["NVDA"]
     assert "NVDA" in text
     assert "AAPL" not in text, (
-        "AAPL was reported on an earlier tick; naming it again breaks the "
-        "promise this very message makes"
+        "AAPL was reported on an earlier tick; naming it again breaks the promise this very message makes"
     )
 
 
@@ -673,6 +739,7 @@ def test_no_stop_at_all_outranks_stop_unreadable_in_every_renderer():
 # 5. the EXIT path: making `ok` honest also made a sale refusable
 # ===========================================================================
 
+
 def _exit_pipe():
     pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     return pipe
@@ -697,9 +764,14 @@ def test_a_listing_failure_is_retried_before_it_can_refuse_an_exit():
         return [{"id": "s1", "qty": 5.0, "stop_price": 10.0}]
 
     b = _broker.AlpacaBroker.__new__(_broker.AlpacaBroker)
-    with patch.object(
-        _broker.AlpacaBroker, "_list_open_protective_stop_orders", _lister,
-    ), patch.object(_broker.time, "sleep"):
+    with (
+        patch.object(
+            _broker.AlpacaBroker,
+            "_list_open_protective_stop_orders",
+            _lister,
+        ),
+        patch.object(_broker.time, "sleep"),
+    ):
         ok, specs = _broker.AlpacaBroker.snapshot_protective_stops(b, "AAPL")
     assert calls["n"] == _broker._STOP_PLACEMENT_MAX_ATTEMPTS
     assert ok is True, "a transient failure must not cost the exit"
@@ -714,9 +786,14 @@ def test_a_listing_that_fails_every_attempt_still_reports_unknown():
         return []
 
     b = _broker.AlpacaBroker.__new__(_broker.AlpacaBroker)
-    with patch.object(
-        _broker.AlpacaBroker, "_list_open_protective_stop_orders", _lister,
-    ), patch.object(_broker.time, "sleep"):
+    with (
+        patch.object(
+            _broker.AlpacaBroker,
+            "_list_open_protective_stop_orders",
+            _lister,
+        ),
+        patch.object(_broker.time, "sleep"),
+    ):
         ok, specs = _broker.AlpacaBroker.snapshot_protective_stops(b, "AAPL")
     assert ok is False and specs == []
 
@@ -740,8 +817,7 @@ def test_the_two_refusal_states_no_longer_share_one_asserted_cause():
         ("cancel_rolled_back", "held_for_orders", "UNKNOWN"),
     ],
 )
-def test_a_declined_exit_reaches_the_owner_by_symbol(
-        state_path, refusal, must_say, must_not_say):
+def test_a_declined_exit_reaches_the_owner_by_symbol(state_path, refusal, must_say, must_not_say):
     """Five call sites upstream do `if sale is None: continue` — no trade
     row, no session field, no message. One of them is the de-levering
     ladder, which after the halt removal is one of the few remaining
@@ -754,16 +830,20 @@ def test_a_declined_exit_reaches_the_owner_by_symbol(
         pipe._last_stop_clear_refusal = refusal
         return False, [], None
 
-    with patch.object(pipe, "_cancel_stops_with_write_ahead", _cancel), \
-         patch(
-             "src.notifier.send_owner_alert",
-             side_effect=lambda text, symbols=None, **_kw: (
-                 sent.append((text, list(symbols or []))) or True
-             ),
-         ):
+    with (
+        patch.object(pipe, "_cancel_stops_with_write_ahead", _cancel),
+        patch(
+            "src.notifier.send_owner_alert",
+            side_effect=lambda text, symbols=None, **_kw: sent.append((text, list(symbols or []))) or True,
+        ),
+    ):
         out = pipe._submit_protected_sell(
-            symbol="AAPL", qty=5.0, position_qty_before_sell=10.0,
-            limit_price=1.0, reference_price=1.0, label="unit",
+            symbol="AAPL",
+            qty=5.0,
+            position_qty_before_sell=10.0,
+            limit_price=1.0,
+            reference_price=1.0,
+            label="unit",
         )
 
     assert out is None, "the exit is still declined — that part is deliberate"
@@ -778,8 +858,7 @@ def test_a_declined_exit_reaches_the_owner_by_symbol(
 def test_a_declined_exit_pages_once_per_symbol_per_day(state_path):
     assert coverage_watchdog.claim_exit_declined_alert(["AAPL"], now=_NOW) == ["AAPL"]
     assert coverage_watchdog.claim_exit_declined_alert(["AAPL"], now=_NOW) == []
-    assert coverage_watchdog.claim_exit_declined_alert(
-        ["AAPL", "NVDA"], now=_NOW) == ["NVDA"]
+    assert coverage_watchdog.claim_exit_declined_alert(["AAPL", "NVDA"], now=_NOW) == ["NVDA"]
 
 
 def test_the_declined_exit_marker_has_its_own_key(state_path):
@@ -794,20 +873,21 @@ def test_the_declined_exit_message_never_claims_anything_was_sold():
     text = coverage_watchdog.exit_declined_text("AAPL", side="sell", why="a reason")
     assert "Nothing was sold, resized or cancelled" in text
     assert "🛑🛑 EXIT NOT PLACED" in text
-    assert "🛑🛑🛑" not in text, (
-        "the position keeps whatever protection it had — this is not the "
-        "unbounded-loss tier"
-    )
+    assert "🛑🛑🛑" not in text, "the position keeps whatever protection it had — this is not the unbounded-loss tier"
 
 
 # ===========================================================================
 # 4. rendering: never folded into a banner that states a measured fact
 # ===========================================================================
 
+
 def _unreadable_row(symbol="AAPL"):
     return {
-        "symbol": symbol, "held_qty": 9.0, "covered_qty": None,
-        "coverage": "unreadable", "repaired": False,
+        "symbol": symbol,
+        "held_qty": 9.0,
+        "covered_qty": None,
+        "coverage": "unreadable",
+        "repaired": False,
         "read_error": "snapshot_protective_stops raised: 503",
     }
 
@@ -819,7 +899,8 @@ def test_the_notifier_gives_it_its_own_banner_not_the_mis_sized_one():
     """
     lines: list[str] = []
     notifier._append_coverage_gap_banner(
-        lines, {"stop_coverage_gaps": [_unreadable_row()]},
+        lines,
+        {"stop_coverage_gaps": [_unreadable_row()]},
     )
     body = "\n".join(lines)
     assert "STOP UNREADABLE" in body and "AAPL" in body
@@ -834,9 +915,12 @@ def test_the_unreadable_row_is_not_classified_off_its_missing_quantity():
     so the classifier must key on the stamp alone."""
     assert notifier._gap_is_unreadable(_unreadable_row()) is True
     assert notifier._gap_is_expected_fractional(_unreadable_row()) is False
-    assert notifier._gap_is_unreadable(
-        {"symbol": "X", "coverage": "fractional_overnight"},
-    ) is False
+    assert (
+        notifier._gap_is_unreadable(
+            {"symbol": "X", "coverage": "fractional_overnight"},
+        )
+        is False
+    )
 
 
 def test_it_breaks_the_intra_check_silence():
@@ -861,7 +945,8 @@ def test_the_feed_does_not_put_it_in_watch_as_a_partly_covered_position():
 def test_the_evening_banner_names_it_as_unknown():
     lines: list[str] = []
     trader_feed._append_evening_banners(
-        lines, {"stop_coverage_gaps": [_unreadable_row()], "analysis": {}},
+        lines,
+        {"stop_coverage_gaps": [_unreadable_row()], "analysis": {}},
     )
     body = "\n".join(lines)
     assert "STOP UNREADABLE" in body and "UNKNOWN" in body

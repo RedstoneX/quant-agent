@@ -26,7 +26,9 @@ from src.config import RiskConfig
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.rules import (
-    agreement_refuses_trade, count_aligned_sources, signed_source_score,
+    agreement_refuses_trade,
+    count_aligned_sources,
+    signed_source_score,
     stance_is_aligned,
 )
 
@@ -36,23 +38,33 @@ from pydantic import ValidationError
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
 
-def _analysis(symbol: str, entry: float = 100.0, stop: float = 95.0,
-              target: float = 115.0) -> TechAnalysisResult:
+def _analysis(symbol: str, entry: float = 100.0, stop: float = 95.0, target: float = 115.0) -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
-        reference_target=target, support_levels=[stop], resistance_levels=[target],
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        support_levels=[stop],
+        resistance_levels=[target],
         # Python-set by TechAnalystAgent, not model-emitted. The constructor
         # derives the take-profit from `computed_levels` (2026-09-01) and
         # refuses without them; the ATR sits just inside the noise band so
         # the structural stop is left alone.
-        computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
-        reasoning="test", reasoning_chain=_tech_rc(),
+        computed_levels=[stop, target],
+        atr_14=(entry - stop) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning="test",
+        reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
 
@@ -60,6 +72,7 @@ def _analysis(symbol: str, entry: float = 100.0, stop: float = 95.0,
 # --------------------------------------------------------------------------
 # count_aligned_sources / stance_is_aligned — the deterministic vocabulary
 # --------------------------------------------------------------------------
+
 
 def test_count_aligned_sources_one_aligned_long():
     sources = {"technical": "bullish", "news": "bearish", "macro": "neutral"}
@@ -79,8 +92,11 @@ def test_count_aligned_sources_two_aligned_long():
 
 def test_count_aligned_sources_three_or_more_aligned():
     sources = {
-        "technical": "bullish", "earnings": "bullish", "news": "bullish",
-        "macro": "bearish", "smart_money": "bearish",
+        "technical": "bullish",
+        "earnings": "bullish",
+        "news": "bullish",
+        "macro": "bearish",
+        "smart_money": "bearish",
     }
     assert count_aligned_sources("CEG", sources, "long") == 3
     assert count_aligned_sources("CEG", sources, "short") == 2
@@ -109,6 +125,7 @@ def test_macro_polarity_flips_for_inverse_etf():
 # --------------------------------------------------------------------------
 # agreement_refuses_trade — the refusal gate, and the ladder's absence
 # --------------------------------------------------------------------------
+
 
 def test_a_net_at_or_below_zero_is_refused():
     """The rule that SURVIVED the 2026-09-14 retirement, unchanged in
@@ -149,31 +166,30 @@ def test_no_agreement_keyed_size_ladder_exists():
     from pathlib import Path
     import src.risk.constants as risk_constants
 
-    for name in ("agreement_ceiling_pct", "derive_agreement_ceiling_schedule",
-                 "INDEPENDENT_SEAT_COUNT", "AGREEMENT_CEILING_PCT"):
+    for name in (
+        "agreement_ceiling_pct",
+        "derive_agreement_ceiling_schedule",
+        "INDEPENDENT_SEAT_COUNT",
+        "AGREEMENT_CEILING_PCT",
+    ):
         assert not hasattr(risk_constants, name), (
-            f"src/risk/constants.py re-exports {name} — the agreement sizing "
-            "ladder is retired"
+            f"src/risk/constants.py re-exports {name} — the agreement sizing ladder is retired"
         )
 
     for model in (RiskConfig, ConstructorConfig):
-        fields = getattr(model, "model_fields", None) or {
-            f.name: f for f in __import__("dataclasses").fields(model)
-        }
+        fields = getattr(model, "model_fields", None) or {f.name: f for f in __import__("dataclasses").fields(model)}
         for field_name in fields:
             assert "agreement" not in field_name, (
-                f"{model.__name__}.{field_name} keys size on agreement — "
-                "retired 2026-09-14"
+                f"{model.__name__}.{field_name} keys size on agreement — retired 2026-09-14"
             )
 
-    risk_settings = yaml.safe_load(
-        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
-    )["risk"]
+    risk_settings = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text())[
+        "risk"
+    ]
     for key, value in risk_settings.items():
         if "agreement" in key:
             raise AssertionError(
-                f"config/settings.yaml carries risk.{key} = {value!r} — the "
-                "agreement sizing ladder is retired"
+                f"config/settings.yaml carries risk.{key} = {value!r} — the agreement sizing ladder is retired"
             )
 
 
@@ -192,10 +208,13 @@ def test_a_stale_settings_file_cannot_resurrect_the_ladder():
 # interacts with, and agreement cannot narrow it.
 # --------------------------------------------------------------------------
 
+
 def _risk_kwargs(**overrides):
     base = dict(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40, require_stop_loss=True,
+        max_position_pct=20,
+        max_total_position_pct=90,
+        max_sector_pct=40,
+        require_stop_loss=True,
     )
     base.update(overrides)
     return base
@@ -211,6 +230,7 @@ def test_risk_config_has_no_agreement_field_at_all():
 # PortfolioConstructor integration — the ceiling in the actual sizing path
 # --------------------------------------------------------------------------
 
+
 def _registry(**sources_per_symbol) -> dict[str, dict[str, str]]:
     return sources_per_symbol
 
@@ -220,15 +240,20 @@ def test_a_single_net_source_request_is_sized_exactly_as_asked():
     seat count narrows it any more."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=2.0, conviction="medium",
+        symbol="NVDA",
+        risk_allocation_pct=2.0,
+        conviction="medium",
         thesis="Modest single-source idea.",
     )
     analysis = _analysis("NVDA")
     registry = _registry(NVDA={"technical": "bullish"})  # net +1 — allowed, uncapped
 
     decisions = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
         evidence_registry=registry,
     )
     assert len(decisions) == 1
@@ -248,16 +273,21 @@ def test_a_single_net_source_full_envelope_ask_is_no_longer_capped():
     envelope, and no cap note is written, because no cap happened."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=5.0,
+        conviction="high",
         thesis="Single-source high-conviction ask.",
     )
     # Wide stop so the single-name notional ceiling does not bind either.
     analysis = _analysis("NVDA", entry=100.0, stop=80.0, target=140.0)
-    registry = _registry(NVDA={"technical": "bullish"})   # net +1
+    registry = _registry(NVDA={"technical": "bullish"})  # net +1
 
     decisions = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
         evidence_registry=registry,
     )
     assert len(decisions) == 1
@@ -274,23 +304,35 @@ def test_one_seat_and_five_seats_are_sized_identically():
 
     def _size(registry):
         decisions = constructor.construct_orders(
-            targets=[TargetPosition(
-                symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
-                thesis="Same ask, different seat counts.",
-            )],
+            targets=[
+                TargetPosition(
+                    symbol="NVDA",
+                    risk_allocation_pct=5.0,
+                    conviction="high",
+                    thesis="Same ask, different seat counts.",
+                )
+            ],
             positions=[],
             analyses=[_analysis("NVDA", entry=100.0, stop=80.0, target=140.0)],
-            total_value=100_000.0, price_map={"NVDA": 100.0},
+            total_value=100_000.0,
+            price_map={"NVDA": 100.0},
             evidence_registry=registry,
         )
         assert len(decisions) == 1
         return decisions[0].allocation_pct
 
     one = _size(_registry(NVDA={"technical": "bullish"}))
-    five = _size(_registry(NVDA={
-        "technical": "bullish", "news": "bullish", "earnings": "bullish",
-        "macro": "bullish", "smart_money": "bullish",
-    }))
+    five = _size(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "news": "bullish",
+                "earnings": "bullish",
+                "macro": "bullish",
+                "smart_money": "bullish",
+            }
+        )
+    )
     assert one == pytest.approx(five, abs=1e-9)
 
 
@@ -300,21 +342,33 @@ def test_no_op_wall_any_positive_net_is_byte_identical_to_no_registry():
     refusal."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=3.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=3.0,
+        conviction="high",
         thesis="Full agreement idea.",
     )
     analysis = _analysis("NVDA")
 
     baseline = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
     )
-    full_agreement_registry = _registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "macro": "bullish",
-    })
+    full_agreement_registry = _registry(
+        NVDA={
+            "technical": "bullish",
+            "earnings": "bullish",
+            "macro": "bullish",
+        }
+    )
     with_registry = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
         evidence_registry=full_agreement_registry,
     )
     assert len(baseline) == len(with_registry) == 1
@@ -333,14 +387,19 @@ def test_missing_evidence_registry_leaves_the_refusal_unenforced():
     agreement — a missing registry is not evidence of disagreement."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=5.0,
+        conviction="high",
         thesis="No registry supplied at all.",
     )
     analysis = _analysis("NVDA", entry=100.0, stop=80.0, target=140.0)
 
     decisions = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
         # evidence_registry omitted entirely
     )
     assert len(decisions) == 1
@@ -364,30 +423,35 @@ def test_composition_agreement_refusal_then_budget_allocator_then_single_name():
     real deployed value is 100 since that date, see settings.yaml) so this
     fixture's notional still exercises the single-name clamp.
     """
-    constructor = PortfolioConstructor(ConstructorConfig(
-        max_cluster_risk_share_pct=16.0, max_position_pct=20.0,
-    ))
+    constructor = PortfolioConstructor(
+        ConstructorConfig(
+            max_cluster_risk_share_pct=16.0,
+            max_position_pct=20.0,
+        )
+    )
     # Two single-seat targets in the same correlation cluster, each asking
     # for 3.0% risk — 6.0% combined against a 4.0% cluster cap.
     targets = [
-        TargetPosition(symbol="OKLO", risk_allocation_pct=3.0, conviction="high",
-                       thesis="Nuclear theme A."),
-        TargetPosition(symbol="CEG", risk_allocation_pct=3.0, conviction="high",
-                       thesis="Nuclear theme B."),
+        TargetPosition(symbol="OKLO", risk_allocation_pct=3.0, conviction="high", thesis="Nuclear theme A."),
+        TargetPosition(symbol="CEG", risk_allocation_pct=3.0, conviction="high", thesis="Nuclear theme B."),
     ]
     analyses = [
         _analysis("OKLO", entry=100.0, stop=90.0, target=130.0),
         _analysis("CEG", entry=100.0, stop=90.0, target=130.0),
     ]
     registry = _registry(
-        OKLO={"technical": "bullish"}, CEG={"technical": "bullish"},
+        OKLO={"technical": "bullish"},
+        CEG={"technical": "bullish"},
     )  # both net +1 — admitted, and NOT narrowed
 
     decisions = constructor.construct_orders(
-        targets=targets, positions=[], analyses=analyses,
+        targets=targets,
+        positions=[],
+        analyses=analyses,
         total_value=100_000.0,
         price_map={"OKLO": 100.0, "CEG": 100.0},
-        existing_risk_pct={}, clusters=[["OKLO", "CEG"]],
+        existing_risk_pct={},
+        clusters=[["OKLO", "CEG"]],
         evidence_registry=registry,
     )
     buys = {d.symbol: d for d in decisions if d.action == "BUY"}
@@ -424,19 +488,19 @@ def test_composition_agreement_refusal_then_budget_allocator_then_single_name():
 # `validate_grounding` still sees the coverage and a PM that cites it does
 # not fail the session.
 
-from datetime import date, timedelta       # noqa: E402
-from unittest.mock import patch            # noqa: E402
+from datetime import date, timedelta  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
-from src.agents.portfolio_manager import PortfolioManagerAgent   # noqa: E402
-from src.risk.rules import (                                     # noqa: E402
-    EARNINGS_STANCE_MAX_AGE_DAYS, count_opposing_sources,
+from src.agents.portfolio_manager import PortfolioManagerAgent  # noqa: E402
+from src.risk.rules import (  # noqa: E402
+    EARNINGS_STANCE_MAX_AGE_DAYS,
+    count_opposing_sources,
 )
 
 _ASOF = date(2026, 9, 1)
 
 
-def _earnings(symbol: str, sentiment: str, *, age_days: int,
-              is_new: bool = False, asof: date = _ASOF) -> dict:
+def _earnings(symbol: str, sentiment: str, *, age_days: int, is_new: bool = False, asof: date = _ASOF) -> dict:
     """One entry in the `earnings_analyses` list, in the shape the pipeline
     actually hands the PM (`run_earnings_preprocess` / `analyze_reports`)."""
     filing_date = (asof - timedelta(days=age_days)).isoformat()
@@ -456,6 +520,7 @@ def _earnings(symbol: str, sentiment: str, *, age_days: int,
 # --------------------------------------------------------------------------
 # The threshold itself, at the boundary
 # --------------------------------------------------------------------------
+
 
 def test_freshness_threshold_reuses_the_earnings_seat_s_own_90_days():
     """Not a number invented here: the earnings prompt already caps its own
@@ -489,7 +554,8 @@ def test_a_filing_with_no_date_is_treated_as_stale():
     entry["filing_date"] = ""
     entry["analysis"].pop("filing_date")
     stale = PortfolioManagerAgent.stale_evidence_sources(
-        earnings_analyses=[entry], asof=_ASOF,
+        earnings_analyses=[entry],
+        asof=_ASOF,
     )
     assert stale == {"NVDA": frozenset({"earnings"})}
 
@@ -503,16 +569,24 @@ def test_freshness_verdict_follows_the_same_last_wins_rule_as_the_stance():
         _earnings("NVDA", "bullish", age_days=5),
     ]
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], positions=[], news_intel=None,
-        earnings_analyses=analyses, macro_analysis=None,
+        analyses=[],
+        positions=[],
+        news_intel=None,
+        earnings_analyses=analyses,
+        macro_analysis=None,
     )
     assert registry["NVDA"]["earnings"] == "bullish"
-    assert PortfolioManagerAgent.stale_evidence_sources(
-        earnings_analyses=analyses, asof=_ASOF,
-    ) == {}
+    assert (
+        PortfolioManagerAgent.stale_evidence_sources(
+            earnings_analyses=analyses,
+            asof=_ASOF,
+        )
+        == {}
+    )
     # ...and reversed, the stale one wins and is gated.
     assert PortfolioManagerAgent.stale_evidence_sources(
-        earnings_analyses=list(reversed(analyses)), asof=_ASOF,
+        earnings_analyses=list(reversed(analyses)),
+        asof=_ASOF,
     ) == {"NVDA": frozenset({"earnings"})}
 
 
@@ -523,8 +597,11 @@ def test_a_gated_stance_stays_in_the_registry():
     block, not the size reduction this is meant to be."""
     analyses = [_earnings("NVDA", "bullish", age_days=200)]
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], positions=[], news_intel=None,
-        earnings_analyses=analyses, macro_analysis=None,
+        analyses=[],
+        positions=[],
+        news_intel=None,
+        earnings_analyses=analyses,
+        macro_analysis=None,
     )
     assert registry["NVDA"]["earnings"] == "bullish"
 
@@ -533,17 +610,25 @@ def test_a_gated_stance_stays_in_the_registry():
 # The tally: a stale stance stops counting
 # --------------------------------------------------------------------------
 
+
 def test_count_aligned_sources_ignores_a_gated_source():
     sources = {"technical": "bullish", "earnings": "bullish"}
     assert count_aligned_sources("NVDA", sources, "long") == 2
-    assert count_aligned_sources(
-        "NVDA", sources, "long", ignored_sources=frozenset({"earnings"}),
-    ) == 1
+    assert (
+        count_aligned_sources(
+            "NVDA",
+            sources,
+            "long",
+            ignored_sources=frozenset({"earnings"}),
+        )
+        == 1
+    )
 
 
 # --------------------------------------------------------------------------
 # End to end: gating a source can refuse the trade, and can do nothing else
 # --------------------------------------------------------------------------
+
 
 def _stale_ceiling_decisions(stale_sources):
     """One full-envelope long on NVDA with technical + earnings both bullish.
@@ -557,15 +642,20 @@ def _stale_ceiling_decisions(stale_sources):
     """
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=5.0,
+        conviction="high",
         thesis="Technical and earnings both bullish.",
     )
     registry = _registry(NVDA={"technical": "bullish", "earnings": "bullish"})
     return constructor.construct_orders(
-        targets=[target], positions=[],
+        targets=[target],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
-        evidence_registry=registry, stale_sources=stale_sources,
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
+        evidence_registry=registry,
+        stale_sources=stale_sources,
     )
 
 
@@ -597,19 +687,15 @@ def test_the_freshness_gate_can_only_ever_reduce():
     Gating EVERYTHING leaves a net score of zero, which is a refusal.
     Asserted as "no order", not as a smaller order."""
     fresh = _stale_ceiling_decision(None).allocation_pct
-    for gated in ({"NVDA": frozenset({"earnings"})},
-                  {"NVDA": frozenset({"technical"})}):
+    for gated in ({"NVDA": frozenset({"earnings"})}, {"NVDA": frozenset({"technical"})}):
         assert _stale_ceiling_decision(gated).allocation_pct <= fresh + 1e-9
-    assert _stale_ceiling_decisions(
-        {"NVDA": frozenset({"technical", "earnings"})}
-    ) == []
+    assert _stale_ceiling_decisions({"NVDA": frozenset({"technical", "earnings"})}) == []
 
 
 def test_no_stale_map_leaves_the_outcome_exactly_as_it_was():
     """A caller with no freshness view must not have one invented for it —
     the same posture `evidence_registry=None` already takes."""
-    assert (_stale_ceiling_decision(None).allocation_pct
-            == _stale_ceiling_decision({}).allocation_pct)
+    assert _stale_ceiling_decision(None).allocation_pct == _stale_ceiling_decision({}).allocation_pct
 
 
 # ==========================================================================
@@ -624,17 +710,16 @@ def test_no_stale_map_leaves_the_outcome_exactly_as_it_was():
 # `agreement_refuses_trade` turns the net into one yes/no. Both counts are
 # still reported because "2 for, 1 against" and "net +1" are different facts.
 
+
 def test_count_opposing_sources_on_a_long():
-    sources = {"technical": "bullish", "earnings": "bearish",
-               "macro": "neutral", "news": "bearish"}
+    sources = {"technical": "bullish", "earnings": "bearish", "macro": "neutral", "news": "bearish"}
     assert count_aligned_sources("NVDA", sources, "long") == 1
     assert count_opposing_sources("NVDA", sources, "long") == 2
 
 
 def test_count_opposing_sources_on_a_short():
     """The exact mirror: on a short the bullish seats are the dissenters."""
-    sources = {"technical": "bearish", "earnings": "bullish",
-               "macro": "neutral", "news": "bullish"}
+    sources = {"technical": "bearish", "earnings": "bullish", "macro": "neutral", "news": "bullish"}
     assert count_aligned_sources("NVDA", sources, "short") == 1
     assert count_opposing_sources("NVDA", sources, "short") == 2
 
@@ -662,16 +747,22 @@ def test_opposing_count_honours_the_freshness_gate_too():
     one freshness rule, not two."""
     sources = {"technical": "bullish", "earnings": "bearish"}
     assert count_opposing_sources("NVDA", sources, "long") == 1
-    assert count_opposing_sources(
-        "NVDA", sources, "long", ignored_sources=frozenset({"earnings"}),
-    ) == 0
+    assert (
+        count_opposing_sources(
+            "NVDA",
+            sources,
+            "long",
+            ignored_sources=frozenset({"earnings"}),
+        )
+        == 0
+    )
 
 
 def test_opposing_count_flips_with_macro_polarity_on_an_inverse_etf():
     """`count_opposing_sources` must use the SAME polarity vocabulary as the
     aligned count, inverse-ETF macro flip included — a second notion of
     "opposed" would let the two disagree about identical evidence."""
-    sources = {"macro": "risk_on"}          # bullish tape
+    sources = {"macro": "risk_on"}  # bullish tape
     assert count_aligned_sources("SQQQ", sources, "long") == 0
     assert count_opposing_sources("SQQQ", sources, "long") == 1
 
@@ -684,13 +775,17 @@ def _dissent_decisions(registry, *, risk_pct: float = 5.0):
     """
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=risk_pct, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=risk_pct,
+        conviction="high",
         thesis="Seats disagree about this one.",
     )
     return constructor.construct_orders(
-        targets=[target], positions=[],
+        targets=[target],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
         evidence_registry=registry,
     )
 
@@ -699,9 +794,15 @@ def test_survivable_dissent_does_not_move_the_size_but_is_still_recorded():
     """2-aligned/1-opposed nets to +1: above zero, so the trade stands at
     the full ask. The dissent is still written into the order note — it is
     information for the Risk Manager, not a size cut."""
-    decisions = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "macro": "bearish",
-    }))
+    decisions = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+                "macro": "bearish",
+            }
+        )
+    )
     assert len(decisions) == 1
     d = decisions[0]
     assert abs(d.allocation_pct - 16.67) < 0.05
@@ -711,22 +812,41 @@ def test_survivable_dissent_does_not_move_the_size_but_is_still_recorded():
 def test_every_surviving_net_sizes_the_same_contested_or_not():
     """The retirement, checked where the old ladder used to be loudest:
     S = 3 - 1 = 2, a flat +2 and a flat +3 all produce the same size."""
-    contested = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "news": "bullish",
-        "macro": "bearish",
-    }))
-    flat_two = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish",
-    }))
-    flat_three = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "news": "bullish",
-    }))
+    contested = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+                "news": "bullish",
+                "macro": "bearish",
+            }
+        )
+    )
+    flat_two = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+            }
+        )
+    )
+    flat_three = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+                "news": "bullish",
+            }
+        )
+    )
     assert len(contested) == len(flat_two) == len(flat_three) == 1
     assert contested[0].allocation_pct == pytest.approx(
-        flat_two[0].allocation_pct, abs=1e-9,
+        flat_two[0].allocation_pct,
+        abs=1e-9,
     )
     assert contested[0].allocation_pct == pytest.approx(
-        flat_three[0].allocation_pct, abs=1e-9,
+        flat_three[0].allocation_pct,
+        abs=1e-9,
     )
 
 
@@ -734,15 +854,32 @@ def test_a_net_score_of_zero_produces_no_order_at_all():
     """One for, one against is not a small idea — it is not an idea. There
     is no standalone dissent veto anywhere in the constructor to charge the
     seat twice; the sign of the net IS the rule."""
-    assert _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bearish",
-    })) == []
+    assert (
+        _dissent_decisions(
+            _registry(
+                NVDA={
+                    "technical": "bullish",
+                    "earnings": "bearish",
+                }
+            )
+        )
+        == []
+    )
 
 
 def test_a_net_score_below_zero_produces_no_order_at_all():
-    assert _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bearish", "macro": "bearish",
-    })) == []
+    assert (
+        _dissent_decisions(
+            _registry(
+                NVDA={
+                    "technical": "bullish",
+                    "earnings": "bearish",
+                    "macro": "bearish",
+                }
+            )
+        )
+        == []
+    )
 
 
 def test_a_net_score_at_or_below_zero_leaves_a_durable_machine_readable_reason():
@@ -759,16 +896,23 @@ def test_a_net_score_at_or_below_zero_leaves_a_durable_machine_readable_reason()
 
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=5.0,
+        conviction="high",
         thesis="Seats disagree about this one.",
     )
     decisions = constructor.construct_orders(
-        targets=[target], positions=[],
+        targets=[target],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
-        evidence_registry=_registry(NVDA={
-            "technical": "bullish", "earnings": "bearish",
-        }),
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
+        evidence_registry=_registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bearish",
+            }
+        ),
     )
     assert decisions == []
     refusals = constructor.drain_refusals()
@@ -786,20 +930,32 @@ def test_blocking_a_target_leaves_a_held_position_alone():
     to vanish from the plan entirely rather than be sized at zero."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=5.0,
+        conviction="high",
         thesis="Adding to a name the earnings seat is bearish on.",
     )
     held = Position(
-        symbol="NVDA", qty=100.0, avg_entry=90.0, current_price=100.0,
-        market_value=10_000.0, unrealized_pnl=1_000.0, sector="Technology",
+        symbol="NVDA",
+        qty=100.0,
+        avg_entry=90.0,
+        current_price=100.0,
+        market_value=10_000.0,
+        unrealized_pnl=1_000.0,
+        sector="Technology",
     )
     decisions = constructor.construct_orders(
-        targets=[target], positions=[held],
+        targets=[target],
+        positions=[held],
         analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
-        evidence_registry=_registry(NVDA={
-            "technical": "bullish", "earnings": "bearish",
-        }),
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
+        evidence_registry=_registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bearish",
+            }
+        ),
     )
     assert [d.action for d in decisions if d.action in ("SELL", "BUY")] == []
 
@@ -808,15 +964,28 @@ def test_dissent_is_recorded_on_the_order_that_survives_it():
     """The split still appears in the order note. It no longer changes the
     size — the note says so, so a reader does not look for a cut that is
     not there."""
-    with_dissent = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "macro": "bearish",
-    }))
-    without_dissent = _dissent_decisions(_registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "macro": "neutral",
-    }))
+    with_dissent = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+                "macro": "bearish",
+            }
+        )
+    )
+    without_dissent = _dissent_decisions(
+        _registry(
+            NVDA={
+                "technical": "bullish",
+                "earnings": "bullish",
+                "macro": "neutral",
+            }
+        )
+    )
     assert len(with_dissent) == len(without_dissent) == 1
     assert with_dissent[0].allocation_pct == pytest.approx(
-        without_dissent[0].allocation_pct, abs=1e-9,
+        without_dissent[0].allocation_pct,
+        abs=1e-9,
     )
     assert "OPPOSITE side" in with_dissent[0].reasoning
     assert "no longer sizes anything" in with_dissent[0].reasoning
@@ -826,6 +995,7 @@ def test_dissent_is_recorded_on_the_order_that_survives_it():
 # ==========================================================================
 # What the PM is shown
 # ==========================================================================
+
 
 def _pm_agent():
     with patch("anthropic.Anthropic"):
@@ -874,7 +1044,8 @@ def test_the_pm_is_shown_the_opposing_count_and_the_net():
         analyses=[_analysis("NVDA")],
         positions=[],
         earnings_analyses=[_earnings("NVDA", "bearish", age_days=10)],
-        cash_balance=100_000.0, total_value=100_000.0,
+        cash_balance=100_000.0,
+        total_value=100_000.0,
     )
     assert "- NVDA: 1 aligned / 1 opposed = net +0 if long" in msg
     assert "1 aligned / 1 opposed = net +0 if short" in msg

@@ -8,6 +8,7 @@ so a replayed verdict can never differ from the one that was acted on.
 Moved byte-for-byte from `TradingPipeline._parse_logged_agent_response`
 (2026-10-01) so readers of the journal need no pipeline to parse a row.
 """
+
 from src.agents.base import AgentResult
 
 

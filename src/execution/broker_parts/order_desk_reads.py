@@ -5,6 +5,7 @@ and patch target on the desk still resolves. The bodies read only `desk.client`,
 `desk.get_latest_price` and the order-desk effect recorders, so they run against
 a fake desk with no broker or TradingPipeline.
 """
+
 from __future__ import annotations
 
 from alpaca.trading.enums import OrderSide, QueryOrderStatus
@@ -14,7 +15,10 @@ from src.execution.broker_parts.stop_place import _alpaca_symbol, _internal_symb
 
 
 def list_open_entry_order_ids(
-    desk, symbol: str, *, side: str | None = None,
+    desk,
+    symbol: str,
+    *,
+    side: str | None = None,
 ) -> list[str]:
     """Ids of working non-stop BUY/SELL orders for `symbol`.
 
@@ -43,7 +47,10 @@ def list_open_entry_order_ids(
 
 
 def list_open_entry_orders_checked(
-    desk, symbol: str, *, side: str | None = None,
+    desk,
+    symbol: str,
+    *,
+    side: str | None = None,
 ) -> tuple[bool, list[str]]:
     """`(ok, ids)` for working non-stop orders — same discriminator as
     `list_open_entry_order_ids`, but ``ok`` is FALSE when the broker's
@@ -73,10 +80,8 @@ def list_open_entry_orders_checked(
     ids: list[str] = []
     for order in orders or []:
         order_id = getattr(order, "id", None)
-        order_side = str(getattr(getattr(order, "side", None), "value",
-                                getattr(order, "side", ""))).lower()
-        order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                getattr(order, "order_type", ""))).lower()
+        order_side = str(getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))).lower()
+        order_type = str(getattr(getattr(order, "order_type", None), "value", getattr(order, "order_type", ""))).lower()
         if order_side not in ("buy", "sell") or not order_id:
             continue
         if "stop" in order_type:
@@ -149,7 +154,10 @@ def open_buy_notional(desk) -> float | None:
 
 
 def list_recent_orders(
-    desk, symbol: str, side: str, after,
+    desk,
+    symbol: str,
+    side: str,
+    after,
 ) -> list[dict] | None:
     """All of `symbol`'s orders (any status) on `side` since `after`.
 
@@ -174,13 +182,14 @@ def list_recent_orders(
             filter=GetOrdersRequest(
                 status=QueryOrderStatus.ALL,
                 symbols=[_alpaca_symbol(symbol)],
-                side=req_side, after=after, nested=False,
+                side=req_side,
+                after=after,
+                nested=False,
             )
         )
         out: list[dict] = []
         for o in orders or []:
-            o_side = str(getattr(getattr(o, "side", None), "value",
-                                 getattr(o, "side", ""))).lower()
+            o_side = str(getattr(getattr(o, "side", None), "value", getattr(o, "side", ""))).lower()
             if o_side != want:
                 continue
             try:
@@ -190,14 +199,15 @@ def list_recent_orders(
             oid = str(getattr(o, "id", "") or "")
             if not oid:
                 continue
-            out.append({
-                "id": oid,
-                "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
-                "side": o_side,
-                "qty": oqty,
-                "status": str(getattr(getattr(o, "status", None), "value",
-                                      getattr(o, "status", ""))).lower(),
-            })
+            out.append(
+                {
+                    "id": oid,
+                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
+                    "side": o_side,
+                    "qty": oqty,
+                    "status": str(getattr(getattr(o, "status", None), "value", getattr(o, "status", ""))).lower(),
+                }
+            )
         ok(desk, "list_recent_orders", symbol=symbol, side=side)
         return out
     except Exception as exc:
@@ -268,13 +278,13 @@ def list_filled_sell_orders(desk, symbol: str, after) -> list[dict] | None:
             filter=GetOrdersRequest(
                 status=QueryOrderStatus.ALL,
                 symbols=[_alpaca_symbol(symbol)],
-                side=OrderSide.SELL, nested=False,
+                side=OrderSide.SELL,
+                nested=False,
             )
         )
         out: list[dict] = []
         for o in orders or []:
-            status = str(getattr(getattr(o, "status", None), "value",
-                                 getattr(o, "status", ""))).lower()
+            status = str(getattr(getattr(o, "status", None), "value", getattr(o, "status", ""))).lower()
             if status != "filled":
                 continue
             oid = str(getattr(o, "id", "") or "")
@@ -294,20 +304,26 @@ def list_filled_sell_orders(desk, symbol: str, after) -> list[dict] | None:
                 continue
             filled_at = getattr(o, "filled_at", None)
             if filled_at is not None and after is not None:
-                cutoff = after if getattr(after, "tzinfo", None) else after.replace(
-                    tzinfo=filled_at.tzinfo,
+                cutoff = (
+                    after
+                    if getattr(after, "tzinfo", None)
+                    else after.replace(
+                        tzinfo=filled_at.tzinfo,
+                    )
                 )
                 if filled_at < cutoff:
                     continue
             order_type = getattr(o, "type", None) or getattr(o, "order_type", None)
-            out.append({
-                "id": oid,
-                "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
-                "qty": filled_qty,
-                "price": filled_avg_price,
-                "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
-                "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
-            })
+            out.append(
+                {
+                    "id": oid,
+                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
+                    "qty": filled_qty,
+                    "price": filled_avg_price,
+                    "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
+                    "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
+                }
+            )
         ok(desk, "list_filled_sell_orders", symbol=symbol)
         return out
     except Exception as exc:
@@ -327,10 +343,7 @@ def get_order_fill_info(desk, order_id: str) -> dict | None:
     except Exception as exc:
         mark(desk, "get_order_fill_info", exc, order=order_id)
         return None
-    status = str(
-        getattr(getattr(order, "status", None), "value",
-                getattr(order, "status", ""))
-    ).lower()
+    status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
     try:
         filled_qty = float(getattr(order, "filled_qty", 0) or 0)
     except (TypeError, ValueError):

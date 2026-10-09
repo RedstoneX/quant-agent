@@ -13,6 +13,7 @@ The rule is ABSOLUTE: no trunk comparison, no grandfathered list. Every site in
 a mixed module is a violation, except modules named in ``EXEMPT`` (identity, with
 a reason). Run: ``python -m scripts.one_clock_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -26,12 +27,11 @@ Site = tuple[str, str, str, str]
 #: Modules allowed to hold both, by path. Not a count: a new module is never exempt.
 EXEMPT = {
     "src/cost_circuit/clock.py": "IS the sanctioned clock: pins SQL 'now' to the caller's "
-                                 "instant and converts a stored UTC stamp to its ET day",
+    "instant and converts a stored UTC stamp to its ET day",
 }
 
 _SQL_NOW = re.compile(r"'now'|CURRENT_TIMESTAMP|CURRENT_DATE", re.IGNORECASE)
-_DAY_READERS = {"et_today", "todays_session_stamp", "todays_session_bar_stamp",
-                "todays_session_snapshot_stamps"}
+_DAY_READERS = {"et_today", "todays_session_stamp", "todays_session_bar_stamp", "todays_session_snapshot_stamps"}
 
 
 def _docstrings(tree: ast.AST) -> set[int]:
@@ -51,8 +51,7 @@ def _py_day(call: ast.Call) -> bool:
         return True
     if isinstance(fn, ast.Attribute) and fn.attr == "date" and isinstance(fn.value, ast.Call):
         return True
-    return isinstance(fn, ast.Attribute) and fn.attr == "today" \
-        and isinstance(fn.value, (ast.Name, ast.Attribute))
+    return isinstance(fn, ast.Attribute) and fn.attr == "today" and isinstance(fn.value, (ast.Name, ast.Attribute))
 
 
 def scan_sites(path: str, text: str) -> list[tuple[str, int, str, str]]:
@@ -65,8 +64,12 @@ def scan_sites(path: str, text: str) -> list[tuple[str, int, str, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _py_day(node):
             py.append(("py_day", node.lineno, *site_identity(node, scopes)))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str) \
-                and id(node) not in skip and _SQL_NOW.search(node.value):
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in skip
+            and _SQL_NOW.search(node.value)
+        ):
             scope, _ = site_identity(node, scopes)
             sql.append(("sql_now", node.lineno, scope, " ".join(node.value.split())[:120]))
     return py + sql if py and sql else []
@@ -100,9 +103,11 @@ def violations() -> list[str]:
 def main() -> int:
     bad = violations()
     if bad:
-        print("a module mixes a Python exchange day with SQL 'now' (UTC); use one clock "
-             "(bind the day from et_today and compare timestamps against its UTC bounds):\n"
-              + "\n".join(bad), file=sys.stderr)
+        print(
+            "a module mixes a Python exchange day with SQL 'now' (UTC); use one clock "
+            "(bind the day from et_today and compare timestamps against its UTC bounds):\n" + "\n".join(bad),
+            file=sys.stderr,
+        )
         return 1
     return 0
 

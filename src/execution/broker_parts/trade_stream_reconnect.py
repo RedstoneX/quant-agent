@@ -1,4 +1,5 @@
 """The `trade_updates` reconnect guard and attempt budget, lifted verbatim from trade_stream.py."""
+
 from __future__ import annotations
 
 import asyncio
@@ -169,15 +170,18 @@ def _alert_stream_gave_up(reason: str) -> None:
     logger.error(
         "trade_updates websocket GIVING UP for today after %d handshake "
         "attempts (%s) — falling back to the bounded REST fill path. %s",
-        _STREAM_ATTEMPT_BUDGET.attempts_today(), reason, message,
+        _STREAM_ATTEMPT_BUDGET.attempts_today(),
+        reason,
+        message,
     )
     try:
         from src.notifier import send_owner_alert
 
         send_owner_alert(message)
     except Exception as exc:  # noqa: BLE001 - never let the alert sink break execution
-        record_guarded_pass(None, "trade_stream.give_up_alert", exc, log=logger,
-                            context={"effect": "owner not told the stream gave up"})
+        record_guarded_pass(
+            None, "trade_stream.give_up_alert", exc, log=logger, context={"effect": "owner not told the stream gave up"}
+        )
 
 
 class TradeStreamGaveUp(Exception):
@@ -213,7 +217,9 @@ def _equal_jitter_backoff(attempt: int, min_backoff: float, max_backoff: float) 
 
 
 def _trading_stream_reconnect_delay(
-    attempt: int, exc: BaseException, stream: object | None = None,
+    attempt: int,
+    exc: BaseException,
+    stream: object | None = None,
 ) -> float:
     """Seconds to wait before the next trade_updates handshake.
 
@@ -286,8 +292,13 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             try:
                 setattr(stream, "_should_run", False)
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(None, "trade_stream.reconnect.stop_flag_exhausted", exc, log=logger,
-                                    context={"effect": "retry loop may keep running"})
+                record_guarded_pass(
+                    None,
+                    "trade_stream.reconnect.stop_flag_exhausted",
+                    exc,
+                    log=logger,
+                    context={"effect": "retry loop may keep running"},
+                )
             event.set()
             _alert_stream_gave_up("the daily retry budget is spent")
             raise TradeStreamGaveUp(
@@ -320,10 +331,7 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             # because the account's published rate-limit budget belongs to
             # the order path. Both are checked BEFORE the sleep so an
             # exhausted budget never buys another wait.
-            if (
-                failures >= _STREAM_ATTEMPT_CEILING_PER_SESSION
-                or _STREAM_ATTEMPT_BUDGET.day_exhausted()
-            ):
+            if failures >= _STREAM_ATTEMPT_CEILING_PER_SESSION or _STREAM_ATTEMPT_BUDGET.day_exhausted():
                 if isinstance(exc, TradeStreamAuthRejected):
                     reason = "it rejected our credential"
                 elif status == 429:
@@ -337,15 +345,22 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 try:
                     setattr(stream, "_should_run", False)
                 except Exception as exc:  # noqa: BLE001
-                    record_guarded_pass(None, "trade_stream.reconnect.stop_flag_giveup", exc, log=logger,
-                                        context={"effect": "retry loop may keep running"})
+                    record_guarded_pass(
+                        None,
+                        "trade_stream.reconnect.stop_flag_giveup",
+                        exc,
+                        log=logger,
+                        context={"effect": "retry loop may keep running"},
+                    )
                 event.set()
                 logger.warning(
                     "trade_updates websocket give-up: %d attempts this "
                     "session (ceiling %d), %d today (ceiling %d), last "
                     "status=%s",
-                    failures, _STREAM_ATTEMPT_CEILING_PER_SESSION,
-                    spent_today, _STREAM_ATTEMPT_CEILING_PER_DAY,
+                    failures,
+                    _STREAM_ATTEMPT_CEILING_PER_SESSION,
+                    spent_today,
+                    _STREAM_ATTEMPT_CEILING_PER_DAY,
                     status if status is not None else "unknown",
                 )
                 _alert_stream_gave_up(reason)
@@ -367,14 +382,15 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                         exc.broker_message or "no message returned",
                         exc.broker_status or "not stated",
                         exc.credential_fingerprint,
-                        failures, delay,
+                        failures,
+                        delay,
                     )
                 else:
                     logger.warning(
-                        "trade_updates websocket handshake failed "
-                        "(status=%s, attempt %d); reconnect in %.1fs",
+                        "trade_updates websocket handshake failed (status=%s, attempt %d); reconnect in %.1fs",
                         status if status is not None else "unknown",
-                        failures, delay,
+                        failures,
+                        delay,
                     )
                 last_log_mono = now
             if not sdk_backs_off and delay > 0 and getattr(stream, "_should_run", True):

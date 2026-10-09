@@ -1,5 +1,6 @@
 """`AlpacaBroker._snapshot_stop_order`, lifted verbatim from
 src/execution/broker.py."""
+
 from __future__ import annotations
 
 

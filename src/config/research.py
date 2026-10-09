@@ -23,6 +23,7 @@ class IntradayScanConfig(BaseModel):
     ExecutionStage chain morning uses. Held names are coverage so an
     increase on a quiet hold can ground; they do not consume the mover cap.
     """
+
     enabled: bool = False
     """Master switch. False = intra_check's existing loss-protection-only
     behavior is completely unchanged. Off by default: this is new
@@ -46,8 +47,6 @@ class IntradayScanConfig(BaseModel):
     current-run Technical; they are coverage, not extra discovery."""
 
 
-
-
 class NominationConfig(BaseModel):
     """Phase 9 (`docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2) — bounds on how
     many candidates the News/Earnings/Macro seats may put in front of
@@ -56,6 +55,7 @@ class NominationConfig(BaseModel):
     this generalises: a bounded, deterministic cap is what keeps an
     on-demand responder call affordable, not a judgment call made per run.
     """
+
     # Applied FIRST, per seat, before cross-seat dedupe: a single seat
     # cannot flood the responder pass. Same default (3) as
     # smart_money.max_external_candidates by design — one seat's bounded

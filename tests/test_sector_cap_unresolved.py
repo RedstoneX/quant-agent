@@ -28,6 +28,7 @@ failure from a symbol that genuinely has no sector, and
 `trader_feed.py` already render as a plain "degraded" line in the session
 output (the owner's Telegram alert).
 """
+
 from src.pipeline_risk_gate import RiskGate
 from unittest.mock import patch
 
@@ -42,9 +43,12 @@ from tests.pipeline_factory import build_pipeline
 
 def _engine(**overrides) -> RiskRuleEngine:
     kwargs = dict(
-        max_position_pct=50.0, max_total_position_pct=300.0,
+        max_position_pct=50.0,
+        max_total_position_pct=300.0,
         max_sector_pct=40.0,
-        max_sector_hard_pct=60.0, require_stop_loss=True, allow_margin=True,
+        max_sector_hard_pct=60.0,
+        require_stop_loss=True,
+        allow_margin=True,
     )
     kwargs.update(overrides)
     return RiskRuleEngine(RiskConfig(**kwargs))
@@ -52,16 +56,24 @@ def _engine(**overrides) -> RiskRuleEngine:
 
 def _held(symbol: str, market_value: float, sector: str) -> Position:
     return Position(
-        symbol=symbol, qty=market_value / 100.0, avg_entry=100.0,
-        current_price=100.0, market_value=market_value,
-        unrealized_pnl=0.0, sector=sector,
+        symbol=symbol,
+        qty=market_value / 100.0,
+        avg_entry=100.0,
+        current_price=100.0,
+        market_value=market_value,
+        unrealized_pnl=0.0,
+        sector=sector,
     )
 
 
 def _buy(symbol: str, allocation_pct: float, entry: float = 100.0) -> TradeDecision:
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=allocation_pct,
-        entry_price=entry, stop_loss=entry * 0.9, take_profit=entry * 1.2,
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=allocation_pct,
+        entry_price=entry,
+        stop_loss=entry * 0.9,
+        take_profit=entry * 1.2,
         reasoning="t",
     )
 
@@ -101,8 +113,11 @@ def test_unresolved_sector_is_not_exempt_from_the_hard_ceiling():
 
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = eng.check(
-            decision=decision, positions=positions,
-            total_value=100_000.0, cash=100_000.0,)
+            decision=decision,
+            positions=positions,
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
     assert [v.rule for v in hard] == ["max_sector_hard_pct"], (
@@ -123,8 +138,11 @@ def test_resolved_sector_book_would_not_have_tripped_the_same_ceiling():
 
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = eng.check(
-            decision=decision, positions=positions,
-            total_value=100_000.0, cash=100_000.0,)
+            decision=decision,
+            positions=positions,
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     assert not [v for v in violations if v.rule in HARD_BLOCK_RULES]
 
@@ -132,6 +150,7 @@ def test_resolved_sector_book_would_not_have_tripped_the_same_ceiling():
 # ===========================================================================
 # 2. The condition raises an owner-visible alert when it affects a decision.
 # ===========================================================================
+
 
 def test_unresolved_sector_raises_an_advisory_violation():
     """Distinct from the hard block above: even when the pooled bucket does
@@ -143,8 +162,11 @@ def test_unresolved_sector_raises_an_advisory_violation():
 
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = eng.check(
-            decision=decision, positions=[],
-            total_value=100_000.0, cash=100_000.0,)
+            decision=decision,
+            positions=[],
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     alerts = [v for v in violations if v.rule.startswith("sector_unresolved")]
     assert alerts, f"expected an unresolved-sector advisory; got {[v.rule for v in violations]}"
@@ -165,7 +187,8 @@ def test_unresolved_sector_alert_promotes_to_data_status():
         RiskViolation(
             rule="sector_unresolved_lookup_failed",
             message="AAPL: sector lookup failed or timed out.",
-            value=12.0, limit=40.0,
+            value=12.0,
+            limit=40.0,
         ),
     ]
     _apply_sector_unresolved_alert(data_status, violations)
@@ -194,6 +217,7 @@ def test_no_alert_when_nothing_unresolved():
 #    toward exposure rather than vanishing.
 # ===========================================================================
 
+
 def test_held_unresolved_sector_position_counts_not_vanishes():
     """A book that is 35% "Unknown" (e.g. a held position whose sector never
     resolved) must not let a new "Unknown"-sector BUY through as if that
@@ -206,20 +230,22 @@ def test_held_unresolved_sector_position_counts_not_vanishes():
 
     with patch("src.execution.broker._get_sector", return_value="Unknown"):
         violations = eng.check(
-            decision=decision, positions=positions,
-            total_value=100_000.0, cash=100_000.0,)
+            decision=decision,
+            positions=positions,
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     soft = next((v for v in violations if v.rule == "max_sector_pct"), None)
     assert soft is not None, "the held Unknown position must not have vanished from exposure"
-    assert soft.value == pytest.approx(45.0), (
-        f"expected the held 35% + new 10% pooled together, got {soft.value}"
-    )
+    assert soft.value == pytest.approx(45.0), f"expected the held 35% + new 10% pooled together, got {soft.value}"
 
 
 # ===========================================================================
 # 4. A transient lookup failure and a genuinely sector-less instrument are
 #    distinguishable.
 # ===========================================================================
+
 
 def test_lookup_exception_is_classified_as_lookup_failed():
     from src.execution.broker import _get_sector, _sector_cache, _sector_resolution_status_for
@@ -252,15 +278,21 @@ def test_the_two_failure_modes_produce_different_risk_violations():
     _sector_cache.clear()
     with patch("src.execution.broker.yf.Ticker", side_effect=RuntimeError("boom")):
         violations_failed = eng.check(
-            decision=_buy("TRANSIENT1", allocation_pct=5.0), positions=[],
-            total_value=100_000.0, cash=100_000.0,)
+            decision=_buy("TRANSIENT1", allocation_pct=5.0),
+            positions=[],
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     _sector_cache.clear()
     with patch("src.execution.broker.yf.Ticker") as mock_ticker:
         mock_ticker.return_value.info = {"longName": "Some Fund"}
         violations_no_sector = eng.check(
-            decision=_buy("NOSECTOR1", allocation_pct=5.0), positions=[],
-            total_value=100_000.0, cash=100_000.0,)
+            decision=_buy("NOSECTOR1", allocation_pct=5.0),
+            positions=[],
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     rule_failed = next(v.rule for v in violations_failed if v.rule.startswith("sector_unresolved"))
     rule_no_sector = next(v.rule for v in violations_no_sector if v.rule.startswith("sector_unresolved"))
@@ -279,6 +311,7 @@ def test_the_two_failure_modes_produce_different_risk_violations():
 #    most).
 # ===========================================================================
 
+
 def test_normal_resolution_unaffected_no_extra_advisory():
     """A cleanly resolved sector must behave exactly as before: the soft
     target fires only when the REAL sector breaches it, and no
@@ -293,8 +326,10 @@ def test_normal_resolution_unaffected_no_extra_advisory():
 
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = eng.check(
-            decision=decision, positions=positions,
-            total_value=10_000.0,)
+            decision=decision,
+            positions=positions,
+            total_value=10_000.0,
+        )
 
     assert any(v.rule == "max_sector_pct" for v in violations)
     assert not any(v.rule.startswith("sector_unresolved") for v in violations), (
@@ -308,8 +343,11 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = eng.check(
-            decision=decision, positions=[],
-            total_value=100_000.0, cash=100_000.0,)
+            decision=decision,
+            positions=[],
+            total_value=100_000.0,
+            cash=100_000.0,
+        )
 
     assert violations == []
 
@@ -320,6 +358,7 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 # not just within one check().
 # ===========================================================================
 
+
 def test_pending_sector_investment_pools_unknown_across_the_batch():
     from src.pipeline import TradingPipeline
 
@@ -329,11 +368,15 @@ def test_pending_sector_investment_pools_unknown_across_the_batch():
         _buy("SECOND", allocation_pct=8.0),
     ]
 
-    with patch("src.pipeline_admission._get_sector", return_value="Unknown"), patch(
-        "src.execution.broker._get_sector", return_value="Unknown"
+    with (
+        patch("src.pipeline_admission._get_sector", return_value="Unknown"),
+        patch("src.execution.broker._get_sector", return_value="Unknown"),
     ):
         allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100_000,)
+            decisions,
+            positions=[],
+            total_value=100_000,
+        )
 
     # FIRST alone (8%, prior 0%) is under the 15% hard ceiling's allowance
     # and passes; SECOND then sees FIRST's 8% already pooled under

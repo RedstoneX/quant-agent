@@ -4,6 +4,7 @@ Clause 5 of `docs/ARCHITECTURE.md` section 3: the service is built with explicit
 stand-ins and the in-memory journal, and this file never imports
 `TradingPipeline`.
 """
+
 import os
 from pathlib import Path
 import json
@@ -28,16 +29,20 @@ def _bars(n=300, price=50.0):
         day -= timedelta(days=1)
     days.reverse()
     return [
-        OHLCV(date=d, open=price, high=price * 1.0005, low=price * 0.9995,
-              close=price, volume=1_000_000)
-        for d in days
+        OHLCV(date=d, open=price, high=price * 1.0005, low=price * 0.9995, close=price, volume=1_000_000) for d in days
     ]
 
 
 ASSET = {
-    "symbol": "ACME", "name": "Acme Corp. Common Stock", "status": "active",
-    "tradable": True, "class": "us_equity", "exchange": "NYSE",
-    "shortable": True, "borrow_status": "easy_to_borrow", "easy_to_borrow": True,
+    "symbol": "ACME",
+    "name": "Acme Corp. Common Stock",
+    "status": "active",
+    "tradable": True,
+    "class": "us_equity",
+    "exchange": "NYSE",
+    "shortable": True,
+    "borrow_status": "easy_to_borrow",
+    "easy_to_borrow": True,
 }
 
 
@@ -45,8 +50,10 @@ def _config(tmp_path, *, enabled):
     return SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
-            max_external_candidates=3, min_external_history_days=20,
-            min_external_price_usd=5.0, min_external_avg_dollar_volume_usd=10_000_000,
+            max_external_candidates=3,
+            min_external_history_days=20,
+            min_external_price_usd=5.0,
+            min_external_avg_dollar_volume_usd=10_000_000,
             request_timeout_s=15,
         ),
         universe_screen=UniverseScreenConfig(enabled=enabled, data_dir=str(tmp_path)),
@@ -65,24 +72,36 @@ def _service(tmp_path, *, enabled, journal=None):
     market.get_ohlcv.return_value = _bars(300)
     market.get_ohlcv_batch.side_effect = lambda chunk, days: {s: _bars(300) for s in chunk}
     market.get_company_profile.return_value = {
-        "market_cap_usd": 5e9, "sector_raw": "Industrials", "quote_type": "EQUITY"}
+        "market_cap_usd": 5e9,
+        "sector_raw": "Industrials",
+        "quote_type": "EQUITY",
+    }
     provider = MagicMock()
     provider.recent_filings.return_value = []
     provider.listed_map.return_value = {}
     journal = journal if journal is not None else InMemoryEventJournal()
     return AdmissionService(
-        config=_config(tmp_path, enabled=enabled), broker=broker, market=market,
-        journal=journal, sec_form4_provider=provider,
+        config=_config(tmp_path, enabled=enabled),
+        broker=broker,
+        market=market,
+        journal=journal,
+        sec_form4_provider=provider,
     ), journal
 
 
 def test_filter_blocks_a_buy_outside_the_universe_and_allows_an_admitted_one(tmp_path):
     svc, _ = _service(tmp_path, enabled=False)
-    buys = [TradeDecision(symbol=s, action="BUY", allocation_pct=5.0, entry_price=10.0,
-                  stop_loss=9.0, take_profit=12.0, reasoning="r")
-            for s in ("SPY", "ACME", "ZZZZ")]
+    buys = [
+        TradeDecision(
+            symbol=s, action="BUY", allocation_pct=5.0, entry_price=10.0, stop_loss=9.0, take_profit=12.0, reasoning="r"
+        )
+        for s in ("SPY", "ACME", "ZZZZ")
+    ]
     allowed, blocked = svc._filter_supported_symbols(
-        buys, [SimpleNamespace(symbol=s) for s in ("SPY", "ACME", "ZZZZ")], [], {"acme"},
+        buys,
+        [SimpleNamespace(symbol=s) for s in ("SPY", "ACME", "ZZZZ")],
+        [],
+        {"acme"},
     )
     assert [d.symbol for d in allowed] == ["SPY", "ACME"]
     assert len(blocked) == 1 and "ZZZZ" in blocked[0]
@@ -142,7 +161,9 @@ def test_admission_is_reachable_without_importing_the_pipeline():
         "print('CLEAN')\n"
     )
     done = subprocess.run(
-        [sys.executable, "-c", program], capture_output=True, text=True,
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
         env={**os.environ, "PYTHONPATH": "."},
     )

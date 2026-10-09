@@ -10,6 +10,7 @@ config/settings.yaml that must NOT be reported as drift, and a fetch
 failure that must degrade quietly (exit 0, no alert) rather than
 alerting falsely.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -35,9 +36,7 @@ def _drift_state_is_never_the_real_one(tmp_path, monkeypatch):
     `degraded`. That is order-dependent and it reddened the whole merge
     queue on 2026-10-01.
     """
-    monkeypatch.setattr(
-        _ds, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json"
-    )
+    monkeypatch.setattr(_ds, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json")
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -46,7 +45,8 @@ SCRIPT = PROJECT_ROOT / "scripts" / "check_deploy_drift.py"
 
 def _load_module():
     spec = importlib.util.spec_from_file_location(
-        "check_deploy_drift_under_test", SCRIPT,
+        "check_deploy_drift_under_test",
+        SCRIPT,
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -61,7 +61,9 @@ mod = _load_module()
 def _git(args, cwd):
     subprocess.run(
         ["git", "-C", str(cwd), *args],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -86,7 +88,9 @@ def _make_deployed(tmp_path, origin: Path) -> Path:
     _git(["config", "user.name", "Test"], deployed)
     head = subprocess.run(
         ["git", "-C", str(origin), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     _git(["checkout", "-q", "--detach", head], deployed)
     return deployed
@@ -110,6 +114,7 @@ def _fake_notifier():
 # ---------------------------------------------------------------------------
 # in sync
 # ---------------------------------------------------------------------------
+
 
 def test_in_sync_is_quiet_and_exits_zero(tmp_path, capsys):
     origin = _make_origin(tmp_path)
@@ -141,6 +146,7 @@ def test_build_report_in_sync_has_zero_behind(tmp_path):
 # behind by N
 # ---------------------------------------------------------------------------
 
+
 def test_behind_by_n_reports_count_subjects_and_nonzero_exit(tmp_path, capsys):
     origin = _make_origin(tmp_path)
     deployed = _make_deployed(tmp_path, origin)
@@ -159,9 +165,7 @@ def test_behind_by_n_reports_count_subjects_and_nonzero_exit(tmp_path, capsys):
     assert "fix: PR 111 hotfix" in alert_text
     assert "chore: bump pricing table" in alert_text
     # oldest-first ordering
-    assert alert_text.index("fix: PR 111 hotfix") < alert_text.index(
-        "chore: bump pricing table"
-    )
+    assert alert_text.index("fix: PR 111 hotfix") < alert_text.index("chore: bump pricing table")
 
     out = capsys.readouterr().out
     assert "2 commits behind" in out
@@ -181,6 +185,7 @@ def test_build_report_behind_by_one_singular_commit_word(tmp_path):
 # ---------------------------------------------------------------------------
 # dirty config/settings.yaml must not read as drift
 # ---------------------------------------------------------------------------
+
 
 def test_dirty_settings_yaml_but_in_sync_is_not_drift(tmp_path, capsys):
     origin = _make_origin(tmp_path)
@@ -220,6 +225,7 @@ def test_unexpected_dirty_file_is_noted_but_not_alerted(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 # fetch failure degrades quietly
 # ---------------------------------------------------------------------------
+
 
 def test_fetch_failure_is_not_clean_exits_nonzero_and_does_not_alert(tmp_path, capsys):
     origin = _make_origin(tmp_path)
@@ -264,6 +270,7 @@ def test_head_unreadable_path_returns_none_and_exit_three(tmp_path, capsys):
 # --no-telegram
 # ---------------------------------------------------------------------------
 
+
 def test_no_telegram_flag_skips_send_even_when_behind(tmp_path, capsys):
     origin = _make_origin(tmp_path)
     deployed = _make_deployed(tmp_path, origin)
@@ -271,9 +278,7 @@ def test_no_telegram_flag_skips_send_even_when_behind(tmp_path, capsys):
 
     patcher, notifier = _fake_notifier()
     with patcher:
-        code = mod.main(
-            ["--deployed-path", str(deployed), "--no-telegram"]
-        )
+        code = mod.main(["--deployed-path", str(deployed), "--no-telegram"])
 
     assert code == 1
     notifier.send.assert_not_called()
@@ -290,8 +295,7 @@ def test_no_test_leaves_a_drift_snapshot_in_the_repository():
     once this module has run.
     """
     assert not _ds.DEPLOY_DRIFT_STATE_PATH.exists(), (
-        f"{_ds.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
-        "writer at a temporary path instead"
+        f"{_ds.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the writer at a temporary path instead"
     )
 
 
@@ -299,8 +303,11 @@ def test_no_test_leaves_a_drift_snapshot_in_the_repository():
 # "could not check" is never "checked and clean"
 # ---------------------------------------------------------------------------
 
+
 def test_git_error_while_listing_commits_exits_nonzero_not_clean(
-    tmp_path, capsys, monkeypatch,
+    tmp_path,
+    capsys,
+    monkeypatch,
 ):
     origin = _make_origin(tmp_path)
     deployed = _make_deployed(tmp_path, origin)
@@ -322,7 +329,8 @@ def test_git_error_while_listing_commits_exits_nonzero_not_clean(
 
 
 def test_missing_commits_and_dirty_files_raise_instead_of_returning_empty(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     def boom(args, *, cwd, timeout=mod.GIT_TIMEOUT_S):
         raise mod.GitError("unreadable")

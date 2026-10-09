@@ -37,7 +37,8 @@ def test_neither_module_imports_the_module_it_came_out_of():
     )
     proc = subprocess.run(
         [sys.executable, "-c", code],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         cwd=str(pathlib.Path(__file__).resolve().parent.parent),
     )
     assert proc.returncode == 0, proc.stderr
@@ -56,7 +57,8 @@ def test_picks_the_agent_shaped_fragment_out_of_prose():
 
 def test_shape_score_accepts_policy_by_value():
     assert shape_score({"targets": []}, WEIGHTS) > shape_score(
-        {"note": "scratch"}, WEIGHTS,
+        {"note": "scratch"},
+        WEIGHTS,
     )
 
 

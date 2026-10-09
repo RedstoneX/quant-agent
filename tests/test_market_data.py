@@ -42,10 +42,16 @@ def test_get_ohlcv_falls_back_when_yfinance_empty(mock_download):
 
     def _fake_fallback(symbol, lookback_days):
         fallback_calls.append((symbol, lookback_days))
-        return [OHLCV(
-            date=date(2026, 4, 15), open=100, high=105, low=99, close=104,
-            volume=1000,
-        )]
+        return [
+            OHLCV(
+                date=date(2026, 4, 15),
+                open=100,
+                high=105,
+                low=99,
+                close=104,
+                volume=1000,
+            )
+        ]
 
     provider = MarketDataProvider(fallback_bars=_fake_fallback)
     bars = provider.get_ohlcv("NVDA", lookback_days=60)
@@ -62,10 +68,16 @@ def test_get_ohlcv_falls_back_when_yfinance_raises(mock_download):
     mock_download.side_effect = RuntimeError("yfinance rate limited")
 
     def _fake_fallback(symbol, lookback_days):
-        return [OHLCV(
-            date=date(2026, 4, 15), open=50, high=52, low=49, close=51,
-            volume=500,
-        )]
+        return [
+            OHLCV(
+                date=date(2026, 4, 15),
+                open=50,
+                high=52,
+                low=49,
+                close=51,
+                volume=500,
+            )
+        ]
 
     provider = MarketDataProvider(fallback_bars=_fake_fallback)
     bars = provider.get_ohlcv("AAPL", lookback_days=30)
@@ -93,9 +105,18 @@ def test_set_fallback_bars_post_construction():
     with patch("src.data.market.yf.download", return_value=pd.DataFrame()):
         assert provider.get_ohlcv("X", 10) == []
     # Install fallback after construction
-    provider.set_fallback_bars(lambda s, d: [OHLCV(
-        date=date(2026, 4, 15), open=1, high=1, low=1, close=1, volume=1,
-    )])
+    provider.set_fallback_bars(
+        lambda s, d: [
+            OHLCV(
+                date=date(2026, 4, 15),
+                open=1,
+                high=1,
+                low=1,
+                close=1,
+                volume=1,
+            )
+        ]
+    )
     with patch("src.data.market.yf.download", return_value=pd.DataFrame()):
         assert len(provider.get_ohlcv("X", 10)) == 1
 
@@ -114,6 +135,7 @@ def test_get_ohlcv_drops_nan_rows(mock_download):
     transient gaps. NaN must be dropped at the boundary so downstream TA
     (RSI / Bollinger / MACD) never sees nan-tainted bars."""
     import numpy as np
+
     dates = pd.date_range(start="2026-03-01", periods=4, freq="B")
     data = pd.DataFrame(
         {
@@ -180,9 +202,7 @@ def test_get_sector_performance(mock_download):
         if isinstance(tickers, list):
             frames = {}
             for t in tickers:
-                frames[t] = pd.DataFrame(
-                    {"Close": [100.0, 102.0]}, index=dates
-                )
+                frames[t] = pd.DataFrame({"Close": [100.0, 102.0]}, index=dates)
             return pd.concat(frames, axis=1)
         return pd.DataFrame({"Close": [100.0, 102.0]}, index=dates)
 
@@ -220,7 +240,8 @@ def _ticker_info(**fields):
 @patch("src.data.market.yf.Ticker")
 def test_ex_dividend_returns_date_and_amount(mock_ticker):
     mock_ticker.return_value = _ticker_info(
-        exDividendDate=_EX_DIV_EPOCH, lastDividendValue=0.25,
+        exDividendDate=_EX_DIV_EPOCH,
+        lastDividendValue=0.25,
     )
     out = MarketDataProvider().get_upcoming_ex_dividend("AAPL")
     assert out == {"date": date(2026, 8, 13), "amount": 0.25}
@@ -235,7 +256,8 @@ def test_ex_dividend_date_is_the_same_in_any_host_timezone(mock_ticker, monkeypa
     import time as _time
 
     mock_ticker.return_value = _ticker_info(
-        exDividendDate=_EX_DIV_EPOCH, lastDividendValue=0.25,
+        exDividendDate=_EX_DIV_EPOCH,
+        lastDividendValue=0.25,
     )
     seen = set()
     for tz in ("UTC", "Asia/Singapore", "America/Los_Angeles", "Pacific/Kiritimati"):
@@ -252,7 +274,8 @@ def test_ex_dividend_falls_back_to_a_quarter_of_the_annual_rate(mock_ticker):
     """Most US large-caps pay quarterly; annual/4 is the documented
     estimate when no concrete last-event value is published."""
     mock_ticker.return_value = _ticker_info(
-        exDividendDate=_EX_DIV_EPOCH, trailingAnnualDividendRate=1.0,
+        exDividendDate=_EX_DIV_EPOCH,
+        trailingAnnualDividendRate=1.0,
     )
     assert MarketDataProvider().get_upcoming_ex_dividend("AAPL")["amount"] == 0.25
 
@@ -260,21 +283,25 @@ def test_ex_dividend_falls_back_to_a_quarter_of_the_annual_rate(mock_ticker):
 @patch("src.data.market.yf.Ticker")
 def test_ex_dividend_rounds_the_amount_to_four_places(mock_ticker):
     mock_ticker.return_value = _ticker_info(
-        exDividendDate=_EX_DIV_EPOCH, trailingAnnualDividendRate=1.0 / 3,
+        exDividendDate=_EX_DIV_EPOCH,
+        trailingAnnualDividendRate=1.0 / 3,
     )
     assert MarketDataProvider().get_upcoming_ex_dividend("AAPL")["amount"] == 0.0833
 
 
-@pytest.mark.parametrize("info", [
-    {},                                                   # nothing published
-    {"exDividendDate": _EX_DIV_EPOCH},                    # no amount anywhere
-    {"lastDividendValue": 0.25},                          # no date
-    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": 0},      # zero payout
-    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": -1.0},   # negative
-    {"exDividendDate": "not-an-epoch", "lastDividendValue": 0.25},  # unparseable
-    {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": "junk"}, # unparseable
-    {"exDividendDate": 1e30, "lastDividendValue": 0.25},   # out of range
-])
+@pytest.mark.parametrize(
+    "info",
+    [
+        {},  # nothing published
+        {"exDividendDate": _EX_DIV_EPOCH},  # no amount anywhere
+        {"lastDividendValue": 0.25},  # no date
+        {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": 0},  # zero payout
+        {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": -1.0},  # negative
+        {"exDividendDate": "not-an-epoch", "lastDividendValue": 0.25},  # unparseable
+        {"exDividendDate": _EX_DIV_EPOCH, "lastDividendValue": "junk"},  # unparseable
+        {"exDividendDate": 1e30, "lastDividendValue": 0.25},  # out of range
+    ],
+)
 @patch("src.data.market.yf.Ticker")
 def test_ex_dividend_returns_empty_on_anything_unusable(mock_ticker, info):
     """No adjustment is always safer than a wrong one — every unusable
@@ -313,6 +340,7 @@ def test_ex_dividend_returns_empty_when_the_lookup_hangs(mock_ticker):
 # genuinely no earnings history produces. These tests pin the fix: a
 # fetch failure on that path must be distinguishable from real emptiness.
 
+
 class _EarningsDatesRaises:
     """Minimal yf.Ticker stand-in where `.earnings_dates` raises on access
     (as it does for real when lxml is missing) but `.dividends` and
@@ -321,9 +349,7 @@ class _EarningsDatesRaises:
     def __init__(self, calendar=None, error=None):
         self.dividends = pd.Series(dtype=float)
         self.calendar = calendar or {}
-        self._error = error or ImportError(
-            "Missing optional dependency 'lxml'. Use pip or conda to install lxml."
-        )
+        self._error = error or ImportError("Missing optional dependency 'lxml'. Use pip or conda to install lxml.")
 
     @property
     def earnings_dates(self):
@@ -335,9 +361,7 @@ def test_past_earnings_fetch_failure_is_flagged_not_silently_empty(mock_ticker):
     """A real fetch failure (ImportError from a missing dependency) must
     set `earnings_degraded`, not just return an empty `earnings` list
     indistinguishable from a symbol with no earnings history."""
-    mock_ticker.return_value = _EarningsDatesRaises(
-        calendar={"Earnings Date": [date(2026, 12, 10)]}
-    )
+    mock_ticker.return_value = _EarningsDatesRaises(calendar={"Earnings Date": [date(2026, 12, 10)]})
     result = MarketDataProvider().get_price_chart_events("ORCL")
 
     assert result["earnings_degraded"] is not None

@@ -20,29 +20,59 @@ def _seed(tmp_path, monkeypatch):
     db.conn.execute(
         "INSERT INTO agent_logs (agent_name,run_id,output_summary,full_response,status,"
         "decision_id,timestamp) VALUES (?,?,?,?,?,?,?)",
-        ("smart_money_analyst", "run-1", "Insider cluster; disclosed promptly",
-         "RAW SECRET-LIKE PROSE", "success", "d-1", "2026-08-24 14:00:00"),
+        (
+            "smart_money_analyst",
+            "run-1",
+            "Insider cluster; disclosed promptly",
+            "RAW SECRET-LIKE PROSE",
+            "success",
+            "d-1",
+            "2026-08-24 14:00:00",
+        ),
     )
     db.conn.execute(
         "INSERT INTO specialist_evidence (run_id,decision_id,agent_name,kind,scope,symbol,"
         "evidence_json,timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        ("run-1", "d-1", "smart_money_analyst", "analysis", "symbol", "AAPL",
-         json.dumps({"source": "SEC Form 4", "known_at": "2026-08-24T12:00:00Z",
-                     "lag_days": 1, "stance": "confirmatory"}),
-         "2026-08-24 14:00:01"),
+        (
+            "run-1",
+            "d-1",
+            "smart_money_analyst",
+            "analysis",
+            "symbol",
+            "AAPL",
+            json.dumps(
+                {"source": "SEC Form 4", "known_at": "2026-08-24T12:00:00Z", "lag_days": 1, "stance": "confirmatory"}
+            ),
+            "2026-08-24 14:00:01",
+        ),
     )
     db.conn.execute(
         "INSERT INTO specialist_evidence (run_id,decision_id,agent_name,kind,scope,symbol,"
         "evidence_json,timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        ("run-1", "d-1", "portfolio_manager", "proposed_order", "symbol", "AAPL",
-         json.dumps({"symbol": "AAPL", "action": "BUY"}), "2026-08-24 14:00:02"),
+        (
+            "run-1",
+            "d-1",
+            "portfolio_manager",
+            "proposed_order",
+            "symbol",
+            "AAPL",
+            json.dumps({"symbol": "AAPL", "action": "BUY"}),
+            "2026-08-24 14:00:02",
+        ),
     )
     db.conn.execute(
         "INSERT INTO specialist_evidence (run_id,decision_id,agent_name,kind,scope,symbol,"
         "evidence_json,timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        ("run-1", "d-1", "pipeline", "pipeline_event", "symbol", "AAPL",
-         json.dumps({"stage": "execution", "outcome": "skipped", "reason": "stale_entry"}),
-         "2026-08-24 14:00:03"),
+        (
+            "run-1",
+            "d-1",
+            "pipeline",
+            "pipeline_event",
+            "symbol",
+            "AAPL",
+            json.dumps({"stage": "execution", "outcome": "skipped", "reason": "stale_entry"}),
+            "2026-08-24 14:00:03",
+        ),
     )
     db.conn.commit()
     db.close()
@@ -94,9 +124,8 @@ def test_daily_research_malformed_evidence_is_partial(tmp_path, monkeypatch):
     conn = Database(str(path))
     conn.initialize()
     conn.conn.execute(
-        "INSERT INTO specialist_evidence (run_id,agent_name,kind,scope,evidence_json,timestamp) "
-        "VALUES (?,?,?,?,?,?)", ("run-1", "news_analyst", "analysis", "run", "not-json",
-                                  "2026-08-24 14:00:04"),
+        "INSERT INTO specialist_evidence (run_id,agent_name,kind,scope,evidence_json,timestamp) VALUES (?,?,?,?,?,?)",
+        ("run-1", "news_analyst", "analysis", "run", "not-json", "2026-08-24 14:00:04"),
     )
     conn.conn.commit()
     conn.close()
@@ -106,7 +135,8 @@ def test_daily_research_malformed_evidence_is_partial(tmp_path, monkeypatch):
 
 
 def test_daily_research_provider_and_analysis_errors_are_partial_with_missing_seats(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     path = _seed(tmp_path, monkeypatch)
     conn = Database(str(path))
@@ -118,8 +148,7 @@ def test_daily_research_provider_and_analysis_errors_are_partial_with_missing_se
         conn.conn.execute(
             "INSERT INTO specialist_evidence "
             "(run_id,agent_name,kind,scope,evidence_json,timestamp) VALUES (?,?,?,?,?,?)",
-            ("run-1", agent, kind, "run", json.dumps({"error": "unavailable"}),
-             "2026-08-24 14:00:05"),
+            ("run-1", agent, kind, "run", json.dumps({"error": "unavailable"}), "2026-08-24 14:00:05"),
         )
     conn.conn.commit()
     conn.close()
@@ -127,7 +156,8 @@ def test_daily_research_provider_and_analysis_errors_are_partial_with_missing_se
     body = TestClient(app).get(f"/research/daily/{DATE}").json()
     assert body["state"] == "partial"
     assert body["missing_sources"] == [
-        "earnings_analyst/analysis", "smart_money_analyst/provider",
+        "earnings_analyst/analysis",
+        "smart_money_analyst/provider",
     ]
     # Failure evidence stays visible rather than being converted to prose.
     kinds = {e["kind"] for e in body["runs"][0]["evidence"]}

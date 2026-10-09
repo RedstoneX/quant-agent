@@ -19,11 +19,7 @@ logger = logging.getLogger("src.pipeline")
 class ExitRecords:
     """The sell-side records the exit engine reads and writes: today's trims, filed target revisions, recent trail tightenings, exit-review approvals, and the event-risk section fetched for an exit review."""
 
-    def __init__(self, *,
-                 trade_executed_or_pending,
-                 record_exit_refusal,
-                 db,
-                 market) -> None:
+    def __init__(self, *, trade_executed_or_pending, record_exit_refusal, db, market) -> None:
         self._trade_executed_or_pending = trade_executed_or_pending
         self._record_exit_refusal = record_exit_refusal
         self.db = db
@@ -59,13 +55,18 @@ class ExitRecords:
         except Exception as exc:
             record_guarded_pass(self.db, "exit_records.symbols_already_trimmed_today", exc)
             logger.warning(
-                "_symbols_already_trimmed_today: query failed: %s", exc,
+                "_symbols_already_trimmed_today: query failed: %s",
+                exc,
             )
             return set()
         sell_actions = {
-            "REDUCE", "SELL", "TAKE_PROFIT",
-            "EMERGENCY_SELL", "FORCE_DELEVER",
-            "COVER", "EMERGENCY_COVER",
+            "REDUCE",
+            "SELL",
+            "TAKE_PROFIT",
+            "EMERGENCY_SELL",
+            "FORCE_DELEVER",
+            "COVER",
+            "EMERGENCY_COVER",
         }
         out: set[str] = set()
         for r in rows:
@@ -73,8 +74,7 @@ class ExitRecords:
             # Normalise PARTIAL_SELL(15%) → PARTIAL_SELL, PARTIAL_COVER(50%)
             # → PARTIAL_COVER.
             base_action = action.split("(", 1)[0].strip()
-            if (base_action not in sell_actions
-                    and base_action not in ("PARTIAL_SELL", "PARTIAL_COVER")):
+            if base_action not in sell_actions and base_action not in ("PARTIAL_SELL", "PARTIAL_COVER"):
                 continue
             # A terminal-fail status that nevertheless moved shares IS a trim.
             # Filtering on fill_status alone (2026-07-16 audit) let a
@@ -93,10 +93,20 @@ class ExitRecords:
         return out
 
     def _file_target_revision(
-        self, *, run_id: str, symbol: str, seat: str, evidence: str,
-        code: str, applied: bool, trigger: str = "",
-        prior_price: float | None = None, new_price: float | None = None,
-        basis: str = "", level_used: float | None = None, detail: str = "",
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        seat: str,
+        evidence: str,
+        code: str,
+        applied: bool,
+        trigger: str = "",
+        prior_price: float | None = None,
+        new_price: float | None = None,
+        basis: str = "",
+        level_used: float | None = None,
+        detail: str = "",
         prior_code: str | None = None,
     ) -> dict:
         """Write one adjudicated flag and return its payload.
@@ -107,10 +117,17 @@ class ExitRecords:
         unrecorded refusal is the blank this whole path exists to avoid.
         """
         payload = {
-            "symbol": symbol, "code": code, "trigger": trigger, "seat": seat,
-            "evidence": evidence, "detail": detail, "basis": basis,
-            "prior_price": prior_price, "new_price": new_price,
-            "level_used": level_used, "applied": bool(applied),
+            "symbol": symbol,
+            "code": code,
+            "trigger": trigger,
+            "seat": seat,
+            "evidence": evidence,
+            "detail": detail,
+            "basis": basis,
+            "prior_price": prior_price,
+            "new_price": new_price,
+            "level_used": level_used,
+            "applied": bool(applied),
         }
         # FAULT 6 (item 194): an unapplied outcome identical to this
         # symbol's last one is recomputable state, and the sweep would
@@ -125,20 +142,33 @@ class ExitRecords:
         evidence_id = None
         try:
             evidence_id = self.db.record_target_revision(
-                run_id=run_id, symbol=symbol, code=code, seat=seat,
-                evidence=evidence, detail=detail, trigger=trigger,
-                prior_price=prior_price, new_price=new_price, basis=basis,
-                level_used=level_used, applied=applied,
+                run_id=run_id,
+                symbol=symbol,
+                code=code,
+                seat=seat,
+                evidence=evidence,
+                detail=detail,
+                trigger=trigger,
+                prior_price=prior_price,
+                new_price=new_price,
+                basis=basis,
+                level_used=level_used,
+                applied=applied,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "target revision: failed to record %s outcome %s (%s)",
-                symbol, code, exc,
+                symbol,
+                code,
+                exc,
             )
         payload["evidence_id"] = evidence_id
         if not applied:
             logger.info(
-                "Target revision refused for %s: %s — %s", symbol, code, detail,
+                "Target revision refused for %s: %s — %s",
+                symbol,
+                code,
+                detail,
             )
         return payload
 
@@ -161,6 +191,7 @@ class ExitRecords:
             logger.warning("trail cooldown query failed for %s: %s", symbol, e)
             return False
         from datetime import datetime as _dt, timedelta, timezone
+
         cutoff = _dt.now(timezone.utc) - timedelta(days=calendar_days)
         for row in rows:
             if (row.get("action") or "").upper() != "TRAIL_STOP":
@@ -180,8 +211,11 @@ class ExitRecords:
                 continue
             ts = row.get("timestamp") or ""
             try:
-                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
+                dt = (
+                    _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                    if "T" in ts
                     else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                )
             except (TypeError, ValueError):
                 continue
             if dt.tzinfo is None:
@@ -210,7 +244,8 @@ class ExitRecords:
         block exists to prevent.
         """
         from src.data.event_calendar import (
-            fetch_earnings_proximity, format_event_risk_block,
+            fetch_earnings_proximity,
+            format_event_risk_block,
         )
 
         event_cfg = getattr(getattr(self, "config", None), "event_risk", None)
@@ -219,9 +254,12 @@ class ExitRecords:
         try:
             if symbols and getattr(self, "market", None) is not None:
                 earnings = fetch_earnings_proximity(
-                    self.market, symbols,
+                    self.market,
+                    symbols,
                     per_symbol_timeout_s=getattr(
-                        event_cfg, "earnings_symbol_timeout_s", 8.0,
+                        event_cfg,
+                        "earnings_symbol_timeout_s",
+                        8.0,
                     ),
                     total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
                 )
@@ -230,17 +268,27 @@ class ExitRecords:
             earnings = None
         try:
             return format_event_risk_block(
-                earnings=earnings, events=None, coverage=None,
+                earnings=earnings,
+                events=None,
+                coverage=None,
                 horizon_days=horizon_days,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Exit review: event-risk block render failed: %s", e)
             return format_event_risk_block(
-                earnings=None, events=None, coverage=None, horizon_days=0,
+                earnings=None,
+                events=None,
+                coverage=None,
+                horizon_days=0,
             )
 
     def _record_exit_review_approvals(
-        self, decisions, vetoed: set, verdict, *, run_id: str,
+        self,
+        decisions,
+        vetoed: set,
+        verdict,
+        *,
+        run_id: str,
         original_action_by_symbol: dict,
     ) -> None:
         """One durable per-symbol row for every exit the AI Risk seat
@@ -266,9 +314,11 @@ class ExitRecords:
             if d.symbol in vetoed:
                 continue
             self._record_exit_refusal(
-                symbol=d.symbol, run_id=run_id,
+                symbol=d.symbol,
+                run_id=run_id,
                 action=original_action_by_symbol.get(d.symbol, d.action),
-                code=CODE_AI_RISK_APPROVED, dropped=False,
+                code=CODE_AI_RISK_APPROVED,
+                dropped=False,
                 detail=(
                     f"approved by the risk seat (category {category!r}; no "
                     f"per-symbol reason in the verdict, run-level reasoning "

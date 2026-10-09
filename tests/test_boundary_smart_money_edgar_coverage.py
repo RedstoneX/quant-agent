@@ -12,6 +12,7 @@ from tests.boundary_harness import check_boundary
 
 def test_part_source_never_names_the_provider_module():
     import src.data.smart_money_edgar_coverage as part
+
     with open(part.__file__) as handle:
         text = handle.read()
     assert "smart_money import" not in text and "src.data.smart_money\n" not in text
@@ -40,10 +41,16 @@ def test_blank_record_reads_unverified():
 
 
 def test_coverage_of_handed_in_stats_is_verified_when_every_filing_is_walked():
-    cov = edgar_coverage({
-        "edgar_total": 10, "edgar_enumerated": 10, "edgar_rows_received": 10,
-        "edgar_days_queried": 5, "edgar_days_in_window": 5, "edgar_days_with_total": 5,
-    })
+    cov = edgar_coverage(
+        {
+            "edgar_total": 10,
+            "edgar_enumerated": 10,
+            "edgar_rows_received": 10,
+            "edgar_days_queried": 5,
+            "edgar_days_in_window": 5,
+            "edgar_days_with_total": 5,
+        }
+    )
     assert cov["ratio"] == 1.0
     assert not (set(cov["reasons"]) & UNVERIFIED_EDGAR_REASONS)
 

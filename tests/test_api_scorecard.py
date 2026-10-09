@@ -39,10 +39,17 @@ def _credit(**kw) -> str:
     either way, which is what makes a pre-2026-08-31 weighted row readable
     without a migration (see `test_a_weighted_legacy_row_...` below)."""
     payload = {
-        "seat": "technical", "symbol": "AAPL", "side": "supported",
-        "stance": "buy", "conviction": "high",
-        "r_multiple": 2.0, "credit": 2.0, "resolved_at": "2026-06-10 15:00:00",
-        "position_id": "pos-1", "decision_id": "d-1", "direction": "long",
+        "seat": "technical",
+        "symbol": "AAPL",
+        "side": "supported",
+        "stance": "buy",
+        "conviction": "high",
+        "r_multiple": 2.0,
+        "credit": 2.0,
+        "resolved_at": "2026-06-10 15:00:00",
+        "position_id": "pos-1",
+        "decision_id": "d-1",
+        "direction": "long",
         "nominated": True,
     }
     payload.update(kw)
@@ -51,16 +58,27 @@ def _credit(**kw) -> str:
 
 def _stance(**kw) -> str:
     payload = {
-        "seat": "technical", "symbol": "AAPL", "stance": "buy",
-        "conviction": "high", "nominated": True,
+        "seat": "technical",
+        "symbol": "AAPL",
+        "stance": "buy",
+        "conviction": "high",
+        "nominated": True,
         "observation": "Broke out of a six-week base on heavy volume.",
     }
     payload.update(kw)
     return json.dumps(payload, sort_keys=True)
 
 
-def _insert(db: Database, *, agent: str, kind: str, symbol: str, payload: str,
-            decision_id: str = "d-1", timestamp: str = "2026-06-10 15:00:00") -> None:
+def _insert(
+    db: Database,
+    *,
+    agent: str,
+    kind: str,
+    symbol: str,
+    payload: str,
+    decision_id: str = "d-1",
+    timestamp: str = "2026-06-10 15:00:00",
+) -> None:
     db.conn.execute(
         "INSERT INTO specialist_evidence (run_id,decision_id,agent_name,kind,scope,"
         "symbol,evidence_json,timestamp) VALUES (?,?,?,?,?,?,?,?)",
@@ -76,31 +94,72 @@ def _seed(tmp_path, monkeypatch, *, populated: bool = True) -> Path:
         # One winning idea (AAPL, +2R) and one losing idea (MSFT, -1R) where
         # the loser's dissenter is paid for having been right to object.
         _insert(db, agent="technical", kind="seat_stance", symbol="AAPL", payload=_stance())
-        _insert(db, agent="news", kind="seat_stance", symbol="AAPL",
-                payload=_stance(seat="news", stance="bearish", conviction="low",
-                                nominated=False, observation="Guidance reads soft."))
-        _insert(db, agent="technical", kind="conviction_credit", symbol="AAPL",
-                payload=_credit())
-        _insert(db, agent="news", kind="conviction_credit", symbol="AAPL",
-                payload=_credit(seat="news", side="opposed", stance="bearish",
-                                conviction="low", credit=-2.0,
-                                nominated=False))
+        _insert(
+            db,
+            agent="news",
+            kind="seat_stance",
+            symbol="AAPL",
+            payload=_stance(
+                seat="news", stance="bearish", conviction="low", nominated=False, observation="Guidance reads soft."
+            ),
+        )
+        _insert(db, agent="technical", kind="conviction_credit", symbol="AAPL", payload=_credit())
+        _insert(
+            db,
+            agent="news",
+            kind="conviction_credit",
+            symbol="AAPL",
+            payload=_credit(
+                seat="news", side="opposed", stance="bearish", conviction="low", credit=-2.0, nominated=False
+            ),
+        )
 
-        _insert(db, agent="technical", kind="seat_stance", symbol="MSFT",
-                decision_id="d-2", payload=_stance(symbol="MSFT"),
-                timestamp="2026-07-14 15:00:00")
-        _insert(db, agent="technical", kind="conviction_credit", symbol="MSFT",
-                decision_id="d-2", timestamp="2026-07-14 15:00:00",
-                payload=_credit(symbol="MSFT", r_multiple=-1.0, credit=-1.0,
-                                position_id="pos-2", decision_id="d-2",
-                                resolved_at="2026-07-14 15:00:00"))
-        _insert(db, agent="news", kind="conviction_credit", symbol="MSFT",
-                decision_id="d-2", timestamp="2026-07-14 15:00:00",
-                payload=_credit(seat="news", symbol="MSFT", side="opposed",
-                                stance="bearish", conviction="medium",
-                                r_multiple=-1.0, credit=1.0, position_id="pos-2",
-                                decision_id="d-2", nominated=False,
-                                resolved_at="2026-07-14 15:00:00"))
+        _insert(
+            db,
+            agent="technical",
+            kind="seat_stance",
+            symbol="MSFT",
+            decision_id="d-2",
+            payload=_stance(symbol="MSFT"),
+            timestamp="2026-07-14 15:00:00",
+        )
+        _insert(
+            db,
+            agent="technical",
+            kind="conviction_credit",
+            symbol="MSFT",
+            decision_id="d-2",
+            timestamp="2026-07-14 15:00:00",
+            payload=_credit(
+                symbol="MSFT",
+                r_multiple=-1.0,
+                credit=-1.0,
+                position_id="pos-2",
+                decision_id="d-2",
+                resolved_at="2026-07-14 15:00:00",
+            ),
+        )
+        _insert(
+            db,
+            agent="news",
+            kind="conviction_credit",
+            symbol="MSFT",
+            decision_id="d-2",
+            timestamp="2026-07-14 15:00:00",
+            payload=_credit(
+                seat="news",
+                symbol="MSFT",
+                side="opposed",
+                stance="bearish",
+                conviction="medium",
+                r_multiple=-1.0,
+                credit=1.0,
+                position_id="pos-2",
+                decision_id="d-2",
+                nominated=False,
+                resolved_at="2026-07-14 15:00:00",
+            ),
+        )
     db.conn.commit()
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(path))
@@ -110,6 +169,7 @@ def _seed(tmp_path, monkeypatch, *, populated: bool = True) -> Path:
 # ---------------------------------------------------------------------------
 # Shape
 # ---------------------------------------------------------------------------
+
 
 def test_scorecard_returns_per_analyst_record_with_raw_counts(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
@@ -187,8 +247,7 @@ def test_per_confidence_breakdown_splits_the_same_calls(tmp_path, monkeypatch):
 
     # A partition of the same rows, so it sums back to the headline figures.
     assert sum(b["resolved_calls"] for b in news["by_confidence"]) == news["resolved_calls"]
-    assert (sum(b["cumulative_credit"] for b in news["by_confidence"])
-            == news["cumulative_credit"])
+    assert sum(b["cumulative_credit"] for b in news["by_confidence"]) == news["cumulative_credit"]
 
     # technical declared "high" on both of its calls: one bucket, not two.
     tech = next(a for a in body["analysts"] if a["analyst"] == "technical")
@@ -203,14 +262,30 @@ def test_a_weighted_legacy_row_is_read_back_unweighted(tmp_path, monkeypatch):
     path = tmp_path / "legacy.db"
     db = Database(str(path))
     db.initialize()
-    _insert(db, agent="macro", kind="conviction_credit", symbol="NVDA",
-            payload=json.dumps({
-                "seat": "macro", "symbol": "NVDA", "side": "supported",
-                "stance": "buy", "conviction": "low", "weight": 0.3,
-                "r_multiple": 2.0, "credit": 0.6,   # the old weighted scale
-                "resolved_at": "2026-06-10 15:00:00", "position_id": "pos-old",
-                "decision_id": "d-old", "direction": "long", "nominated": False,
-            }, sort_keys=True))
+    _insert(
+        db,
+        agent="macro",
+        kind="conviction_credit",
+        symbol="NVDA",
+        payload=json.dumps(
+            {
+                "seat": "macro",
+                "symbol": "NVDA",
+                "side": "supported",
+                "stance": "buy",
+                "conviction": "low",
+                "weight": 0.3,
+                "r_multiple": 2.0,
+                "credit": 0.6,  # the old weighted scale
+                "resolved_at": "2026-06-10 15:00:00",
+                "position_id": "pos-old",
+                "decision_id": "d-old",
+                "direction": "long",
+                "nominated": False,
+            },
+            sort_keys=True,
+        ),
+    )
     db.conn.commit()
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(path))
@@ -228,15 +303,39 @@ def test_a_short_reads_exactly_like_a_long(tmp_path, monkeypatch):
     path = tmp_path / "short.db"
     db = Database(str(path))
     db.initialize()
-    _insert(db, agent="technical", kind="conviction_credit", symbol="TSLA",
-            payload=_credit(seat="technical", symbol="TSLA", stance="sell",
-                            direction="short", r_multiple=2.0, credit=2.0,
-                            position_id="pos-s"))
-    _insert(db, agent="news", kind="conviction_credit", symbol="TSLA",
-            payload=_credit(seat="news", symbol="TSLA", side="opposed",
-                            stance="positive", conviction="low",
-                            direction="short", r_multiple=2.0, credit=-2.0,
-                            position_id="pos-s", nominated=False))
+    _insert(
+        db,
+        agent="technical",
+        kind="conviction_credit",
+        symbol="TSLA",
+        payload=_credit(
+            seat="technical",
+            symbol="TSLA",
+            stance="sell",
+            direction="short",
+            r_multiple=2.0,
+            credit=2.0,
+            position_id="pos-s",
+        ),
+    )
+    _insert(
+        db,
+        agent="news",
+        kind="conviction_credit",
+        symbol="TSLA",
+        payload=_credit(
+            seat="news",
+            symbol="TSLA",
+            side="opposed",
+            stance="positive",
+            conviction="low",
+            direction="short",
+            r_multiple=2.0,
+            credit=-2.0,
+            position_id="pos-s",
+            nominated=False,
+        ),
+    )
     db.conn.commit()
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(path))
@@ -302,8 +401,13 @@ def test_no_minimum_sample_gate_hides_an_analyst(tmp_path, monkeypatch):
     path = tmp_path / "one_call.db"
     db = Database(str(path))
     db.initialize()
-    _insert(db, agent="macro", kind="conviction_credit", symbol="NVDA",
-            payload=_credit(seat="macro", symbol="NVDA", credit=0.3, r_multiple=0.3))
+    _insert(
+        db,
+        agent="macro",
+        kind="conviction_credit",
+        symbol="NVDA",
+        payload=_credit(seat="macro", symbol="NVDA", credit=0.3, r_multiple=0.3),
+    )
     db.conn.commit()
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(path))
@@ -316,6 +420,7 @@ def test_no_minimum_sample_gate_hides_an_analyst(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Degradation — an unreadable ledger is never presented as a quiet desk
 # ---------------------------------------------------------------------------
+
 
 def test_empty_ledger_is_empty_not_error(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch, populated=False)
@@ -342,8 +447,13 @@ def test_malformed_credit_row_is_skipped_not_counted_as_break_even(tmp_path, mon
     db = Database(str(path))
     db.initialize()
     _insert(db, agent="technical", kind="conviction_credit", symbol="AAPL", payload="{not json")
-    _insert(db, agent="technical", kind="conviction_credit", symbol="AAPL",
-            payload=json.dumps({"seat": "technical", "symbol": "AAPL"}))
+    _insert(
+        db,
+        agent="technical",
+        kind="conviction_credit",
+        symbol="AAPL",
+        payload=json.dumps({"seat": "technical", "symbol": "AAPL"}),
+    )
     _insert(db, agent="technical", kind="conviction_credit", symbol="AAPL", payload=_credit())
     db.conn.commit()
     db.close()
@@ -357,6 +467,7 @@ def test_malformed_credit_row_is_skipped_not_counted_as_break_even(tmp_path, mon
 # ---------------------------------------------------------------------------
 # Read-only / isolation contract
 # ---------------------------------------------------------------------------
+
 
 def test_endpoint_writes_nothing_to_the_database(tmp_path, monkeypatch):
     path = _seed(tmp_path, monkeypatch)
@@ -397,10 +508,7 @@ def test_scorecard_module_imports_no_trading_or_risk_module():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
     forbidden = ("src.risk", "src.pipeline", "src.conviction_ledger", "src.storage")
-    assert not [
-        m for m in imported
-        if any(m == p or m.startswith(p + ".") for p in forbidden)
-    ], imported
+    assert not [m for m in imported if any(m == p or m.startswith(p + ".") for p in forbidden)], imported
 
 
 def test_projection_matches_the_ledgers_own_aggregate_when_it_is_available():
@@ -417,33 +525,69 @@ def test_projection_matches_the_ledgers_own_aggregate_when_it_is_available():
         reason="conviction ledger not present on this checkout",
     )
     rows = [
-        {"analyst": "technical", "symbol": "AAPL", "side": "supported", "stance": "buy",
-         "conviction": "high", "r_multiple": 2.0, "credit": 2.0,
-         "resolved_at": "2026-06-10 15:00:00", "position_id": "pos-1",
-         "decision_id": "d-1", "direction": "long", "nominated": True},
-        {"analyst": "technical", "symbol": "MSFT", "side": "supported", "stance": "buy",
-         "conviction": "low", "r_multiple": -1.0, "credit": -1.0,
-         "resolved_at": "2026-07-14 15:00:00", "position_id": "pos-2",
-         "decision_id": "d-2", "direction": "long", "nominated": False},
-        {"analyst": "news", "symbol": "TSLA", "side": "opposed", "stance": "bullish",
-         "conviction": "medium", "r_multiple": -1.0, "credit": 1.0,
-         "resolved_at": "2026-07-14 15:00:00", "position_id": "pos-3",
-         "decision_id": "d-3", "direction": "short", "nominated": False},
+        {
+            "analyst": "technical",
+            "symbol": "AAPL",
+            "side": "supported",
+            "stance": "buy",
+            "conviction": "high",
+            "r_multiple": 2.0,
+            "credit": 2.0,
+            "resolved_at": "2026-06-10 15:00:00",
+            "position_id": "pos-1",
+            "decision_id": "d-1",
+            "direction": "long",
+            "nominated": True,
+        },
+        {
+            "analyst": "technical",
+            "symbol": "MSFT",
+            "side": "supported",
+            "stance": "buy",
+            "conviction": "low",
+            "r_multiple": -1.0,
+            "credit": -1.0,
+            "resolved_at": "2026-07-14 15:00:00",
+            "position_id": "pos-2",
+            "decision_id": "d-2",
+            "direction": "long",
+            "nominated": False,
+        },
+        {
+            "analyst": "news",
+            "symbol": "TSLA",
+            "side": "opposed",
+            "stance": "bullish",
+            "conviction": "medium",
+            "r_multiple": -1.0,
+            "credit": 1.0,
+            "resolved_at": "2026-07-14 15:00:00",
+            "position_id": "pos-3",
+            "decision_id": "d-3",
+            "direction": "short",
+            "nominated": False,
+        },
     ]
-    mine = {
-        a.analyst: a
-        for a in build_scorecard({"read_error": None, "credits": rows, "stances": []}).analysts
-    }
-    theirs = ledger.aggregate_seat_records([
-        ledger.SeatCredit(
-            seat=r["analyst"], symbol=r["symbol"], side=r["side"], stance=r["stance"],
-            conviction=r["conviction"], r_multiple=r["r_multiple"],
-            credit=r["credit"], resolved_at=r["resolved_at"],
-            position_id=r["position_id"], decision_id=r["decision_id"],
-            direction=r["direction"], nominated=r["nominated"],
-        )
-        for r in rows
-    ])
+    mine = {a.analyst: a for a in build_scorecard({"read_error": None, "credits": rows, "stances": []}).analysts}
+    theirs = ledger.aggregate_seat_records(
+        [
+            ledger.SeatCredit(
+                seat=r["analyst"],
+                symbol=r["symbol"],
+                side=r["side"],
+                stance=r["stance"],
+                conviction=r["conviction"],
+                r_multiple=r["r_multiple"],
+                credit=r["credit"],
+                resolved_at=r["resolved_at"],
+                position_id=r["position_id"],
+                decision_id=r["decision_id"],
+                direction=r["direction"],
+                nominated=r["nominated"],
+            )
+            for r in rows
+        ]
+    )
 
     assert set(mine) == set(theirs)
     for name, record in theirs.items():
@@ -459,9 +603,10 @@ def test_projection_matches_the_ledgers_own_aggregate_when_it_is_available():
         assert [(p.resolved_at, p.cumulative) for p in item.cumulative] == record.cumulative
         # ...including the per-confidence breakdown, which both sides build
         # independently and which must not drift apart either.
-        assert (
-            [(b.conviction, b.resolved_calls, b.calls_right, b.avg_win,
-              b.avg_loss, b.cumulative_credit) for b in item.by_confidence]
-            == [(b.conviction, b.resolved_calls, b.calls_right, b.avg_win,
-                 b.avg_loss, b.cumulative_credit) for b in record.by_confidence]
-        )
+        assert [
+            (b.conviction, b.resolved_calls, b.calls_right, b.avg_win, b.avg_loss, b.cumulative_credit)
+            for b in item.by_confidence
+        ] == [
+            (b.conviction, b.resolved_calls, b.calls_right, b.avg_win, b.avg_loss, b.cumulative_credit)
+            for b in record.by_confidence
+        ]

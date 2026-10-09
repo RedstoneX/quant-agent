@@ -5,6 +5,7 @@ history index, the SEC ticker/exchange cache and the raw filing cache goes
 through this object. It takes its paths by value and knows nothing of the
 provider, the network or the rate limiter.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,6 +15,7 @@ import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
 
 def atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,8 +34,13 @@ def load_json(path: Path, fallback):
 
 class SmartMoneyStores:
     def __init__(
-        self, *, manifest_path: Path, observations_path: Path,
-        history_path: Path, tickers_path: Path, raw_dir: Path,
+        self,
+        *,
+        manifest_path: Path,
+        observations_path: Path,
+        history_path: Path,
+        tickers_path: Path,
+        raw_dir: Path,
     ):
         self.manifest_path = manifest_path
         self.observations_path = observations_path
@@ -64,10 +71,7 @@ class SmartMoneyStores:
 
     def tickers_stale(self) -> bool:
         try:
-            return (
-                not self.tickers_path.exists()
-                or time.time() - self.tickers_path.stat().st_mtime > 24 * 3600
-            )
+            return not self.tickers_path.exists() or time.time() - self.tickers_path.stat().st_mtime > 24 * 3600
         except OSError:
             return True
 

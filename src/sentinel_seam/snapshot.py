@@ -20,6 +20,7 @@ What is NOT here, on purpose: no network transport, no daemon, no
 schedule, no reader. The later Sentinel build is a connection to this
 file, not surgery on the desk.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -61,8 +62,7 @@ def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
     verifier on another machine reproduces them exactly.
     """
     body = {k: v for k, v in payload.items() if k != _SIGNATURE_FIELD}
-    return json.dumps(body, sort_keys=True, separators=(",", ":"),
-                      default=str, ensure_ascii=True).encode("utf-8")
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=True).encode("utf-8")
 
 
 def build_snapshot(
@@ -102,16 +102,20 @@ def build_snapshot(
     }
 
 
-def desk_code_version(*, cwd: Path | None = None,
-                      run: Callable[..., Any] = subprocess.run) -> str:
+def desk_code_version(*, cwd: Path | None = None, run: Callable[..., Any] = subprocess.run) -> str:
     """The desk's code version: git short SHA, else package version, else "unknown".
 
     Every failure path lands on the literal `UNKNOWN_VERSION` so a reader
     sees an honest gap, never a guessed tag.
     """
     try:
-        out = run(["git", "-C", str(cwd or _REPO_ROOT), "rev-parse", "--short", "HEAD"],
-                  capture_output=True, text=True, timeout=5, check=False)
+        out = run(
+            ["git", "-C", str(cwd or _REPO_ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
         sha = (getattr(out, "stdout", "") or "").strip()
         if getattr(out, "returncode", 1) == 0 and sha:
             return sha
@@ -137,8 +141,10 @@ _SENSITIVE_KEY = re.compile(
 )
 _SENSITIVE_VALUE = [
     # Absolute or home-relative filesystem paths (POSIX and Windows).
-    (re.compile(r"(?:^|(?<=\s))(?:~|/(?:home|Users|var|tmp|opt|etc|srv|mnt|root|data)|[A-Za-z]:\\)[^\s\"']*"),
-     "[PATH REDACTED]"),
+    (
+        re.compile(r"(?:^|(?<=\s))(?:~|/(?:home|Users|var|tmp|opt|etc|srv|mnt|root|data)|[A-Za-z]:\\)[^\s\"']*"),
+        "[PATH REDACTED]",
+    ),
     # Bearer tokens and provider key prefixes (Alpaca PK/AK/SK, OpenAI/Anthropic sk-).
     (re.compile(r"\b(?:Bearer\s+\S+|(?:PK|AK|SK)[A-Z0-9]{12,}|sk-[A-Za-z0-9_-]{8,})"), "[SECRET REDACTED]"),
     # Broker account numbers: 10-14 upper-case alphanumerics with digits AND
@@ -156,8 +162,7 @@ _SENSITIVE_VALUE = [
 
 def _scrub_value(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {k: ("[REDACTED]" if _SENSITIVE_KEY.search(str(k)) else _scrub_value(v))
-                for k, v in value.items()}
+        return {k: ("[REDACTED]" if _SENSITIVE_KEY.search(str(k)) else _scrub_value(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_scrub_value(v) for v in value]
     if isinstance(value, str):
@@ -253,8 +258,7 @@ class SnapshotPublisher:
     def render(self) -> dict[str, Any]:
         """The sealed snapshot as a dict, without writing it."""
         state = dict(self._state_reader())
-        payload = build_snapshot(heartbeat_at=self._clock(),
-                                 desk_version=self._desk_version, **state)
+        payload = build_snapshot(heartbeat_at=self._clock(), desk_version=self._desk_version, **state)
         return sign_snapshot(scrub_snapshot(payload), key=self._signing_key)
 
     def publish(self) -> dict[str, Any]:

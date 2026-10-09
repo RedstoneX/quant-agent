@@ -11,6 +11,7 @@ here imports src.pipeline. Storage and the evidence journal (anything with
 `EventJournal.persist_evidence`, src/ports/event_journal.py) are handed in,
 never reached for through a host.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,7 +27,8 @@ class SeatHealer:
     """Heal a LOST or EXPIRED research seat with one paid retry."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db,
         record_heal: Callable,
         persist_heal_call: Callable,
@@ -66,10 +68,16 @@ class SeatHealer:
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import (
-            HealResult, HEAL_CAP_BLOCKED, HEAL_DAY_CAP, HEAL_FAILED,
-            HEAL_PAID_RETRY, can_paid_retry, record_paid_retry,
+            HealResult,
+            HEAL_CAP_BLOCKED,
+            HEAL_DAY_CAP,
+            HEAL_FAILED,
+            HEAL_PAID_RETRY,
+            can_paid_retry,
+            record_paid_retry,
         )
         from src import evidence_gate as _gate
+
         # An EXPIRED seat is being REFRESHED, not recovered: the desk holds
         # the earlier answer and will decide on it whatever happens here. Any
         # owner page from this function must say so, because the default
@@ -77,14 +85,16 @@ class SeatHealer:
         # answered") is true of a lost seat and false of this one — the
         # owner-facing-lie class of defect item 133 closed.
         _incoming = (getattr(ctx, "data_status", None) or {}).get(seat)
-        _expired_seat = (
-            _gate.STATUS_CATEGORY.get(_incoming) == _gate.CATEGORY_EXPIRED
-        )
+        _expired_seat = _gate.STATUS_CATEGORY.get(_incoming) == _gate.CATEGORY_EXPIRED
         _consequence = (
-            "The desk still holds this seat's earlier answer and will decide "
-            "on it, labelled as carried rather than read this tick. No trade "
-            "was withheld for this."
-        ) if _expired_seat else ""
+            (
+                "The desk still holds this seat's earlier answer and will decide "
+                "on it, labelled as carried rather than read this tick. No trade "
+                "was withheld for this."
+            )
+            if _expired_seat
+            else ""
+        )
         retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
         if not can_paid_retry(retries, seat):
             return False
@@ -97,10 +107,7 @@ class SeatHealer:
         if agent_name is None or not callable(require):
             return False
         agent = self._agent_for(agent_name)
-        analyze = (
-            getattr(agent, "analyze", None) if seat != "tech"
-            else getattr(agent, "analyze_batch", None)
-        )
+        analyze = getattr(agent, "analyze", None) if seat != "tech" else getattr(agent, "analyze_batch", None)
         if not callable(analyze):
             return False
         # The analyst already spent the one paid retry on its own parse.
@@ -148,12 +155,14 @@ class SeatHealer:
                 # rather than assumed.
                 logger.warning(
                     "seat heal: could not read %s's day allowance; allowing "
-                    "the retry and leaving the spend to the cost circuit", seat,
+                    "the retry and leaving the spend to the cost circuit",
+                    seat,
                 )
             elif not can_paid_retry({seat: int(spent_today)}, seat):
                 logger.info(
-                    "seat heal: %s already had its one paid retry today "
-                    "(%d spent); not re-asking", seat, spent_today,
+                    "seat heal: %s already had its one paid retry today (%d spent); not re-asking",
+                    seat,
+                    spent_today,
                 )
                 # Durable, not just a log line. "The desk declined to pay for
                 # fresher research on this tick" is a decision about money,
@@ -163,10 +172,10 @@ class SeatHealer:
                 self._record_heal(
                     ctx,
                     HealResult(
-                        seat=seat, outcome=HEAL_DAY_CAP,
+                        seat=seat,
+                        outcome=HEAL_DAY_CAP,
                         reason=(
-                            f"seat already had its one paid heal this ET day "
-                            f"({spent_today} recorded); not re-asking"
+                            f"seat already had its one paid heal this ET day ({spent_today} recorded); not re-asking"
                         ),
                         paid_retry=False,
                         details={
@@ -182,17 +191,17 @@ class SeatHealer:
             require(agent_name)
         except PaidAnalysisSuspended as exc:
             blocked = HealResult(
-                seat=seat, outcome=HEAL_CAP_BLOCKED,
+                seat=seat,
+                outcome=HEAL_CAP_BLOCKED,
                 reason=f"spend cap blocked the one paid retry: {exc}",
-                paid_retry=False, owner_consequence=_consequence,
+                paid_retry=False,
+                owner_consequence=_consequence,
                 details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, blocked, alert=True)
             return False
         except Exception as exc:  # noqa: BLE001
-            record_swallowed(
-                "research_continuity.seat_heal_path._try_one_paid_research_retry", exc, log=logger
-            )
+            record_swallowed("research_continuity.seat_heal_path._try_one_paid_research_retry", exc, log=logger)
             return False
         ctx.heal_paid_retries = record_paid_retry(retries, seat)
         try:
@@ -213,25 +222,27 @@ class SeatHealer:
                 )
         except Exception as exc:  # noqa: BLE001
             failed = HealResult(
-                seat=seat, outcome=HEAL_FAILED,
+                seat=seat,
+                outcome=HEAL_FAILED,
                 reason=f"paid heal retry raised: {exc}",
-                paid_retry=True, owner_consequence=_consequence,
+                paid_retry=True,
+                owner_consequence=_consequence,
                 details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
         if analysis is None:
             failed = HealResult(
-                seat=seat, outcome=HEAL_FAILED,
+                seat=seat,
+                outcome=HEAL_FAILED,
                 reason="paid heal retry returned no usable output",
-                paid_retry=True, owner_consequence=_consequence,
+                paid_retry=True,
+                owner_consequence=_consequence,
                 details={"was_expired": _expired_seat},
             )
             self._record_heal(ctx, failed, alert=True)
             return False
-        payload = (
-            analysis.model_dump() if hasattr(analysis, "model_dump") else analysis
-        )
+        payload = analysis.model_dump() if hasattr(analysis, "model_dump") else analysis
         if seat == "macro":
             ctx.macro_analysis = payload
         elif seat == "news":
@@ -256,13 +267,16 @@ class SeatHealer:
         self._record_heal(
             ctx,
             HealResult(
-                seat=seat, outcome=HEAL_PAID_RETRY,
+                seat=seat,
+                outcome=HEAL_PAID_RETRY,
                 reason=(
                     "one paid retry refreshed a superseded seat"
-                    if _expired_seat else
-                    "one paid retry replaced a lost seat"
+                    if _expired_seat
+                    else "one paid retry replaced a lost seat"
                 ),
-                payload=payload, paid_retry=True, usable=True,
+                payload=payload,
+                paid_retry=True,
+                usable=True,
                 details={"was_expired": _expired_seat},
             ),
             alert=False,
@@ -284,6 +298,7 @@ class SeatHealer:
         """
         from src import evidence_gate
         from src.seat_heal import HealResult, HEAL_FAILED
+
         data_status = ctx.data_status or {}
         for seat, status in list(data_status.items()):
             category = evidence_gate.STATUS_CATEGORY.get(status)
@@ -312,12 +327,17 @@ class SeatHealer:
             # owner-facing lie item 133 fixed, so the consequence sentence is
             # overridden rather than defaulted.
             consequence = (
-                "The desk still holds this seat's earlier answer and will "
-                "decide on it, labelled as carried rather than read this "
-                "tick. No trade was withheld for this."
-            ) if was_expired else ""
+                (
+                    "The desk still holds this seat's earlier answer and will "
+                    "decide on it, labelled as carried rather than read this "
+                    "tick. No trade was withheld for this."
+                )
+                if was_expired
+                else ""
+            )
             result = HealResult(
-                seat=seat, outcome=HEAL_FAILED,
+                seat=seat,
+                outcome=HEAL_FAILED,
                 reason=f"seat still {still} after mechanical heal",
                 details={
                     "status": still,

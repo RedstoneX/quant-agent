@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class TertiaryRoute:
     """What `BaseAgent.__init__` used to compute inline as five attributes."""
+
     provider: str
     model: str
     api_key: str
@@ -62,14 +63,13 @@ def resolve_tertiary_route(
     # measurement behind it. The swap fires only for a seat whose routes
     # 1 and 2 have collapsed onto one provider; it never adds a rung.
     _configured_tertiary = (
-        resolve_provider(tertiary_model, tertiary_provider), tertiary_model,
+        resolve_provider(tertiary_model, tertiary_provider),
+        tertiary_model,
     )
     _alt_key = (tertiary_alt_api_key or "").strip()
     _alt = (
-        (resolve_provider(tertiary_alt_model, tertiary_alt_provider),
-         tertiary_alt_model)
-        if _alt_key and (tertiary_alt_model or "").strip()
-        and (tertiary_model or "").strip()
+        (resolve_provider(tertiary_alt_model, tertiary_alt_provider), tertiary_alt_model)
+        if _alt_key and (tertiary_alt_model or "").strip() and (tertiary_model or "").strip()
         else None
     )
     _selected = select_tertiary_route(
@@ -80,14 +80,8 @@ def resolve_tertiary_route(
     )
     on_alt_road = _selected is _alt and _alt is not None
     provider, model = _selected
-    api_key = (
-        _alt_key if on_alt_road
-        else (tertiary_api_key or "").strip()
-    )
-    reachable = bool(api_key) and (
-        (provider, model)
-        not in {primary, fallback}
-    )
+    api_key = _alt_key if on_alt_road else (tertiary_api_key or "").strip()
+    reachable = bool(api_key) and ((provider, model) not in {primary, fallback})
     return TertiaryRoute(provider, model, api_key, reachable, on_alt_road)
 
 
@@ -116,7 +110,8 @@ def refuse_unmeasured_route(
     # than a log line. `record` never raises, so a journal
     # failure cannot abort the decision stage.
     seat_refuses = seat_must_refuse_unmeasured_route(
-        seat_name, on_alt_road,
+        seat_name,
+        on_alt_road,
     )
     if not seat_refuses:
         return None
@@ -125,16 +120,20 @@ def refuse_unmeasured_route(
         "%s/%s, which has never been measured at this "
         "decision seat. The seat produces no verdict; a "
         "defaulted or fabricated one would be a lie.",
-        seat_name, _tertiary_provider,
+        seat_name,
+        _tertiary_provider,
         _tertiary_model,
     )
     _in_p, _out_p = _route_price(_tertiary_model)
     llm_route_journal.record(
-        "seat_refused", agent_name=seat_name,
+        "seat_refused",
+        agent_name=seat_name,
         run_id=run_id,
         route=f"{_tertiary_provider}/{_tertiary_model}",
-        from_route=f"{_provider}/{_model}", tier=3,
-        input_usd_per_mtok=_in_p, output_usd_per_mtok=_out_p,
+        from_route=f"{_provider}/{_model}",
+        tier=3,
+        input_usd_per_mtok=_in_p,
+        output_usd_per_mtok=_out_p,
         error=primary_error,
         detail=(
             "decision seat refused the last rung: route 3 is "

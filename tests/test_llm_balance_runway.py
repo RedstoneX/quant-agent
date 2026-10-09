@@ -21,8 +21,9 @@ def test_low_when_under_two_worst_days():
 
 
 def test_provider_snapshot_wins_and_falls_with_later_spend():
-    s = compute_state(DAYS, snapshot={"remaining_usd": 20.0, "as_of_day": "2026-09-30"},
-                      topup_usd=1.0, topup_date="2026-10-01")
+    s = compute_state(
+        DAYS, snapshot={"remaining_usd": 20.0, "as_of_day": "2026-09-30"}, topup_usd=1.0, topup_date="2026-10-01"
+    )
     assert s["source"] == "provider" and s["remaining_usd"] == 19.0
 
 

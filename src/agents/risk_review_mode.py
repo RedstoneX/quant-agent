@@ -205,8 +205,7 @@ def reasoning_chain_heading(mode) -> tuple[str, str]:
     """Return `(title_line, preamble)` for the reasoning-chain section."""
     if is_exit_review(mode):
         return (
-            "## Position Reviewer Reasoning Chain — the reviewer's CLAIMS "
-            "about its own exits, not evidence",
+            "## Position Reviewer Reasoning Chain — the reviewer's CLAIMS about its own exits, not evidence",
             "Audit these against the blocks above. Where a claim cites a "
             "number,\ncheck it against the Account / Positions / Portfolio "
             "Risk data you were\ngiven; where you cannot check it, say so "

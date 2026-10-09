@@ -12,6 +12,7 @@ patches `src.execution.broker._ENTRY_FILL_TIMEOUT_S` still reaches this body,
 which reads the name byte-identically. `_ENTRY_SIDES` moved here with its
 comment; `src.execution.broker` re-exports it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,8 +32,13 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 
 def place_entry_protection(
-    broker, symbol: str, order_id: str, stop_price: float,
-    *, requested_qty: float | None = None, side: str = "buy",
+    broker,
+    symbol: str,
+    order_id: str,
+    stop_price: float,
+    *,
+    requested_qty: float | None = None,
+    side: str = "buy",
     superseded_filled_qty: float = 0.0,
     on_unfilled_cancel=None,
     cover_full_position: bool = False,
@@ -139,18 +145,26 @@ def place_entry_protection(
             "entry protection: %s refusing to guess a protective side for "
             "entry side %r (expected one of %s) — NO stop placed, position "
             "will be left uncovered and must be repaired by reconcile",
-            symbol, side, sorted(_ENTRY_SIDES),
+            symbol,
+            side,
+            sorted(_ENTRY_SIDES),
         )
         return None
 
     try:
         status = broker.wait_for_order_terminal(
-            order_id, timeout_seconds=_ENTRY_FILL_TIMEOUT_S,
+            order_id,
+            timeout_seconds=_ENTRY_FILL_TIMEOUT_S,
         )
         record_guarded_pass(broker, "entry_protection.wait_terminal", context={"symbol": symbol, "order": order_id})
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(broker, "entry_protection.wait_terminal", exc, log=logger,
-                   context={"symbol": symbol, "order": order_id, "effect": "status unknown"})
+        record_guarded_pass(
+            broker,
+            "entry_protection.wait_terminal",
+            exc,
+            log=logger,
+            context={"symbol": symbol, "order": order_id, "effect": "status unknown"},
+        )
         status = None
 
     cancelled_here = False
@@ -165,23 +179,51 @@ def place_entry_protection(
             "its session (status=%s) — cancelling the unfilled remainder "
             "so no share can fill without a stop watching it and no "
             "order outlives the analysis that created it",
-            symbol, order_id, status or "unknown",
+            symbol,
+            order_id,
+            status or "unknown",
         )
         try:
             broker.client.cancel_order_by_id(order_id)
             cancelled_here = True
-            record_guarded_pass(broker, "entry_protection.cancel_working_entry", context={"symbol": symbol, "order": order_id})
+            record_guarded_pass(
+                broker, "entry_protection.cancel_working_entry", context={"symbol": symbol, "order": order_id}
+            )
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(broker, "entry_protection.cancel_working_entry", exc, log=logger,
-                       context={"symbol": symbol, "order": order_id, "effect": "a later fill will be UNPROTECTED until the next coverage reconcile"})
+            record_guarded_pass(
+                broker,
+                "entry_protection.cancel_working_entry",
+                exc,
+                log=logger,
+                context={
+                    "symbol": symbol,
+                    "order": order_id,
+                    "effect": "a later fill will be UNPROTECTED until the next coverage reconcile",
+                },
+            )
         try:
-            status = broker.wait_for_order_terminal(
-                order_id, timeout_seconds=10.0,
-            ) or status
-            record_guarded_pass(broker, "entry_protection.wait_after_cancel", context={"symbol": symbol, "order": order_id})
+            status = (
+                broker.wait_for_order_terminal(
+                    order_id,
+                    timeout_seconds=10.0,
+                )
+                or status
+            )
+            record_guarded_pass(
+                broker, "entry_protection.wait_after_cancel", context={"symbol": symbol, "order": order_id}
+            )
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(broker, "entry_protection.wait_after_cancel", exc, log=logger,
-                       context={"symbol": symbol, "order": order_id, "effect": "falls through to the unconfirmed-outcome branch below"})
+            record_guarded_pass(
+                broker,
+                "entry_protection.wait_after_cancel",
+                exc,
+                log=logger,
+                context={
+                    "symbol": symbol,
+                    "order": order_id,
+                    "effect": "falls through to the unconfirmed-outcome branch below",
+                },
+            )
         if (status or "").lower() not in broker._TERMINAL_ORDER_STATES:
             # Fill confirmation has genuinely DEGRADED: the bounded
             # window closed, the cancel-and-recheck closed too, and the
@@ -194,22 +236,40 @@ def place_entry_protection(
             # prevent. See src/notifier.py's fill-confirmation block.
             try:
                 from src.notifier import alert_order_outcome_unconfirmed
+
                 alert_order_outcome_unconfirmed(
-                    symbol, order_id,
+                    symbol,
+                    order_id,
                     waited_seconds=_ENTRY_FILL_TIMEOUT_S,
                     last_status=(status or "").lower() or None,
                 )
-                record_guarded_pass(broker, "entry_protection.unconfirmed_alert", context={"symbol": symbol, "order": order_id})
+                record_guarded_pass(
+                    broker, "entry_protection.unconfirmed_alert", context={"symbol": symbol, "order": order_id}
+                )
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(broker, "entry_protection.unconfirmed_alert", exc, log=logger,
-                           context={"symbol": symbol, "order": order_id, "effect": "the owner was NOT told the outcome is unconfirmed"})
+                record_guarded_pass(
+                    broker,
+                    "entry_protection.unconfirmed_alert",
+                    exc,
+                    log=logger,
+                    context={
+                        "symbol": symbol,
+                        "order": order_id,
+                        "effect": "the owner was NOT told the outcome is unconfirmed",
+                    },
+                )
 
     try:
         info = broker.get_order_fill_info(order_id) or {}
         record_guarded_pass(broker, "entry_protection.fill_info", context={"symbol": symbol, "order": order_id})
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(broker, "entry_protection.fill_info", exc, log=logger,
-                   context={"symbol": symbol, "order": order_id, "effect": "treated as filled_qty=0"})
+        record_guarded_pass(
+            broker,
+            "entry_protection.fill_info",
+            exc,
+            log=logger,
+            context={"symbol": symbol, "order": order_id, "effect": "treated as filled_qty=0"},
+        )
         info = {}
     try:
         filled_qty = float(info.get("filled_qty") or 0)
@@ -223,47 +283,67 @@ def place_entry_protection(
         logger.info(
             "entry protection: %s carries %.4f share(s) filled under a "
             "superseded order id; stop will cover %.4f + %.4f",
-            symbol, carried, filled_qty, carried,
+            symbol,
+            carried,
+            filled_qty,
+            carried,
         )
         filled_qty += carried
     if filled_qty > 0 and cover_full_position:
         full_qty = cover_qty_for_rearm(
-            broker, symbol=symbol, filled_qty=filled_qty,
+            broker,
+            symbol=symbol,
+            filled_qty=filled_qty,
             held_qty_before=held_qty_before,
         )
         if full_qty > filled_qty + 1e-9:
             logger.info(
-                "entry protection: %s scale-in fill %.4f — stop sized to "
-                "broker full position %.4f, not the add alone",
-                symbol, filled_qty, full_qty,
+                "entry protection: %s scale-in fill %.4f — stop sized to broker full position %.4f, not the add alone",
+                symbol,
+                filled_qty,
+                full_qty,
             )
         if full_qty > 0:
             filled_qty = full_qty
 
     if filled_qty <= 0:
         logger.warning(
-            "entry protection: %s entry %s filled 0 (status=%s) — no stop "
-            "placed (nothing to protect)", symbol, order_id, status or "unknown",
+            "entry protection: %s entry %s filled 0 (status=%s) — no stop placed (nothing to protect)",
+            symbol,
+            order_id,
+            status or "unknown",
         )
         if cancelled_here and on_unfilled_cancel is not None:
             try:
-                on_unfilled_cancel({
-                    "order_id": order_id,
-                    "status": (status or "").lower() or "unknown",
-                    "filled_qty": 0.0,
-                })
-                record_guarded_pass(broker, "entry_protection.unfilled_cancel_callback", context={"symbol": symbol, "order": order_id})
+                on_unfilled_cancel(
+                    {
+                        "order_id": order_id,
+                        "status": (status or "").lower() or "unknown",
+                        "filled_qty": 0.0,
+                    }
+                )
+                record_guarded_pass(
+                    broker, "entry_protection.unfilled_cancel_callback", context={"symbol": symbol, "order": order_id}
+                )
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(broker, "entry_protection.unfilled_cancel_callback", exc, log=logger,
-                           context={"symbol": symbol, "order": order_id, "effect": "the caller was not told the entry went unfilled"})
+                record_guarded_pass(
+                    broker,
+                    "entry_protection.unfilled_cancel_callback",
+                    exc,
+                    log=logger,
+                    context={
+                        "symbol": symbol,
+                        "order": order_id,
+                        "effect": "the caller was not told the entry went unfilled",
+                    },
+                )
         return None
-    if (
-        requested_qty and filled_qty < requested_qty
-        and not cover_full_position
-    ):
+    if requested_qty and filled_qty < requested_qty and not cover_full_position:
         logger.warning(
-            "entry protection: %s partially filled %.4f/%.4f — stop sized to "
-            "the ACTUAL fill", symbol, filled_qty, requested_qty,
+            "entry protection: %s partially filled %.4f/%.4f — stop sized to the ACTUAL fill",
+            symbol,
+            filled_qty,
+            requested_qty,
         )
     # The protective order's side is the OPPOSITE of the entry's: a BUY
     # entry (long) is protected by a SELL stop below it; a SELL/SELL_SHORT
@@ -275,12 +355,14 @@ def place_entry_protection(
     # exactly the direction it needed protecting.
     protective_side = "sell" if normalized == "buy" else "buy"
     buffer_mult = (
-        (1 - broker.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
-        else (1 + broker.STOP_LIMIT_BUFFER_PCT)
+        (1 - broker.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell" else (1 + broker.STOP_LIMIT_BUFFER_PCT)
     )
     stop_order = broker._submit_protective_stop_retrying(
-        symbol=symbol, qty=filled_qty, stop_price=stop_price,
-        limit_price=stop_price * buffer_mult, side=protective_side,
+        symbol=symbol,
+        qty=filled_qty,
+        stop_price=stop_price,
+        limit_price=stop_price * buffer_mult,
+        side=protective_side,
     )
     if stop_order is None:
         logger.error(
@@ -288,7 +370,10 @@ def place_entry_protection(
             "after %d attempt(s) — position is UNPROTECTED; the caller must "
             "raise an OWNER alert (spec §11.1 guard 2) and the coverage "
             "reconcile must repair it",
-            symbol, filled_qty, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
+            symbol,
+            filled_qty,
+            stop_price,
+            _STOP_PLACEMENT_MAX_ATTEMPTS,
         )
         return None
     return stop_order

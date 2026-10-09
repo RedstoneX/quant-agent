@@ -1,4 +1,5 @@
 """Scale-in catch-alls must be LOUD: never reached, ran clean, and swallowed stay apart."""
+
 import logging
 
 from src.execution import scale_in

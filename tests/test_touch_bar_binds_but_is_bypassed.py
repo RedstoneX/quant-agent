@@ -24,6 +24,7 @@ measured it. These tests pin both halves so neither can rot silently.
 
 Nothing here changes the threshold or the guard's logic.
 """
+
 from types import SimpleNamespace
 
 import pytest
@@ -50,16 +51,22 @@ def _analysis(touches: int) -> SimpleNamespace:
     )
 
 
-@pytest.mark.parametrize("bar,touches,honoured", [
-    (5, 4, False),   # below the shipped bar -> refused
-    (5, 5, True),    # exactly at it -> honoured
-    (8, 5, False),   # a tighter bar refuses what 5 honours
-    (2, 4, True),    # a looser bar honours what 5 refuses
-])
+@pytest.mark.parametrize(
+    "bar,touches,honoured",
+    [
+        (5, 4, False),  # below the shipped bar -> refused
+        (5, 5, True),  # exactly at it -> honoured
+        (8, 5, False),  # a tighter bar refuses what 5 honours
+        (2, 4, True),  # a looser bar honours what 5 refuses
+    ],
+)
 def test_touch_bar_actually_binds(bar: int, touches: int, honoured: bool) -> None:
     """The bar is NOT inert: the same level flips on the threshold alone."""
     level = _rules(bar)._level_backing_stop(
-        _analysis(touches), entry_price=100.0, stop_loss=90.0, is_short=False,
+        _analysis(touches),
+        entry_price=100.0,
+        stop_loss=90.0,
+        is_short=False,
     )
     assert (level is not None) is honoured
 

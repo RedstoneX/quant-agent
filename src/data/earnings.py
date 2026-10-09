@@ -20,8 +20,14 @@ from urllib.request import urlopen, Request
 
 from src.data.filing_text import extract_text
 from src.data.sec_client import (  # noqa: F401 — re-exported for existing callers
-    REQUEST_DELAY, SEC_ARCHIVES, SEC_BASE, SEC_TICKERS_URL, USER_AGENT,
-    FilingInfo, SecClient, build_sec_client,
+    REQUEST_DELAY,
+    SEC_ARCHIVES,
+    SEC_BASE,
+    SEC_TICKERS_URL,
+    USER_AGENT,
+    FilingInfo,
+    SecClient,
+    build_sec_client,
 )
 from src.data.xbrl_facts import fetch_xbrl_raw, format_xbrl_text, xbrl_comparable_values
 from src.sentinel.counted import record_swallowed
@@ -33,9 +39,29 @@ logger = logging.getLogger(__name__)
 # avoid wasting CIK lookups + retry budget on something that will always
 # fail. Keep this list in sync with `config/settings.yaml:trading.universe`
 # whenever a new ETF is added there.
-ETFS = {"SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLV", "XLI", "XLP",
-        "XLY", "XLU", "XLRE", "XLB", "SMH", "SOXX", "DRAM", "CHPX",
-        "SH", "SDS", "PSQ", "SQQQ"}
+ETFS = {
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLI",
+    "XLP",
+    "XLY",
+    "XLU",
+    "XLRE",
+    "XLB",
+    "SMH",
+    "SOXX",
+    "DRAM",
+    "CHPX",
+    "SH",
+    "SDS",
+    "PSQ",
+    "SQQQ",
+}
 
 
 @dataclass
@@ -63,8 +89,7 @@ class EarningsReport:
 
 
 class EarningsDataProvider:
-    def __init__(self, data_dir: str = "data/earnings", lookback_days: int = 45,
-                 sec_client: SecClient | None = None):
+    def __init__(self, data_dir: str = "data/earnings", lookback_days: int = 45, sec_client: SecClient | None = None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.data_dir / "manifest.json"
@@ -77,7 +102,8 @@ class EarningsDataProvider:
         self.sec = sec_client or build_sec_client(
             opener=lambda req, timeout: urlopen(req, timeout=timeout),
             request=lambda *a, **k: Request(*a, **k),
-            http_error=HTTPError, url_error=URLError,
+            http_error=HTTPError,
+            url_error=URLError,
             lookback_days=lookback_days,
         )
 
@@ -133,7 +159,8 @@ class EarningsDataProvider:
         if removed:
             logger.info(
                 "earnings prune: removed %d raw filing HTML older than %s",
-                removed, cutoff,
+                removed,
+                cutoff,
             )
         return removed
 
@@ -183,10 +210,11 @@ class EarningsDataProvider:
                 entry.pop("abandoned", None)
                 entry.pop("abandoned_at", None)
                 logger.info(
-                    "Earnings retry budget reset for %s %s: prior filing %s "
-                    "→ new filing %s",
-                    report.symbol, report.form_type,
-                    prior_filing_date, report.filing_date,
+                    "Earnings retry budget reset for %s %s: prior filing %s → new filing %s",
+                    report.symbol,
+                    report.form_type,
+                    prior_filing_date,
+                    report.filing_date,
                 )
             attempts = int(entry.get("failed_attempts", 0)) + 1
             entry["filing_date"] = report.filing_date
@@ -199,12 +227,18 @@ class EarningsDataProvider:
                 abandoned = True
                 logger.error(
                     "Abandoning earnings analysis for %s %s (%s) after %d attempts",
-                    report.symbol, report.form_type, report.filing_date, attempts,
+                    report.symbol,
+                    report.form_type,
+                    report.filing_date,
+                    attempts,
                 )
             else:
                 logger.warning(
                     "Earnings analysis for %s %s failed (attempt %d/%d); will retry next session",
-                    report.symbol, report.form_type, attempts, max_attempts,
+                    report.symbol,
+                    report.form_type,
+                    attempts,
+                    max_attempts,
                 )
             self.manifest[key] = entry
         self.save_manifest()
@@ -225,8 +259,7 @@ class EarningsDataProvider:
         try:
             content = self.sec.get(url)
             local_path.write_bytes(content)
-            logger.info("Downloaded %s %s (%s) → %s", filing.symbol, filing.form_type,
-                        filing.filing_date, local_path)
+            logger.info("Downloaded %s %s (%s) → %s", filing.symbol, filing.form_type, filing.filing_date, local_path)
             return str(local_path)
         except Exception as e:
             record_swallowed("data.earnings.download", e, log=logger, symbol=filing.symbol)
@@ -256,8 +289,12 @@ class EarningsDataProvider:
             except Exception as e:
                 logger.warning("Error checking earnings for %s: %s", symbol, e)
 
-        logger.info("Earnings check: %d reports (%d new) from %d stocks",
-                     len(reports), sum(1 for r in reports if r.is_new), len(stocks))
+        logger.info(
+            "Earnings check: %d reports (%d new) from %d stocks",
+            len(reports),
+            sum(1 for r in reports if r.is_new),
+            len(stocks),
+        )
         return reports
 
     def _check_symbol(self, symbol: str) -> EarningsReport | None:
@@ -282,7 +319,9 @@ class EarningsDataProvider:
         if entry.get("abandoned") and last_known == latest.filing_date:
             logger.info(
                 "Skipping %s %s (%s) — previously abandoned after repeated LLM failures",
-                symbol, latest.form_type, latest.filing_date,
+                symbol,
+                latest.form_type,
+                latest.filing_date,
             )
             return self._get_existing_analysis(symbol, form_type=latest.form_type)
 
@@ -316,7 +355,10 @@ class EarningsDataProvider:
         elif last_known == latest.filing_date and prior_failures:
             logger.info(
                 "%s %s (%s): retrying after %d failed analysis attempt(s)",
-                symbol, latest.form_type, latest.filing_date, prior_failures,
+                symbol,
+                latest.form_type,
+                latest.filing_date,
+                prior_failures,
             )
 
         # New filing — download it
@@ -342,9 +384,7 @@ class EarningsDataProvider:
             xbrl_facts=xbrl_comparable_values(xbrl_raw),
         )
 
-    def _get_existing_analysis(
-        self, symbol: str, form_type: str | None = None
-    ) -> EarningsReport | None:
+    def _get_existing_analysis(self, symbol: str, form_type: str | None = None) -> EarningsReport | None:
         """Find the latest existing analysis for a symbol, bounded by age.
 
         When form_type is given, only analyses of that form are considered; otherwise
@@ -413,7 +453,9 @@ class EarningsDataProvider:
             logger.info(
                 "Existing earnings analysis for %s (%s, filed %s) is %s — "
                 "the fallback will not re-serve it (bound: %dd)",
-                symbol, form_type, filing_date,
+                symbol,
+                form_type,
+                filing_date,
                 "unparseable" if age_days is None else f"{age_days}d old",
                 EARNINGS_STANCE_MAX_AGE_DAYS,
             )

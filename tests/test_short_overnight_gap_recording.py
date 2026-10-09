@@ -12,6 +12,7 @@ They assert nothing about what the haircut SHOULD be, and nothing here may
 be optimised against: fitting a multiple to this desk's own history is
 barred by doctrine whatever the sample size.
 """
+
 from types import SimpleNamespace
 
 import pytest
@@ -22,9 +23,13 @@ from src.storage.db import Database
 
 def _snapshot(symbol, qty, avg_entry, current_price):
     return SimpleNamespace(
-        symbol=symbol, qty=qty, avg_entry=avg_entry,
-        current_price=current_price, market_value=qty * current_price,
-        unrealized_pnl=(avg_entry - current_price) * abs(qty), sector="Tech",
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
+        market_value=qty * current_price,
+        unrealized_pnl=(avg_entry - current_price) * abs(qty),
+        sector="Tech",
     )
 
 
@@ -37,15 +42,19 @@ def db(tmp_path):
 
 
 def _row(db, trade_id):
-    return dict(
-        db.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
-    )
+    return dict(db.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone())
 
 
 def _open_short(db, symbol="SSS"):
     return db.insert_trade(
-        symbol=symbol, action="SHORT", qty=-10, price=100.0,
-        reasoning="entry", run_id="r1", stop_loss=105.0, entry_atr=2.0,
+        symbol=symbol,
+        action="SHORT",
+        qty=-10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=105.0,
+        entry_atr=2.0,
         stop_basis=STOP_RULE_ATR_BAND,
     )
 
@@ -59,12 +68,9 @@ def test_closed_short_keeps_its_worst_adverse_overnight_gap(db):
 
     # Three sessions held. The 3.50 gap must survive both the smaller gap
     # before it and the favourable gap after it.
-    db.record_overnight_gap("SSS", prev_close=100.0, open_price=101.2,
-                            session_date="2026-09-28")
-    db.record_overnight_gap("SSS", prev_close=101.2, open_price=104.7,
-                            session_date="2026-09-29")
-    db.record_overnight_gap("SSS", prev_close=104.7, open_price=103.0,
-                            session_date="2026-09-30")
+    db.record_overnight_gap("SSS", prev_close=100.0, open_price=101.2, session_date="2026-09-28")
+    db.record_overnight_gap("SSS", prev_close=101.2, open_price=104.7, session_date="2026-09-29")
+    db.record_overnight_gap("SSS", prev_close=104.7, open_price=103.0, session_date="2026-09-30")
     # The position closes: the broker snapshot no longer carries it.
     db.sync_positions([])
 
@@ -89,10 +95,8 @@ def test_an_all_favourable_short_records_a_negative_worst_not_a_blank(db):
     a short that never gapped against the desk records a NEGATIVE worst and
     a session count, not a NULL."""
     trade_id = _open_short(db, "FAV")
-    db.record_overnight_gap("FAV", prev_close=100.0, open_price=99.0,
-                            session_date="2026-09-29")
-    db.record_overnight_gap("FAV", prev_close=99.0, open_price=97.5,
-                            session_date="2026-09-30")
+    db.record_overnight_gap("FAV", prev_close=100.0, open_price=99.0, session_date="2026-09-29")
+    db.record_overnight_gap("FAV", prev_close=99.0, open_price=97.5, session_date="2026-09-30")
 
     row = _row(db, trade_id)
     assert row["max_adverse_overnight_gap"] == pytest.approx(-1.0)
@@ -121,8 +125,14 @@ def test_recording_is_scoped_to_shorts_and_to_sane_prices(db):
     """A long is not touched (only the short-side multiple is in question),
     and a zero or missing price is skipped rather than guessed."""
     long_id = db.insert_trade(
-        symbol="LNG", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="r1", stop_loss=94.0, entry_atr=2.0,
+        symbol="LNG",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=94.0,
+        entry_atr=2.0,
         stop_basis=STOP_RULE_ATR_BAND,
     )
     assert db.record_overnight_gap("LNG", 100.0, 103.0, "2026-09-30") is False

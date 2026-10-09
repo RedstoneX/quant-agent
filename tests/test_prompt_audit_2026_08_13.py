@@ -18,6 +18,7 @@ read) and the veto hierarchy under F5.
 Each test pins one finding so a future prompt edit — human, or the
 meta_reflector's auto-evolve path — cannot silently reintroduce it.
 """
+
 from pathlib import Path
 
 import pytest
@@ -31,9 +32,10 @@ DECISION_CHAIN_PROMPTS = ("tech_analyst.md", "portfolio_manager.md", "risk_manag
 # F1 — R/R stated as a law of expectancy
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("prompt_name", DECISION_CHAIN_PROMPTS)
 def test_rr_not_described_as_negative_expectancy(prompt_name: str) -> None:
-    """"R/R < 1.5 is a negative-expectancy trade" is false as stated.
+    """ "R/R < 1.5 is a negative-expectancy trade" is false as stated.
 
     Expectancy is `p*reward - (1-p)*risk`; the payoff ratio alone fixes
     only the BREAKEVEN hit rate (`1/(1+R/R)`), not the sign. A 1.2:1 setup
@@ -53,8 +55,7 @@ def test_rr_not_described_as_negative_expectancy(prompt_name: str) -> None:
         f"the setup depends on a hit rate this system has never measured."
     )
     assert "negative expectancy." not in lowered, (
-        f"{prompt_name} reintroduced 'negative expectancy' as a flat "
-        f"assertion. See the docstring for why it is wrong."
+        f"{prompt_name} reintroduced 'negative expectancy' as a flat assertion. See the docstring for why it is wrong."
     )
     assert "negative-expectancy territory" not in lowered, (
         f"{prompt_name} reintroduced 'negative-expectancy territory'."
@@ -83,14 +84,14 @@ def test_rr_operative_thresholds_unchanged(prompt_name: str) -> None:
     """
     text = (PROMPT_DIR / prompt_name).read_text()
     assert "1.5" in text, (
-        f"{prompt_name} lost the 1.5 R/R floor. Correcting the "
-        f"justification must not relax the threshold."
+        f"{prompt_name} lost the 1.5 R/R floor. Correcting the justification must not relax the threshold."
     )
 
 
 # ---------------------------------------------------------------------------
 # F2 — RM's R/R threshold contradicted itself
 # ---------------------------------------------------------------------------
+
 
 def test_rm_rr_threshold_is_internally_consistent() -> None:
     """RM's Review Checklist said "Minimum 1:2 risk-reward preferred"
@@ -110,6 +111,7 @@ def test_rm_rr_threshold_is_internally_consistent() -> None:
 # ---------------------------------------------------------------------------
 # F3 — reasoning_chain field counts drifted from the schema
 # ---------------------------------------------------------------------------
+
 
 def test_pm_reasoning_chain_field_count_matches_schema() -> None:
     """PM's prompt claimed a "7-field reasoning_chain" and a "7-Step"
@@ -157,10 +159,7 @@ def test_pm_names_every_reasoning_chain_field() -> None:
 
     text = (PROMPT_DIR / "portfolio_manager.md").read_text()
     for name in ReasoningChain.model_fields:
-        assert name in text, (
-            f"portfolio_manager.md never names `{name}`, a field of the "
-            f"schema it must populate."
-        )
+        assert name in text, f"portfolio_manager.md never names `{name}`, a field of the schema it must populate."
 
 
 def test_pm_framework_step_count_is_not_understated() -> None:
@@ -170,8 +169,7 @@ def test_pm_framework_step_count_is_not_understated() -> None:
     """
     text = (PROMPT_DIR / "portfolio_manager.md").read_text()
     assert "7-Step Decision Framework" not in text, (
-        "portfolio_manager.md reintroduced the '7-Step' header over an "
-        "8-step framework."
+        "portfolio_manager.md reintroduced the '7-Step' header over an 8-step framework."
     )
     assert "### Step 8" in text, (
         "portfolio_manager.md lost Step 8 (the pre-mortem). It is the only "
@@ -183,11 +181,13 @@ def test_pm_framework_step_count_is_not_understated() -> None:
 # F9 — forced chain-of-thought scaffolding
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
-    "prompt_name", ("portfolio_manager.md", "macro_analyst.md", "tech_analyst.md"),
+    "prompt_name",
+    ("portfolio_manager.md", "macro_analyst.md", "tech_analyst.md"),
 )
 def test_no_forced_step_by_step_scaffolding(prompt_name: str) -> None:
-    """"You must think step by step / do NOT skip steps" is weak-model
+    """ "You must think step by step / do NOT skip steps" is weak-model
     scaffolding. On a modern reasoning model it does not improve the answer
     and it pins reasoning to a fixed order, which is wrong on the days when
     a single input dominates.
@@ -206,8 +206,7 @@ def test_no_forced_step_by_step_scaffolding(prompt_name: str) -> None:
 
 @pytest.mark.parametrize(
     "prompt_name",
-    ("portfolio_manager.md", "macro_analyst.md", "tech_analyst.md",
-     "risk_manager.md", "position_reviewer.md"),
+    ("portfolio_manager.md", "macro_analyst.md", "tech_analyst.md", "risk_manager.md", "position_reviewer.md"),
 )
 def test_reasoning_chain_still_mandatory(prompt_name: str) -> None:
     """The auditability requirement must survive the scaffolding removal.
@@ -227,6 +226,7 @@ def test_reasoning_chain_still_mandatory(prompt_name: str) -> None:
 # F10 — duplicated instructions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "prompt_name,phrase,limit",
     (
@@ -242,7 +242,9 @@ def test_reasoning_chain_still_mandatory(prompt_name: str) -> None:
     ),
 )
 def test_instruction_not_repeated_verbatim(
-    prompt_name: str, phrase: str, limit: int,
+    prompt_name: str,
+    phrase: str,
+    limit: int,
 ) -> None:
     """Repetition was a weak-model technique for making an instruction
     stick. On a strong model the copies compete: near-duplicates with
@@ -266,26 +268,17 @@ def test_dedup_preserved_the_role_boundary_anchors() -> None:
     trims copies, not contracts.
     """
     tech = (PROMPT_DIR / "tech_analyst.md").read_text()
-    assert "**Autonomy.**" in tech, (
-        "tech_analyst.md lost its Guardrails autonomy bullet."
-    )
+    assert "**Autonomy.**" in tech, "tech_analyst.md lost its Guardrails autonomy bullet."
     pm = (PROMPT_DIR / "portfolio_manager.md").read_text()
-    assert "**Autonomy boundary.**" in pm, (
-        "portfolio_manager.md lost its Guardrails autonomy bullet."
-    )
+    assert "**Autonomy boundary.**" in pm, "portfolio_manager.md lost its Guardrails autonomy bullet."
     assert "do NOT emit" in pm, (
-        "portfolio_manager.md lost the explicit 'do NOT emit' statement of "
-        "the PortfolioConstructor boundary."
+        "portfolio_manager.md lost the explicit 'do NOT emit' statement of the PortfolioConstructor boundary."
     )
     for forbidden in ("entry_price", "stop_loss", "take_profit", "allocation_pct"):
-        assert forbidden in pm, (
-            f"portfolio_manager.md must still name `{forbidden}` as a field "
-            f"PM does not emit."
-        )
+        assert forbidden in pm, f"portfolio_manager.md must still name `{forbidden}` as a field PM does not emit."
     rm = (PROMPT_DIR / "risk_manager.md").read_text()
     assert "**Final gate.**" in rm, (
-        "risk_manager.md lost its Guardrails final-gate bullet — the "
-        "surviving copy after dedup."
+        "risk_manager.md lost its Guardrails final-gate bullet — the surviving copy after dedup."
     )
 
 
@@ -306,6 +299,7 @@ def test_rm_dedup_did_not_drop_capital_preservation() -> None:
 # ---------------------------------------------------------------------------
 # F7a — earnings_analyst graded on evidence it never receives
 # ---------------------------------------------------------------------------
+
 
 def test_earnings_valuation_context_does_not_require_absent_market_data() -> None:
     """`EarningsAnalystAgent.build_user_message` passes ONLY the filing
@@ -352,6 +346,5 @@ def test_earnings_unsourced_convention_still_intact() -> None:
     text = (PROMPT_DIR / "earnings_analyst.md").read_text()
     for reason in ("not_in_filing", "truncated", "ambiguous"):
         assert f"[UNSOURCED:{reason}]" in text, (
-            f"earnings_analyst.md lost [UNSOURCED:{reason}] during the "
-            f"valuation cleanup."
+            f"earnings_analyst.md lost [UNSOURCED:{reason}] during the valuation cleanup."
         )

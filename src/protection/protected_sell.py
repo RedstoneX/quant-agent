@@ -20,7 +20,8 @@ class ProtectedSell:
     """The protected sell and its write-ahead stop cancel; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         broker=None,
         db=None,
         alert_owner_exit_declined=None,
@@ -40,11 +41,11 @@ class ProtectedSell:
 
     @property
     def _last_stop_clear_refusal(self):
-        return self._state.get('_last_stop_clear_refusal')
+        return self._state.get("_last_stop_clear_refusal")
 
     @_last_stop_clear_refusal.setter
     def _last_stop_clear_refusal(self, value) -> None:
-        self._state.set('_last_stop_clear_refusal', value)
+        self._state.set("_last_stop_clear_refusal", value)
 
     def _submit_protected_sell(
         self,
@@ -115,13 +116,15 @@ class ProtectedSell:
                 self.broker.cancel_open_entry_orders(symbol=symbol)
                 record_guarded_pass((self.broker, self.db), "protected_sell.entry_cancel", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass((self.broker, self.db), "protected_sell.entry_cancel", exc,
-                                    context={"symbol": symbol})
-                logger.warning("%s: entry-order cancel failed for %s: %s",
-                               label, symbol, exc)
+                record_guarded_pass(
+                    (self.broker, self.db), "protected_sell.entry_cancel", exc, context={"symbol": symbol}
+                )
+                logger.warning("%s: entry-order cancel failed for %s: %s", label, symbol, exc)
         stop_side_kwargs = {} if side == "sell" else {"side": side}
         ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
-            symbol, position_qty_before_sell, **stop_side_kwargs,
+            symbol,
+            position_qty_before_sell,
+            **stop_side_kwargs,
         )
         if not ok:
             # WHY THE DESK STILL DECLINES THE EXIT, and why it is no longer
@@ -175,8 +178,11 @@ class ProtectedSell:
             return None
         try:
             order = self.broker.submit_order(
-                symbol=symbol, qty=qty, side=side,
-                limit_price=limit_price, reference_price=reference_price,
+                symbol=symbol,
+                qty=qty,
+                side=side,
+                limit_price=limit_price,
+                reference_price=reference_price,
             )
             record_guarded_pass((self.broker, self.db), "protected_sell.submit", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
@@ -188,7 +194,10 @@ class ProtectedSell:
             logger.error("%s: submit failed for %s: %s", label, symbol, exc)
             if stop_specs:
                 self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+                    symbol,
+                    stop_specs,
+                    check_idempotency=False,
+                    **stop_side_kwargs,
                 )
             return None
         if not self._order_accepted(order, symbol, side):
@@ -209,31 +218,40 @@ class ProtectedSell:
             # and let finalize rebuild coverage on its fill, exactly as for the
             # limit.
             if escalate_to_market_on_reject and limit_price is not None:
-                rejected_status = (
-                    order.get("status") if isinstance(order, dict) else order
-                )
+                rejected_status = order.get("status") if isinstance(order, dict) else order
                 logger.warning(
                     "%s: marketable-limit exit for %s was not accepted (%s) — "
                     "escalating to a MARKET order (guaranteed fill).",
-                    label, symbol, rejected_status,
+                    label,
+                    symbol,
+                    rejected_status,
                 )
                 try:
                     order = self.broker.submit_order(
-                        symbol=symbol, qty=qty, side=side,
-                        limit_price=None, reference_price=reference_price,
+                        symbol=symbol,
+                        qty=qty,
+                        side=side,
+                        limit_price=None,
+                        reference_price=reference_price,
                     )
-                    record_guarded_pass((self.broker, self.db), "protected_sell.market_escalation",
-                                        context={"symbol": symbol})
+                    record_guarded_pass(
+                        (self.broker, self.db), "protected_sell.market_escalation", context={"symbol": symbol}
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    record_guarded_pass((self.broker, self.db), "protected_sell.market_escalation", exc,
-                                        context={"symbol": symbol})
+                    record_guarded_pass(
+                        (self.broker, self.db), "protected_sell.market_escalation", exc, context={"symbol": symbol}
+                    )
                     logger.error(
                         "%s: MARKET escalation submit failed for %s: %s",
-                        label, symbol, exc,
+                        label,
+                        symbol,
+                        exc,
                     )
                     if stop_specs:
                         self.broker._restore_stop_orders(
-                            symbol, stop_specs, check_idempotency=False,
+                            symbol,
+                            stop_specs,
+                            check_idempotency=False,
                             **stop_side_kwargs,
                         )
                     return None
@@ -242,7 +260,10 @@ class ProtectedSell:
                 # not accepted) — restore the stops we just cancelled.
                 if stop_specs:
                     self.broker._restore_stop_orders(
-                        symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
+                        symbol,
+                        stop_specs,
+                        check_idempotency=False,
+                        **stop_side_kwargs,
                     )
                 return None
         # audit F5: tag the order dict so the notifier's intervention banner +
@@ -253,19 +274,25 @@ class ProtectedSell:
         # an accepted limit can still cancel/expire without filling, in which
         # case the FULL original protection is what the position needs.
         prot = {
-            "order_id": order["id"], "symbol": symbol,
+            "order_id": order["id"],
+            "symbol": symbol,
             "position_qty_before_sell": position_qty_before_sell,
             # How much this order asked the broker to shed. Needed to net an
             # order still working out of a later gross re-measure — see
             # `_register_exit_settlement`.
             "submitted_qty": abs(float(qty or 0.0)),
-            "specs": stop_specs, "wal_row_id": wal_row_id, "side": side,
+            "specs": stop_specs,
+            "wal_row_id": wal_row_id,
+            "side": side,
         }
         return order, prot
 
     def _cancel_stops_with_write_ahead(
-        self, symbol: str, position_qty_before_sell: float,
-        *, side: str = "sell",
+        self,
+        symbol: str,
+        position_qty_before_sell: float,
+        *,
+        side: str = "sell",
     ) -> tuple[bool, list[dict], int | None]:
         """Snapshot protective stops -> persist WAL recovery intent ->
         THEN cancel the stops. audit F1 review #1: true write-ahead.
@@ -307,26 +334,35 @@ class ProtectedSell:
         if not specs:
             return True, [], None
         wal_row_id = self._write_ahead_protection_restore(
-            symbol, position_qty_before_sell, specs, side=side,
+            symbol,
+            position_qty_before_sell,
+            specs,
+            side=side,
         )
         cancel = self.broker.cancel_snapshotted_stops(symbol, specs)
         if not cancel.cleared:
             # STATE THREE: rollback failed, shares naked NOW, WAL row is the repair.
             from src.stop_cancel_outcome import keep_lost_coverage_row
+
             if cancel.coverage_shrank and keep_lost_coverage_row(self, symbol, wal_row_id, cancel, logger):
                 return False, [], None
             if wal_row_id is not None:
                 try:
                     self.db.delete_pending_protection_restore(wal_row_id)
-                    record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge",
-                                        context={"symbol": symbol})
+                    record_guarded_pass(
+                        (self.broker, self.db), "protected_sell.wal_discharge", context={"symbol": symbol}
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge", exc,
-                                        context={"symbol": symbol})
+                    record_guarded_pass(
+                        (self.broker, self.db), "protected_sell.wal_discharge", exc, context={"symbol": symbol}
+                    )
                     logger.warning(
                         "WAL: failed to discharge row %d after cancel "
                         "rollback for %s: %s (drain will idempotently "
-                        "no-op it)", wal_row_id, symbol, exc,
+                        "no-op it)",
+                        wal_row_id,
+                        symbol,
+                        exc,
                     )
             # The stops are verified resting, so "the broker would reject
             # the SELL on held_for_orders" is an evidenced statement here —

@@ -36,19 +36,13 @@ def read_allowlist(path: Path) -> set[str]:
 def count_arbitrary(text: str) -> int:
     """`status: arbitrary` rows in a raw ledger document."""
     raw = yaml.safe_load(text) or {}
-    return sum(
-        1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary"
-    )
+    return sum(1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary")
 
 
 def statuses_by_id(text: str) -> dict[str, str]:
     """Every ledger row's status, keyed by row id, from a raw document."""
     raw = yaml.safe_load(text) or {}
-    return {
-        entry["id"]: entry.get("status")
-        for entry in (raw.get("numbers") or [])
-        if entry.get("id")
-    }
+    return {entry["id"]: entry.get("status") for entry in (raw.get("numbers") or []) if entry.get("id")}
 
 
 def ratchet_violations(ledger, allowed):
@@ -69,21 +63,26 @@ def ratchet_violations(ledger, allowed):
         route = (
             f" It also carries no {' and no '.join(missing)}: a new unsourced "
             "number is admitted only with a route to settlement."
-            if missing else ""
+            if missing
+            else ""
         )
-        out.append((
-            site_id,
-            "is `arbitrary` but not on config/check_allowlists/"
-            "ledger_arbitrary_rows.txt. Source it, or (with a Guard-rule-change "
-            "line) list it." + route,
-        ))
+        out.append(
+            (
+                site_id,
+                "is `arbitrary` but not on config/check_allowlists/"
+                "ledger_arbitrary_rows.txt. Source it, or (with a Guard-rule-change "
+                "line) list it." + route,
+            )
+        )
     for site_id in sorted(allowed):
         if ledger.get(site_id, {}).get("status") != "arbitrary":
-            out.append((
-                site_id,
-                "is on ledger_arbitrary_rows.txt but is no longer `arbitrary` "
-                "in the ledger: stale entry, delete it from the list.",
-            ))
+            out.append(
+                (
+                    site_id,
+                    "is on ledger_arbitrary_rows.txt but is no longer `arbitrary` "
+                    "in the ledger: stale entry, delete it from the list.",
+                )
+            )
     return out
 
 
@@ -91,8 +90,7 @@ def routeless_by_id(text: str) -> dict[str, bool]:
     """Per row id: is it `arbitrary` with no `settles_by` block at all?"""
     raw = yaml.safe_load(text) or {}
     return {
-        entry["id"]: entry.get("status") == "arbitrary"
-        and entry.get("settles_by") is None
+        entry["id"]: entry.get("status") == "arbitrary" and entry.get("settles_by") is None
         for entry in (raw.get("numbers") or [])
         if entry.get("id")
     }
@@ -112,20 +110,23 @@ def route_ratchet_violations(ledger, allowed):
             continue
         if site_id in allowed:
             continue
-        out.append((
-            site_id,
-            "is `arbitrary` with no `settles_by` and not on config/"
-            "check_allowlists/ledger_routeless_rows.txt. A routeless number may "
-            "not be created or regressed: give it a `settles_by` route, or "
-            "restore its source.",
-        ))
+        out.append(
+            (
+                site_id,
+                "is `arbitrary` with no `settles_by` and not on config/"
+                "check_allowlists/ledger_routeless_rows.txt. A routeless number may "
+                "not be created or regressed: give it a `settles_by` route, or "
+                "restore its source.",
+            )
+        )
     for site_id in sorted(allowed):
         entry = ledger.get(site_id)
-        if not (entry and entry.get("status") == "arbitrary"
-                and entry.get("settles_by") is None):
-            out.append((
-                site_id,
-                "is on ledger_routeless_rows.txt but is no longer a routeless "
-                "`arbitrary` row: stale entry, delete it from the list.",
-            ))
+        if not (entry and entry.get("status") == "arbitrary" and entry.get("settles_by") is None):
+            out.append(
+                (
+                    site_id,
+                    "is on ledger_routeless_rows.txt but is no longer a routeless "
+                    "`arbitrary` row: stale entry, delete it from the list.",
+                )
+            )
     return out

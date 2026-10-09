@@ -14,7 +14,11 @@ def test_owner_ruled_status_without_a_date_or_record_fails(tmp_path) -> None:
     rows = [r for r in doc["numbers"] if r.get("status") == "owner-ruled"]
     assert rows, "no owner-ruled row to mutate"
     assert audit(ledger_path=live) == []
-    for missing, kind in (("ruled_on", "no-ruling-date"), ("ruling_record", "no-ruling-record"), ("ruling_summary", "no-ruling-summary")):
+    for missing, kind in (
+        ("ruled_on", "no-ruling-date"),
+        ("ruling_record", "no-ruling-record"),
+        ("ruling_summary", "no-ruling-summary"),
+    ):
         saved = rows[0].pop(missing)
         broken = tmp_path / f"{missing}.yaml"
         broken.write_text(_yaml.safe_dump(doc), encoding="utf-8")

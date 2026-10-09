@@ -13,6 +13,7 @@ cost on the next 30-min tick.
 Fixtures are the VERBATIM recorded `full_response` payloads from the two
 killed production runs (run-cbf2adbd 17 targets, run-5dc7a354 11 targets).
 """
+
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,8 @@ def _result(raw: str) -> AgentResult:
     ],
 )
 def test_recorded_production_payload_parses_to_full_decision(
-    fixture_name, expected_targets,
+    fixture_name,
+    expected_targets,
 ):
     raw = (FIXTURES / fixture_name).read_text()
     parsed = _result(raw).parse_json()
@@ -117,7 +119,10 @@ def test_pm_decide_treats_non_dict_parse_as_failure(monkeypatch):
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     fake = _result('[{"symbol": "XOM", "target_weight_pct": 5.0}]')
     monkeypatch.setattr(
-        PortfolioManagerAgent, "run", lambda self, **kw: fake, raising=False,
+        PortfolioManagerAgent,
+        "run",
+        lambda self, **kw: fake,
+        raising=False,
     )
     decision, result = agent.decide(analyses=[], positions=[])
     assert decision is None
@@ -125,7 +130,7 @@ def test_pm_decide_treats_non_dict_parse_as_failure(monkeypatch):
 
 
 def test_pm_decide_treats_all_malformed_targets_as_failure(monkeypatch):
-    raw = '''{
+    raw = """{
       "reasoning_chain": {
         "macro_filter":"m", "news_check":"n", "earnings_check":"e",
         "signal_conflicts":"s", "sizing_logic":"z",
@@ -133,11 +138,14 @@ def test_pm_decide_treats_all_malformed_targets_as_failure(monkeypatch):
       },
       "targets":[{"symbol":"AAPL","target_weight_pct":99,"thesis":"bad"}],
       "portfolio_view":"actionable target was attempted"
-    }'''
+    }"""
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     fake = _result(raw)
     monkeypatch.setattr(
-        PortfolioManagerAgent, "run", lambda self, **kw: fake, raising=False,
+        PortfolioManagerAgent,
+        "run",
+        lambda self, **kw: fake,
+        raising=False,
     )
     decision, result = agent.decide(analyses=[], positions=[])
     assert decision is None

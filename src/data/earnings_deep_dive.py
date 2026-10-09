@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 _JSON_BLOCK_RE = re.compile(
-    r"```json\s*\n(?P<body>.*?)\n```", re.DOTALL,
+    r"```json\s*\n(?P<body>.*?)\n```",
+    re.DOTALL,
 )
 
 # Hard cap per reasoning-chain step so a very long analysis can't push
@@ -64,8 +65,7 @@ def _extract_json_block(markdown: str, *, path: Path | None = None) -> dict | No
     match = _JSON_BLOCK_RE.search(markdown)
     if match is None:
         logger.error(
-            "earnings_deep_dive: no ```json fenced block found in %s — "
-            "evening will skip this symbol's deep-dive",
+            "earnings_deep_dive: no ```json fenced block found in %s — evening will skip this symbol's deep-dive",
             path_str,
         )
         return None
@@ -81,13 +81,17 @@ def _extract_json_block(markdown: str, *, path: Path | None = None) -> dict | No
         logger.error(
             "earnings_deep_dive: JSON block in %s failed to parse (%s) — "
             "head=%r tail=%r — evening will skip this symbol's deep-dive",
-            path_str, exc, head, tail,
+            path_str,
+            exc,
+            head,
+            tail,
         )
         return None
 
 
 def _latest_filing_key_for_symbol(
-    symbol: str, manifest: dict,
+    symbol: str,
+    manifest: dict,
 ) -> tuple[str, dict] | None:
     """Pick the most-recent filing entry for a symbol out of the provider
     manifest. Returns (manifest_key, entry_dict) or None.
@@ -152,14 +156,17 @@ def load_earnings_deep_dive(
     path = Path(analysis_path)
     if not path.exists():
         logger.warning(
-            "earnings_deep_dive: manifest points to missing file %s", path,
+            "earnings_deep_dive: manifest points to missing file %s",
+            path,
         )
         return None
     try:
         markdown = path.read_text()
     except OSError as exc:
         logger.warning(
-            "earnings_deep_dive: failed reading %s: %s", path, exc,
+            "earnings_deep_dive: failed reading %s: %s",
+            path,
+            exc,
         )
         return None
 
@@ -197,22 +204,27 @@ def load_earnings_deep_dive(
         "key_thesis": _truncate(impl.get("key_thesis") or "", 400),
         "headline": headline,
         "fundamental_quality": _truncate(
-            chain.get("fundamental_quality") or "", _CHAIN_STEP_MAX_CHARS,
+            chain.get("fundamental_quality") or "",
+            _CHAIN_STEP_MAX_CHARS,
         ),
         "growth_trajectory": _truncate(
-            chain.get("growth_trajectory") or "", _CHAIN_STEP_MAX_CHARS,
+            chain.get("growth_trajectory") or "",
+            _CHAIN_STEP_MAX_CHARS,
         ),
         "valuation_context": _truncate(
-            chain.get("valuation_context") or "", _CHAIN_STEP_MAX_CHARS,
+            chain.get("valuation_context") or "",
+            _CHAIN_STEP_MAX_CHARS,
         ),
         # The two "why things could go wrong" steps — truncated harder
         # since they're lower priority for the healthy-thesis majority.
         # Evening can decide to lean on them when trajectory is
         # weakening/broken via the prompt guidance.
         "strategic_risks": _truncate(
-            chain.get("strategic_risks") or "", 300,
+            chain.get("strategic_risks") or "",
+            300,
         ),
         "management_execution": _truncate(
-            chain.get("management_execution") or "", 300,
+            chain.get("management_execution") or "",
+            300,
         ),
     }

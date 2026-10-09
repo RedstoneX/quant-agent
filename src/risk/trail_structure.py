@@ -4,6 +4,7 @@ Moved verbatim out of `src/risk/trailing.py` (2026-10-04) so the arithmetic
 can be built and exercised alone. The doctrine, the numbers and the result
 types stay in `src/risk/trailing.py`; read its module docstring first.
 """
+
 from __future__ import annotations
 
 from src.risk.trailing import PIVOT_WINDOW, _finite
@@ -87,7 +88,7 @@ def _swing_lows(bars, window: int = PIVOT_WINDOW) -> list[float]:
         centre = values[i]
         if centre is None:
             continue
-        neighbourhood = [v for v in values[i - window:i + window + 1] if v is not None]
+        neighbourhood = [v for v in values[i - window : i + window + 1] if v is not None]
         if len(neighbourhood) < window + 1:
             continue
         if centre <= min(neighbourhood):
@@ -113,7 +114,7 @@ def _swing_highs(bars, window: int = PIVOT_WINDOW) -> list[float]:
         centre = values[i]
         if centre is None:
             continue
-        neighbourhood = [v for v in values[i - window:i + window + 1] if v is not None]
+        neighbourhood = [v for v in values[i - window : i + window + 1] if v is not None]
         if len(neighbourhood) < window + 1:
             continue
         if centre >= max(neighbourhood):

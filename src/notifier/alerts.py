@@ -30,6 +30,7 @@ from src.notifier.wording import (
     describe_short_handed_decision,
 )
 
+
 def _append_evidence_freshness(lines: list[str], result: dict) -> None:
     """Put the freshness disclosure into a session message body, and — when
     the desk PROCEEDED with a seat absent — the short-handed mark (item 154).
@@ -45,15 +46,16 @@ def _append_evidence_freshness(lines: list[str], result: dict) -> None:
     if block:
         _new_section(lines, *block)
     if result.get("status") != "evidence_gate_skip":
-        short_handed = describe_short_handed_decision(
-            result.get("evidence_freshness")
-        )
+        short_handed = describe_short_handed_decision(result.get("evidence_freshness"))
         if short_handed:
             _new_section(lines, *short_handed)
 
 
 def describe_skipped_decision(
-    lost: Any, data_status: Any, *, include_next_pass: bool = True,
+    lost: Any,
+    data_status: Any,
+    *,
+    include_next_pass: bool = True,
 ) -> list[str]:
     """The owner-facing account of an evidence-gate skip: a bold title line
     that states the conclusion, then one short bullet per idea.
@@ -85,9 +87,7 @@ def describe_skipped_decision(
         "   • every position keeps the stop it already had",
     ]
     if include_next_pass:
-        lines.append(
-            "   • the next scheduled decision tries again — nothing for you to do"
-        )
+        lines.append("   • the next scheduled decision tries again — nothing for you to do")
     return lines
 
 
@@ -108,10 +108,11 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     if not isinstance(data_status, dict):
         return False
     from src import evidence_gate
+
     bad = {
-        k: v for k, v in data_status.items()
-        if evidence_gate.counts_as_degraded(v)
-        and v not in _ALERT_EXEMPT_PER_SEAT.get(k, ())
+        k: v
+        for k, v in data_status.items()
+        if evidence_gate.counts_as_degraded(v) and v not in _ALERT_EXEMPT_PER_SEAT.get(k, ())
     }
     if not bad:
         return False
@@ -176,7 +177,9 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
 
 
 def alert_order_outcome_unconfirmed(
-    symbol: str, order_id: str, waited_seconds: float,
+    symbol: str,
+    order_id: str,
+    waited_seconds: float,
     last_status: str | None = None,
 ) -> bool:
     """PAGE: the desk could not confirm what happened to a live order.
@@ -195,6 +198,7 @@ def alert_order_outcome_unconfirmed(
     """
     try:
         from src.trading_calendar import et_now
+
         when = fmt_time_12h(et_now())
         sym = str(symbol or "").strip() or "an order"
         whole = int(waited_seconds) if waited_seconds else 0
@@ -204,7 +208,7 @@ def alert_order_outcome_unconfirmed(
             f"{sym}: the desk sent an order to the broker and waited the "
             f"full {whole} seconds it allows, then cancelled it and waited "
             "again. The broker never confirmed the result either time. The "
-            f"last thing it said was \"{(last_status or 'nothing at all')}\".\n"
+            f'last thing it said was "{(last_status or "nothing at all")}".\n'
             "\n"
             "WHAT THIS MEANS FOR YOU: this may have bought nothing, or it "
             f"may have bought {sym} shares that have no protective stop on "
@@ -220,15 +224,21 @@ def alert_order_outcome_unconfirmed(
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
         from src.sentinel.counted import record_swallowed
+
         record_swallowed("notifier.alerts.alert_order_outcome_unconfirmed", exc, log=logger)
         logger.warning(
-            "unconfirmed-order alert for %s could not be sent: %s", symbol, exc,
+            "unconfirmed-order alert for %s could not be sent: %s",
+            symbol,
+            exc,
         )
         return False
 
 
 def alert_records_disagree_with_broker(
-    symbol: str, desk_qty: float, broker_qty: float, lookback_days: int,
+    symbol: str,
+    desk_qty: float,
+    broker_qty: float,
+    lookback_days: int,
 ) -> bool:
     """PAGE: reconciliation found the desk's record and the broker's disagreeing.
 
@@ -250,6 +260,7 @@ def alert_records_disagree_with_broker(
     """
     try:
         from src.trading_calendar import et_now
+
         when = fmt_time_12h(et_now())
         sym = str(symbol or "").strip() or "a position"
         body = (
@@ -274,15 +285,21 @@ def alert_records_disagree_with_broker(
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
         from src.sentinel.counted import record_swallowed
+
         record_swallowed("notifier.alerts.alert_records_disagree_with_broker", exc, log=logger)
         logger.warning(
-            "records-disagree alert for %s could not be sent: %s", symbol, exc,
+            "records-disagree alert for %s could not be sent: %s",
+            symbol,
+            exc,
         )
         return False
 
 
 def alert_stop_out_recorded(
-    symbol: str, qty: float, price: float, realized_pnl: float | None = None,
+    symbol: str,
+    qty: float,
+    price: float,
+    realized_pnl: float | None = None,
 ) -> bool:
     """PAGE: the broker closed a position on its own protective stop.
 
@@ -303,6 +320,7 @@ def alert_stop_out_recorded(
     """
     try:
         from src.trading_calendar import et_now
+
         when = fmt_time_12h(et_now())
         sym = str(symbol or "").strip() or "a position"
         if realized_pnl is None:
@@ -312,10 +330,7 @@ def alert_stop_out_recorded(
                 "not guessed."
             )
         else:
-            pnl_line = (
-                f"Realized profit-and-loss on this exit: "
-                f"{_fmt_signed_money(realized_pnl)}."
-            )
+            pnl_line = f"Realized profit-and-loss on this exit: {_fmt_signed_money(realized_pnl)}."
         body = (
             "BROKER STOPPED YOU OUT — a protective stop fired and closed a "
             "position; the desk did not choose this exit\n"
@@ -329,16 +344,20 @@ def alert_stop_out_recorded(
             f"no matching order in the desk's own records, so it was written "
             f"back into the ledger just now. {pnl_line}\n"
             f"WHAT TO CHECK: your broker account's {sym} history, as of "
-            + when + ". The position is already closed; nothing further is "
+            + when
+            + ". The position is already closed; nothing further is "
             "required of you — this is a notice that the market took you out, "
             "not a request."
         )
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
         from src.sentinel.counted import record_swallowed
+
         record_swallowed("notifier.alerts.alert_stop_out_recorded", exc, log=logger)
         logger.warning(
-            "stop-out-recorded alert for %s could not be sent: %s", symbol, exc,
+            "stop-out-recorded alert for %s could not be sent: %s",
+            symbol,
+            exc,
         )
         return False
 
@@ -360,6 +379,7 @@ def alert_positions_reprotected(count: int) -> bool:
         if n <= 0:
             return False
         from src.trading_calendar import et_now
+
         when = fmt_time_12h(et_now())
         noun = "position" if n == 1 else "positions"
         body = (
@@ -378,8 +398,10 @@ def alert_positions_reprotected(count: int) -> bool:
         return send_owner_alert(body)
     except Exception as exc:  # noqa: BLE001
         from src.sentinel.counted import record_swallowed
+
         record_swallowed("notifier.alerts.alert_positions_reprotected", exc, log=logger)
         logger.warning(
-            "positions-reprotected alert could not be sent: %s", exc,
+            "positions-reprotected alert could not be sent: %s",
+            exc,
         )
         return False

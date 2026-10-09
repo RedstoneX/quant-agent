@@ -32,12 +32,11 @@ _EARNINGS_ABSENCE_TEXT = {
     EARNINGS_NO_FETCHED_DATE: (
         "NO FETCHED DATE — the earnings-date source answered with nothing for "
         "this symbol. It does NOT mean no report is due: the source cannot "
-        "distinguish \"no scheduled date published\" from \"date unknown\". "
+        'distinguish "no scheduled date published" from "date unknown". '
         "Treat the earnings date as UNKNOWN"
     ),
     EARNINGS_LOOKUP_FAILED: (
-        "LOOKUP FAILED — the earnings-date fetch raised. No date was obtained; "
-        "treat the earnings date as UNKNOWN"
+        "LOOKUP FAILED — the earnings-date fetch raised. No date was obtained; treat the earnings date as UNKNOWN"
     ),
     EARNINGS_LOOKUP_TIMEOUT: (
         "LOOKUP TIMED OUT — the earnings-date fetch exceeded its per-symbol "
@@ -78,16 +77,15 @@ class EarningsProximity:
     def describe(self) -> str:
         if self.measured:
             imminent = (
-                f" ** INSIDE THE {EARNINGS_EVENT_WINDOW_SESSIONS}-SESSION "
-                f"EVENT WINDOW **"
-            ) if self.sessions_away <= EARNINGS_EVENT_WINDOW_SESSIONS else ""
-            unit = "session" if self.sessions_away == 1 else "sessions"
-            return (
-                f"{self.symbol}: next earnings ~{self.sessions_away} {unit} "
-                f"away (fetched){imminent}"
+                (f" ** INSIDE THE {EARNINGS_EVENT_WINDOW_SESSIONS}-SESSION EVENT WINDOW **")
+                if self.sessions_away <= EARNINGS_EVENT_WINDOW_SESSIONS
+                else ""
             )
+            unit = "session" if self.sessions_away == 1 else "sessions"
+            return f"{self.symbol}: next earnings ~{self.sessions_away} {unit} away (fetched){imminent}"
         detail = _EARNINGS_ABSENCE_TEXT.get(
-            self.status, "UNAVAILABLE — treat the earnings date as UNKNOWN",
+            self.status,
+            "UNAVAILABLE — treat the earnings date as UNKNOWN",
         )
         return f"{self.symbol}: {detail} [{self.status}]"
 
@@ -131,9 +129,13 @@ def fetch_earnings_proximity(
     for symbol in ordered:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            results.append(EarningsProximity(
-                symbol, None, EARNINGS_DEADLINE_EXCEEDED,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    None,
+                    EARNINGS_DEADLINE_EXCEEDED,
+                )
+            )
             continue
         # Deliberately NOT a `with` block. `ThreadPoolExecutor.__exit__` calls
         # `shutdown(wait=True)`, which blocks until the worker finishes — so on
@@ -146,38 +148,59 @@ def fetch_earnings_proximity(
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             sessions = executor.submit(
-                market_provider.get_next_earnings_date, symbol,
+                market_provider.get_next_earnings_date,
+                symbol,
             ).result(timeout=min(per_symbol_timeout_s, remaining))
         except FuturesTimeout:
             logger.warning(
                 "earnings-date lookup timed out for %s (>%.1fs)",
-                symbol, per_symbol_timeout_s,
+                symbol,
+                per_symbol_timeout_s,
             )
-            results.append(EarningsProximity(
-                symbol, None, EARNINGS_LOOKUP_TIMEOUT,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    None,
+                    EARNINGS_LOOKUP_TIMEOUT,
+                )
+            )
             continue
         except Exception as e:  # noqa: BLE001 — any provider shape degrades
             logger.warning("earnings-date lookup failed for %s: %s", symbol, e)
-            results.append(EarningsProximity(
-                symbol, None, EARNINGS_LOOKUP_FAILED,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    None,
+                    EARNINGS_LOOKUP_FAILED,
+                )
+            )
             continue
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
         if sessions is None:
-            results.append(EarningsProximity(
-                symbol, None, EARNINGS_NO_FETCHED_DATE,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    None,
+                    EARNINGS_NO_FETCHED_DATE,
+                )
+            )
             continue
         try:
-            results.append(EarningsProximity(
-                symbol, max(0, int(sessions)), EARNINGS_MEASURED,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    max(0, int(sessions)),
+                    EARNINGS_MEASURED,
+                )
+            )
         except (TypeError, ValueError):
-            results.append(EarningsProximity(
-                symbol, None, EARNINGS_LOOKUP_FAILED,
-            ))
+            results.append(
+                EarningsProximity(
+                    symbol,
+                    None,
+                    EARNINGS_LOOKUP_FAILED,
+                )
+            )
     return results
-

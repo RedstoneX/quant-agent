@@ -11,6 +11,7 @@ part builds and runs alone). `src/risk/rules.py` keeps the engine, every
 ledger-pinned number and the re-export mirror, so every existing
 `from src.risk.rules import X` keeps resolving.
 """
+
 import logging
 import math
 from dataclasses import dataclass, field
@@ -42,7 +43,8 @@ def _positive_float(value, default: float = 0.0) -> float:
 
 
 def peak_to_trough_pct(
-    equity_history, current_equity: float | None,
+    equity_history,
+    current_equity: float | None,
 ) -> float | None:
     """Peak-to-trough drawdown in percent (<= 0), or None if unmeasurable.
 
@@ -115,7 +117,8 @@ def peak_to_trough_pct(
             "portfolio_value during market-open glitches. "
             "The remaining %d historical "
             "reading(s) still went into this call's peak.",
-            dropped_non_finite, len(history_values),
+            dropped_non_finite,
+            len(history_values),
         )
     if not (
         isinstance(current_equity, (int, float))
@@ -142,7 +145,9 @@ def peak_to_trough_pct(
 
 
 def unmeasurable_gross_symbols(
-    positions, *, cash_park_symbol: str | None = None,
+    positions,
+    *,
+    cash_park_symbol: str | None = None,
 ) -> list[str]:
     """Held symbols whose market value cannot be trusted for gross math.
 
@@ -261,6 +266,7 @@ def deployment_gap_band_pct(config) -> float:
     value falls back to the field's own declared default.
     """
     from src.config import DeploymentGapConfig
+
     pct = getattr(getattr(config, "deployment_gap", None), "band_pct", None)
     if pct is None:
         pct = DeploymentGapConfig.model_fields["band_pct"].get_default()
@@ -278,6 +284,7 @@ class BookExposure:
         net short. Hedges cancel, which is the point of this one.
     `gross` — unsigned and leverage-aware. What the §11.2 ceiling caps.
     """
+
     equity: float
     deployed_usd: float
     net_usd: float
@@ -342,8 +349,7 @@ def book_exposure(
         equity=float(equity or 0.0),
         deployed_usd=deployed + float(pending_deployed_usd or 0.0),
         net_usd=net + float(pending_net_usd or 0.0),
-        gross_usd=gross_exposure(positions, cash_park_symbol=cash_park_symbol)
-        + float(pending_gross_usd or 0.0),
+        gross_usd=gross_exposure(positions, cash_park_symbol=cash_park_symbol) + float(pending_gross_usd or 0.0),
     )
 
 

@@ -1,5 +1,6 @@
 """The lifted entry-order catch-alls are loud: fault, clean pass, unreached,
 and the one site that holds no ledger handle."""
+
 import logging
 
 from types import SimpleNamespace

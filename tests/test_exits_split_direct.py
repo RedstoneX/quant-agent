@@ -1,4 +1,5 @@
 """The lifted exit bodies exercised directly with plain stand-in objects."""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -15,8 +16,16 @@ def test_risk_review_without_exits_returns_no_veto_and_no_verdict():
     review = SimpleNamespace(actions=[SimpleNamespace(action="HOLD", symbol="AAA", reason="")])
     owner = SimpleNamespace(db=MagicMock())
     assert risk_review._risk_review_exits(
-        owner, review, [], run_id="r1", total_value=1000.0,
+        owner,
+        review,
+        [],
+        run_id="r1",
+        total_value=1000.0,
     ) == (set(), None)
     assert risk_review._risk_review_exits(
-        owner, None, [], run_id="r1", total_value=1000.0,
+        owner,
+        None,
+        [],
+        run_id="r1",
+        total_value=1000.0,
     ) == (set(), None)

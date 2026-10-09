@@ -5,6 +5,7 @@ hand it to the one notifier factory. No LLM calls, no orders. Lives here so
 the pipeline module shrinks rather than widens when the notifier is built
 through the funnel.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,6 +26,7 @@ def run_daily_export(pipeline) -> dict:
     """
     from src.notifier import build_daily_csv, build_default_notifier
     from src.trading_calendar import et_today
+
     try:
         closes = pipeline.broker.get_full_portfolio_history()
         if not closes:
@@ -45,7 +47,8 @@ def run_daily_export(pipeline) -> dict:
             # failure, just nowhere to deliver it.
             logger.info(
                 "run_daily: built %d-row CSV %s but Telegram is disabled",
-                len(closes), filename,
+                len(closes),
+                filename,
             )
             return {"status": "skipped", **base}
         # Enabled but the upload failed (network / API / rate limit).

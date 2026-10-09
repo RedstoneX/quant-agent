@@ -377,15 +377,6 @@ tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt | desk-decisi
 tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt | desk-decision | a2c7374c3f14
 tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt | desk-decision | fbcefd401572
 tests/test_broker.py | broker-order-id | 3ae36a46d989
-tests/test_broker.py | broker-order-id | 7837cd53a2c3
 tests/test_broker.py | broker-order-id | acbcd75fd0e9
-tests/test_broker.py | broker-order-id | cabadbf24af8
-tests/test_stop_out_reconciliation.py | broker-order-id | 040b822b6fe4
-tests/test_stop_out_reconciliation.py | broker-order-id | 4aaecf1ce7c1
-tests/test_stop_out_reconciliation.py | broker-order-id | 4aaecf1ce7c1
-tests/test_stop_out_reconciliation.py | broker-order-id | 4aaecf1ce7c1
-tests/test_stop_out_reconciliation.py | broker-order-id | 548a0a1dd3ea
-tests/test_stop_out_reconciliation.py | broker-order-id | 8224fd7fad7b
 tests/test_stop_out_reconciliation.py | broker-order-id | d615ea06388d
-tests/test_stop_out_reconciliation.py | broker-order-id | f3059dfae060
 tests/test_stop_out_reconciliation.py | broker-order-id | ff076e58ad6b

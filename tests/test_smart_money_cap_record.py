@@ -1,4 +1,5 @@
 """The smart-money text caps emit a counted row on every evaluation."""
+
 import logging
 
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent as A

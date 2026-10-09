@@ -1,4 +1,5 @@
 """Entry-order catch-alls are loud: traceback + counted row; clean pass has its own row."""
+
 from __future__ import annotations
 
 import logging
@@ -13,8 +14,7 @@ from src.sentinel import reconciliation
 @pytest.fixture
 def rows(monkeypatch):
     seen = []
-    monkeypatch.setattr(reconciliation, "record_reconciliation",
-                        lambda **kw: seen.append((kw["kind"], kw["result"])))
+    monkeypatch.setattr(reconciliation, "record_reconciliation", lambda **kw: seen.append((kw["kind"], kw["result"])))
     return seen
 
 

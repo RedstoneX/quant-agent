@@ -5,6 +5,7 @@ now the first argument); `ExitEngineMixin._risk_review_exits` is a one-line shim
 same signature. Sell-side code. Since 2026-10-09 the seat is advisory on
 exits: it records objections and never removes an exit (see the docstring).
 """
+
 import importlib
 import logging
 
@@ -14,10 +15,18 @@ logger = logging.getLogger("src.pipeline")
 
 
 def _risk_review_exits(
-    owner, review, positions, *, run_id: str, total_value: float,
-    macro_summary: dict | None = None, position_facts: dict | None = None,
-    news_intel=None, earnings_analyses: list | None = None,
-    cash: float | None = None, reserve_balance: float = 0.0,
+    owner,
+    review,
+    positions,
+    *,
+    run_id: str,
+    total_value: float,
+    macro_summary: dict | None = None,
+    position_facts: dict | None = None,
+    news_intel=None,
+    earnings_analyses: list | None = None,
+    cash: float | None = None,
+    reserve_balance: float = 0.0,
     recent_performance: dict | None = None,
 ):
     """Put the reviewer's exits in front of the AI Risk Manager — Phase 3.4.
@@ -110,12 +119,15 @@ def _risk_review_exits(
     See `src/agents/risk_review_mode.py`.
     """
     from src.agents import risk_review_mode
+
     # Looked up through the original module at call time, so a test that patches
     # `src.pipeline_exits._reason_cites_hard_trigger` still reaches this body
     # (a static import would also make an import cycle: pipeline_exits -> here).
     _reason_cites_hard_trigger = importlib.import_module("src.pipeline_exits")._reason_cites_hard_trigger
     from src.models import (
-        ExitReviewChain, PortfolioDecision, TradeDecision,
+        ExitReviewChain,
+        PortfolioDecision,
+        TradeDecision,
     )
     from src.risk.exit_refusal import (
         CODE_AI_RISK_OBJECTION,
@@ -128,10 +140,7 @@ def _risk_review_exits(
     # COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
     # fix): a short's exit must reach the AI Risk Manager exactly like a
     # long's does, not skip it.
-    exits = [
-        a for a in (review.actions if review else [])
-        if a.action in ("SELL", "REDUCE", "COVER")
-    ]
+    exits = [a for a in (review.actions if review else []) if a.action in ("SELL", "REDUCE", "COVER")]
     if not exits:
         return set(), None
 
@@ -148,7 +157,8 @@ def _risk_review_exits(
         # owner already refused. Record here so the skip is durable if
         # execute is not reached; the executor still drops.
         judgment = classify_trigger_reason(
-            action.reason, cites=_reason_cites_hard_trigger,
+            action.reason,
+            cites=_reason_cites_hard_trigger,
             trigger=getattr(action, "exit_trigger", None),
             trigger_evidence=getattr(action, "trigger_evidence", None),
         )
@@ -157,11 +167,15 @@ def _risk_review_exits(
                 "AI Risk exit review: not sending %s %s — reason names "
                 "no recognised trigger; deterministic owner refuses "
                 "before the challenge seat.",
-                action.action, symbol,
+                action.action,
+                symbol,
             )
             owner._record_exit_refusal(
-                symbol=symbol, run_id=run_id, action=action.action,
-                code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
+                symbol=symbol,
+                run_id=run_id,
+                action=action.action,
+                code=CODE_UNRECOGNIZED_TRIGGER,
+                dropped=True,
                 detail=str(action.reason or "")[:400],
                 layer="hard_trigger",
             )
@@ -171,11 +185,16 @@ def _risk_review_exits(
                 "AI Risk exit review: hard-trigger recogniser raised "
                 "on %s %s — failing OPEN on that gate, sending the "
                 "exit to the challenge seat. Reason was: %r",
-                action.action, symbol, str(action.reason)[:200],
+                action.action,
+                symbol,
+                str(action.reason)[:200],
             )
             owner._record_exit_refusal(
-                symbol=symbol, run_id=run_id, action=action.action,
-                code=CODE_HARD_TRIGGER_UNCERTAIN, dropped=False,
+                symbol=symbol,
+                run_id=run_id,
+                action=action.action,
+                code=CODE_HARD_TRIGGER_UNCERTAIN,
+                dropped=False,
                 detail=str(action.reason or "")[:400],
                 layer="hard_trigger",
             )
@@ -185,17 +204,21 @@ def _risk_review_exits(
         # ExecutionStage decision path already uses it), and mislabeling
         # a short's exit as a stock sale is exactly the "reads a winning
         # short as a loser" failure this fix exists to close.
-        decisions.append(TradeDecision(
-            action="SELL" if action.action in ("SELL", "REDUCE") else "COVER",
-            symbol=symbol,
-            # 100 = full exit (SELL and COVER are both full closes on
-            # this path); REDUCE is a partial whose exact fraction the
-            # executor derives. The RM is being asked to judge WHETHER the
-            # exit is sound, not to re-size it.
-            allocation_pct=100.0 if action.action in ("SELL", "COVER") else 50.0,
-            entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-            reasoning=str(action.reason or "")[:500],
-        ))
+        decisions.append(
+            TradeDecision(
+                action="SELL" if action.action in ("SELL", "REDUCE") else "COVER",
+                symbol=symbol,
+                # 100 = full exit (SELL and COVER are both full closes on
+                # this path); REDUCE is a partial whose exact fraction the
+                # executor derives. The RM is being asked to judge WHETHER the
+                # exit is sound, not to re-size it.
+                allocation_pct=100.0 if action.action in ("SELL", "COVER") else 50.0,
+                entry_price=0.0,
+                stop_loss=0.0,
+                take_profit=0.0,
+                reasoning=str(action.reason or "")[:500],
+            )
+        )
     if not decisions:
         return set(), None
 
@@ -248,7 +271,11 @@ def _risk_review_exits(
         record_exit_guard(owner, "exit_review.position_history")
     except Exception as e:  # noqa: BLE001
         record_exit_guard(
-            owner, "exit_review.position_history", e, logger, effect="seat sees holding ages as unknown",
+            owner,
+            "exit_review.position_history",
+            e,
+            logger,
+            effect="seat sees holding ages as unknown",
         )
         exit_position_history = {}
 
@@ -270,9 +297,7 @@ def _risk_review_exits(
             reserve_balance=reserve_balance or 0.0,
             recent_performance=recent_performance or {},
             position_history=exit_position_history,
-            event_risk_block=owner._exit_event_risk_block(
-                sorted({d.symbol for d in decisions})
-            ),
+            event_risk_block=owner._exit_event_risk_block(sorted({d.symbol for d in decisions})),
             # Tells the renderer which review this is. Without it the
             # exit path is rendered as a morning plan and the seat is told
             # two audit steps were skipped that do not exist here.
@@ -283,9 +308,11 @@ def _risk_review_exits(
         record_exit_guard(owner, "exit_review.risk_review", e, logger, effect="fails OPEN: exits proceed unreviewed")
         for d in decisions:
             owner._record_exit_refusal(
-                symbol=d.symbol, run_id=run_id,
+                symbol=d.symbol,
+                run_id=run_id,
                 action=original_action_by_symbol.get(d.symbol, d.action),
-                code=CODE_AI_RISK_UNAVAILABLE, dropped=False,
+                code=CODE_AI_RISK_UNAVAILABLE,
+                dropped=False,
                 detail=f"risk manager raised: {e}"[:400],
                 layer="ai_risk",
             )
@@ -293,7 +320,8 @@ def _risk_review_exits(
 
     try:
         owner.db.insert_agent_log(
-            agent_name="risk_manager", run_id=run_id,
+            agent_name="risk_manager",
+            run_id=run_id,
             input_summary=f"exit review: {len(decisions)} exit(s)",
             input_message=rm_result.user_message,
             output_summary=f"Approved: {verdict.approved if verdict else 'error'}",
@@ -311,14 +339,16 @@ def _risk_review_exits(
 
     if verdict is None:
         logger.error(
-            "AI Risk exit review returned no verdict — failing OPEN: "
-            "%d exit(s) proceed unreviewed.", len(decisions),
+            "AI Risk exit review returned no verdict — failing OPEN: %d exit(s) proceed unreviewed.",
+            len(decisions),
         )
         for d in decisions:
             owner._record_exit_refusal(
-                symbol=d.symbol, run_id=run_id,
+                symbol=d.symbol,
+                run_id=run_id,
                 action=original_action_by_symbol.get(d.symbol, d.action),
-                code=CODE_AI_RISK_UNAVAILABLE, dropped=False,
+                code=CODE_AI_RISK_UNAVAILABLE,
+                dropped=False,
                 detail="risk manager returned no verdict",
                 layer="ai_risk",
             )
@@ -334,8 +364,7 @@ def _risk_review_exits(
     rejections = verdict.rejections_by_symbol()
     if verdict.approved:
         objection_reasons = {
-            d.symbol: rejections[d.symbol.strip().upper()]
-            for d in decisions if d.symbol.strip().upper() in rejections
+            d.symbol: rejections[d.symbol.strip().upper()] for d in decisions if d.symbol.strip().upper() in rejections
         }
     else:
         objection_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
@@ -343,28 +372,36 @@ def _risk_review_exits(
     if not objection_reasons:
         logger.info(
             "AI Risk approved %d exit(s): %s",
-            len(decisions), (verdict.reasoning or "")[:200],
+            len(decisions),
+            (verdict.reasoning or "")[:200],
         )
     else:
         objected = sorted(objection_reasons)
         logger.warning(
             "AI Risk OBJECTED to %d of %d exit(s) %s — advisory only, the "
             "sell(s) proceed to the fact gates. Reason: %s",
-            len(objected), len(decisions), objected,
+            len(objected),
+            len(decisions),
+            objected,
             (verdict.reasoning or "")[:300],
         )
         for symbol in objected:
             owner._record_exit_refusal(
-                symbol=symbol, run_id=run_id,
+                symbol=symbol,
+                run_id=run_id,
                 action=original_action_by_symbol.get(symbol, "SELL"),
-                code=CODE_AI_RISK_OBJECTION, dropped=False,
+                code=CODE_AI_RISK_OBJECTION,
+                dropped=False,
                 detail=(objection_reasons[symbol] or "")[:400],
                 layer="ai_risk",
             )
     # The exits the seat approved, beside the ones it objected to (an
     # objection is not an approval, so those are excluded here).
     owner._record_exit_review_approvals(
-        decisions, set(objection_reasons), verdict, run_id=run_id,
+        decisions,
+        set(objection_reasons),
+        verdict,
+        run_id=run_id,
         original_action_by_symbol=original_action_by_symbol,
     )
     return set(), verdict

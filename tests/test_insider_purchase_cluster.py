@@ -19,7 +19,9 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.smart_money import SECForm4Provider
 from src.data.smart_money_cluster import insider_purchase_clusters
 from src.models import (
-    InsiderPurchaseCluster, SmartMoneyFinding, SmartMoneyObservation,
+    InsiderPurchaseCluster,
+    SmartMoneyFinding,
+    SmartMoneyObservation,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -29,22 +31,41 @@ UNIVERSE = {"NVDA"}
 
 
 def _buy(
-    *, owner="1", symbol="NVDA", day=DAY, code="P", direction="buy",
-    signal_class="opportunistic", value=150_000.0, amendment=False,
-    accession=None, disclosed=None,
+    *,
+    owner="1",
+    symbol="NVDA",
+    day=DAY,
+    code="P",
+    direction="buy",
+    signal_class="opportunistic",
+    value=150_000.0,
+    amendment=False,
+    accession=None,
+    disclosed=None,
 ):
     disclosed = disclosed or day + timedelta(days=2)
     return SmartMoneyObservation(
-        symbol=symbol, stream="insider", actor=f"Owner {owner}",
-        actor_cik=owner, direction=direction, transaction_date=day,
+        symbol=symbol,
+        stream="insider",
+        actor=f"Owner {owner}",
+        actor_cik=owner,
+        direction=direction,
+        transaction_date=day,
         disclosure_date=disclosed,
         source_url="https://www.sec.gov/x.txt",
         accession_number=accession or f"000000000{owner}-26-{day:%m%d}",
-        filing_form="4/A" if amendment else "4", amendment=amendment,
-        transaction_code=code, transaction_row=0, shares=value / 100,
-        price_per_share=100, transaction_value_usd=value,
-        lag_days=2, disclosure_age_days=0, freshness="fresh",
-        economic_role="confirmatory", signal_class=signal_class,
+        filing_form="4/A" if amendment else "4",
+        amendment=amendment,
+        transaction_code=code,
+        transaction_row=0,
+        shares=value / 100,
+        price_per_share=100,
+        transaction_value_usd=value,
+        lag_days=2,
+        disclosure_age_days=0,
+        freshness="fresh",
+        economic_role="confirmatory",
+        signal_class=signal_class,
     )
 
 
@@ -56,11 +77,14 @@ def _clusters(rows, universe=UNIVERSE):
 # detection
 # --------------------------------------------------------------------------
 
+
 def test_two_distinct_insiders_same_day_is_a_cluster_with_its_facts():
-    got = _clusters([
-        _buy(owner="1", value=100_000),
-        _buy(owner="2", value=250_000, disclosed=DAY + timedelta(days=3)),
-    ])
+    got = _clusters(
+        [
+            _buy(owner="1", value=100_000),
+            _buy(owner="2", value=250_000, disclosed=DAY + timedelta(days=3)),
+        ]
+    )
     cluster = got["NVDA"]
     assert cluster.transaction_date == DAY
     assert cluster.distinct_insiders == 2
@@ -71,49 +95,84 @@ def test_two_distinct_insiders_same_day_is_a_cluster_with_its_facts():
 
 
 def test_next_day_purchases_are_not_a_cluster():
-    assert _clusters([
-        _buy(owner="1", day=DAY),
-        _buy(owner="2", day=DAY + timedelta(days=1)),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1", day=DAY),
+                _buy(owner="2", day=DAY + timedelta(days=1)),
+            ]
+        )
+        == {}
+    )
 
 
 def test_a_routine_purchase_does_not_count_toward_a_cluster():
-    assert _clusters([
-        _buy(owner="1"),
-        _buy(owner="2", signal_class="routine"),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1"),
+                _buy(owner="2", signal_class="routine"),
+            ]
+        )
+        == {}
+    )
 
 
 def test_an_indeterminate_purchase_does_not_count_toward_a_cluster():
-    assert _clusters([
-        _buy(owner="1"),
-        _buy(owner="2", signal_class="indeterminate"),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1"),
+                _buy(owner="2", signal_class="indeterminate"),
+            ]
+        )
+        == {}
+    )
 
 
 def test_sales_are_not_a_cluster_and_do_not_complete_one():
-    assert _clusters([
-        _buy(owner="1", code="S", direction="sell"),
-        _buy(owner="2", code="S", direction="sell"),
-    ]) == {}
-    assert _clusters([
-        _buy(owner="1"),
-        _buy(owner="2", code="S", direction="sell"),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1", code="S", direction="sell"),
+                _buy(owner="2", code="S", direction="sell"),
+            ]
+        )
+        == {}
+    )
+    assert (
+        _clusters(
+            [
+                _buy(owner="1"),
+                _buy(owner="2", code="S", direction="sell"),
+            ]
+        )
+        == {}
+    )
 
 
 def test_one_insider_buying_twice_the_same_day_is_not_a_cluster():
-    assert _clusters([
-        _buy(owner="1", accession="0000000001-26-000001"),
-        _buy(owner="1", accession="0000000001-26-000002"),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1", accession="0000000001-26-000001"),
+                _buy(owner="1", accession="0000000001-26-000002"),
+            ]
+        )
+        == {}
+    )
 
 
 def test_an_amendment_is_not_a_second_purchase():
-    assert _clusters([
-        _buy(owner="1"),
-        _buy(owner="2", amendment=True),
-    ]) == {}
+    assert (
+        _clusters(
+            [
+                _buy(owner="1"),
+                _buy(owner="2", amendment=True),
+            ]
+        )
+        == {}
+    )
 
 
 def test_a_symbol_outside_the_universe_never_gets_a_cluster():
@@ -124,11 +183,15 @@ def test_a_symbol_outside_the_universe_never_gets_a_cluster():
 
 def test_the_most_recent_cluster_is_the_one_recorded():
     later = DAY + timedelta(days=5)
-    got = _clusters([
-        _buy(owner="1"), _buy(owner="2"),
-        _buy(owner="3", day=later), _buy(owner="4", day=later),
-        _buy(owner="5", day=later),
-    ])
+    got = _clusters(
+        [
+            _buy(owner="1"),
+            _buy(owner="2"),
+            _buy(owner="3", day=later),
+            _buy(owner="4", day=later),
+            _buy(owner="5", day=later),
+        ]
+    )
     assert got["NVDA"].transaction_date == later
     assert got["NVDA"].distinct_insiders == 3
 
@@ -137,25 +200,44 @@ def test_the_most_recent_cluster_is_the_one_recorded():
 # provider: stamped on universe rows only, no effect on admission or order
 # --------------------------------------------------------------------------
 
+
 def _provider_row(
-    *, symbol, owner, value, accession,
-    transaction_date=None, disclosure_date=None,
+    *,
+    symbol,
+    owner,
+    value,
+    accession,
+    transaction_date=None,
+    disclosure_date=None,
 ):
     disclosed = disclosure_date or date.today()
     txn = transaction_date if transaction_date is not None else disclosed - timedelta(days=2)
     return SmartMoneyObservation(
-        symbol=symbol, stream="insider", actor=f"Owner {owner}",
-        actor_cik=owner, actor_roles=["director"], direction="buy",
+        symbol=symbol,
+        stream="insider",
+        actor=f"Owner {owner}",
+        actor_cik=owner,
+        actor_roles=["director"],
+        direction="buy",
         transaction_date=txn,
         disclosure_date=disclosed,
         accepted_at=datetime.combine(disclosed, datetime.min.time(), tzinfo=ET),
         source_url=f"https://www.sec.gov/{accession}.txt",
-        accession_number=accession, filing_form="4", transaction_code="P",
-        transaction_row=0, security_title="Common Stock", shares=value / 100,
-        price_per_share=100, transaction_value_usd=value,
-        post_transaction_shares=10_000, ownership_nature="direct",
-        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=0,
-        freshness="fresh", economic_role="confirmatory",
+        accession_number=accession,
+        filing_form="4",
+        transaction_code="P",
+        transaction_row=0,
+        security_title="Common Stock",
+        shares=value / 100,
+        price_per_share=100,
+        transaction_value_usd=value,
+        post_transaction_shares=10_000,
+        ownership_nature="direct",
+        listed_exchange="Nasdaq",
+        lag_days=2,
+        disclosure_age_days=0,
+        freshness="fresh",
+        economic_role="confirmatory",
     )
 
 
@@ -167,9 +249,7 @@ def test_fetch_stamps_the_cluster_on_universe_rows_and_leaves_others_alone(tmp_p
         _provider_row(symbol="XYZ", owner="3", value=300_000, accession="0000000003-26-000001"),
         _provider_row(symbol="XYZ", owner="4", value=300_000, accession="0000000004-26-000001"),
     ]
-    provider.stores.observations_path.write_text(json.dumps(
-        [row.model_dump(mode="json") for row in rows]
-    ))
+    provider.stores.observations_path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
     got, error = provider.fetch(["NVDA"])
     assert error is None
     nvda = [row for row in got if row.symbol == "NVDA"]
@@ -187,10 +267,7 @@ def test_a_cluster_does_not_change_the_seats_symbol_ranking():
     plain = [_buy(owner="1"), _buy(owner="2")]
     stamped_cluster = _clusters(plain)["NVDA"]
     stamped = [row.model_copy(update={"purchase_cluster": stamped_cluster}) for row in plain]
-    assert (
-        SmartMoneyAnalystAgent._symbol_rank("NVDA", plain)
-        == SmartMoneyAnalystAgent._symbol_rank("NVDA", stamped)
-    )
+    assert SmartMoneyAnalystAgent._symbol_rank("NVDA", plain) == SmartMoneyAnalystAgent._symbol_rank("NVDA", stamped)
 
 
 def test_the_seat_is_handed_the_cluster_fact_and_null_without_one():
@@ -223,21 +300,30 @@ def test_evidence_hash_tracks_the_cluster_but_not_its_age():
 # --------------------------------------------------------------------------
 
 _CLUSTER = InsiderPurchaseCluster(
-    transaction_date=DAY, distinct_insiders=2, insider_ciks=["1", "2"],
-    combined_value_usd=300_000, latest_disclosure_date=DAY,
+    transaction_date=DAY,
+    distinct_insiders=2,
+    insider_ciks=["1", "2"],
+    combined_value_usd=300_000,
+    latest_disclosure_date=DAY,
     filing_age_days=9,
 )
 
 
 def _finding(*, role="confirmatory", stance="bullish", cluster=_CLUSTER, stream="insider"):
-    row = _buy(owner="1").model_copy(update={
-        "purchase_cluster": cluster, "stream": stream,
-    })
+    row = _buy(owner="1").model_copy(
+        update={
+            "purchase_cluster": cluster,
+            "stream": stream,
+        }
+    )
     if stance == "bearish":
         row = row.model_copy(update={"direction": "sell", "transaction_code": "S"})
     return SmartMoneyFinding(
-        symbol="NVDA", stance=stance, economic_role=role,
-        summary="insiders bought", why_now="fresh Form 4 purchases",
+        symbol="NVDA",
+        stance=stance,
+        economic_role=role,
+        summary="insiders bought",
+        why_now="fresh Form 4 purchases",
         observations=[row],
     )
 
@@ -248,8 +334,7 @@ def test_a_cluster_lifts_medium_to_high():
 
 
 def test_the_lift_is_recorded_as_evidence():
-    evidence = [e for e in _finding().to_verdict().evidence
-                if e.label == "insider_purchase_cluster"]
+    evidence = [e for e in _finding().to_verdict().evidence if e.label == "insider_purchase_cluster"]
     assert len(evidence) == 1
     assert evidence[0].value == 300_000
     assert evidence[0].as_of == DAY
@@ -281,6 +366,7 @@ def test_the_lift_does_not_apply_to_a_bearish_or_neutral_read():
 # actual behaviour, not a fixture of real filings, and is reported as such.
 # --------------------------------------------------------------------------
 
+
 def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_the_seat_sees_it(tmp_path):
     """The rescued cluster's OWN rows can be truncated by higher-dollar solo
     buys of the same symbol, but the cluster FACT still reaches the seat.
@@ -305,29 +391,41 @@ def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_t
     # owners and accessions, far enough from the rescue pair's date (more
     # than cluster_window_days=2) to form their own separate window.
     for i in range(40):
-        rows.append(_provider_row(
-            symbol="CORE", owner=f"solo-{i}", value=500_000,
-            accession=f"0000000100-26-{i:06d}",
-            transaction_date=today - timedelta(days=10),
-            disclosure_date=today,
-        ))
+        rows.append(
+            _provider_row(
+                symbol="CORE",
+                owner=f"solo-{i}",
+                value=500_000,
+                accession=f"0000000100-26-{i:06d}",
+                transaction_date=today - timedelta(days=10),
+                disclosure_date=today,
+            )
+        )
     # Two distinct insiders, same day, each below the $100k threshold alone
     # ($60k) but $120k combined -- rescued by cluster_survivors's window
     # rule, and independently a same-day opportunistic purchase cluster
     # (the fact that lifts conviction).
-    rows.append(_provider_row(
-        symbol="CORE", owner="rescue-1", value=60_000,
-        accession="0000000200-26-000001",
-        transaction_date=today - timedelta(days=1), disclosure_date=today,
-    ))
-    rows.append(_provider_row(
-        symbol="CORE", owner="rescue-2", value=60_000,
-        accession="0000000200-26-000002",
-        transaction_date=today - timedelta(days=1), disclosure_date=today,
-    ))
-    provider.stores.observations_path.write_text(json.dumps(
-        [row.model_dump(mode="json") for row in rows]
-    ))
+    rows.append(
+        _provider_row(
+            symbol="CORE",
+            owner="rescue-1",
+            value=60_000,
+            accession="0000000200-26-000001",
+            transaction_date=today - timedelta(days=1),
+            disclosure_date=today,
+        )
+    )
+    rows.append(
+        _provider_row(
+            symbol="CORE",
+            owner="rescue-2",
+            value=60_000,
+            accession="0000000200-26-000002",
+            transaction_date=today - timedelta(days=1),
+            disclosure_date=today,
+        )
+    )
+    provider.stores.observations_path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
     got, error = provider.fetch(["CORE"])
     assert error is None
     assert len(got) == provider.max_observations == 40
@@ -339,8 +437,7 @@ def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_t
     # cap (asserted next), so losing these specific rows does not starve the
     # seat. If this assertion changes, the crowd-out behaviour changed too.
     assert rescued == [], (
-        "cluster-rescued rows unexpectedly survived truncation — the "
-        "crowd-out scenario this test relies on has changed"
+        "cluster-rescued rows unexpectedly survived truncation — the crowd-out scenario this test relies on has changed"
     )
 
     # The cluster FACT reaches the seat anyway: every surviving row of the
@@ -376,6 +473,7 @@ def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_t
 # tests above do.
 # --------------------------------------------------------------------------
 
+
 def test_an_established_recurring_monthly_buyer_is_excluded_from_the_cluster():
     """Two insiders each with four prior monthly purchases of the same small
     dollar amount (an ESPP-shaped pattern) buy again, same day, same symbol.
@@ -387,30 +485,27 @@ def test_an_established_recurring_monthly_buyer_is_excluded_from_the_cluster():
     from src.data.insider_signal import InsiderHistory, InsiderPriorTrade, classify_transaction
 
     today = date(2026, 9, 19)
-    history = InsiderHistory({
-        ("espp-1", "TSM"): [
-            InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
-            for d in (120, 90, 60, 30)
-        ],
-        ("espp-2", "TSM"): [
-            InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
-            for d in (121, 91, 61, 31)
-        ],
-    })
+    history = InsiderHistory(
+        {
+            ("espp-1", "TSM"): [
+                InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
+                for d in (120, 90, 60, 30)
+            ],
+            ("espp-2", "TSM"): [
+                InsiderPriorTrade(transaction_date=today - timedelta(days=d), direction="buy")
+                for d in (121, 91, 61, 31)
+            ],
+        }
+    )
     newest = [
-        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000,
-             accession="espp-1-newest"),
-        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500,
-             accession="espp-2-newest"),
+        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000, accession="espp-1-newest"),
+        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500, accession="espp-2-newest"),
     ]
     verdicts = [classify_transaction(row, history) for row in newest]
     assert [v.label for v in verdicts] == ["routine", "routine"]
     assert all(v.reason == "recurring_cadence" for v in verdicts)
 
-    stamped = [
-        row.model_copy(update={"signal_class": v.label})
-        for row, v in zip(newest, verdicts)
-    ]
+    stamped = [row.model_copy(update={"signal_class": v.label}) for row, v in zip(newest, verdicts)]
     clusters = insider_purchase_clusters(stamped, universe={"TSM"}, today=today)
     assert "TSM" not in clusters
 
@@ -448,6 +543,7 @@ def test_a_brand_new_participants_first_purchase_has_no_history_to_classify_rout
 # that some row of that symbol survives.
 # --------------------------------------------------------------------------
 
+
 def test_a_cluster_survives_cross_symbol_crowd_out_by_unrelated_higher_dollar_buys(tmp_path):
     """CLUSTERED has ONLY its two cluster-member rows -- no other row for
     that symbol exists anywhere in the cache. 45 unrelated symbols each
@@ -466,29 +562,41 @@ def test_a_cluster_survives_cross_symbol_crowd_out_by_unrelated_higher_dollar_bu
     today = date.today()
     rows = []
     for i in range(45):
-        rows.append(_provider_row(
-            symbol=f"CROWD{i}", owner=f"solo-{i}", value=1_000_000,
-            accession=f"0000000300-26-{i:06d}",
-            transaction_date=today - timedelta(days=10),
-            disclosure_date=today,
-        ))
+        rows.append(
+            _provider_row(
+                symbol=f"CROWD{i}",
+                owner=f"solo-{i}",
+                value=1_000_000,
+                accession=f"0000000300-26-{i:06d}",
+                transaction_date=today - timedelta(days=10),
+                disclosure_date=today,
+            )
+        )
     # CLUSTERED: two distinct insiders, same day, each below the $100k core
     # threshold alone ($60k) but $120k combined -- rescued into
     # `cluster_survivors` by the two-owner window rule, and independently a
     # same-day opportunistic `insider_purchase_clusters` cluster.
-    rows.append(_provider_row(
-        symbol="CLUSTERED", owner="rescue-1", value=60_000,
-        accession="0000000400-26-000001",
-        transaction_date=today - timedelta(days=1), disclosure_date=today,
-    ))
-    rows.append(_provider_row(
-        symbol="CLUSTERED", owner="rescue-2", value=60_000,
-        accession="0000000400-26-000002",
-        transaction_date=today - timedelta(days=1), disclosure_date=today,
-    ))
-    provider.stores.observations_path.write_text(json.dumps(
-        [row.model_dump(mode="json") for row in rows]
-    ))
+    rows.append(
+        _provider_row(
+            symbol="CLUSTERED",
+            owner="rescue-1",
+            value=60_000,
+            accession="0000000400-26-000001",
+            transaction_date=today - timedelta(days=1),
+            disclosure_date=today,
+        )
+    )
+    rows.append(
+        _provider_row(
+            symbol="CLUSTERED",
+            owner="rescue-2",
+            value=60_000,
+            accession="0000000400-26-000002",
+            transaction_date=today - timedelta(days=1),
+            disclosure_date=today,
+        )
+    )
+    provider.stores.observations_path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
     symbols = ["CLUSTERED"] + [f"CROWD{i}" for i in range(45)]
     got, error = provider.fetch(symbols)
     assert error is None
@@ -517,12 +625,12 @@ def test_cross_symbol_reservation_is_bounded_and_does_not_starve_everything():
     non-clustered rows, one per reserved symbol.
     """
     from src.data.smart_money_cluster import (
-        MAX_CLUSTER_RESERVED_SLOTS, reserve_cluster_symbols as _reserve_cluster_symbols,
+        MAX_CLUSTER_RESERVED_SLOTS,
+        reserve_cluster_symbols as _reserve_cluster_symbols,
     )
 
     def _row(symbol, value, cik):
-        return _buy(owner=cik, symbol=symbol, value=value, day=DAY,
-                    accession=f"{cik}-{symbol}")
+        return _buy(owner=cik, symbol=symbol, value=value, day=DAY, accession=f"{cik}-{symbol}")
 
     # 10 clustered symbols, each with exactly one overflow row, competing
     # against 40 unrelated higher-value rows that fill the whole cap.
@@ -551,10 +659,8 @@ def test_a_routine_cluster_gets_no_reserved_slot():
     """
     today = date(2026, 9, 19)
     routine_pair = [
-        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000,
-             signal_class="routine", accession="espp-1-x"),
-        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500,
-             signal_class="routine", accession="espp-2-x"),
+        _buy(owner="espp-1", symbol="TSM", day=today, value=4_000, signal_class="routine", accession="espp-1-x"),
+        _buy(owner="espp-2", symbol="TSM", day=today, value=4_500, signal_class="routine", accession="espp-2-x"),
     ]
     clusters = insider_purchase_clusters(routine_pair, universe={"TSM"}, today=today)
     assert "TSM" not in clusters

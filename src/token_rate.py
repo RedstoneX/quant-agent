@@ -64,9 +64,7 @@ class TokenRateGovernor:
         clock=time.monotonic,
     ):
         if tokens_per_minute <= 0:
-            raise ValueError(
-                f"{name}: tokens_per_minute must be positive, got {tokens_per_minute}"
-            )
+            raise ValueError(f"{name}: tokens_per_minute must be positive, got {tokens_per_minute}")
         self.name = name
         self.tokens_per_minute = int(tokens_per_minute)
         self.max_wait_s = float(max_wait_s)
@@ -129,7 +127,10 @@ class TokenRateGovernor:
                             "%s token-rate governor held a request for %.1fs to "
                             "stay under %d tokens/min (request ~%d tokens). This "
                             "is the desk pacing itself, not a provider error.",
-                            self.name, waited, self.tokens_per_minute, tokens,
+                            self.name,
+                            waited,
+                            self.tokens_per_minute,
+                            tokens,
                         )
                     return waited
                 if now >= deadline:
@@ -143,7 +144,10 @@ class TokenRateGovernor:
                         "Proceeding so the session is not stranded, but the "
                         "ceiling or the request size is wrong — this is the "
                         "condition the governor exists to prevent.",
-                        self.name, tokens, in_window, self.tokens_per_minute,
+                        self.name,
+                        tokens,
+                        in_window,
+                        self.tokens_per_minute,
                         self.max_wait_s,
                     )
                     return waited

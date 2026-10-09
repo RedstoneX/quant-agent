@@ -55,9 +55,7 @@ def text_inventory(name: str, text: str) -> dict[str, object]:
     classes: dict[str, list[str]] = {}
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
-            classes[node.name] = sorted(
-                child.name for child in node.body if isinstance(child, _FUNC)
-            )
+            classes[node.name] = sorted(child.name for child in node.body if isinstance(child, _FUNC))
     return {"module_functions": functions, "classes": dict(sorted(classes.items()))}
 
 

@@ -7,6 +7,7 @@ loss-protection latency with it. These tests pin the decoupling and, just as
 importantly, pin that the paid tick still runs the same work through the same
 single implementation -- the change is additive, never a removal.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -89,11 +90,7 @@ def test_wrapper_exempts_intra_safety_from_the_once_per_day_and_session_locks():
 
 
 def _oncalendar(unit: Path) -> list[str]:
-    return [
-        line.split("=", 1)[1].strip()
-        for line in unit.read_text().splitlines()
-        if line.startswith("OnCalendar=")
-    ]
+    return [line.split("=", 1)[1].strip() for line in unit.read_text().splitlines() if line.startswith("OnCalendar=")]
 
 
 def test_safety_timer_exists_and_runs_the_safety_mode():

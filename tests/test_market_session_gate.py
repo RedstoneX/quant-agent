@@ -12,6 +12,7 @@ open. The weekday-and-clock window is a last resort used only when the
 calendar bounds nothing, and the fail-open is reached only when both
 sources are unreadable, where it is logged and the reason names the cause.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ _FRI_1005 = datetime(2026, 9, 11, 10, 5, tzinfo=ET).astimezone(timezone.utc)
 
 
 # ---- confirmed closed answers stop placement; unreadable may fall open ----
+
 
 def test_session_gate_says_shut_on_a_non_trading_day():
     broker = MagicMock()

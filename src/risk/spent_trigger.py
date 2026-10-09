@@ -204,10 +204,12 @@ CODE_TRIGGER_UNIDENTIFIABLE = "trigger_record_unidentifiable"
 
 #: See the module docstring. A stop firing is a price fact; declining to
 #: substantiate is not a trigger. Everything else is spendable.
-NON_SPENDABLE_TRIGGERS: frozenset[ExitTrigger] = frozenset({
-    ExitTrigger.STOP_FIRED,
-    ExitTrigger.CANNOT_SUBSTANTIATE,
-})
+NON_SPENDABLE_TRIGGERS: frozenset[ExitTrigger] = frozenset(
+    {
+        ExitTrigger.STOP_FIRED,
+        ExitTrigger.CANNOT_SUBSTANTIATE,
+    }
+)
 
 _PUNCT = re.compile(r"[^0-9a-z]+")
 
@@ -253,12 +255,17 @@ class ActedTrigger:
     broker_order_id: str = ""
 
     def to_json(self) -> str:
-        return json.dumps({
-            "symbol": self.symbol, "trigger": self.trigger,
-            "evidence": self.evidence, "fingerprint": self.fingerprint,
-            "action": self.action, "run_id": self.run_id,
-            "broker_order_id": self.broker_order_id,
-        })
+        return json.dumps(
+            {
+                "symbol": self.symbol,
+                "trigger": self.trigger,
+                "evidence": self.evidence,
+                "fingerprint": self.fingerprint,
+                "action": self.action,
+                "run_id": self.run_id,
+                "broker_order_id": self.broker_order_id,
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -278,8 +285,7 @@ class SpentTriggerCheck:
     ``uncertain``       — the record could not be read. Fails OPEN.
     """
 
-    verdict: Literal["spent", "new_evidence", "unidentifiable",
-                     "not_applicable", "uncertain"]
+    verdict: Literal["spent", "new_evidence", "unidentifiable", "not_applicable", "uncertain"]
     detail: str = ""
     prior: ActedTrigger | None = None
     code: str = ""
@@ -289,9 +295,9 @@ class SpentTriggerCheck:
         return self.verdict == "spent"
 
 
-def acted_trigger_payload(*, symbol: str, trigger: object, evidence: object,
-                          action: str, run_id: str,
-                          broker_order_id: str = "") -> ActedTrigger | None:
+def acted_trigger_payload(
+    *, symbol: str, trigger: object, evidence: object, action: str, run_id: str, broker_order_id: str = ""
+) -> ActedTrigger | None:
     """The record to persist after a sell-side order is submitted.
 
     None when the action carried no spendable trigger — there is then
@@ -303,9 +309,13 @@ def acted_trigger_payload(*, symbol: str, trigger: object, evidence: object,
         return None
     text = str(evidence or "")
     return ActedTrigger(
-        symbol=(symbol or "").upper(), trigger=t.value, evidence=text[:500],
-        fingerprint=evidence_fingerprint(text, t), action=action or "",
-        run_id=run_id or "", broker_order_id=str(broker_order_id or ""),
+        symbol=(symbol or "").upper(),
+        trigger=t.value,
+        evidence=text[:500],
+        fingerprint=evidence_fingerprint(text, t),
+        action=action or "",
+        run_id=run_id or "",
+        broker_order_id=str(broker_order_id or ""),
     )
 
 
@@ -315,15 +325,17 @@ def parse_acted_triggers(rows: Any) -> list[ActedTrigger]:
     for raw in rows or []:
         try:
             d = raw if isinstance(raw, dict) else json.loads(raw)
-            out.append(ActedTrigger(
-                symbol=str(d.get("symbol") or "").upper(),
-                trigger=str(d.get("trigger") or ""),
-                evidence=str(d.get("evidence") or ""),
-                fingerprint=str(d.get("fingerprint") or ""),
-                action=str(d.get("action") or ""),
-                run_id=str(d.get("run_id") or ""),
-                broker_order_id=str(d.get("broker_order_id") or ""),
-            ))
+            out.append(
+                ActedTrigger(
+                    symbol=str(d.get("symbol") or "").upper(),
+                    trigger=str(d.get("trigger") or ""),
+                    evidence=str(d.get("evidence") or ""),
+                    fingerprint=str(d.get("fingerprint") or ""),
+                    action=str(d.get("action") or ""),
+                    run_id=str(d.get("run_id") or ""),
+                    broker_order_id=str(d.get("broker_order_id") or ""),
+                )
+            )
             record_guarded_pass(NO_LEDGER, "spent_trigger.parse_acted_trigger_row", log=logger)
         except Exception as exc:  # noqa: BLE001 — one bad row is not a judgment
             record_guarded_pass(NO_LEDGER, "spent_trigger.parse_acted_trigger_row", exc, log=logger)
@@ -358,14 +370,17 @@ def keep_executed_acted_triggers(
     """
     if acted is None or executed_order_ids is None:
         return None
-    return [r for r in acted
-            if r.broker_order_id and r.broker_order_id in executed_order_ids]
+    return [r for r in acted if r.broker_order_id and r.broker_order_id in executed_order_ids]
 
 
-def spent_trigger_check(*, action: object, symbol: str, trigger: object,
-                        evidence: object,
-                        acted_today: list[ActedTrigger] | None,
-                        ) -> SpentTriggerCheck:
+def spent_trigger_check(
+    *,
+    action: object,
+    symbol: str,
+    trigger: object,
+    evidence: object,
+    acted_today: list[ActedTrigger] | None,
+) -> SpentTriggerCheck:
     """Has this trigger, on this record, already cut this name today?
 
     `acted_today` is every sell-side action already submitted for ANY
@@ -379,8 +394,7 @@ def spent_trigger_check(*, action: object, symbol: str, trigger: object,
     if acted_today is None:
         return SpentTriggerCheck(
             "uncertain",
-            "today's acted-trigger record could not be read — this layer "
-            "reaches no judgment and the exit proceeds",
+            "today's acted-trigger record could not be read — this layer reaches no judgment and the exit proceeds",
         )
     t = normalize_trigger(trigger)
     if t is None:
@@ -389,42 +403,51 @@ def spent_trigger_check(*, action: object, symbol: str, trigger: object,
         return SpentTriggerCheck("not_applicable", "no structured trigger named")
     if t in NON_SPENDABLE_TRIGGERS:
         return SpentTriggerCheck(
-            "not_applicable", f"{t.value} is never spent — see module docstring",
+            "not_applicable",
+            f"{t.value} is never spent — see module docstring",
         )
     sym = (symbol or "").upper()
-    prior = [r for r in acted_today
-             if r.symbol == sym and r.trigger == t.value]
+    prior = [r for r in acted_today if r.symbol == sym and r.trigger == t.value]
     if not prior:
         return SpentTriggerCheck(
-            "not_applicable", f"no earlier cut on {t.value} for {sym} today",
+            "not_applicable",
+            f"no earlier cut on {t.value} for {sym} today",
         )
     fp = evidence_fingerprint(evidence, t)
     if not fp:
         earlier = prior[0]
         return SpentTriggerCheck(
             "unidentifiable",
-            (f"{sym} was already cut today on {t.value} "
-             f"({earlier.action or 'sell-side'}, evidence: "
-             f"{earlier.evidence[:160]!r}) and this second cut cites no "
-             f"record beyond the trigger's own name — this layer cannot "
-             f"show it is the same record, so it is recorded and allowed, "
-             f"matching the unsubstantiated-exit posture upstream"),
-            prior=earlier, code=CODE_TRIGGER_UNIDENTIFIABLE,
+            (
+                f"{sym} was already cut today on {t.value} "
+                f"({earlier.action or 'sell-side'}, evidence: "
+                f"{earlier.evidence[:160]!r}) and this second cut cites no "
+                f"record beyond the trigger's own name — this layer cannot "
+                f"show it is the same record, so it is recorded and allowed, "
+                f"matching the unsubstantiated-exit posture upstream"
+            ),
+            prior=earlier,
+            code=CODE_TRIGGER_UNIDENTIFIABLE,
         )
     match = next((r for r in prior if r.fingerprint and r.fingerprint == fp), None)
     if match is not None:
         return SpentTriggerCheck(
             "spent",
-            (f"{sym} was already cut today on {t.value} resting on this "
-             f"same record ({match.action or 'sell-side'}, evidence: "
-             f"{match.evidence[:160]!r}); the trigger is spent"),
-            prior=match, code=CODE_TRIGGER_ALREADY_SPENT,
+            (
+                f"{sym} was already cut today on {t.value} resting on this "
+                f"same record ({match.action or 'sell-side'}, evidence: "
+                f"{match.evidence[:160]!r}); the trigger is spent"
+            ),
+            prior=match,
+            code=CODE_TRIGGER_ALREADY_SPENT,
         )
     return SpentTriggerCheck(
         "new_evidence",
-        (f"{sym} was already cut today on {t.value}, but this cut names a "
-         f"different record ({str(evidence)[:160]!r}) — new information, "
-         f"so it is allowed and recorded for the evening grade"),
-        prior=prior[0], code=CODE_TRIGGER_SUPERSEDED,
+        (
+            f"{sym} was already cut today on {t.value}, but this cut names a "
+            f"different record ({str(evidence)[:160]!r}) — new information, "
+            f"so it is allowed and recorded for the evening grade"
+        ),
+        prior=prior[0],
+        code=CODE_TRIGGER_SUPERSEDED,
     )
-

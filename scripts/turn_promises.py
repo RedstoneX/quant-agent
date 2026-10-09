@@ -45,6 +45,7 @@ Measured against this repository's own session transcript rather than
 invented sentences — see `tests/test_work_queue.py`, whose negative cases
 are real sentences lifted from it.
 """
+
 from __future__ import annotations
 
 import json
@@ -74,7 +75,9 @@ _COMMITMENT = re.compile(
     r"|i'?m\s+about\s+to\b"
     r"|next\s+i\b"
     r"|starting\s+on\b"
-    r")", re.I)
+    r")",
+    re.I,
+)
 
 #: "Merging now." — a bare gerund opening the sentence, with an explicit
 #: "now". The "now" is required: "Running." on its own is a status report,
@@ -83,30 +86,40 @@ _GERUND_NOW = re.compile(
     r"^\W*(?:dispatching|running|building|fixing|checking|merging|rebasing"
     r"|pushing|committing|verifying|investigating|resolving|updating|writing"
     r"|reading|searching|adding|creating|opening|closing|proceeding\s+to"
-    r"|doing|starting|kicking\s+off)\b[^.!?]*\bnow\b", re.I)
+    r"|doing|starting|kicking\s+off)\b[^.!?]*\bnow\b",
+    re.I,
+)
 
 #: Anything here disqualifies the whole sentence. Coverage traded for
 #: precision, deliberately and in that direction.
 _CONDITIONAL = re.compile(
     r"\b(?:if|unless|once|when|whenever|after|until|as\s+soon\s+as"
-    r"|the\s+moment|in\s+case|provided|assuming|pending|while)\b", re.I)
+    r"|the\s+moment|in\s+case|provided|assuming|pending|while)\b",
+    re.I,
+)
 
 _FUTURE_SESSION = re.compile(
     r"\b(?:going\s+forward|from\s+now\s+on|in\s+future|next\s+session"
     r"|tomorrow|tonight|overnight|later|each\s+(?:morning|day|time)"
-    r"|every\s+time|scheduled|cron|nightly|weekly|daily)\b", re.I)
+    r"|every\s+time|scheduled|cron|nightly|weekly|daily)\b",
+    re.I,
+)
 
 _SOMEONE_ELSE = re.compile(
     r"\b(?:agent|agents|subagent|subagents|session|sessions|github|ci"
     r"|auto-?merge|they|it)\s+(?:will|'ll|is|are)\b|\bthe\s+agent\b"
-    r"|\banother\s+session\b", re.I)
+    r"|\banother\s+session\b",
+    re.I,
+)
 
 #: A promise to SAY something. No tool call discharges it, so its absence
 #: is not evidence of anything.
 _JUST_TALKING = re.compile(
     r"\b(?:tell|confirm|report|let\s+you\s+know|come\s+back|bring\s+back"
     r"|update\s+you|flag|mention|note|bring\s+you|say|explain|show\s+you"
-    r"|answer|keep\s+you|label|call\s+it|describe|own)\b", re.I)
+    r"|answer|keep\s+you|label|call\s+it|describe|own)\b",
+    re.I,
+)
 
 #: A stance, a habit, or a manner — "I'll keep it simple", "I'll slow down",
 #: "I'll be looking hard at that". Real sentences, all of them, and none of
@@ -114,7 +127,9 @@ _JUST_TALKING = re.compile(
 _STANCE = re.compile(
     r"\bi'?(?:ll|m)\s+(?:be\s+\w+ing|keep|stay|slow|stop|go\s+quiet|hold"
     r"|remain|treat|watch|avoid|stick|carry|leave|make\s+sure|ensure|try"
-    r"|remember|only|also|still|never|always|need|want|have\s+to)\b", re.I)
+    r"|remember|only|also|still|never|always|need|want|have\s+to)\b",
+    re.I,
+)
 
 #: "- **Reading** — taking the number from what's in front of you" is a
 #: glossary line, not an intention, and its bolded gerund otherwise reads as
@@ -181,12 +196,10 @@ def _is_real_user_turn(entry: dict) -> bool:
         return True
     if not isinstance(content, list):
         return False
-    return not any(isinstance(b, dict) and b.get("type") == "tool_result"
-                   for b in content)
+    return not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
 
 
-def final_turn_message(transcript_path: str | Path,
-                       tail_lines: int = 600) -> tuple[str, bool] | None:
+def final_turn_message(transcript_path: str | Path, tail_lines: int = 600) -> tuple[str, bool] | None:
     """The last assistant message of the turn, and whether the TURN used a
     tool at all.
 
@@ -229,15 +242,13 @@ def final_turn_message(transcript_path: str | Path,
         content = (entry.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue
-        if any(isinstance(b, dict) and b.get("type") == "tool_use"
-               for b in content):
+        if any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content):
             used_tool = True
             if final_text is None:
                 # The turn's last act was a tool call, not a sentence.
                 final_text = ""
             continue
-        text = "\n".join(b.get("text", "") for b in content
-                         if isinstance(b, dict) and b.get("type") == "text")
+        text = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
         if final_text is None and text.strip():
             final_text = text
     if final_text is None:

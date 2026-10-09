@@ -25,15 +25,17 @@ BOARD = "docs/WORK.md"
 # ---------------------------------------------------------------------------
 
 _ENV = {
-    "GIT_AUTHOR_NAME": "dod-test", "GIT_AUTHOR_EMAIL": "dod@example.com",
-    "GIT_COMMITTER_NAME": "dod-test", "GIT_COMMITTER_EMAIL": "dod@example.com",
-    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "dod-test",
+    "GIT_AUTHOR_EMAIL": "dod@example.com",
+    "GIT_COMMITTER_NAME": "dod-test",
+    "GIT_COMMITTER_EMAIL": "dod@example.com",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
 }
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True,
-                   capture_output=True, text=True, env=_ENV)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=_ENV)
 
 
 def _write(repo: Path, rel: str, text: str) -> None:
@@ -80,7 +82,6 @@ def _change(repo: Path, base: str) -> dod.Change:
     )
 
 
-
 def _change_retiring_an_item(messages: str, tmp_path: Path | None = None) -> dod.Change:
     """A Change that retires one item, so the observable check arms.
 
@@ -101,6 +102,7 @@ def _base_with_board(tmp_path: Path, items: str, retired: str = "1, 2") -> tuple
     repo = _repo(tmp_path)
     _write(repo, BOARD, _board(items, retired))
     _commit(repo, "base board", BOARD)
-    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                          capture_output=True, text=True, check=True).stdout.strip()
+    base = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
     return repo, base

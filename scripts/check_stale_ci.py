@@ -77,6 +77,7 @@ Exit codes:
     1  at least one PR head commit had no test run
     2  the check could not run (no `gh`, no auth, API failure)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -119,16 +120,16 @@ def _gh(args: list[str]) -> str:
     try:
         proc = subprocess.run(
             ["gh", *args],
-            capture_output=True, text=True, timeout=GH_TIMEOUT_S,
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_S,
         )
     except FileNotFoundError as exc:  # pragma: no cover - environment
         raise GhError("the `gh` CLI is not installed") from exc
     except subprocess.TimeoutExpired as exc:
         raise GhError(f"`gh {' '.join(args)}` timed out") from exc
     if proc.returncode != 0:
-        raise GhError(
-            f"`gh {' '.join(args)}` failed: {proc.stderr.strip() or proc.returncode}"
-        )
+        raise GhError(f"`gh {' '.join(args)}` failed: {proc.stderr.strip() or proc.returncode}")
     return proc.stdout
 
 
@@ -142,9 +143,16 @@ def _gh_json(args: list[str]) -> object:
 
 def open_pull_requests(repo: str | None) -> list[dict]:
     """Open, non-draft PRs. Drafts are excluded: nobody is waiting on them."""
-    args = ["pr", "list", "--state", "open", "--limit", "100",
-            "--json", "number,headRefName,headRefOid,isDraft,title,mergeStateStatus,"
-            "statusCheckRollup"]
+    args = [
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "number,headRefName,headRefOid,isDraft,title,mergeStateStatus,statusCheckRollup",
+    ]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
@@ -154,28 +162,35 @@ def open_pull_requests(repo: str | None) -> list[dict]:
 
 
 def runs_for_sha(sha: str, repo: str | None) -> list[dict]:
-    args = ["run", "list", "--commit", sha, "--limit", "30",
-            "--json", "workflowName,status,conclusion,databaseId,event,createdAt,startedAt"]
+    args = [
+        "run",
+        "list",
+        "--commit",
+        sha,
+        "--limit",
+        "30",
+        "--json",
+        "workflowName,status,conclusion,databaseId,event,createdAt,startedAt",
+    ]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
     if not isinstance(rows, list):
         raise GhError("unexpected `gh run list` payload")
-    return [
-        row for row in rows
-        if str(row.get("workflowName", "")).strip().lower() == WORKFLOW_NAME
-    ]
+    return [row for row in rows if str(row.get("workflowName", "")).strip().lower() == WORKFLOW_NAME]
 
 
 def classify(runs: list[dict]) -> str:
     """ok / running / stale, from the runs recorded against one commit."""
     for run in runs:
-        if str(run.get("status")) in ("queued", "in_progress", "waiting", "pending",
-                                      "requested"):
+        if str(run.get("status")) in ("queued", "in_progress", "waiting", "pending", "requested"):
             return "running"
     for run in runs:
         if str(run.get("status")) == "completed" and run.get("conclusion") not in (
-            None, "cancelled", "skipped", "stale",
+            None,
+            "cancelled",
+            "skipped",
+            "stale",
         ):
             return "ok"
     return "stale"
@@ -205,9 +220,9 @@ def is_obsolete(runs: list[dict], tip: datetime | None) -> bool:
     if tip is None:
         return False
     started = [
-        _ts(r.get("startedAt") or r.get("createdAt")) for r in runs
-        if str(r.get("status")) == "completed"
-        and r.get("conclusion") not in (None, "cancelled", "skipped", "stale")
+        _ts(r.get("startedAt") or r.get("createdAt"))
+        for r in runs
+        if str(r.get("status")) == "completed" and r.get("conclusion") not in (None, "cancelled", "skipped", "stale")
     ]
     started = [t for t in started if t is not None]
     return bool(started) and max(started) < tip
@@ -220,8 +235,7 @@ def required_check_is_red(pr: dict) -> bool:
     (`context`/`state`); both spellings are read. An entry that is missing,
     still running, or neutral is not a red — only a settled negative is.
     """
-    negative = {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE",
-                "ERROR", "CANCELLED"}
+    negative = {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR", "CANCELLED"}
     for entry in pr.get("statusCheckRollup") or []:
         if not isinstance(entry, dict):
             continue
@@ -241,8 +255,7 @@ def reruns_already_spent(runs: list[dict]) -> int:
     `workflow_dispatch`, pushes arrive as `pull_request` — so nothing has to
     be stored and a new push resets the budget by having a new SHA.
     """
-    return sum(1 for run in runs
-               if str(run.get("event")) == "workflow_dispatch")
+    return sum(1 for run in runs if str(run.get("event")) == "workflow_dispatch")
 
 
 def dispatch(branch: str, repo: str | None) -> str | None:
@@ -259,24 +272,20 @@ def dispatch(branch: str, repo: str | None) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=None,
-                        help="owner/name; defaults to the checkout's remote")
-    parser.add_argument("--no-dispatch", action="store_true",
-                        help="report stale PRs without starting a run")
+    parser.add_argument("--repo", default=None, help="owner/name; defaults to the checkout's remote")
+    parser.add_argument("--no-dispatch", action="store_true", help="report stale PRs without starting a run")
     args = parser.parse_args(argv)
 
     try:
         prs = open_pull_requests(args.repo)
     except GhError as exc:
-        print(f"check_stale_ci: could not list pull requests — {exc}",
-              file=sys.stderr)
+        print(f"check_stale_ci: could not list pull requests — {exc}", file=sys.stderr)
         return 2
 
     try:
         tip = main_tip_time(args.repo)
     except GhError as exc:
-        print(f"check_stale_ci: main tip lookup failed, obsolete rule skipped "
-              f"— {exc}", file=sys.stderr)
+        print(f"check_stale_ci: main tip lookup failed, obsolete rule skipped — {exc}", file=sys.stderr)
         tip = None
 
     stale: list[dict] = []
@@ -286,25 +295,27 @@ def main(argv: list[str] | None = None) -> int:
         number = pr.get("number")
         branch = str(pr.get("headRefName") or "")
         if not sha or not branch:
-            print(f"check_stale_ci: PR #{number} has no resolvable head — skipped",
-                  file=sys.stderr)
+            print(f"check_stale_ci: PR #{number} has no resolvable head — skipped", file=sys.stderr)
             continue
         try:
             runs = runs_for_sha(sha, args.repo)
             verdict = classify(runs)
         except GhError as exc:
-            print(f"check_stale_ci: PR #{number} run lookup failed — {exc}",
-                  file=sys.stderr)
+            print(f"check_stale_ci: PR #{number} run lookup failed — {exc}", file=sys.stderr)
             return 2
-        if (verdict == "ok" and is_obsolete(runs, tip)
-                and required_check_is_red(pr)
-                and pr.get("mergeStateStatus") != "DIRTY"):
+        if (
+            verdict == "ok"
+            and is_obsolete(runs, tip)
+            and required_check_is_red(pr)
+            and pr.get("mergeStateStatus") != "DIRTY"
+        ):
             if reruns_already_spent(runs) >= MAX_RERUNS_PER_HEAD:
                 verdict = "red-for-real"
             else:
                 verdict = "obsolete"
-            when = min(_ts(r.get("startedAt") or r.get("createdAt")) or tip
-                       for r in runs if r.get("status") == "completed")
+            when = min(
+                _ts(r.get("startedAt") or r.get("createdAt")) or tip for r in runs if r.get("status") == "completed"
+            )
             if verdict == "obsolete":
                 obsolete.append((when, pr))
         print(f"PR #{number} {sha[:10]} {branch}: {verdict}")
@@ -316,26 +327,30 @@ def main(argv: list[str] | None = None) -> int:
         batch = obsolete[:MAX_OBSOLETE_DISPATCH]
         for _, pr in batch:
             error = dispatch(str(pr.get("headRefName")), args.repo)
-            print(f"check_stale_ci: obsolete verdict on #{pr.get('number')} — "
-                  + (f"could not re-run: {error}" if error else "re-run started"))
+            print(
+                f"check_stale_ci: obsolete verdict on #{pr.get('number')} — "
+                + (f"could not re-run: {error}" if error else "re-run started")
+            )
         if len(obsolete) > len(batch):
-            print(f"check_stale_ci: {len(obsolete) - len(batch)} more obsolete "
-                  f"PR(s) wait for the next sweep (cap {MAX_OBSOLETE_DISPATCH})")
+            print(
+                f"check_stale_ci: {len(obsolete) - len(batch)} more obsolete "
+                f"PR(s) wait for the next sweep (cap {MAX_OBSOLETE_DISPATCH})"
+            )
     elif obsolete:
         print(f"check_stale_ci: {len(obsolete)} PR(s) hold an obsolete verdict")
 
     if not stale:
-        print(f"check_stale_ci: all {len(prs)} open PR head commits have a "
-              f"test run")
+        print(f"check_stale_ci: all {len(prs)} open PR head commits have a test run")
         return 0
 
     print("")
-    print(f"check_stale_ci: {len(stale)} open PR(s) have NO test run on their "
-          f"head commit — their last recorded result belongs to an older "
-          f"commit and auto-merge cannot fire:")
+    print(
+        f"check_stale_ci: {len(stale)} open PR(s) have NO test run on their "
+        f"head commit — their last recorded result belongs to an older "
+        f"commit and auto-merge cannot fire:"
+    )
     for pr in stale:
-        print(f"  #{pr.get('number')}  {pr.get('headRefName')}  "
-              f"{str(pr.get('title') or '')[:70]}")
+        print(f"  #{pr.get('number')}  {pr.get('headRefName')}  {str(pr.get('title') or '')[:70]}")
 
     if args.no_dispatch:
         return 1
@@ -343,11 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     for pr in stale:
         error = dispatch(str(pr.get("headRefName")), args.repo)
         if error:
-            print(f"check_stale_ci: could not start a run for "
-                  f"#{pr.get('number')} — {error}", file=sys.stderr)
+            print(f"check_stale_ci: could not start a run for #{pr.get('number')} — {error}", file=sys.stderr)
         else:
-            print(f"check_stale_ci: started a run for #{pr.get('number')} "
-                  f"({pr.get('headRefName')})")
+            print(f"check_stale_ci: started a run for #{pr.get('number')} ({pr.get('headRefName')})")
     return 1
 
 

@@ -55,7 +55,8 @@ def entry_stop_price(ctx, decision, is_short, sizing_price):
             "constructor honoured this stop at a computed "
             "structural level [%s]. Re-widening it here would "
             "undo §12.1 against a second ATR reading.",
-            decision.symbol, decision.stop_rule,
+            decision.symbol,
+            decision.stop_rule,
         )
     if not is_short and not level_backed and stop_price > 0 and sizing_price > stop_price:
         try:
@@ -63,6 +64,7 @@ def entry_stop_price(ctx, decision, is_short, sizing_price):
             atr14 = None
             if len(bars) >= 15:
                 from src.data.technical import compute_indicators
+
                 atr14 = compute_indicators(decision.symbol, bars).atr_14
             if atr14 and atr14 > 0 and (sizing_price - stop_price) < atr14:
                 widened = round(sizing_price - atr14, 2)
@@ -70,23 +72,24 @@ def entry_stop_price(ctx, decision, is_short, sizing_price):
                     "BUY %s: stop $%.2f is %.2f×ATR from entry "
                     "$%.2f — widening to $%.2f (1×ATR14=$%.2f "
                     "floor; qty sizing compensates)",
-                    decision.symbol, stop_price,
+                    decision.symbol,
+                    stop_price,
                     (sizing_price - stop_price) / atr14,
-                    sizing_price, widened, atr14,
+                    sizing_price,
+                    widened,
+                    atr14,
                 )
                 stop_price = widened
         except Exception as e:
-            logger.warning("ATR stop floor skipped for %s: %s",
-                           decision.symbol, e)
+            logger.warning("ATR stop floor skipped for %s: %s", decision.symbol, e)
 
     # Geometry may have moved since the Risk Manager audited
     # (ATR-widened stop, or limit raised to market). Reward:risk
     # — computed, thin, or unmeasurable — is never a skip
     # (owner 2026-09-17). The retired 1.2 belt killed RSG on
     # 2026-09-16; renaming that skip is also a defect.
-    geometry_changed = (
-        stop_price != decision.stop_loss
-        or (decision.entry_price > 0 and sizing_price > decision.entry_price)
+    geometry_changed = stop_price != decision.stop_loss or (
+        decision.entry_price > 0 and sizing_price > decision.entry_price
     )
     payoff_skip = _execution_payoff_skip_reason(
         decision,
@@ -96,19 +99,16 @@ def entry_stop_price(ctx, decision, is_short, sizing_price):
         is_short=is_short,
     )
     if payoff_skip is not None:
-        raise RuntimeError(
-            "reward:risk execution skip is retired; "
-            f"got {payoff_skip!r} for {decision.symbol}"
-        )
-    if (
-        not is_short and geometry_changed
-        and decision.take_profit > 0
-    ):
+        raise RuntimeError(f"reward:risk execution skip is retired; got {payoff_skip!r} for {decision.symbol}")
+    if not is_short and geometry_changed and decision.take_profit > 0:
         logger.info(
             "BUY %s: execution moved the geometry (entry $%.2f -> "
             "$%.2f, stop $%.2f -> $%.2f) — no reward-side skip "
             "applies (invented R/R gates retired).",
-            decision.symbol, decision.entry_price, sizing_price,
-            decision.stop_loss, stop_price,
+            decision.symbol,
+            decision.entry_price,
+            sizing_price,
+            decision.stop_loss,
+            stop_price,
         )
     return stop_price

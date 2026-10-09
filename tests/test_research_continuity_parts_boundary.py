@@ -4,6 +4,7 @@ Every collaborator is an explicit keyword-only constructor argument, so the clas
 built from stubs alone (clause 5 of tests/boundary_harness.py). Nothing here names
 the pipeline class, imports its module, or patches anything by module path.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -59,9 +60,11 @@ def test_every_lifted_module_passes_the_boundary_check(module):
 
 
 def test_macro_regime_change_is_read_from_the_macro_store_collaborator_only():
-    store = SimpleNamespace(load_history=lambda days: [
-        {"date": "2026-10-02", "regime": "risk-off"},
-    ])
+    store = SimpleNamespace(
+        load_history=lambda days: [
+            {"date": "2026-10-02", "regime": "risk-off"},
+        ]
+    )
     det = _detectors(macro_store=store)
     stored = {"regime": "risk-on", "date": "2026-10-01"}
     assert det._macro_regime_or_print_changed(stored) is True
@@ -74,6 +77,7 @@ def test_macro_regime_change_is_read_from_the_macro_store_collaborator_only():
 def test_a_failing_detector_is_not_a_change():
     def boom(days):
         raise RuntimeError("store down")
+
     det = _detectors(macro_store=SimpleNamespace(load_history=boom))
     assert det._macro_regime_or_print_changed({"regime": "risk-on", "date": "2026-10-01"}) is False
 
@@ -86,7 +90,8 @@ def test_series_prints_changed_needs_a_recorded_fingerprint_and_a_live_fetch():
 
 def test_live_prints_restore_the_providers_side_channel():
     provider = SimpleNamespace(
-        last_coverage="morning", _run_freshness="fresh",
+        last_coverage="morning",
+        _run_freshness="fresh",
         get_macro_summary=lambda: {"series": {}},
     )
     det = _detectors(macro=provider)
@@ -132,14 +137,18 @@ def test_peek_items_live_where_the_host_keeps_them():
     slot = {}
     config = SimpleNamespace(trading=SimpleNamespace(universe=["AAPL"]), news=SimpleNamespace(max_prompt_items=50))
     det = _detectors(
-        config=config, news_provider=_Provider(["AAPL beats"]),
-        peek_items_get=lambda: slot.get("items"), peek_items_set=lambda items: slot.__setitem__("items", items),
+        config=config,
+        news_provider=_Provider(["AAPL beats"]),
+        peek_items_get=lambda: slot.get("items"),
+        peek_items_set=lambda items: slot.__setitem__("items", items),
     )
     det._peek_news_headlines(report=None)
     assert [i.title for i in slot["items"]] == ["AAPL beats"]
 
 
 def test_a_host_override_of_a_lifted_body_is_honoured():
-    det = _detectors(macro_store=SimpleNamespace(load_history=lambda days: []),
-                     macro_history_regime_changed=lambda state, stored: True)
+    det = _detectors(
+        macro_store=SimpleNamespace(load_history=lambda days: []),
+        macro_history_regime_changed=lambda state, stored: True,
+    )
     assert det._macro_regime_or_print_changed({"regime": "risk-on"}) is True

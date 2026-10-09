@@ -5,7 +5,8 @@ import sqlite3
 import pytest
 
 from ops.rehearsal.durable_outcomes import (
-    DurableOutcomeMismatch, compare_durable_outcomes,
+    DurableOutcomeMismatch,
+    compare_durable_outcomes,
 )
 from src.storage.db import Database
 
@@ -20,8 +21,7 @@ def _backup(source, target):
 
 
 def _fixture(tmp_path):
-    before, captured, replayed = (tmp_path / name for name in
-                                  ("before.db", "captured.db", "replayed.db"))
+    before, captured, replayed = (tmp_path / name for name in ("before.db", "captured.db", "replayed.db"))
     db = Database(str(before))
     db.initialize()
     db.close()
@@ -44,25 +44,36 @@ def _fixture(tmp_path):
 def _write_run(path, run_id, decision_id, broker_id, position_id):
     with sqlite3.connect(path) as conn:
         for agent, kind, scope, symbol, payload in (
-            ("portfolio_manager", "reasoning", "run", None,
-             '{"portfolio_view":"hold cash","reasoning_chain":{"why":"measured"}}'),
-            ("portfolio_manager", "proposed_order", "symbol", "ZZZT",
-             '{"action":"BUY","qty":1,"reason":"measured"}'),
-            ("risk_manager", "verdict", "run", None,
-             '{"approved":true,"reasoning":"within risk"}'),
-            ("pipeline", "stop_shift_legs", "symbol", "ZZZT",
-             '{"code":"stop_shift_amended","legs":[{"old_id":"old-stop",'
-             '"new_id":"new-stop","outcome":"amended"}]}'),
-            ("pipeline", "exit_refusal", "symbol", "ZZZT",
-             '{"action":"SELL","code":"ai_risk_approved","dropped":false,'
-             '"detail":"named trigger","layer":"ai_risk"}'),
+            (
+                "portfolio_manager",
+                "reasoning",
+                "run",
+                None,
+                '{"portfolio_view":"hold cash","reasoning_chain":{"why":"measured"}}',
+            ),
+            ("portfolio_manager", "proposed_order", "symbol", "ZZZT", '{"action":"BUY","qty":1,"reason":"measured"}'),
+            ("risk_manager", "verdict", "run", None, '{"approved":true,"reasoning":"within risk"}'),
+            (
+                "pipeline",
+                "stop_shift_legs",
+                "symbol",
+                "ZZZT",
+                '{"code":"stop_shift_amended","legs":[{"old_id":"old-stop","new_id":"new-stop","outcome":"amended"}]}',
+            ),
+            (
+                "pipeline",
+                "exit_refusal",
+                "symbol",
+                "ZZZT",
+                '{"action":"SELL","code":"ai_risk_approved","dropped":false,'
+                '"detail":"named trigger","layer":"ai_risk"}',
+            ),
         ):
             conn.execute(
                 "INSERT INTO specialist_evidence "
                 "(run_id,decision_id,agent_name,kind,scope,symbol,evidence_json) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (run_id, decision_id if agent != "pipeline" else None,
-                 agent, kind, scope, symbol, payload),
+                (run_id, decision_id if agent != "pipeline" else None, agent, kind, scope, symbol, payload),
             )
         conn.execute(
             "INSERT INTO trade_refusals "
@@ -91,19 +102,15 @@ def _write_run(path, run_id, decision_id, broker_id, position_id):
             (broker_id, run_id),
         )
         conn.execute(
-            "INSERT INTO order_attempts (outcome,broker_order_id,reason) "
-            "VALUES ('cancelled',?,'cancel_order_by_id')", (broker_id,),
+            "INSERT INTO order_attempts (outcome,broker_order_id,reason) VALUES ('cancelled',?,'cancel_order_by_id')",
+            (broker_id,),
         )
-        conn.execute(
-            "INSERT INTO reconciliation_runs (kind,agreed,detail) "
-            "VALUES ('stop_coverage',1,'')"
-        )
+        conn.execute("INSERT INTO reconciliation_runs (kind,agreed,detail) VALUES ('stop_coverage',1,'')")
 
 
 def _compare(paths):
     before, captured, replayed = paths
-    compare_durable_outcomes(before, captured, replayed,
-                             captured_run=CAPTURE, replay_run=REPLAY)
+    compare_durable_outcomes(before, captured, replayed, captured_run=CAPTURE, replay_run=REPLAY)
 
 
 def test_exact_durable_outcomes_allow_only_consistent_generated_ids(tmp_path):
@@ -119,11 +126,14 @@ def test_parallel_evidence_insert_order_does_not_change_verdict(tmp_path):
     _compare(paths)
 
 
-@pytest.mark.parametrize("target,where", [
-    ("specialist_evidence", "kind='reasoning'"),
-    ("trade_refusals", "refusal='losing_geometry'"),
-    ("specialist_evidence", "kind='stop_shift_legs'"),
-])
+@pytest.mark.parametrize(
+    "target,where",
+    [
+        ("specialist_evidence", "kind='reasoning'"),
+        ("trade_refusals", "refusal='losing_geometry'"),
+        ("specialist_evidence", "kind='stop_shift_legs'"),
+    ],
+)
 def test_missing_pm_refusal_or_protection_record_is_red(tmp_path, target, where):
     paths = _fixture(tmp_path)
     with sqlite3.connect(paths[2]) as conn:
@@ -154,8 +164,7 @@ def test_decision_or_broker_link_cannot_split(tmp_path):
         _compare(paths)
     with sqlite3.connect(paths[2]) as conn:
         conn.execute("UPDATE trades SET decision_id='rehearsal-dec-f4e5d6' WHERE run_id=?", (REPLAY,))
-        conn.execute("UPDATE order_attempts SET broker_order_id='different-broker' "
-                     "WHERE run_id=?", (REPLAY,))
+        conn.execute("UPDATE order_attempts SET broker_order_id='different-broker' WHERE run_id=?", (REPLAY,))
     with pytest.raises(DurableOutcomeMismatch, match="one-to-one"):
         _compare(paths)
 
@@ -163,13 +172,11 @@ def test_decision_or_broker_link_cannot_split(tmp_path):
 def test_exit_reason_and_cancel_attempt_are_not_summarized_away(tmp_path):
     paths = _fixture(tmp_path)
     with sqlite3.connect(paths[2]) as conn:
-        conn.execute("UPDATE trades SET reasoning='different exit' "
-                     "WHERE run_id=? AND action='SELL'", (REPLAY,))
+        conn.execute("UPDATE trades SET reasoning='different exit' WHERE run_id=? AND action='SELL'", (REPLAY,))
     with pytest.raises(DurableOutcomeMismatch, match="trades inserted semantic rows"):
         _compare(paths)
     with sqlite3.connect(paths[2]) as conn:
-        conn.execute("UPDATE trades SET reasoning='named trigger' "
-                     "WHERE run_id=? AND action='SELL'", (REPLAY,))
+        conn.execute("UPDATE trades SET reasoning='named trigger' WHERE run_id=? AND action='SELL'", (REPLAY,))
         conn.execute("DELETE FROM order_attempts WHERE outcome='cancelled'")
     with pytest.raises(DurableOutcomeMismatch, match="order_attempts"):
         _compare(paths)

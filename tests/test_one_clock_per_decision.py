@@ -2,6 +2,7 @@
 
 Rule and rationale: scripts/one_clock_guard.py. Absolute: no baseline, no trunk delta.
 """
+
 from __future__ import annotations
 
 from scripts import one_clock_guard as g

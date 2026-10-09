@@ -1,4 +1,5 @@
 """A converted intraday catch-all logs a traceback and a counted row; a clean pass writes its own."""
+
 import logging
 from src.storage.db import Database
 from types import SimpleNamespace
@@ -45,6 +46,7 @@ def test_no_handle_still_logs_traceback_and_does_not_raise(caplog):
 
 def test_snapshot_health_failure_writes_disagreed_row_end_to_end(tmp_path):
     from src.intraday.gating import IntradayGating
+
     owner = _owner(tmp_path)
     real = owner.db
 

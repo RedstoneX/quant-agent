@@ -69,6 +69,7 @@ class ProbeResult:
             line += " [probe message could not be deleted; it stays in the chat]"
         return line
 
+
 # Cash-sweep parking vehicles — cash equivalents, never "deployed capital".
 # The notifier reads the DB directly (it deliberately doesn't thread config
 # in — see the comment at the sqlite3 connect), so it can't ask
@@ -234,13 +235,12 @@ def _redact_malformed_numbers(text: str) -> str:
             "notifier: redacted %d malformed numeric token(s) before sending "
             "(%s) — the upstream text generator produced a garbled figure; "
             "fix that, not this guard",
-            len(found), "; ".join(f"{tok!r} ({reason})" for tok, reason in found),
+            len(found),
+            "; ".join(f"{tok!r} ({reason})" for tok, reason in found),
         )
         return redacted
     except Exception:  # noqa: BLE001
-        logger.exception(
-            "notifier: malformed-number guard itself failed; sending text unredacted"
-        )
+        logger.exception("notifier: malformed-number guard itself failed; sending text unredacted")
         return text
 
 

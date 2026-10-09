@@ -18,8 +18,10 @@ from __future__ import annotations
 import pytest
 
 from src.soft_exit_never_blank import (
-    REFUSAL_COUNT_REASON, REFUSAL_COUNT_STAGE,
-    heal_targets_from_raw, refusal_tally,
+    REFUSAL_COUNT_REASON,
+    REFUSAL_COUNT_STAGE,
+    heal_targets_from_raw,
+    refusal_tally,
 )
 
 
@@ -35,12 +37,15 @@ class _Target:
 
 # ---------------------------------------------------------------- unit: heal
 
+
 def test_raw_heal_restores_the_sentence_the_model_wrote():
     targets = [_Target("AAPL"), _Target("MSFT", "closes below the 200-day")]
-    raw = {"targets": [
-        {"symbol": "AAPL", "thesis_invalid_if": "loses the 50-day on volume"},
-        {"symbol": "MSFT", "thesis_invalid_if": "something else entirely"},
-    ]}
+    raw = {
+        "targets": [
+            {"symbol": "AAPL", "thesis_invalid_if": "loses the 50-day on volume"},
+            {"symbol": "MSFT", "thesis_invalid_if": "something else entirely"},
+        ]
+    }
     out, filled = heal_targets_from_raw(targets, raw)
     assert filled == ["AAPL"]
     assert out[0].thesis_invalid_if == "loses the 50-day on volume"
@@ -52,10 +57,12 @@ def test_raw_heal_restores_the_sentence_the_model_wrote():
 def test_raw_heal_never_invents(raw_val):
     targets = [_Target("AAPL")]
     out, filled = heal_targets_from_raw(
-        targets, {"targets": [{"symbol": "AAPL", "thesis_invalid_if": raw_val}]},
+        targets,
+        {"targets": [{"symbol": "AAPL", "thesis_invalid_if": raw_val}]},
     )
     assert filled == []
     from src.models.base import missing_stated_falsifier
+
     assert missing_stated_falsifier(out[0].thesis_invalid_if)
 
 
@@ -69,6 +76,7 @@ def test_raw_heal_survives_rubbish_payloads():
 
 # ------------------------------------------------------------- unit: counted
 
+
 def test_refusal_tally_counts_every_refusal_with_its_reason():
     tally = refusal_tally(
         ["aapl", "AAPL", "MSFT", "NVDA"],
@@ -78,17 +86,22 @@ def test_refusal_tally_counts_every_refusal_with_its_reason():
     assert tally["refused_symbols"] == ["AAPL", "MSFT", "NVDA"]
     # a name with no heal record is COUNTED, not dropped
     assert tally["by_heal_outcome"] == {
-        "cap_blocked": 1, "failed": 1, "none_recorded": 1,
+        "cap_blocked": 1,
+        "failed": 1,
+        "none_recorded": 1,
     }
 
 
 def test_refusal_tally_of_nothing_is_zero_not_missing():
     assert refusal_tally([], {}) == {
-        "refused_count": 0, "refused_symbols": [], "by_heal_outcome": {},
+        "refused_count": 0,
+        "refused_symbols": [],
+        "by_heal_outcome": {},
     }
 
 
 # ------------------------------------- behaviour 1+2: heal before paying
+
 
 class _StubPM:
     """Just enough PortfolioManagerAgent to drive the heal method."""
@@ -127,8 +140,13 @@ class _Result:
 
 def _run_heal(pm, decision, result):
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     return PortfolioManagerAgent._fill_missing_open_falsifiers(
-        pm, decision, result, positions=[], total_value=100000.0,
+        pm,
+        decision,
+        result,
+        positions=[],
+        total_value=100000.0,
     )
 
 
@@ -136,9 +154,13 @@ def test_blank_target_is_healed_from_raw_without_paying():
     """Behaviour 1: the sentence is already written — do not buy it again."""
     pm = _StubPM()
     decision = _Decision([_Target("AAPL")])
-    result = _Result({"targets": [
-        {"symbol": "AAPL", "thesis_invalid_if": "loses the 50-day on volume"},
-    ]})
+    result = _Result(
+        {
+            "targets": [
+                {"symbol": "AAPL", "thesis_invalid_if": "loses the 50-day on volume"},
+            ]
+        }
+    )
     out, _ = _run_heal(pm, decision, result)
     assert out.targets[0].thesis_invalid_if == "loses the 50-day on volume"
     assert pm.executed == 0, "the desk paid for a sentence it already had"
@@ -148,9 +170,13 @@ def test_blank_target_is_healed_from_raw_without_paying():
 
 def test_genuinely_blank_target_still_buys_exactly_one_retry():
     """Behaviour 2: raw is blank too, so the seat IS re-asked, once, paid."""
-    retry = _Result({"targets": [
-        {"symbol": "AAPL", "thesis_invalid_if": "breaks 180 intraday"},
-    ]})
+    retry = _Result(
+        {
+            "targets": [
+                {"symbol": "AAPL", "thesis_invalid_if": "breaks 180 intraday"},
+            ]
+        }
+    )
     pm = _StubPM(retry_result=retry)
     decision = _Decision([_Target("AAPL")])
     result = _Result({"targets": [{"symbol": "AAPL", "thesis_invalid_if": ""}]})
@@ -166,6 +192,7 @@ def test_genuinely_blank_target_still_buys_exactly_one_retry():
 
 # ---------------------------------- behaviour 3: refused, counted, not silent
 
+
 def test_refusal_before_the_book_is_counted_with_its_reason():
     from src.pipeline_stages import _record_soft_exit_refusal_count
 
@@ -180,10 +207,10 @@ def test_refusal_before_the_book_is_counted_with_its_reason():
         soft_exit_heals = {"AAPL": {"outcome": "failed"}}
 
     import src.pipeline_stages as ps
+
     original = ps._record_pipeline_event
-    ps._record_pipeline_event = lambda p, c, s, stage, outcome, reason="", **d: (
-        events.append({"stage": stage, "outcome": outcome,
-                       "reason": reason, "details": d})
+    ps._record_pipeline_event = lambda p, c, s, stage, outcome, reason="", **d: events.append(
+        {"stage": stage, "outcome": outcome, "reason": reason, "details": d}
     )
     try:
         _record_soft_exit_refusal_count(_Pipeline(), _Ctx(), ["AAPL", "MSFT"])
@@ -197,7 +224,8 @@ def test_refusal_before_the_book_is_counted_with_its_reason():
     assert event["outcome"] == "2"
     assert event["details"]["refused_count"] == 2
     assert event["details"]["by_heal_outcome"] == {
-        "failed": 1, "none_recorded": 1,
+        "failed": 1,
+        "none_recorded": 1,
     }
 
 
@@ -221,6 +249,4 @@ def test_decision_stage_counts_the_refusals_it_makes():
     import src.stage_decision as sd
 
     source = inspect.getsource(sd)
-    assert "_record_soft_exit_refusal_count" in source, (
-        "the before-the-book refusal is still uncounted"
-    )
+    assert "_record_soft_exit_refusal_count" in source, "the before-the-book refusal is still uncounted"

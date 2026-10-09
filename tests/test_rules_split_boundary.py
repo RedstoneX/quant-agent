@@ -4,6 +4,7 @@ no pipeline, broker, database or RiskRuleEngine. Clause 5 of
 tests/boundary_harness.py: this test imports the part and never names the
 pipeline. Follows tests/test_risk_rules_parts_boundary.py.
 """
+
 from __future__ import annotations
 
 from src.risk import gross_ladder, rules

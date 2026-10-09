@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_formats.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 from typing import Any, Callable, TypeVar
 from src.cost_circuit.refusal import _fmt_settled
@@ -20,9 +21,7 @@ class AlertFormats:
         # carry no trigger code at all; say so rather than borrowing the
         # auto path's wording for a latch that may not have existed.
         code = str(event.get("trigger_code") or "").strip() or (
-            "not recorded"
-            if str(event.get("event_type") or "") == "reset"
-            else "transient provider latch"
+            "not recorded" if str(event.get("event_type") or "") == "reset" else "transient provider latch"
         )
         session_cost = float(event.get("session_cost_usd") or 0.0)
         daily_cost = float(event.get("daily_cost_usd") or 0.0)
@@ -39,15 +38,10 @@ class AlertFormats:
         manual = str(event.get("event_type") or "") == "reset"
         if manual:
             default_reason = "operator reset"
-            how = (
-                "status: paid analysis is live again after an operator reset. "
-            )
+            how = "status: paid analysis is live again after an operator reset. "
         else:
             default_reason = "transient provider latch auto-expired"
-            how = (
-                "status: paid analysis is live again; no operator reset was "
-                "needed. "
-            )
+            how = "status: paid analysis is live again; no operator reset was needed. "
         return (
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
@@ -65,16 +59,10 @@ class AlertFormats:
     def format_quota_alert(hold: dict[str, Any]) -> str:
         scope = str(hold.get("scope") or "session")
         if scope == "day":
-            recovery = (
-                "recovery: automatic at the next ET budget day after exact "
-                "accounting checks pass"
-            )
+            recovery = "recovery: automatic at the next ET budget day after exact accounting checks pass"
             affected = "all paid analysis for this ET budget day"
         elif scope == "mode_day":
-            recovery = (
-                "recovery: this mode is eligible again next ET budget day after "
-                "exact accounting checks pass"
-            )
+            recovery = "recovery: this mode is eligible again next ET budget day after exact accounting checks pass"
             affected = f"{hold.get('mode') or 'this mode'} paid sessions today"
         else:
             recovery = "recovery: later independent sessions remain eligible"
@@ -100,11 +88,7 @@ class AlertFormats:
     @staticmethod
     def format_recovery_alert(hold: dict[str, Any]) -> str:
         scope = str(hold.get("scope") or "day")
-        released = (
-            "all paid modes"
-            if scope == "day"
-            else str(hold.get("mode") or "unknown mode")
-        )
+        released = "all paid modes" if scope == "day" else str(hold.get("mode") or "unknown mode")
         return (
             "🟢 QAMC PAID ANALYSIS REARMED\n"
             f"previous hold: {hold.get('trigger_code')} on ET day {hold.get('day')}\n"
@@ -125,14 +109,11 @@ class AlertFormats:
         if trigger_code == "legacy_unknown_cost":
             cost_note = " (known minimum; legacy rows have unknown cost)"
         else:
-            cost_note = (
-                " (includes conservative or unresolved-request accounting)"
-                if not costs_exact else ""
-            )
+            cost_note = " (includes conservative or unresolved-request accounting)" if not costs_exact else ""
         attempts_line = (
             f"attempts: {attempts} provider attempt{'s' if attempts != 1 else ''}"
-            if attempts_exact else
-            f"attempts: {attempts} logged agent record{'s' if attempts != 1 else ''} "
+            if attempts_exact
+            else f"attempts: {attempts} logged agent record{'s' if attempts != 1 else ''} "
             "(legacy; exact provider-request count unavailable)"
         )
         return (

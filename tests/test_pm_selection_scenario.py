@@ -79,8 +79,9 @@ def _decision(*targets: TargetPosition) -> PortfolioDecision:
     )
 
 
-def _target(symbol: str, *, direction: str = "long", risk: float = 1.0,
-            catalyst: str = "", conviction: str = "medium") -> TargetPosition:
+def _target(
+    symbol: str, *, direction: str = "long", risk: float = 1.0, catalyst: str = "", conviction: str = "medium"
+) -> TargetPosition:
     return TargetPosition(
         symbol=symbol,
         direction=direction,
@@ -105,6 +106,7 @@ def _by_name(checks) -> dict:
 # The fixture is the real run, and the checks mean what its numbers mean
 # --------------------------------------------------------------------------
 
+
 def test_fixture_is_the_real_run_and_has_the_documented_shape():
     assert scenarios._SELECTION["_provenance"]["run_id"] == "run-bba4d4f3"
     assert scenarios._SELECTION_SHAPE == scenarios._SELECTION_SHAPE_EXPECTED
@@ -118,17 +120,14 @@ def test_the_admitted_set_is_the_desks_own_rules_not_a_ratio():
     the failure mode that let a retired reward:risk floor survive here for
     three days after the desk deleted it.
     """
-    deterministic = importlib.import_module(
-        "ops.model_policy.deterministic_selection")
+    deterministic = importlib.import_module("ops.model_policy.deterministic_selection")
     rows = deterministic.evaluate(
         scenarios._SELECTION,
         scenarios._SELECTION_ANALYSES,
         scenarios._SELECTION_POSITIONS,
         scenarios._SELECTION_NEWS,
     )
-    assert scenarios._SELECTION_ELIGIBLE == {
-        r["symbol"] for r in rows if r["eligible"]
-    }
+    assert scenarios._SELECTION_ELIGIBLE == {r["symbol"] for r in rows if r["eligible"]}
     assert len(scenarios._SELECTION_ELIGIBLE) == 25
 
 
@@ -147,10 +146,13 @@ def test_fixture_carries_the_levels_the_live_gate_reads():
     actionable = [a for a in analyses if a.rating != "neutral"]
     assert len(actionable) == 34
     missing = [
-        a.symbol for a in actionable
+        a.symbol
+        for a in actionable
         if constructor.real_reward_risk_preview(
-            a, "short" if a.rating in ("sell", "strong_sell") else "long",
-        ) is None
+            a,
+            "short" if a.rating in ("sell", "strong_sell") else "long",
+        )
+        is None
     ]
     assert missing == []
 
@@ -168,7 +170,8 @@ def test_production_gate_with_real_ratios_admits_exactly_the_graded_set():
         news_intel=scenarios._SELECTION_NEWS,
         earnings_analyses=sel["earnings_analyses"],
         macro_analysis=sel["macro_analysis"],
-        smart_money_findings=[], symbol_sectors={},
+        smart_money_findings=[],
+        symbol_sectors={},
     )
     blocked = PortfolioManagerAgent.candidate_eligibility(
         analyses=scenarios._SELECTION_ANALYSES,
@@ -176,9 +179,7 @@ def test_production_gate_with_real_ratios_admits_exactly_the_graded_set():
         stale_sources=PortfolioManagerAgent.stale_evidence_sources(
             earnings_analyses=sel["earnings_analyses"],
         ),
-        allowed_buy_symbols=(
-            set(sel["allowed_buy_symbols"]) | set(sel["transient_admitted_symbols"])
-        ),
+        allowed_buy_symbols=(set(sel["allowed_buy_symbols"]) | set(sel["transient_admitted_symbols"])),
         active_state_changes=sel["memory"]["active_state_changes"],
         real_reward_risk_by_symbol=scenarios._SELECTION_STRUCTURAL_RR,
     )
@@ -207,9 +208,11 @@ def test_a_thin_but_admitted_pick_costs_nothing():
     catalyst. It is now simply a name the desk admits."""
     assert "SLB" in scenarios._SELECTION_BREAKOUT
     assert scenarios._SELECTION_RR["SLB"] == 1.3
-    checks = _by_name(scenarios._pm_selection_grade(
-        _decision(_target("SLB"), _target("FLNC", direction="short")),
-    ))
+    checks = _by_name(
+        scenarios._pm_selection_grade(
+            _decision(_target("SLB"), _target("FLNC", direction="short")),
+        )
+    )
     assert checks["selection_from_eligible_set"].passed is True
     assert checks["takes_an_eligible_short"].passed is True
     assert "n/a[breakout]" in checks["opens_a_position"].detail
@@ -238,8 +241,7 @@ def test_every_covered_mega_cap_is_admitted_which_is_why_it_is_not_scored():
 
 def test_only_four_checks_carry_weight_and_familiarity_carries_none():
     checks = _by_name(scenarios._pm_selection_grade(_decision(_target("XLE"))))
-    assert {name: c.weight for name, c in checks.items() if c.weight} == \
-        _SCORING_WEIGHTS
+    assert {name: c.weight for name, c in checks.items() if c.weight} == _SCORING_WEIGHTS
     assert checks["familiarity_bias"].weight == 0.0
     assert sum(c.weight for c in checks.values()) == pytest.approx(_TOTAL_WEIGHT)
 
@@ -248,14 +250,15 @@ def test_only_four_checks_carry_weight_and_familiarity_carries_none():
 # Discrimination
 # --------------------------------------------------------------------------
 
+
 def test_evidence_led_selection_scores_full_marks():
     """Four picks, every one admitted by the desk's own rules, including the
     admitted short."""
     decision = _decision(
-        _target("XLE"),                       # buy/high, range
-        _target("EPD"),                       # buy/high, breakout
-        _target("NUE"),                       # buy/high, breakout
-        _target("FLNC", direction="short"),   # sell/medium, net +1
+        _target("XLE"),  # buy/high, range
+        _target("EPD"),  # buy/high, breakout
+        _target("NUE"),  # buy/high, breakout
+        _target("FLNC", direction="short"),  # sell/medium, net +1
     )
     checks = scenarios._pm_selection_grade(decision)
     assert _score(checks) == pytest.approx(1.0)
@@ -268,11 +271,11 @@ def test_a_book_of_refused_names_fails_the_selection_check():
     is the trap check now: a selector that reads ratings without reading
     agreement trips it immediately."""
     decision = _decision(
-        _target("UNH", direction="short"),   # net  0
-        _target("HON", direction="short"),   # net  0
-        _target("AGX", direction="short"),   # net  0
-        _target("CAT", direction="short"),   # net -1
-        _target("GEV", direction="short"),   # net -1
+        _target("UNH", direction="short"),  # net  0
+        _target("HON", direction="short"),  # net  0
+        _target("AGX", direction="short"),  # net  0
+        _target("CAT", direction="short"),  # net -1
+        _target("GEV", direction="short"),  # net -1
     )
     checks = _by_name(scenarios._pm_selection_grade(decision))
     assert checks["selection_from_eligible_set"].passed is False
@@ -284,9 +287,11 @@ def test_a_book_of_refused_names_fails_the_selection_check():
 def test_a_pick_in_a_direction_the_desk_does_not_admit_is_refused():
     """XLE is admitted LONG on a `buy` rating. Shorting it is not selecting
     from the admitted set, and the detail has to say which direction was."""
-    checks = _by_name(scenarios._pm_selection_grade(
-        _decision(_target("XLE", direction="short")),
-    ))
+    checks = _by_name(
+        scenarios._pm_selection_grade(
+            _decision(_target("XLE", direction="short")),
+        )
+    )
     assert checks["selection_from_eligible_set"].passed is False
     assert "admitted long, not short" in checks["selection_from_eligible_set"].detail
 
@@ -294,15 +299,16 @@ def test_a_pick_in_a_direction_the_desk_does_not_admit_is_refused():
 def test_a_name_with_no_coverage_is_refused():
     checks = _by_name(scenarios._pm_selection_grade(_decision(_target("AMZN"))))
     assert checks["selection_from_eligible_set"].passed is False
-    assert "no current technical coverage" in \
-        checks["selection_from_eligible_set"].detail
+    assert "no current technical coverage" in checks["selection_from_eligible_set"].detail
 
 
 def test_familiarity_is_reported_as_a_number_and_changes_no_score():
     """The owner asked for the diagnostic on every run. It must appear, and
     it must not move the score in either direction."""
     famous = _decision(
-        _target("NVDA"), _target("AAPL"), _target("MSFT", risk=0.5),
+        _target("NVDA"),
+        _target("AAPL"),
+        _target("MSFT", risk=0.5),
     )
     checks = _by_name(scenarios._pm_selection_grade(famous))
     diagnostic = checks["familiarity_bias"]
@@ -343,9 +349,14 @@ def test_inaction_does_not_outscore_a_bad_but_real_book():
     """The vacuous-pass bug this guards against: inaction is the live desk's
     own failure and must sit at the bottom of the scale."""
     nothing = _score(scenarios._pm_selection_grade(_decision()))
-    bad = _score(scenarios._pm_selection_grade(_decision(
-        _target("GEV", direction="short"), _target("UNH", direction="short"),
-    )))
+    bad = _score(
+        scenarios._pm_selection_grade(
+            _decision(
+                _target("GEV", direction="short"),
+                _target("UNH", direction="short"),
+            )
+        )
+    )
     assert nothing < bad
 
 
@@ -355,17 +366,31 @@ def test_the_live_desks_own_targets_do_not_score_well():
     refused on net evidence — so the book fails selection purity and still
     has no admitted short."""
     assert scenarios._SELECTION["what_the_live_desk_did"]["pm_targets"] == [
-        "NVDA", "EPD", "MU", "CMCSA", "DIS", "V", "XLB", "AUGO", "UNH",
+        "NVDA",
+        "EPD",
+        "MU",
+        "CMCSA",
+        "DIS",
+        "V",
+        "XLB",
+        "AUGO",
+        "UNH",
     ]
     decision = _decision(
-        _target("NVDA"), _target("EPD"), _target("MU"), _target("CMCSA"),
-        _target("DIS"), _target("V"), _target("XLB"), _target("AUGO"),
+        _target("NVDA"),
+        _target("EPD"),
+        _target("MU"),
+        _target("CMCSA"),
+        _target("DIS"),
+        _target("V"),
+        _target("XLB"),
+        _target("AUGO"),
         _target("UNH", direction="short"),
     )
     checks = _by_name(scenarios._pm_selection_grade(decision))
     assert checks["selection_from_eligible_set"].passed is False
     assert "UNH(R5" in checks["selection_from_eligible_set"].detail
-    assert checks["takes_an_eligible_short"].passed is False   # the real gap
+    assert checks["takes_an_eligible_short"].passed is False  # the real gap
     assert _score(list(checks.values())) == pytest.approx(0.20 / _TOTAL_WEIGHT)
 
 
@@ -379,6 +404,7 @@ def test_unparsed_decision_scores_zero():
 # What counts as a SELECTION
 # --------------------------------------------------------------------------
 
+
 def test_the_catalyst_door_still_admits_an_unmeasurable_payoff():
     """MSFT and TSM are the two range names whose analyst ratio sits under
     the floor and which a dated state-change row names, so the shadow routes
@@ -388,15 +414,21 @@ def test_the_catalyst_door_still_admits_an_unmeasurable_payoff():
     from ops.model_policy.deterministic_selection import evaluate
 
     door = {
-        r["symbol"] for r in evaluate(
-            scenarios._SELECTION, scenarios._SELECTION_ANALYSES,
-            scenarios._SELECTION_POSITIONS, scenarios._SELECTION_NEWS,
-        ) if r["subfloor_catalyst"] and r["eligible"]
+        r["symbol"]
+        for r in evaluate(
+            scenarios._SELECTION,
+            scenarios._SELECTION_ANALYSES,
+            scenarios._SELECTION_POSITIONS,
+            scenarios._SELECTION_NEWS,
+        )
+        if r["subfloor_catalyst"] and r["eligible"]
     }
     assert door == {"MSFT", "TSM"}
-    checks = _by_name(scenarios._pm_selection_grade(
-        _decision(_target("TSM"), _target("FLNC", direction="short")),
-    ))
+    checks = _by_name(
+        scenarios._pm_selection_grade(
+            _decision(_target("TSM"), _target("FLNC", direction="short")),
+        )
+    )
     assert checks["selection_from_eligible_set"].passed is True
     assert checks["takes_an_eligible_short"].passed is True
 
@@ -406,9 +438,11 @@ def test_closing_and_trimming_held_names_is_not_scored_as_selection():
     on a held name plus a trim must leave the selection checks looking at the
     one genuine pick only."""
     close = TargetPosition(
-        symbol="DIS", risk_allocation_pct=0.0, thesis="Close the starter.",
+        symbol="DIS",
+        risk_allocation_pct=0.0,
+        thesis="Close the starter.",
     )
-    trim = _target("MSFT", risk=0.2)   # ~4.3% implied vs 5.1% held -> a trim
+    trim = _target("MSFT", risk=0.2)  # ~4.3% implied vs 5.1% held -> a trim
     decision = _decision(close, trim, _target("FLNC", direction="short"))
     checks = _by_name(scenarios._pm_selection_grade(decision))
     assert checks["opens_a_position"].detail.startswith("1 opening/adding target")
@@ -419,9 +453,11 @@ def test_closing_and_trimming_held_names_is_not_scored_as_selection():
 
 def test_adding_to_a_held_name_is_scored_as_selection():
     """The mirror of the trim: raising MSFT's weight IS choosing it."""
-    checks = _by_name(scenarios._pm_selection_grade(
-        _decision(_target("MSFT", risk=0.5)),
-    ))
+    checks = _by_name(
+        scenarios._pm_selection_grade(
+            _decision(_target("MSFT", risk=0.5)),
+        )
+    )
     assert checks["opens_a_position"].passed is True
     assert "famous picks 1/1" in checks["familiarity_bias"].detail
 

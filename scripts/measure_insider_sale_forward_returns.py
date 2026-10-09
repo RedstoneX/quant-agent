@@ -43,18 +43,21 @@ def _census_rows_from_observations(path: str) -> list[dict]:
         if str(item.get("direction") or "") != "sell":
             continue
         probe = SimpleNamespace(
-            stream="insider", direction="sell",
+            stream="insider",
+            direction="sell",
             shares=item.get("shares"),
             post_transaction_shares=item.get("post_transaction_shares"),
         )
         fraction, band = holdings_fraction(probe)
-        rows.append({
-            "symbol": item.get("symbol"),
-            "transaction_date": item.get("transaction_date"),
-            "reference_price": item.get("price_per_share"),
-            "holdings_fraction": fraction,
-            "holdings_fraction_band": band or "unknown",
-        })
+        rows.append(
+            {
+                "symbol": item.get("symbol"),
+                "transaction_date": item.get("transaction_date"),
+                "reference_price": item.get("price_per_share"),
+                "holdings_fraction": fraction,
+                "holdings_fraction_band": band or "unknown",
+            }
+        )
     return rows
 
 
@@ -63,21 +66,29 @@ def _buy_rows_from_observations(path: str) -> list[dict]:
     with open(path) as fh:
         raw = json.load(fh)
     return [
-        {"symbol": i.get("symbol"), "transaction_date": i.get("transaction_date"),
-         "reference_price": i.get("price_per_share"), "holdings_fraction_band": "buy"}
-        for i in raw if str(i.get("direction") or "") == "buy"
+        {
+            "symbol": i.get("symbol"),
+            "transaction_date": i.get("transaction_date"),
+            "reference_price": i.get("price_per_share"),
+            "holdings_fraction_band": "buy",
+        }
+        for i in raw
+        if str(i.get("direction") or "") == "buy"
     ]
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--observations", default="data/smart_money/observations.json")
-    ap.add_argument("--census-json", default=None,
-                    help="exported insider_sale_census evidence JSON (uses its `rows`)")
+    ap.add_argument("--census-json", default=None, help="exported insider_sale_census evidence JSON (uses its `rows`)")
     ap.add_argument("--bars", required=True, help="pickle of SYMBOL -> [daily bars]")
-    ap.add_argument("--horizon", type=int, action="append", default=None,
-                    help="trading sessions after the transaction; repeatable, "
-                         "omit for the filing-to-latest-close window")
+    ap.add_argument(
+        "--horizon",
+        type=int,
+        action="append",
+        default=None,
+        help="trading sessions after the transaction; repeatable, omit for the filing-to-latest-close window",
+    )
     args = ap.parse_args(argv)
 
     with open(args.bars, "rb") as fh:

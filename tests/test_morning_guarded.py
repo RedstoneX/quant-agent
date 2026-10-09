@@ -1,4 +1,5 @@
 """The morning-research catch-alls are loud: fault, clean pass, unreached site."""
+
 import logging
 import sqlite3
 from types import SimpleNamespace

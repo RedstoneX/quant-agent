@@ -6,6 +6,7 @@ true and safe: it renders from live broker state without ordering or
 paying for anything, and a field it genuinely cannot know says
 "not available" rather than "OK" or zero.
 """
+
 import sqlite3
 import sys
 from datetime import datetime
@@ -145,7 +146,9 @@ def test_hourly_desk_check_defaults_are_unchanged(tmp_path, monkeypatch):
     _empty_db(tmp_path, monkeypatch)
     monkeypatch.setattr(trader_feed, "et_now", lambda: _WHEN)
     msg = trader_feed._format_hourly_desk_check(
-        {"run_id": "run-x", "daily_pnl": None}, None, 1.0,
+        {"run_id": "run-x", "daily_pnl": None},
+        None,
+        1.0,
     )
     assert "Covering the last hour" in msg
     assert "on demand" not in msg
@@ -156,7 +159,8 @@ def _load_script():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "desk_status_script", PROJECT_ROOT / "scripts" / "desk_status.py",
+        "desk_status_script",
+        PROJECT_ROOT / "scripts" / "desk_status.py",
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -185,7 +189,9 @@ class _StubBroker:
 
 
 def test_dry_run_prints_and_sends_nothing_and_places_no_order(
-    tmp_path, monkeypatch, capsys,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     _empty_db(tmp_path, monkeypatch)
     monkeypatch.setattr(trader_feed, "et_now", lambda: _WHEN)
@@ -223,7 +229,8 @@ def test_dry_run_prints_and_sends_nothing_and_places_no_order(
 
 
 def test_broker_failure_refuses_to_send_rather_than_invent_a_pnl(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     _empty_db(tmp_path, monkeypatch)
     monkeypatch.setenv("ALPACA_API_KEY", "test-key")

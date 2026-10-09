@@ -31,18 +31,28 @@ STOP = 95.0
 
 def _rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
 
 def _analysis(symbol: str, *, setup_type: str = "range") -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", conviction="medium", entry_price=ENTRY,
-        stop_loss=STOP, reference_target=102.0,
-        support_levels=[STOP], resistance_levels=[102.0],
-        computed_levels=[STOP, 102.0], atr_14=(ENTRY - STOP) / 3.5,
-        setup_type=setup_type, expected_horizon_sessions=60,
+        symbol=symbol,
+        rating="buy",
+        conviction="medium",
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        reference_target=102.0,
+        support_levels=[STOP],
+        resistance_levels=[102.0],
+        computed_levels=[STOP, 102.0],
+        atr_14=(ENTRY - STOP) / 3.5,
+        setup_type=setup_type,
+        expected_horizon_sessions=60,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_rc(),
         thesis_invalid_if="closes below support",
@@ -50,26 +60,38 @@ def _analysis(symbol: str, *, setup_type: str = "range") -> TechAnalysisResult:
 
 
 def _decision(symbol: str, *, risk: float = 2.5) -> PortfolioDecision:
-    return PortfolioDecision.model_validate({
-        "reasoning_chain": {
-            "macro_filter": "Macro checked.", "news_check": "News checked.",
-            "earnings_check": "Earnings checked.",
-            "signal_conflicts": "None material.",
-            "sizing_logic": "Sizing checked.",
-            "portfolio_balance": "Book checked.",
-            "cash_target": "Cash checked.",
-        },
-        "targets": [{
-            "symbol": symbol, "conviction": "medium", "direction": "long",
-            "thesis": f"{symbol} setup.", "catalyst": "",
-            "risk_allocation_pct": risk,
-            "provenance": [{
-                "source": "technical", "observed_stance": "buy",
-                "relationship": "supports", "evidence": "current-run rating",
-            }],
-        }],
-        "portfolio_view": "Test decision.",
-    })
+    return PortfolioDecision.model_validate(
+        {
+            "reasoning_chain": {
+                "macro_filter": "Macro checked.",
+                "news_check": "News checked.",
+                "earnings_check": "Earnings checked.",
+                "signal_conflicts": "None material.",
+                "sizing_logic": "Sizing checked.",
+                "portfolio_balance": "Book checked.",
+                "cash_target": "Cash checked.",
+            },
+            "targets": [
+                {
+                    "symbol": symbol,
+                    "conviction": "medium",
+                    "direction": "long",
+                    "thesis": f"{symbol} setup.",
+                    "catalyst": "",
+                    "risk_allocation_pct": risk,
+                    "provenance": [
+                        {
+                            "source": "technical",
+                            "observed_stance": "buy",
+                            "relationship": "supports",
+                            "evidence": "current-run rating",
+                        }
+                    ],
+                }
+            ],
+            "portfolio_view": "Test decision.",
+        }
+    )
 
 
 def test_geometry_rr_is_not_written_as_an_execution_skip_reason():
@@ -99,9 +121,14 @@ def test_rsg_like_executed_ratio_below_the_retired_belt_does_not_skip():
     not a skip.
     """
     order = TradeDecision(
-        action="BUY", symbol="RSG", allocation_pct=5.0,
-        entry_price=223.99, stop_loss=218.51, take_profit=228.46,
-        reasoning="r", setup_type="range",
+        action="BUY",
+        symbol="RSG",
+        allocation_pct=5.0,
+        entry_price=223.99,
+        stop_loss=218.51,
+        take_profit=228.46,
+        reasoning="r",
+        setup_type="range",
     )
     assert order.reward_risk is not None
     assert order.reward_risk < 1.2
@@ -117,9 +144,14 @@ def test_rsg_like_executed_ratio_below_the_retired_belt_does_not_skip():
 
 def test_a_range_buy_does_not_skip_when_executed_payoff_cannot_be_computed():
     order = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0,
-        entry_price=ENTRY, stop_loss=STOP, take_profit=110.0,
-        reasoning="r", setup_type="range",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=110.0,
+        reasoning="r",
+        setup_type="range",
     )
     reason = _execution_payoff_skip_reason(
         order,
@@ -133,9 +165,14 @@ def test_a_range_buy_does_not_skip_when_executed_payoff_cannot_be_computed():
 
 def test_a_breakout_is_not_skipped_even_when_executed_payoff_is_unmeasurable():
     order = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0,
-        entry_price=ENTRY, stop_loss=STOP, take_profit=110.0,
-        reasoning="r", setup_type="breakout",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=110.0,
+        reasoning="r",
+        setup_type="breakout",
     )
     reason = _execution_payoff_skip_reason(
         order,
@@ -152,8 +189,11 @@ def test_measurable_range_under_1_5_keeps_the_pm_asked_size():
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision("RSG", risk=2.5),
         analyses=[_analysis("RSG")],
-        positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=1.5, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        positions=[],
+        total_value=EQUITY,
+        active_state_changes="",
+        rr_floor=1.5,
+        starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"RSG": 0.81},
     )
     assert [t.symbol for t in result.targets] == ["RSG"]
@@ -165,8 +205,11 @@ def test_an_unmeasurable_range_without_catalyst_keeps_the_asked_size():
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision("RSG", risk=2.5),
         analyses=[_analysis("RSG")],
-        positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=99.0, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        positions=[],
+        total_value=EQUITY,
+        active_state_changes="",
+        rr_floor=99.0,
+        starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"RSG": None},
     )
     assert [t.symbol for t in result.targets] == ["RSG"]
@@ -179,8 +222,11 @@ def test_rr_floor_argument_cannot_reinstate_the_size_cap():
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision("AAA", risk=3.0),
         analyses=[_analysis("AAA")],
-        positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=99.0, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        positions=[],
+        total_value=EQUITY,
+        active_state_changes="",
+        rr_floor=99.0,
+        starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"AAA": 3.0},
     )
     assert result.targets[0].risk_allocation_pct == 3.0

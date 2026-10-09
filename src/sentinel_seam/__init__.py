@@ -5,6 +5,7 @@ serves everything"). The inbound seam is the kill-switch FLAG the broker
 layer already reads (RiskConfig.kill_switch_path); this package is only
 the outward half. Imports nothing from src: it is a pure stdlib piece.
 """
+
 from src.sentinel_seam.snapshot import (
     SNAPSHOT_SCHEMA_VERSION,
     SIGNING_KEY_ENV_VAR,

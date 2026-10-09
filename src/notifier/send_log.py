@@ -73,13 +73,9 @@ def record_send(
                 )
                 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts ON notifier_sends(kind, timestamp)")
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts "
-                "ON notifier_sends(kind, timestamp)"
-            )
-            conn.execute(
-                "INSERT INTO notifier_sends "
-                "(kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO notifier_sends (kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
                 (kind, status, run_id, safe_text, safe_detail),
             )
             conn.commit()

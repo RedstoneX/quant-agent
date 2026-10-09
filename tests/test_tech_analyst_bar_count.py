@@ -45,6 +45,7 @@ independent of the window, though: the seat can only count bars it was given,
 so the rule is meaningful only while the window is at least that large. That is
 now asserted rather than assumed.
 """
+
 from __future__ import annotations
 
 import re
@@ -68,10 +69,7 @@ from src.models import OHLCV, TechnicalIndicators
 #: Numbers a future editor might spell rather than type. Not exhaustive and
 #: cannot be — the behaviour checks below are what cover the general case; this
 #: only closes the cheapest way to restate the window in prose.
-_SPELLED = (
-    "ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred"
-    "|a dozen|two dozen|dozen"
-)
+_SPELLED = "ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|a dozen|two dozen|dozen"
 
 #: A claim about the size of the attached window, in any of the forms the sheet
 #: could plausibly use. Digits or spelled; bars, sessions, trading days or
@@ -116,9 +114,7 @@ _HISTORY_PHRASE_RE = re.compile(
 #: src/data/technical.py) — how far the deepest INDICATOR reaches, not how many
 #: bars are attached. Rendered from that constant and checked in
 #: tests/test_tech_analyst_history_window.py; exempted here by shape.
-_LONGEST_INDICATOR_PHRASE_RE = re.compile(
-    r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+\d+\s+sessions"
-)
+_LONGEST_INDICATOR_PHRASE_RE = re.compile(r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+\d+\s+sessions")
 
 #: Bar counts to render the sheet against in the coupling test. All sit above
 #: the data-sufficiency floor on purpose: rendering a sheet that says "you are
@@ -151,7 +147,10 @@ def _bars(count: int) -> list[OHLCV]:
     return [
         OHLCV(
             date=start + timedelta(days=i),
-            open=float(i), high=float(i), low=float(i), close=float(i),
+            open=float(i),
+            high=float(i),
+            low=float(i),
+            close=float(i),
             volume=1_000_000,
         )
         for i in range(count)
@@ -160,10 +159,19 @@ def _bars(count: int) -> list[OHLCV]:
 
 def _indicators() -> TechnicalIndicators:
     return TechnicalIndicators(
-        symbol="SPY", ma_20=505.0, ma_50=498.0, ma_200=450.0, rsi_14=58.0,
-        macd=1.0, macd_signal=0.5, macd_hist=0.5,
-        bb_upper=520.0, bb_middle=505.0, bb_lower=490.0,
-        atr_14=8.5, volume_change_pct=15.0,
+        symbol="SPY",
+        ma_20=505.0,
+        ma_50=498.0,
+        ma_200=450.0,
+        rsi_14=58.0,
+        macd=1.0,
+        macd_signal=0.5,
+        macd_hist=0.5,
+        bb_upper=520.0,
+        bb_middle=505.0,
+        bb_lower=490.0,
+        atr_14=8.5,
+        volume_change_pct=15.0,
     )
 
 
@@ -180,6 +188,7 @@ def _user_message(bar_count: int) -> str:
 # --------------------------------------------------------------------------
 # The sheet: one home for the number
 # --------------------------------------------------------------------------
+
 
 def test_data_sufficiency_rule_is_still_present_and_untouched() -> None:
     """The exemption must describe something that actually exists.
@@ -247,6 +256,7 @@ def test_prompt_source_actually_uses_the_placeholder() -> None:
 # Rendering: the coupling is live, not a coincidence of today's value
 # --------------------------------------------------------------------------
 
+
 def test_rendered_prompt_states_the_count_the_code_sends() -> None:
     claims = _bar_claims(render_tech_placeholders(_prompt_source()))
     assert claims, "rendering produced no bar-window claim at all"
@@ -311,8 +321,10 @@ def test_agent_system_prompt_is_rendered() -> None:
 # The other half: what the code actually sends
 # --------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
-    "available", [_BARS_PER_SYMBOL - 5, _BARS_PER_SYMBOL, _BARS_PER_SYMBOL + 60],
+    "available",
+    [_BARS_PER_SYMBOL - 5, _BARS_PER_SYMBOL, _BARS_PER_SYMBOL + 60],
 )
 def test_user_message_sends_the_most_recent_window(available: int) -> None:
     """Behaviour, not syntax: how many bars go out, and WHICH ones.

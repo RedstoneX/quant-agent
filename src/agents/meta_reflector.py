@@ -103,8 +103,7 @@ def _fmt_loss_patterns(lp: dict | None) -> str:
         return "(no loss_patterns data)"
     lines = [
         f"- Total wrong BUYs: {lp.get('total_wrong_buys', 0)}",
-        f"- Alpha destruction (sum market-relative losses): "
-        f"{lp.get('alpha_destruction_pct', 'n/a')}%",
+        f"- Alpha destruction (sum market-relative losses): {lp.get('alpha_destruction_pct', 'n/a')}%",
     ]
     by_cause = lp.get("by_cause") or {}
     if not by_cause:
@@ -131,17 +130,18 @@ def _fmt_agent_activity(activity: dict | None) -> str:
         return "(no agent_signal_activity data)"
     lines = []
     for agent_name in (
-        "tech_analyst", "news_analyst", "macro_analyst",
-        "earnings_analyst", "portfolio_manager", "risk_manager",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "portfolio_manager",
+        "risk_manager",
     ):
         stats = activity.get(agent_name) or {}
         if not stats:
             lines.append(f"- {agent_name}: (no data)")
             continue
-        key_bits = ", ".join(
-            f"{k}={v}" for k, v in stats.items()
-            if not isinstance(v, (dict, list))
-        )
+        key_bits = ", ".join(f"{k}={v}" for k, v in stats.items() if not isinstance(v, (dict, list)))
         lines.append(f"- {agent_name}: {key_bits}")
         for k, v in stats.items():
             if isinstance(v, dict) and v:
@@ -182,8 +182,7 @@ def _fmt_watchlist_candidates(wl: dict | None) -> str:
         return "(no watchlist candidates this period)"
     high = ", ".join(wl.get("high_conviction") or []) or "(none)"
     lines = [
-        f"- Total candidates: {wl.get('total_candidates', 0)} "
-        f"over {wl.get('window_days', '?')} days",
+        f"- Total candidates: {wl.get('total_candidates', 0)} over {wl.get('window_days', '?')} days",
         f"- High-conviction (add_count >= 2 — seriously consider): {high}",
         "- Top candidates:",
     ]
@@ -229,8 +228,7 @@ def _fmt_agent_prompts_snapshot(snapshot: dict | None) -> str:
         err = payload.get("error")
         if err:
             out_lines.append(
-                f"### {agent}\n(snapshot error: {err} — can't audit "
-                f"existing prompt; skip edits targeting this agent)"
+                f"### {agent}\n(snapshot error: {err} — can't audit existing prompt; skip edits targeting this agent)"
             )
             continue
         intro = (payload.get("intro") or "").strip()
@@ -260,8 +258,7 @@ def _fmt_agent_prompts_snapshot(snapshot: dict | None) -> str:
             )
         else:
             agent_block.append(
-                "**Existing system-evolved Learnings**: (none — this "
-                "agent has no prior auto-evolved entries)"
+                "**Existing system-evolved Learnings**: (none — this agent has no prior auto-evolved entries)"
             )
         if truncated:
             agent_block.append(
@@ -285,10 +282,7 @@ class MetaReflectorAgent(BaseAgent):
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
             return PROMPT_PATH.read_text()
-        return (
-            "You are a quarterly meta-reflector. Produce a "
-            "QuarterlyMetaReflection JSON object."
-        )
+        return "You are a quarterly meta-reflector. Produce a QuarterlyMetaReflection JSON object."
 
     def build_user_message(self, **kwargs) -> str:
         digest: dict = kwargs["digest"]
@@ -316,19 +310,14 @@ class MetaReflectorAgent(BaseAgent):
         if prev_reflection:
             prior_bits = [
                 f"- Prior period: {prev_reflection.get('period', '?')}",
-                f"- Prior style_self_portrait: "
-                f"{(prev_reflection.get('style_self_portrait') or '')[:400]}",
-                f"- Prior persistent_blindspots: "
-                f"{prev_reflection.get('persistent_blindspots', [])}",
+                f"- Prior style_self_portrait: {(prev_reflection.get('style_self_portrait') or '')[:400]}",
+                f"- Prior persistent_blindspots: {prev_reflection.get('persistent_blindspots', [])}",
             ]
             prior_learnings = prev_reflection.get("proposed_learnings") or []
             if prior_learnings:
                 prior_bits.append("- Prior proposed_learnings (for continuity):")
                 for pl in prior_learnings[:3]:
-                    prior_bits.append(
-                        f"  - [{pl.get('agent_name', '?')}] "
-                        f"{(pl.get('learning_text') or '')[:160]}"
-                    )
+                    prior_bits.append(f"  - [{pl.get('agent_name', '?')}] {(pl.get('learning_text') or '')[:160]}")
             prior_section = "\n".join(prior_bits)
         else:
             prior_section = "(no prior reflection — first meta-reflection run)"
@@ -437,8 +426,8 @@ the edits compound forward."""
             pass
         elif not isinstance(raw_learnings, list):
             logger.warning(
-                "Meta-reflector: proposed_learnings is %s, not list — "
-                "replacing with []", type(raw_learnings).__name__,
+                "Meta-reflector: proposed_learnings is %s, not list — replacing with []",
+                type(raw_learnings).__name__,
             )
             parsed["proposed_learnings"] = []
         else:
@@ -446,8 +435,9 @@ the edits compound forward."""
             for i, item in enumerate(raw_learnings):
                 if not isinstance(item, dict):
                     logger.warning(
-                        "Meta-reflector: dropping non-dict proposed_learning "
-                        "at index %d: %r", i, item,
+                        "Meta-reflector: dropping non-dict proposed_learning at index %d: %r",
+                        i,
+                        item,
                     )
                     continue
                 try:
@@ -455,8 +445,9 @@ the edits compound forward."""
                 except ValidationError as e:
                     agent = item.get("agent_name") or f"<idx {i}>"
                     logger.warning(
-                        "Meta-reflector: dropping malformed proposed_learning "
-                        "for %s: %s", agent, e,
+                        "Meta-reflector: dropping malformed proposed_learning for %s: %s",
+                        agent,
+                        e,
                     )
                     continue
                 valid.append(item)
@@ -470,8 +461,9 @@ the edits compound forward."""
                 for i, item in enumerate(raw_patterns):
                     if not isinstance(item, dict):
                         logger.warning(
-                            "Meta-reflector: dropping non-dict top_pattern "
-                            "at index %d: %r", i, item,
+                            "Meta-reflector: dropping non-dict top_pattern at index %d: %r",
+                            i,
+                            item,
                         )
                         continue
                     try:
@@ -479,16 +471,16 @@ the edits compound forward."""
                     except ValidationError as e:
                         cause = item.get("root_cause") or f"<idx {i}>"
                         logger.warning(
-                            "Meta-reflector: dropping malformed loss_pattern "
-                            "%r: %s", cause, e,
+                            "Meta-reflector: dropping malformed loss_pattern %r: %s",
+                            cause,
+                            e,
                         )
                         continue
                     valid_patterns.append(item)
                 lpr["top_patterns"] = valid_patterns
             elif raw_patterns is not None:
                 logger.warning(
-                    "Meta-reflector: loss_pattern_report.top_patterns is %s, "
-                    "not list — replacing with []",
+                    "Meta-reflector: loss_pattern_report.top_patterns is %s, not list — replacing with []",
                     type(raw_patterns).__name__,
                 )
                 lpr["top_patterns"] = []
@@ -506,6 +498,7 @@ def persist_reflection(
     read this to drive prompt edits; PR3 leaves it as observe-only.
     """
     import os
+
     out_dir = Path(root_dir) / reflection.period
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "reflection.json"
@@ -525,6 +518,7 @@ def load_previous_reflection(
     dict (parsed JSON) — the agent only uses it for continuity framing,
     not for structural decisions, so we don't re-validate schema here."""
     from src.trading_calendar import quarter_of
+
     year = current_period_end.year
     q = quarter_of(current_period_end)
     prev_q = q - 1
@@ -539,6 +533,8 @@ def load_previous_reflection(
         return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning(
-            "load_previous_reflection: failed to parse %s: %s", path, exc,
+            "load_previous_reflection: failed to parse %s: %s",
+            path,
+            exc,
         )
         return None

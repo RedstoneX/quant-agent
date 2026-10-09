@@ -27,6 +27,7 @@ trading path reads this row. It never raises, never gates and never delays: a
 failed record must not take a live session with it. It is run-scoped (symbol
 None) for the reason given in `_record_rotation_precheck`.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,11 +62,19 @@ def margins_for(held, analyses, registry, stale, non_corroborating) -> dict:
         if rating != "neutral":
             direction = "short" if rating in ("sell", "strong_sell") else "long"
             sources = (registry or {}).get(sym, {})
-            entry["r5_net_evidence"] = int(signed_source_score(
-                sym, sources, direction,
-                ignored_sources=(stale or {}).get(sym),
-                non_corroborating_sources=(non_corroborating or {}).get(sym),
-            )) if sources else 0
+            entry["r5_net_evidence"] = (
+                int(
+                    signed_source_score(
+                        sym,
+                        sources,
+                        direction,
+                        ignored_sources=(stale or {}).get(sym),
+                        non_corroborating_sources=(non_corroborating or {}).get(sym),
+                    )
+                )
+                if sources
+                else 0
+            )
         out[sym] = entry
     return out
 
@@ -76,19 +85,26 @@ def record_rotation_margins(pipeline, ctx) -> None:
     try:
         precheck = getattr(
             getattr(pipeline, "portfolio_manager", None),
-            "last_rotation_precheck", None,
+            "last_rotation_precheck",
+            None,
         )
         held = tuple(getattr(precheck, "held_examined", ()) or ())
         if not held:
             return
         margins = margins_for(
-            held, getattr(ctx, "analyses", None),
+            held,
+            getattr(ctx, "analyses", None),
             getattr(ctx, "evidence_registry", None),
             getattr(ctx, "evidence_stale_sources", None),
             getattr(ctx, "evidence_non_corroborating_sources", None),
         )
         _record_pipeline_event(
-            pipeline, ctx, None, "rotation", "margins", "bar_margins",
+            pipeline,
+            ctx,
+            None,
+            "rotation",
+            "margins",
+            "bar_margins",
             held_margins=json.dumps(margins, sort_keys=True),
         )
     except Exception as exc:  # noqa: BLE001

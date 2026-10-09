@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,6 @@ from src.trader_feed.evening import (
 from src.trader_feed.intraday import (
     _format_intra_check,
 )
-
 
 
 def format_session_result(

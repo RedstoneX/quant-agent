@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_latch.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import logging
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 class EmergencyLatch:
     def __init__(
-        self, *,
+        self,
+        *,
         connect,
         notifier,
         infrastructure_lock,
@@ -81,8 +83,7 @@ class EmergencyLatch:
                 if day_row is None:
                     return {}
                 session_row = conn.execute(
-                    "SELECT actual_cost_usd, provider_attempts, costs_exact "
-                    "FROM llm_budget_sessions WHERE run_id=?",
+                    "SELECT actual_cost_usd, provider_attempts, costs_exact FROM llm_budget_sessions WHERE run_id=?",
                     (run_id,),
                 ).fetchone()
         except Exception as exc:
@@ -111,9 +112,7 @@ class EmergencyLatch:
             detail = str(payload.get("error") or "persistent accounting failure")
             recorded = str(payload.get("recorded_at") or "unknown time")
             return (
-                RuntimeError(
-                    f"durable cost-circuit emergency latch from {recorded}: {detail}"
-                ),
+                RuntimeError(f"durable cost-circuit emergency latch from {recorded}: {detail}"),
                 payload,
             )
         except Exception as exc:
@@ -140,17 +139,11 @@ class EmergencyLatch:
                     notifier=self.notifier,
                     run_id=str(payload.get("run_id") or "unscoped"),
                     mode=str(payload.get("mode") or "unknown"),
-                    agent_name=str(
-                        payload.get("agent_name") or "circuit_infrastructure"
-                    ),
+                    agent_name=str(payload.get("agent_name") or "circuit_infrastructure"),
                     attempts=self._safe_optional_int(payload.get("attempts")),
                     attempts_exact=payload.get("attempts_exact") is True,
-                    session_cost_usd=self._safe_optional_float(
-                        payload.get("session_cost_usd")
-                    ),
-                    daily_cost_usd=self._safe_optional_float(
-                        payload.get("daily_cost_usd")
-                    ),
+                    session_cost_usd=self._safe_optional_float(payload.get("session_cost_usd")),
+                    daily_cost_usd=self._safe_optional_float(payload.get("daily_cost_usd")),
                     costs_exact=payload.get("costs_exact") is True,
                     emergency_latch_path=self._emergency_latch_path,
                     emergency_lock_path=self._emergency_lock_path,
@@ -204,30 +197,33 @@ class EmergencyLatch:
             # failures in other workers must not rewrite incident identity.
             if path.exists():
                 return
-            payload = json.dumps(
-                {
-                    "recorded_at": _now_utc().isoformat(),
-                    "error": f"{type(error).__name__}: {str(error)[:500]}",
-                    "run_id": run_id,
-                    "mode": mode,
-                    "agent_name": agent_name,
-                    "attempts": attempts,
-                    "attempts_exact": attempts_exact,
-                    "session_cost_usd": session_cost_usd,
-                    "daily_cost_usd": daily_cost_usd,
-                    "costs_exact": costs_exact,
-                    # item 17(b): durable alert-delivery bookkeeping, folded
-                    # in place by `_record_alert_attempt` as
-                    # `UnavailableLLMCostCircuit._alert()` runs. Starts
-                    # undelivered/zero -- nothing has attempted to notify
-                    # the operator about THIS incident yet.
-                    "alert_delivered": False,
-                    "alert_suppressed": False,
-                    "alert_attempts": 0,
-                    "last_alert_attempt_at": None,
-                },
-                sort_keys=True,
-            ) + "\n"
+            payload = (
+                json.dumps(
+                    {
+                        "recorded_at": _now_utc().isoformat(),
+                        "error": f"{type(error).__name__}: {str(error)[:500]}",
+                        "run_id": run_id,
+                        "mode": mode,
+                        "agent_name": agent_name,
+                        "attempts": attempts,
+                        "attempts_exact": attempts_exact,
+                        "session_cost_usd": session_cost_usd,
+                        "daily_cost_usd": daily_cost_usd,
+                        "costs_exact": costs_exact,
+                        # item 17(b): durable alert-delivery bookkeeping, folded
+                        # in place by `_record_alert_attempt` as
+                        # `UnavailableLLMCostCircuit._alert()` runs. Starts
+                        # undelivered/zero -- nothing has attempted to notify
+                        # the operator about THIS incident yet.
+                        "alert_delivered": False,
+                        "alert_suppressed": False,
+                        "alert_attempts": 0,
+                        "last_alert_attempt_at": None,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
             try:
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -21,10 +21,10 @@ def test_work_md_growth_budget_shrinks_as_the_file_fills():
     function's own docstring in scripts/status_board.py for why 0.5 is
     provisional and what it replaced."""
     cap = sb.WORK_MD_GROWTH_CAP_BYTES
-    assert sb.work_md_growth_budget(30_000, cap) == 35_000   # ~30% full
-    assert sb.work_md_growth_budget(85_000, cap) == 7_500    # ~85% full
-    assert sb.work_md_growth_budget(95_000, cap) == 2_500    # ~95% full
-    assert sb.work_md_growth_budget(cap, cap) == 0           # at the cap
+    assert sb.work_md_growth_budget(30_000, cap) == 35_000  # ~30% full
+    assert sb.work_md_growth_budget(85_000, cap) == 7_500  # ~85% full
+    assert sb.work_md_growth_budget(95_000, cap) == 2_500  # ~95% full
+    assert sb.work_md_growth_budget(cap, cap) == 0  # at the cap
     assert sb.work_md_growth_budget(cap + 10_000, cap) == 0  # past it: never negative
 
 
@@ -102,5 +102,3 @@ def test_the_cap_warns_before_it_binds():
     assert sb.work_md_cap_warning(95_000, cap) is not None
     # Fires early enough that pruning is still a choice, not a precondition.
     assert sb.work_md_growth_budget(int(sb.WORK_MD_WARN_SHARE * cap), cap) == 10_000
-
-

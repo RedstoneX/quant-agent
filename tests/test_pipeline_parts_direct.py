@@ -1,4 +1,5 @@
 """Direct tests: each lifted pipeline part is imported on its own, with no pipeline object behind it."""
+
 from __future__ import annotations
 
 import logging
@@ -21,8 +22,10 @@ def test_trade_executed_or_pending_ignores_zero_fill_cancels():
 
 
 def test_report_kill_repair_names_each_stop_it_could_not_add(caplog):
-    outcomes = [SimpleNamespace(placed=False, symbol="ZZZ", qty=2.0, detail="rejected"),
-                SimpleNamespace(placed=True, symbol="YYY", qty=1.0, detail="")]
+    outcomes = [
+        SimpleNamespace(placed=False, symbol="ZZZ", qty=2.0, detail="rejected"),
+        SimpleNamespace(placed=True, symbol="YYY", qty=1.0, detail=""),
+    ]
     with caplog.at_level(logging.WARNING):
         kill_repair._report_kill_repair("ctx", outcomes)
     text = caplog.text
@@ -62,6 +65,10 @@ def test_record_name_coverage_hands_config_to_the_session(monkeypatch):
 
 
 def test_review_module_exposes_the_lifted_entry_points():
-    for name in ("run_position_review", "run_earnings_preprocess",
-                 "_persist_review_metrics", "_run_position_review_body"):
+    for name in (
+        "run_position_review",
+        "run_earnings_preprocess",
+        "_persist_review_metrics",
+        "_run_position_review_body",
+    ):
         assert callable(getattr(review, name))

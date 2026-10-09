@@ -2,6 +2,7 @@
 
 That module re-exports both so every caller and test keeps its name.
 """
+
 from __future__ import annotations
 
 import math
@@ -131,7 +132,7 @@ def _structural_level_backing_stop(
         if not math.isfinite(stop_distance) or stop_distance <= 0:
             continue
         ranges = []
-        for rng in (bars_by_price.get(price) or ()):
+        for rng in bars_by_price.get(price) or ():
             try:
                 low, high = float(rng[0]), float(rng[1])
             except (TypeError, ValueError, IndexError):

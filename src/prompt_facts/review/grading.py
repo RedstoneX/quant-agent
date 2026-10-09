@@ -17,7 +17,8 @@ class ReviewGrading:
     """Graded recent sells and buys, and the trade-grade summary; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         broker=None,
         market=None,
@@ -31,7 +32,8 @@ class ReviewGrading:
         self._build_post_exit_reality = build_post_exit_reality  # owned by ReviewExits; the host's shim is handed in
 
     def _build_recent_sells_for_grading(
-        self, lookback_days: int = 2,
+        self,
+        lookback_days: int = 2,
         symbols_bars: dict | None = None,
     ) -> list[dict]:
         """Return recent SELL-family trades joined with current quote for grading.
@@ -49,6 +51,7 @@ class ReviewGrading:
         if not all_rows:
             return []
         from datetime import date as _date, timedelta as _td
+
         cutoff = et_today() - _td(days=lookback_days)
         # REDUCE = midday reviewer trim (discretionary partial exit — a SELL
         # decision the reviewer owns and should be graded on). TAKE_PROFIT
@@ -75,7 +78,7 @@ class ReviewGrading:
                 continue
             sym = row.get("symbol")
             if sweep_symbol is not None and sym == sweep_symbol:
-                continue   # parking churn is not a graded decision
+                continue  # parking churn is not a graded decision
             sell_price = float(row.get("fill_price") or row.get("price") or 0) or 0.0
             if not sym or sell_price <= 0:
                 continue
@@ -91,19 +94,23 @@ class ReviewGrading:
                 if bars:
                     curr = float(bars[-1].close or 0)
             pct = ((curr / sell_price - 1) * 100) if (curr > 0 and sell_price > 0) else 0.0
-            out.append({
-                "symbol": sym,
-                "sell_date": str(sell_date),
-                "sell_price": sell_price,
-                "current_price": round(curr, 2) if curr else 0.0,
-                "pct_move_since_sell": round(pct, 2),
-                "reasoning": row.get("reasoning") or "",
-            })
+            out.append(
+                {
+                    "symbol": sym,
+                    "sell_date": str(sell_date),
+                    "sell_price": sell_price,
+                    "current_price": round(curr, 2) if curr else 0.0,
+                    "pct_move_since_sell": round(pct, 2),
+                    "reasoning": row.get("reasoning") or "",
+                }
+            )
         # Newest first, cap to avoid bloating the evening prompt
         out.sort(key=lambda r: r["sell_date"], reverse=True)
         return out[:10]
+
     def _build_recent_buys_for_grading(
-        self, lookback_days: int = 5,
+        self,
+        lookback_days: int = 5,
         symbols_bars: dict | None = None,
     ) -> list[dict]:
         """Mirror of `_build_recent_sells_for_grading` for entry quality.
@@ -128,15 +135,14 @@ class ReviewGrading:
         if not all_rows:
             return []
         from datetime import date as _date, timedelta as _td
+
         cutoff = et_today() - _td(days=lookback_days)
         # SPY bars once — used to compute market_relative_move_pct per BUY.
         # Pad the lookback to cover the oldest BUY date + weekends.
         spy_close_by_date: dict[str, float] = {}
         spy_latest_close: float = 0.0
         try:
-            spy_bars = self.market.get_ohlcv(
-                "SPY", lookback_days=max(lookback_days + 5, 12)
-            )
+            spy_bars = self.market.get_ohlcv("SPY", lookback_days=max(lookback_days + 5, 12))
             for b in spy_bars or []:
                 try:
                     spy_close_by_date[str(b.date)] = float(b.close)
@@ -209,17 +215,20 @@ class ReviewGrading:
                 market_relative = round(pct - spy_pct, 2)
             else:
                 market_relative = None
-            out.append({
-                "symbol": sym,
-                "buy_date": str(buy_date),
-                "buy_price": buy_price,
-                "current_price": round(curr, 2) if curr else 0.0,
-                "pct_move_since_buy": round(pct, 2),
-                "market_relative_move_pct": market_relative,
-                "reasoning": row.get("reasoning") or "",
-            })
+            out.append(
+                {
+                    "symbol": sym,
+                    "buy_date": str(buy_date),
+                    "buy_price": buy_price,
+                    "current_price": round(curr, 2) if curr else 0.0,
+                    "pct_move_since_buy": round(pct, 2),
+                    "market_relative_move_pct": market_relative,
+                    "reasoning": row.get("reasoning") or "",
+                }
+            )
         out.sort(key=lambda r: r["buy_date"], reverse=True)
         return out[:10]
+
     def _build_trade_grade_summary(self, lookback_days: int = 14) -> dict:
         """Aggregate evening's structured sell_grades + buy_grades over N days.
 
@@ -237,13 +246,16 @@ class ReviewGrading:
         }
         """
         import json as _json
+
         empty = {
-            "n_sells": 0, "n_buys": 0,
+            "n_sells": 0,
+            "n_buys": 0,
             "sell_counts": {"correct": 0, "premature": 0, "wrong": 0},
-            "buy_counts":  {"correct": 0, "premature": 0, "wrong": 0},
+            "buy_counts": {"correct": 0, "premature": 0, "wrong": 0},
             "repeat_premature_symbols": [],
             "repeat_wrong_symbols": [],
         }
+
         def _with_reality(base: dict) -> dict:
             # The deterministic post-exit block must ride along even when
             # nightly grades are absent/corrupt — it's tape-derived, not
@@ -286,16 +298,19 @@ class ReviewGrading:
                 # evening run can regenerate and we can see the symptom.
                 preview = (raw if isinstance(raw, str) else str(raw))[:120]
                 logger.warning(
-                    "_build_trade_grade_summary: failed to parse insights[%s] "
-                    "(row date=%s): %s — preview=%r",
-                    col, row.get("date", "?"), exc, preview,
+                    "_build_trade_grade_summary: failed to parse insights[%s] (row date=%s): %s — preview=%r",
+                    col,
+                    row.get("date", "?"),
+                    exc,
+                    preview,
                 )
                 return []
             if not isinstance(v, list):
                 logger.warning(
-                    "_build_trade_grade_summary: insights[%s] (row date=%s) "
-                    "expected list, got %s — ignoring",
-                    col, row.get("date", "?"), type(v).__name__,
+                    "_build_trade_grade_summary: insights[%s] (row date=%s) expected list, got %s — ignoring",
+                    col,
+                    row.get("date", "?"),
+                    type(v).__name__,
                 )
                 return []
             return v
@@ -346,12 +361,8 @@ class ReviewGrading:
             "n_buys": sum(buy_counts.values()),
             "sell_counts": sell_counts,
             "buy_counts": buy_counts,
-            "repeat_premature_symbols": sorted(
-                s for s, c in sell_premature_by_symbol.items() if c >= 2
-            ),
-            "repeat_wrong_symbols": sorted(
-                s for s, c in sell_wrong_by_symbol.items() if c >= 2
-            ),
+            "repeat_premature_symbols": sorted(s for s, c in sell_premature_by_symbol.items() if c >= 2),
+            "repeat_wrong_symbols": sorted(s for s, c in sell_wrong_by_symbol.items() if c >= 2),
         }
         # RC4 (2026-07-16): deterministic post-exit reality. The LLM grader
         # scored 32/33 recent sells "correct" at t+1..t+3 while the tape

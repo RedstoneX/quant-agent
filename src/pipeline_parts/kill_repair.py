@@ -14,12 +14,11 @@ def _install_sigterm_unwind(pipeline, context: str):
     is the ordinary case under pytest's worker threads.
     """
     import signal
+
     try:
         return signal.signal(
             signal.SIGTERM,
-            lambda *_: (_ for _ in ()).throw(
-                SessionTerminated(f"{context}: SIGTERM from the run wrapper")
-            ),
+            lambda *_: (_ for _ in ()).throw(SessionTerminated(f"{context}: SIGTERM from the run wrapper")),
         )
     except (ValueError, OSError, AttributeError, RuntimeError) as exc:
         logger.debug("SIGTERM unwind not installed for %s: %s", context, exc)
@@ -54,7 +53,8 @@ def _repair_stops_on_kill(pipeline, context: str) -> None:
         outcomes = pipeline._add_missing_stops()
     except Exception:  # noqa: BLE001 — logged with traceback; the unwind must go on
         logger.exception(
-            "%s: SIGTERM unwind stop-coverage repair FAILED — continuing the unwind", context,
+            "%s: SIGTERM unwind stop-coverage repair FAILED — continuing the unwind",
+            context,
         )
     else:
         pipeline._report_kill_repair(context, outcomes)
@@ -66,11 +66,16 @@ def _report_kill_repair(context: str, outcomes: list) -> None:
         if not o.placed:
             logger.error(
                 "%s: SIGTERM unwind could NOT add the stop owed on %s (%.4f): %s",
-                context, o.symbol, o.qty, o.detail,
+                context,
+                o.symbol,
+                o.qty,
+                o.detail,
             )
     logger.warning(
-        "%s: SIGTERM unwind placed %d of %d owed stop(s)", context,
-        sum(1 for o in outcomes if o.placed), len(outcomes),
+        "%s: SIGTERM unwind placed %d of %d owed stop(s)",
+        context,
+        sum(1 for o in outcomes if o.placed),
+        len(outcomes),
     )
 
 
@@ -78,22 +83,26 @@ def _add_missing_stops(pipeline) -> list:
     """The coverage sweep's add-only gap repair, against this desk's book."""
     from src.coverage_watchdog import replace_missing_stops, uncovered_positions
 
-    pending = {
-        r.get("symbol") for r in pipeline.db.get_pending_protection_restores()
-    }
+    pending = {r.get("symbol") for r in pipeline.db.get_pending_protection_restores()}
     sweeper = pipeline._sweeper()
-    sweep_symbol = (
-        sweeper.symbol if sweeper is not None else pipeline._retired_cash_park_symbol()
-    )
+    sweep_symbol = sweeper.symbol if sweeper is not None else pipeline._retired_cash_park_symbol()
     gaps, error = uncovered_positions(
-        pipeline.broker, sweep_symbol=sweep_symbol, skip_symbols=pending, db=pipeline.db,
+        pipeline.broker,
+        sweep_symbol=sweep_symbol,
+        skip_symbols=pending,
+        db=pipeline.db,
     )
     if error:
         raise RuntimeError(error)
     return replace_missing_stops(
-        pipeline.broker, gaps, sweep_symbol=sweep_symbol, db=pipeline.db,
+        pipeline.broker,
+        gaps,
+        sweep_symbol=sweep_symbol,
+        db=pipeline.db,
         last_buy=lambda sym, action="BUY": pipeline.db.get_symbol_last_buy(
-            sym, include_in_flight=True, action=action,
+            sym,
+            include_in_flight=True,
+            action=action,
         ),
     )
 
@@ -102,6 +111,7 @@ def _restore_sigterm(pipeline, previous) -> None:
     if previous is None:
         return
     import signal
+
     try:
         signal.signal(signal.SIGTERM, previous)
     except (ValueError, OSError, AttributeError, RuntimeError):

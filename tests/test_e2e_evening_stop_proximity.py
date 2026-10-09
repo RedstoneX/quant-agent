@@ -14,6 +14,7 @@ stop resting at the broker, and the price is placed relative to that stop:
 
 Every expectation derives from the inputs (price, stop), not desk output.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,8 +29,7 @@ from tests.test_e2e_close_existing_book import _news_says_nothing
 
 def _evening(tmp_path, monkeypatch, price):
     answers = {"evening": _analyst_says(), "news": _news_says_nothing()}
-    return run_held_book(tmp_path, monkeypatch, session="evening", hour=HOUR,
-                         bars=_bars(end=price), answers=answers)
+    return run_held_book(tmp_path, monkeypatch, session="evening", hour=HOUR, bars=_bars(end=price), answers=answers)
 
 
 def _rows(result):
@@ -38,8 +38,7 @@ def _rows(result):
 
 def test_a_tight_stop_is_reported_near_and_persisted(tmp_path, monkeypatch):
     price = INITIAL_STOP + 0.3
-    result, _trace, trading, attempts, pipeline = _evening(
-        tmp_path, monkeypatch, price)
+    result, _trace, trading, attempts, pipeline = _evening(tmp_path, monkeypatch, price)
     assert attempts == [], attempts
     rows = _rows(result)
     assert len(rows) == 1, result["stop_proximity"]
@@ -49,7 +48,8 @@ def test_a_tight_stop_is_reported_near_and_persisted(tmp_path, monkeypatch):
     assert rows[0]["gap"] < rows[0]["atr"]
     stored = pipeline.db.get_evening_report()
     assert stored is not None and SYMBOL in json.dumps(stored), (
-        "the near-stop finding did not reach the stored evening report")
+        "the near-stop finding did not reach the stored evening report"
+    )
     assert trading.submitted == [] and trading.cancelled == []
 
 
@@ -59,7 +59,8 @@ def test_a_roomy_stop_is_not_reported(tmp_path, monkeypatch):
 
 
 def test_a_price_through_an_unfilled_stop_is_its_own_state(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     price = INITIAL_STOP - 1.0
     result, *_ = _evening(tmp_path, monkeypatch, price)

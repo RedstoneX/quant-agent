@@ -1,4 +1,5 @@
 """Fill-reconciler catch-alls are loud: traceback + counted row; clean pass has its own row; unreached writes none."""
+
 from __future__ import annotations
 
 import logging
@@ -13,14 +14,19 @@ from src.sentinel import reconciliation
 @pytest.fixture
 def rows(monkeypatch):
     seen = []
-    monkeypatch.setattr(reconciliation, "record_reconciliation",
-                        lambda **kw: seen.append((kw["kind"], kw["result"])))
+    monkeypatch.setattr(reconciliation, "record_reconciliation", lambda **kw: seen.append((kw["kind"], kw["result"])))
     return seen
 
 
 def _rec(db, broker=None):
-    return FillReconciler(broker=broker, db=db, config=SimpleNamespace(), flag_stop_out_anomaly=None,
-                          format_qty=str, parse_broker_fill_timestamp=lambda x: x)
+    return FillReconciler(
+        broker=broker,
+        db=db,
+        config=SimpleNamespace(),
+        flag_stop_out_anomaly=None,
+        format_qty=str,
+        parse_broker_fill_timestamp=lambda x: x,
+    )
 
 
 def test_swallowed_fault_logs_traceback_and_writes_disagreed_row(rows, caplog):
@@ -56,6 +62,7 @@ def test_unreached_site_writes_no_row(rows):
 def test_observer_fault_never_breaks_reconciliation(monkeypatch):
     def bad(**_kw):
         raise RuntimeError("ledger locked")
+
     monkeypatch.setattr(reconciliation, "record_reconciliation", bad)
 
     class Db:

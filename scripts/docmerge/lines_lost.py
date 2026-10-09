@@ -3,6 +3,7 @@
 Pure: counts lines, touches no git and no file; loaded by path from
 `scripts/resolve_doc_conflict.py` the way `status_board.py` is.
 """
+
 from __future__ import annotations
 
 

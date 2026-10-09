@@ -7,6 +7,7 @@ traceback at ERROR plus one ``disagreed`` row; a clean pass writes its own
 re-raises, so an observer fault cannot alter reconciliation. `db` is the
 ledger handle the reconciler already holds; None means log-only, no row.
 """
+
 import logging
 
 from src.sentinel.reconciliation import record_guarded_outcome

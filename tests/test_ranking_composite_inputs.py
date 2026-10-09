@@ -4,16 +4,20 @@ Reward:risk is a within-tier tiebreak and net evidence is a gate/ceiling, by
 recorded decision (docs/INCIDENT_HISTORY.md, 2026-10-01). These tests fail if
 either quietly becomes a score input.
 """
+
 from src.models import AnalystVerdict, VerdictEvidence
 from src.verdicts import rank_verdicts, score_verdict
 
 
 def _v(symbol, rr, seat="technical"):
     return AnalystVerdict(
-        seat=seat, symbol=symbol, direction="bullish", magnitude=0.5,
-        conviction="medium", invalidation="closes below the stop",
-        evidence=[VerdictEvidence(label="stop_loss", value=95.0),
-                  VerdictEvidence(label="risk_reward", value=rr)],
+        seat=seat,
+        symbol=symbol,
+        direction="bullish",
+        magnitude=0.5,
+        conviction="medium",
+        invalidation="closes below the stop",
+        evidence=[VerdictEvidence(label="stop_loss", value=95.0), VerdictEvidence(label="risk_reward", value=rr)],
     )
 
 

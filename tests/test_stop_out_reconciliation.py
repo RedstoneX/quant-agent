@@ -8,7 +8,7 @@ rows sat forever at `realized_pnl IS NULL`, and the `positions` table
 claimed. Verified against the live paper account on 2026-08-28:
 
   ONDS: BUY 17 @ 8.53 (2026-08-27 14:31:55 UTC) → stop-limit order
-        865a3187-af9d-4752-be45-f121dcb9a390 filled 17 @ 7.93
+        00000000-0000-4000-8000-0000000000b1 filled 17 @ 7.93
         (2026-08-28 16:16:07 UTC) → realized -$10.20
   CCJ:  BUY 2 @ 107.465 (2026-08-27 13:36:04 UTC) → stop-limit order
         c785ae7e-359d-49fc-9853-0930e879eae5 filled 2 @ 102.955
@@ -44,8 +44,12 @@ def _mk_pipeline(db: Database, broker, lookback_days: int = 7) -> TradingPipelin
 
 def _stop_order(order_id, symbol, qty, price, filled_at="2026-08-28T16:16:07.476647+00:00"):
     return {
-        "id": order_id, "symbol": symbol, "qty": qty, "price": price,
-        "filled_at": filled_at, "order_type": "stop_limit",
+        "id": order_id,
+        "symbol": symbol,
+        "qty": qty,
+        "price": price,
+        "filled_at": filled_at,
+        "order_type": "stop_limit",
     }
 
 
@@ -59,10 +63,10 @@ def _filled_buy(db, symbol, qty, price, order_id, run_id="r1", ts=None):
     for any exit to price against it — passing fill_status='filled'
     straight to insert_trade alone leaves those NULL and silently starves
     every downstream realized_pnl computation."""
-    db.insert_trade(symbol, "BUY", qty, price, "entry", run_id,
-                    broker_order_id=order_id, fill_status="submitted", stop_loss=90.0)
-    db.update_trade_fill(broker_order_id=order_id, fill_status="filled",
-                         fill_qty=qty, fill_price=price)
+    db.insert_trade(
+        symbol, "BUY", qty, price, "entry", run_id, broker_order_id=order_id, fill_status="submitted", stop_loss=90.0
+    )
+    db.update_trade_fill(broker_order_id=order_id, fill_status="filled", fill_qty=qty, fill_price=price)
     if ts:
         db.conn.execute(
             "UPDATE trades SET timestamp = ? WHERE broker_order_id = ?",
@@ -75,6 +79,7 @@ def _filled_buy(db, symbol, qty, price, order_id, run_id="r1", ts=None):
 # Database.insert_stop_out_trade — the write-back primitive.
 # ---------------------------------------------------------------------------
 
+
 def test_insert_stop_out_trade_computes_realized_pnl_for_a_loss(tmp_path):
     """ONDS, exact real numbers: BUY 17 @ 8.53, stopped 17 @ 7.93 →
     realized_pnl must be NEGATIVE and equal to -$10.20 (not a guess, not a
@@ -84,9 +89,12 @@ def test_insert_stop_out_trade_computes_realized_pnl_for_a_loss(tmp_path):
     _filled_buy(db, "ONDS", 17, 8.53, "entry-onds")
 
     row_id, created = db.insert_stop_out_trade(
-        symbol="ONDS", qty=17.0, price=7.93,
-        broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
-        filled_at="2026-08-28 16:16:07", run_id="r2",
+        symbol="ONDS",
+        qty=17.0,
+        price=7.93,
+        broker_order_id="00000000-0000-4000-8000-0000000000b1",
+        filled_at="2026-08-28 16:16:07",
+        run_id="r2",
     )
     assert created is True
     assert row_id > 0
@@ -98,7 +106,7 @@ def test_insert_stop_out_trade_computes_realized_pnl_for_a_loss(tmp_path):
     assert stop_out["fill_status"] == "filled"
     assert stop_out["fill_qty"] == 17.0
     assert stop_out["fill_price"] == 7.93
-    assert stop_out["broker_order_id"] == "865a3187-af9d-4752-be45-f121dcb9a390"
+    assert stop_out["broker_order_id"] == "00000000-0000-4000-8000-0000000000b1"
     assert stop_out["timestamp"].startswith("2026-08-28 16:16:07")
 
 
@@ -110,15 +118,15 @@ def test_insert_stop_out_trade_ccj_realized_pnl_exact(tmp_path):
     _filled_buy(db, "CCJ", 2, 107.465, "entry-ccj")
 
     db.insert_stop_out_trade(
-        symbol="CCJ", qty=2.0, price=102.955,
+        symbol="CCJ",
+        qty=2.0,
+        price=102.955,
         broker_order_id="c785ae7e-359d-49fc-9853-0930e879eae5",
-        filled_at="2026-08-28 14:05:17", run_id="r2",
+        filled_at="2026-08-28 14:05:17",
+        run_id="r2",
     )
 
-    row = next(
-        r for r in db.get_trades(symbol="CCJ", executed_only=True)
-        if r["action"] == "STOP_OUT"
-    )
+    row = next(r for r in db.get_trades(symbol="CCJ", executed_only=True) if r["action"] == "STOP_OUT")
     assert row["realized_pnl"] == -9.02
 
 
@@ -133,9 +141,12 @@ def test_insert_stop_out_trade_is_idempotent_across_repeated_calls(tmp_path):
 
     results = [
         db.insert_stop_out_trade(
-            symbol="ONDS", qty=17.0, price=7.93,
-            broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
-            filled_at="2026-08-28 16:16:07", run_id=f"pass-{i}",
+            symbol="ONDS",
+            qty=17.0,
+            price=7.93,
+            broker_order_id="00000000-0000-4000-8000-0000000000b1",
+            filled_at="2026-08-28 16:16:07",
+            run_id=f"pass-{i}",
         )
         for i in range(3)
     ]
@@ -145,10 +156,7 @@ def test_insert_stop_out_trade_is_idempotent_across_repeated_calls(tmp_path):
     assert row_ids == [row_ids[0]] * 3, "all three calls must resolve to the SAME row"
     assert created_flags == [True, False, False]
 
-    stop_out_rows = [
-        r for r in db.get_trades(symbol="ONDS", executed_only=True)
-        if r["action"] == "STOP_OUT"
-    ]
+    stop_out_rows = [r for r in db.get_trades(symbol="ONDS", executed_only=True) if r["action"] == "STOP_OUT"]
     assert len(stop_out_rows) == 1
 
 
@@ -161,8 +169,11 @@ def test_insert_stop_out_trade_requires_broker_order_id(tmp_path):
     db.initialize()
     with pytest.raises(ValueError):
         db.insert_stop_out_trade(
-            symbol="ONDS", qty=17.0, price=7.93,
-            broker_order_id="", filled_at=None,
+            symbol="ONDS",
+            qty=17.0,
+            price=7.93,
+            broker_order_id="",
+            filled_at=None,
         )
 
 
@@ -176,14 +187,14 @@ def test_insert_stop_out_trade_unmatched_pnl_is_null_not_guessed(tmp_path):
     _filled_buy(db, "XYZ", 10, 50.0, "entry-xyz")
 
     db.insert_stop_out_trade(
-        symbol="XYZ", qty=15.0, price=45.0,
-        broker_order_id="stop-xyz", filled_at="2026-08-28 10:00:00",
+        symbol="XYZ",
+        qty=15.0,
+        price=45.0,
+        broker_order_id="stop-xyz",
+        filled_at="2026-08-28 10:00:00",
     )
 
-    row = next(
-        r for r in db.get_trades(symbol="XYZ", executed_only=True)
-        if r["action"] == "STOP_OUT"
-    )
+    row = next(r for r in db.get_trades(symbol="XYZ", executed_only=True) if r["action"] == "STOP_OUT")
     assert row["fill_qty"] == 15.0  # the REAL broker fill, recorded as-is
     assert row["realized_pnl"] is None  # not guessed
 
@@ -192,16 +203,14 @@ def test_insert_stop_out_trade_unmatched_pnl_is_null_not_guessed(tmp_path):
 # Database.get_symbols_with_open_ledger_qty / get_known_broker_order_ids
 # ---------------------------------------------------------------------------
 
+
 def test_get_symbols_with_open_ledger_qty_nets_buys_and_exits(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("AAPL", "SELL", 4, 110.0, "x", "r2",
-                    broker_order_id="s1", fill_status="filled")
+    db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("AAPL", "SELL", 4, 110.0, "x", "r2", broker_order_id="s1", fill_status="filled")
     # A canceled order contributes nothing (never executed).
-    db.insert_trade("AAPL", "SELL", 100, 999.0, "x", "r3",
-                    broker_order_id="canceled-1", fill_status="canceled")
+    db.insert_trade("AAPL", "SELL", 100, 999.0, "x", "r3", broker_order_id="canceled-1", fill_status="canceled")
     db.insert_trade("MSFT", "BUY", 5, 200.0, "x", "r1", fill_status="filled", stop_loss=90.0)
 
     net = db.get_symbols_with_open_ledger_qty()
@@ -212,10 +221,12 @@ def test_get_symbols_with_open_ledger_qty_nets_buys_and_exits(tmp_path):
 def test_get_known_broker_order_ids_scoped_to_symbol(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "x", "r1",
-                    broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("CCJ", "BUY", 2, 107.465, "x", "r1",
-                    broker_order_id="entry-ccj", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "ONDS", "BUY", 17, 8.53, "x", "r1", broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade(
+        "CCJ", "BUY", 2, 107.465, "x", "r1", broker_order_id="entry-ccj", fill_status="filled", stop_loss=90.0
+    )
 
     assert db.get_known_broker_order_ids("ONDS") == {"entry-onds"}
     assert db.get_known_broker_order_ids("CCJ") == {"entry-ccj"}
@@ -225,6 +236,7 @@ def test_get_known_broker_order_ids_scoped_to_symbol(tmp_path):
 # ---------------------------------------------------------------------------
 # TradingPipeline._reconcile_stop_out_fills — the session-level reconciler.
 # ---------------------------------------------------------------------------
+
 
 def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
     """End-to-end against the two real 2026-08-28 incidents, using the
@@ -239,16 +251,27 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
 
     def _fills(symbol, after):
         if symbol == "ONDS":
-            return [_stop_order(
-                "00000000-0000-4000-8000-000000000001", "ONDS", 17.0, 7.93,
-                "2026-08-28T16:16:07.476647+00:00",
-            )]
+            return [
+                _stop_order(
+                    "00000000-0000-4000-8000-000000000001",
+                    "ONDS",
+                    17.0,
+                    7.93,
+                    "2026-08-28T16:16:07.476647+00:00",
+                )
+            ]
         if symbol == "CCJ":
-            return [_stop_order(
-                "00000000-0000-4000-8000-000000000002", "CCJ", 2.0, 102.955,
-                "2026-08-28T14:05:17.636316+00:00",
-            )]
+            return [
+                _stop_order(
+                    "00000000-0000-4000-8000-000000000002",
+                    "CCJ",
+                    2.0,
+                    102.955,
+                    "2026-08-28T14:05:17.636316+00:00",
+                )
+            ]
         return []
+
     broker.list_filled_sell_orders.side_effect = _fills
 
     pipeline = _mk_pipeline(db, broker)
@@ -260,10 +283,8 @@ def test_reconcile_stop_out_fills_records_ondsccj_with_correct_pnl(tmp_path):
     assert by_symbol["CCJ"]["matched"] is True
     assert by_symbol["CCJ"]["recorded"] == 1
 
-    onds = next(r for r in db.get_trades(symbol="ONDS", executed_only=True)
-                if r["action"] == "STOP_OUT")
-    ccj = next(r for r in db.get_trades(symbol="CCJ", executed_only=True)
-               if r["action"] == "STOP_OUT")
+    onds = next(r for r in db.get_trades(symbol="ONDS", executed_only=True) if r["action"] == "STOP_OUT")
+    ccj = next(r for r in db.get_trades(symbol="CCJ", executed_only=True) if r["action"] == "STOP_OUT")
     assert onds["realized_pnl"] == -10.2
     assert ccj["realized_pnl"] == -9.02
     assert onds["broker_order_id"] == "00000000-0000-4000-8000-000000000001"
@@ -285,17 +306,14 @@ def test_reconcile_stop_out_fills_written_exactly_once_across_three_passes(tmp_p
     broker = MagicMock()
     broker.get_positions.return_value = []
     broker.list_filled_sell_orders.return_value = [
-        _stop_order("865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93),
+        _stop_order("00000000-0000-4000-8000-0000000000b1", "ONDS", 17.0, 7.93),
     ]
 
     pipeline = _mk_pipeline(db, broker)
     for i in range(3):
         pipeline._reconcile_stop_out_fills(run_id=f"pass-{i}")
 
-    stop_out_rows = [
-        r for r in db.get_trades(symbol="ONDS", executed_only=True)
-        if r["action"] == "STOP_OUT"
-    ]
+    stop_out_rows = [r for r in db.get_trades(symbol="ONDS", executed_only=True) if r["action"] == "STOP_OUT"]
     assert len(stop_out_rows) == 1
     assert stop_out_rows[0]["realized_pnl"] == -10.2
     # After the first pass the ledger and broker agree (both flat) — later
@@ -319,20 +337,21 @@ def test_reconcile_stop_out_fills_flags_unresolved_gap_without_guessing(tmp_path
     pipeline = _mk_pipeline(db, broker)
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
 
-    assert results == [{
-        "symbol": "ONDS", "ledger_qty": 17.0, "broker_qty": 0.0,
-        "matched": False, "recorded": 0,
-    }]
-    # Nothing fabricated in the ledger.
-    stop_out_rows = [
-        r for r in db.get_trades(symbol="ONDS", executed_only=True)
-        if r["action"] == "STOP_OUT"
+    assert results == [
+        {
+            "symbol": "ONDS",
+            "ledger_qty": 17.0,
+            "broker_qty": 0.0,
+            "matched": False,
+            "recorded": 0,
+        }
     ]
+    # Nothing fabricated in the ledger.
+    stop_out_rows = [r for r in db.get_trades(symbol="ONDS", executed_only=True) if r["action"] == "STOP_OUT"]
     assert stop_out_rows == []
     # But the anomaly is NOT silently dropped — it's visible in evidence.
     event = db.conn.execute(
-        "SELECT evidence_json FROM specialist_evidence "
-        "WHERE run_id='r1' AND symbol='ONDS' AND kind='pipeline_event'"
+        "SELECT evidence_json FROM specialist_evidence WHERE run_id='r1' AND symbol='ONDS' AND kind='pipeline_event'"
     ).fetchone()
     assert event is not None
     assert '"outcome": "stop_out_gap_unexplained"' in event["evidence_json"]
@@ -356,18 +375,21 @@ def test_reconcile_stop_out_fills_flags_unmatched_pnl_without_guessing(tmp_path)
     pipeline = _mk_pipeline(db, broker)
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
 
-    assert results == [{
-        "symbol": "XYZ", "ledger_qty": 10.0, "broker_qty": 0.0,
-        "matched": True, "recorded": 1,
-    }]
-    row = next(r for r in db.get_trades(symbol="XYZ", executed_only=True)
-               if r["action"] == "STOP_OUT")
+    assert results == [
+        {
+            "symbol": "XYZ",
+            "ledger_qty": 10.0,
+            "broker_qty": 0.0,
+            "matched": True,
+            "recorded": 1,
+        }
+    ]
+    row = next(r for r in db.get_trades(symbol="XYZ", executed_only=True) if r["action"] == "STOP_OUT")
     assert row["fill_qty"] == 15.0
     assert row["realized_pnl"] is None
 
     event = db.conn.execute(
-        "SELECT evidence_json FROM specialist_evidence "
-        "WHERE run_id='r1' AND symbol='XYZ' AND kind='pipeline_event'"
+        "SELECT evidence_json FROM specialist_evidence WHERE run_id='r1' AND symbol='XYZ' AND kind='pipeline_event'"
     ).fetchone()
     assert event is not None
     assert '"outcome": "stop_out_pnl_unmatched"' in event["evidence_json"]
@@ -382,9 +404,17 @@ def test_reconcile_stop_out_fills_no_gap_is_a_no_op(tmp_path):
 
     broker = MagicMock()
     from src.models import Position
+
     broker.get_positions.return_value = [
-        Position(symbol="AAPL", qty=10, avg_entry=180.0, current_price=185.0,
-                 market_value=1850.0, unrealized_pnl=50.0, sector="Tech"),
+        Position(
+            symbol="AAPL",
+            qty=10,
+            avg_entry=180.0,
+            current_price=185.0,
+            market_value=1850.0,
+            unrealized_pnl=50.0,
+            sector="Tech",
+        ),
     ]
 
     pipeline = _mk_pipeline(db, broker)
@@ -423,10 +453,7 @@ def test_reconcile_stop_out_fills_broker_fill_query_none_leaves_gap_for_next_pas
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
 
     assert results == []
-    stop_out_rows = [
-        r for r in db.get_trades(symbol="ONDS", executed_only=True)
-        if r["action"] == "STOP_OUT"
-    ]
+    stop_out_rows = [r for r in db.get_trades(symbol="ONDS", executed_only=True) if r["action"] == "STOP_OUT"]
     assert stop_out_rows == []
 
 
@@ -458,26 +485,32 @@ def test_reconcile_stop_out_fills_noop_without_config(tmp_path):
 from src.pipeline import _reconciled_exit_action  # noqa: E402
 
 
-def _sell_order(order_id, symbol, qty, price, order_type,
-                filled_at="2026-09-21T15:00:00+00:00"):
+def _sell_order(order_id, symbol, qty, price, order_type, filled_at="2026-09-21T15:00:00+00:00"):
     return {
-        "id": order_id, "symbol": symbol, "qty": qty, "price": price,
-        "filled_at": filled_at, "order_type": order_type,
+        "id": order_id,
+        "symbol": symbol,
+        "qty": qty,
+        "price": price,
+        "filled_at": filled_at,
+        "order_type": order_type,
     }
 
 
-@pytest.mark.parametrize("order_type,expected", [
-    ("stop", "STOP_OUT"),
-    ("stop_limit", "STOP_OUT"),
-    ("trailing_stop", "STOP_OUT"),
-    ("OrderType.STOP", "STOP_OUT"),
-    ("market", "SELL"),
-    ("limit", "SELL"),
-    ("OrderType.MARKET", "SELL"),
-    (None, "RECONCILED_EXIT"),
-    ("", "RECONCILED_EXIT"),
-    ("something_new", "RECONCILED_EXIT"),
-])
+@pytest.mark.parametrize(
+    "order_type,expected",
+    [
+        ("stop", "STOP_OUT"),
+        ("stop_limit", "STOP_OUT"),
+        ("trailing_stop", "STOP_OUT"),
+        ("OrderType.STOP", "STOP_OUT"),
+        ("market", "SELL"),
+        ("limit", "SELL"),
+        ("OrderType.MARKET", "SELL"),
+        (None, "RECONCILED_EXIT"),
+        ("", "RECONCILED_EXIT"),
+        ("something_new", "RECONCILED_EXIT"),
+    ],
+)
 def test_reconciled_exit_action_maps_order_type_honestly(order_type, expected):
     """The pure mapping — genuine stops to STOP_OUT, plain sells to SELL,
     everything else to the unattributed marker, NEVER a guessed STOP_OUT."""
@@ -505,9 +538,7 @@ def test_reconcile_records_stop_fill_as_stop_out(tmp_path):
     row = next(r for r in rows if r["broker_order_id"] == "stop-onds")
     assert row["action"] == "STOP_OUT"
     assert row["exit_reason_category"] == "broker_stop_fill"
-    assert not any(
-        r["action"] in ("SELL", "RECONCILED_EXIT") for r in rows
-    )
+    assert not any(r["action"] in ("SELL", "RECONCILED_EXIT") for r in rows)
 
 
 def test_reconcile_records_market_sell_as_sell_not_stop_out(tmp_path):
@@ -547,8 +578,7 @@ def test_reconcile_records_missing_order_type_as_unattributed_not_stop_out(tmp_p
     broker = MagicMock()
     broker.get_positions.return_value = []
     broker.list_filled_sell_orders.return_value = [
-        {"id": "ambiguous-amd", "qty": 2.0, "price": 500.0,
-         "filled_at": "2026-09-22 14:00:00"},  # no order_type at all
+        {"id": "ambiguous-amd", "qty": 2.0, "price": 500.0, "filled_at": "2026-09-22 14:00:00"},  # no order_type at all
     ]
 
     pipeline = _mk_pipeline(db, broker)
@@ -573,17 +603,15 @@ def test_reconcile_records_missing_order_type_as_unattributed_not_stop_out(tmp_p
 # change what those four compute.
 # ---------------------------------------------------------------------------
 
+
 def test_existing_sell_realized_pnl_unchanged(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _filled_buy(db, "AAPL", 10, 100.0, "b1")
-    db.insert_trade("AAPL", "SELL", 10, 0, "x", "r2",
-                    broker_order_id="s1", fill_status="submitted")
-    db.update_trade_fill(broker_order_id="s1", fill_status="filled",
-                         fill_qty=10.0, fill_price=110.0)
+    db.insert_trade("AAPL", "SELL", 10, 0, "x", "r2", broker_order_id="s1", fill_status="submitted")
+    db.update_trade_fill(broker_order_id="s1", fill_status="filled", fill_qty=10.0, fill_price=110.0)
 
-    row = next(r for r in db.get_trades(symbol="AAPL", executed_only=True)
-               if r["action"] == "SELL")
+    row = next(r for r in db.get_trades(symbol="AAPL", executed_only=True) if r["action"] == "SELL")
     assert row["realized_pnl"] == 100.0
 
 
@@ -591,13 +619,10 @@ def test_existing_reduce_realized_pnl_unchanged(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _filled_buy(db, "MSFT", 5, 200.0, "b2")
-    db.insert_trade("MSFT", "REDUCE", 5, 0, "x", "r2",
-                    broker_order_id="red1", fill_status="submitted")
-    db.update_trade_fill(broker_order_id="red1", fill_status="filled",
-                         fill_qty=5.0, fill_price=220.0)
+    db.insert_trade("MSFT", "REDUCE", 5, 0, "x", "r2", broker_order_id="red1", fill_status="submitted")
+    db.update_trade_fill(broker_order_id="red1", fill_status="filled", fill_qty=5.0, fill_price=220.0)
 
-    row = next(r for r in db.get_trades(symbol="MSFT", executed_only=True)
-               if r["action"] == "REDUCE")
+    row = next(r for r in db.get_trades(symbol="MSFT", executed_only=True) if r["action"] == "REDUCE")
     assert row["realized_pnl"] == 100.0
 
 
@@ -605,30 +630,22 @@ def test_existing_filled_trail_stop_realized_pnl_unchanged(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _filled_buy(db, "LLY", 8, 50.0, "b3")
-    db.insert_trade("LLY", "TRAIL_STOP", 8, 45.0, "x", "r2",
-                    broker_order_id="trail1", fill_status="submitted")
-    db.update_trade_fill(broker_order_id="trail1", fill_status="filled",
-                         fill_qty=8.0, fill_price=45.0)
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 45.0, "x", "r2", broker_order_id="trail1", fill_status="submitted")
+    db.update_trade_fill(broker_order_id="trail1", fill_status="filled", fill_qty=8.0, fill_price=45.0)
 
-    row = next(r for r in db.get_trades(symbol="LLY", executed_only=True)
-               if r["action"] == "TRAIL_STOP")
+    row = next(r for r in db.get_trades(symbol="LLY", executed_only=True) if r["action"] == "TRAIL_STOP")
     assert row["realized_pnl"] == -40.0
 
 
 def test_existing_sweep_sell_realized_pnl_unchanged(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("SGOV", "SWEEP_BUY", 100, 100.0, "x", "r1",
-                    broker_order_id="sb1", fill_status="submitted")
-    db.update_trade_fill(broker_order_id="sb1", fill_status="filled",
-                         fill_qty=100.0, fill_price=100.0)
-    db.insert_trade("SGOV", "SWEEP_SELL", 100, 0, "x", "r2",
-                    broker_order_id="ss1", fill_status="submitted")
-    db.update_trade_fill(broker_order_id="ss1", fill_status="filled",
-                         fill_qty=100.0, fill_price=100.02)
+    db.insert_trade("SGOV", "SWEEP_BUY", 100, 100.0, "x", "r1", broker_order_id="sb1", fill_status="submitted")
+    db.update_trade_fill(broker_order_id="sb1", fill_status="filled", fill_qty=100.0, fill_price=100.0)
+    db.insert_trade("SGOV", "SWEEP_SELL", 100, 0, "x", "r2", broker_order_id="ss1", fill_status="submitted")
+    db.update_trade_fill(broker_order_id="ss1", fill_status="filled", fill_qty=100.0, fill_price=100.02)
 
-    row = next(r for r in db.get_trades(symbol="SGOV", executed_only=True)
-               if r["action"] == "SWEEP_SELL")
+    row = next(r for r in db.get_trades(symbol="SGOV", executed_only=True) if r["action"] == "SWEEP_SELL")
     assert row["realized_pnl"] == 2.0
 
 
@@ -642,26 +659,25 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
 
     # Three closed pairs needed to cross compute_trade_calibration's n>=3
     # reporting threshold. Two ordinary SELLs plus one STOP_OUT loss.
-    db.insert_trade("AAA", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("AAA", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='b1'")
-    db.insert_trade("AAA", "SELL", 10, 110.0, "x", "r2",
-                    broker_order_id="s1", fill_status="filled")
+    db.insert_trade("AAA", "SELL", 10, 110.0, "x", "r2", broker_order_id="s1", fill_status="filled")
     db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-9 days') WHERE broker_order_id='s1'")
 
-    db.insert_trade("BBB", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="b2", fill_status="filled", stop_loss=90.0)
+    db.insert_trade("BBB", "BUY", 10, 100.0, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE broker_order_id='b2'")
-    db.insert_trade("BBB", "SELL", 10, 110.0, "x", "r2",
-                    broker_order_id="s2", fill_status="filled")
+    db.insert_trade("BBB", "SELL", 10, 110.0, "x", "r2", broker_order_id="s2", fill_status="filled")
     db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE broker_order_id='s2'")
 
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "x", "r1",
-                    broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "ONDS", "BUY", 17, 8.53, "x", "r1", broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0
+    )
     db.conn.execute("UPDATE trades SET timestamp = '2026-08-27 14:31:55' WHERE broker_order_id='entry-onds'")
     db.insert_stop_out_trade(
-        symbol="ONDS", qty=17.0, price=7.93,
-        broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
+        symbol="ONDS",
+        qty=17.0,
+        price=7.93,
+        broker_order_id="00000000-0000-4000-8000-0000000000b1",
         filled_at="2026-08-28 16:16:07",
     )
     db.conn.commit()
@@ -694,15 +710,14 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
 # actions the signing rule enumerates.
 # ---------------------------------------------------------------------------
 
+
 def _rest_the_stops(db: Database, *, clear_order_id: bool = False):
     """Force every TRAIL_STOP row into the production legacy shape:
     fill_status NULL and fill_qty NULL. `insert_trade` cannot express this
     together with a broker_order_id, and it is exactly the shape the three
     live rows carry."""
     extra = ", broker_order_id = NULL" if clear_order_id else ""
-    db.conn.execute(
-        f"UPDATE trades SET fill_status = NULL, fill_qty = NULL{extra} "
-        "WHERE action = 'TRAIL_STOP'")
+    db.conn.execute(f"UPDATE trades SET fill_status = NULL, fill_qty = NULL{extra} WHERE action = 'TRAIL_STOP'")
     db.conn.commit()
 
 
@@ -711,8 +726,8 @@ def _set_fill(db: Database, broker_order_id: str, *, status=None, qty=None):
     takes no fill_qty) — a legacy NULL status carrying a real executed
     quantity, or a partial fill that was then canceled."""
     db.conn.execute(
-        "UPDATE trades SET fill_status = ?, fill_qty = ? WHERE broker_order_id = ?",
-        (status, qty, broker_order_id))
+        "UPDATE trades SET fill_status = ?, fill_qty = ? WHERE broker_order_id = ?", (status, qty, broker_order_id)
+    )
     db.conn.commit()
 
 
@@ -720,16 +735,17 @@ def test_unfilled_trail_stop_with_null_fill_status_is_not_an_exit(tmp_path):
     """THE LIVE DEFECT (AMD id 50): a resting stop must not zero the book."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AMD", "BUY", 1.7662, 549.11, "entry", "r1",
-                    broker_order_id="amd-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "AMD", "BUY", 1.7662, 549.11, "entry", "r1", broker_order_id="amd-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("AMD", "TRAIL_STOP", 1.7662, 549.11, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
 
     # Precondition: the row really is one the executed predicate admits —
     # otherwise this test would pass for the wrong reason.
     admitted = db.conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE action = 'TRAIL_STOP' AND "
-        + Database._executed_trade_predicate()).fetchone()[0]
+        "SELECT COUNT(*) FROM trades WHERE action = 'TRAIL_STOP' AND " + Database._executed_trade_predicate()
+    ).fetchone()[0]
     assert admitted == 1
 
     assert db.get_symbols_with_open_ledger_qty()["AMD"] == 1.7662
@@ -740,12 +756,12 @@ def test_resting_trail_stop_does_not_drive_a_flat_symbol_negative(tmp_path):
     the book. The stop must not double-count that exit."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("COP", "BUY", 5.3194, 100.0, "entry", "r1",
-                    broker_order_id="cop-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "COP", "BUY", 5.3194, 100.0, "entry", "r1", broker_order_id="cop-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("COP", "TRAIL_STOP", 5.3194, 95.0, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
-    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2",
-                    broker_order_id="cop-sell", fill_status="filled")
+    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2", broker_order_id="cop-sell", fill_status="filled")
     _set_fill(db, "cop-sell", status="filled", qty=5.3194)
 
     assert db.get_symbols_with_open_ledger_qty()["COP"] == 0.0
@@ -755,10 +771,10 @@ def test_filled_trail_stop_is_an_exit(tmp_path):
     """The stop actually sold the shares: it MUST still subtract them."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("LLY", "BUY", 8, 900.0, "entry", "r1",
-                    broker_order_id="lly-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1",
-                    broker_order_id="lly-stop", fill_status="submitted")
+    db.insert_trade(
+        "LLY", "BUY", 8, 900.0, "entry", "r1", broker_order_id="lly-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1", broker_order_id="lly-stop", fill_status="submitted")
     _set_fill(db, "lly-stop", status="filled", qty=8.0)
 
     assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0
@@ -769,8 +785,7 @@ def test_filled_trail_stop_is_an_exit(tmp_path):
 #: than typed out here: an earlier hand-written list silently omitted
 #: `done_for_day`, `rejected` and the two-L `cancelled`, which is the same
 #: two-copies-of-a-contract drift these tests exist to catch.
-_TERMINAL_FAIL_STATUSES = ("canceled", "cancelled", "expired", "rejected",
-                           "done_for_day")
+_TERMINAL_FAIL_STATUSES = ("canceled", "cancelled", "expired", "rejected", "done_for_day")
 _PRE_TERMINAL_STATUSES = ("submitted", "pending_submit")
 
 
@@ -790,8 +805,7 @@ def test_terminal_status_list_still_matches_the_only_writer():
     )
 
 
-@pytest.mark.parametrize(
-    "status", _PRE_TERMINAL_STATUSES + _TERMINAL_FAIL_STATUSES)
+@pytest.mark.parametrize("status", _PRE_TERMINAL_STATUSES + _TERMINAL_FAIL_STATUSES)
 def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
     """A stop that rests, is pulled, lapses, is rejected or is closed out
     at the end of the day WITHOUT trading moves no shares — asserted TWICE
@@ -805,15 +819,13 @@ def test_non_trading_trail_stop_statuses_are_not_exits(tmp_path, status):
     is pinned directly as well."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 10, 500.0, "entry", "r1",
-                    broker_order_id="nv-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("NVDA", "TRAIL_STOP", 10, 450.0, "protect", "r1",
-                    broker_order_id="nv-stop", fill_status=status)
+    db.insert_trade(
+        "NVDA", "BUY", 10, 500.0, "entry", "r1", broker_order_id="nv-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("NVDA", "TRAIL_STOP", 10, 450.0, "protect", "r1", broker_order_id="nv-stop", fill_status=status)
 
     assert db.get_symbols_with_open_ledger_qty()["NVDA"] == 10.0
-    row = db.conn.execute(
-        "SELECT fill_qty, fill_status FROM trades WHERE broker_order_id = 'nv-stop'"
-    ).fetchone()
+    row = db.conn.execute("SELECT fill_qty, fill_status FROM trades WHERE broker_order_id = 'nv-stop'").fetchone()
     assert _trail_stop_reduced_position(row, "TRAIL_STOP") is False
 
 
@@ -831,10 +843,10 @@ def test_every_terminal_status_with_a_partial_fill_still_subtracts(tmp_path, sta
     to subtract them."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("TGT", "BUY", 30, 80.0, "entry", "r1",
-                    broker_order_id="tgt-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("TGT", "TRAIL_STOP", 30, 75.0, "protect", "r1",
-                    broker_order_id="tgt-stop", fill_status="submitted")
+    db.insert_trade(
+        "TGT", "BUY", 30, 80.0, "entry", "r1", broker_order_id="tgt-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("TGT", "TRAIL_STOP", 30, 75.0, "protect", "r1", broker_order_id="tgt-stop", fill_status="submitted")
     _set_fill(db, "tgt-stop", status=status, qty=11.0)
 
     assert db.get_symbols_with_open_ledger_qty()["TGT"] == 19.0
@@ -863,10 +875,10 @@ def test_trail_stop_with_fill_qty_but_null_status_is_an_exit(tmp_path):
     executed quantity WAS recorded. Those shares are gone."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("KO", "BUY", 20, 60.0, "entry", "r1",
-                    broker_order_id="ko-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("KO", "TRAIL_STOP", 20, 55.0, "protect", "r1",
-                    broker_order_id="ko-stop")
+    db.insert_trade(
+        "KO", "BUY", 20, 60.0, "entry", "r1", broker_order_id="ko-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("KO", "TRAIL_STOP", 20, 55.0, "protect", "r1", broker_order_id="ko-stop")
     _set_fill(db, "ko-stop", status=None, qty=20.0)
 
     assert db.get_symbols_with_open_ledger_qty()["KO"] == 0.0
@@ -883,10 +895,10 @@ def test_partially_filled_trail_stop_subtracts_only_what_traded(tmp_path):
     it would exercise the right branch under a name that cannot occur."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("PEP", "BUY", 30, 170.0, "entry", "r1",
-                    broker_order_id="pep-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("PEP", "TRAIL_STOP", 30, 160.0, "protect", "r1",
-                    broker_order_id="pep-stop")
+    db.insert_trade(
+        "PEP", "BUY", 30, 170.0, "entry", "r1", broker_order_id="pep-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("PEP", "TRAIL_STOP", 30, 160.0, "protect", "r1", broker_order_id="pep-stop")
     _set_fill(db, "pep-stop", status=None, qty=12.0)
 
     assert db.get_symbols_with_open_ledger_qty()["PEP"] == 18.0
@@ -898,12 +910,12 @@ def test_resting_stop_alongside_a_real_partial_sale(tmp_path):
     the number."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("EQNR", "BUY", 17.1924, 25.0, "entry", "r1",
-                    broker_order_id="eqnr-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "EQNR", "BUY", 17.1924, 25.0, "entry", "r1", broker_order_id="eqnr-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("EQNR", "TRAIL_STOP", 17.1924, 23.0, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
-    db.insert_trade("EQNR", "REDUCE", 8.5962, 24.0, "trim", "r2",
-                    broker_order_id="eqnr-reduce", fill_status="filled")
+    db.insert_trade("EQNR", "REDUCE", 8.5962, 24.0, "trim", "r2", broker_order_id="eqnr-reduce", fill_status="filled")
     _set_fill(db, "eqnr-reduce", status="filled", qty=8.5962)
 
     assert db.get_symbols_with_open_ledger_qty()["EQNR"] == 8.5962
@@ -916,33 +928,53 @@ def test_short_position_resting_stop_does_not_move_the_count(tmp_path):
     so a wrong number here would be silent."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
-                    broker_order_id="flnc-short", fill_status="filled", stop_loss=110.0)
+    db.insert_trade(
+        "FLNC",
+        "SHORT",
+        36,
+        7.39,
+        "short entry",
+        "r1",
+        broker_order_id="flnc-short",
+        fill_status="filled",
+        stop_loss=110.0,
+    )
     db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
 
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
+
+
 def test_other_enumerated_actions_keep_their_existing_signs(tmp_path):
     """Guard the rest of the signing rule against collateral damage:
     BUY/SWEEP_BUY add, SWEEP_SELL/STOP_OUT/REDUCE subtract, and HOLD plus a
     never-sent submit_failed row contribute nothing."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("SGOV", "SWEEP_BUY", 65, 100.0, "park", "r1",
-                    broker_order_id="sw-b", fill_status="filled")
-    db.insert_trade("SGOV", "SWEEP_SELL", 25, 100.1, "release", "r2",
-                    broker_order_id="sw-s", fill_status="filled")
-    db.insert_trade("OXY", "BUY", 31.3451, 45.0, "entry", "r1",
-                    broker_order_id="oxy-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("OXY", "STOP_OUT", 31.3451, 41.0, "stopped out", "r2",
-                    broker_order_id="oxy-stop", fill_status="filled")
-    db.insert_trade("XOM", "BUY", 10, 110.0, "entry", "r1",
-                    broker_order_id="xom-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("XOM", "REDUCE", 4, 112.0, "trim", "r2",
-                    broker_order_id="xom-red", fill_status="filled")
+    db.insert_trade("SGOV", "SWEEP_BUY", 65, 100.0, "park", "r1", broker_order_id="sw-b", fill_status="filled")
+    db.insert_trade("SGOV", "SWEEP_SELL", 25, 100.1, "release", "r2", broker_order_id="sw-s", fill_status="filled")
+    db.insert_trade(
+        "OXY", "BUY", 31.3451, 45.0, "entry", "r1", broker_order_id="oxy-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade(
+        "OXY", "STOP_OUT", 31.3451, 41.0, "stopped out", "r2", broker_order_id="oxy-stop", fill_status="filled"
+    )
+    db.insert_trade(
+        "XOM", "BUY", 10, 110.0, "entry", "r1", broker_order_id="xom-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("XOM", "REDUCE", 4, 112.0, "trim", "r2", broker_order_id="xom-red", fill_status="filled")
     db.insert_trade("XOM", "HOLD", 0, 0, "hold", "r2")
-    db.insert_trade("XOM", "BUY", 99, 110.0, "never sent", "r2",
-                    broker_order_id="xom-fail", fill_status="submit_failed", stop_loss=90.0)
+    db.insert_trade(
+        "XOM",
+        "BUY",
+        99,
+        110.0,
+        "never sent",
+        "r2",
+        broker_order_id="xom-fail",
+        fill_status="submit_failed",
+        stop_loss=90.0,
+    )
 
     net = db.get_symbols_with_open_ledger_qty()
     assert net["SGOV"] == 40.0
@@ -957,16 +989,22 @@ def test_reconciler_now_sees_a_stop_out_masked_by_a_resting_stop(tmp_path):
     by construction. With the fix the gap is seen and written back."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AMD", "BUY", 2.0, 549.11, "entry", "r1",
-                    broker_order_id="amd-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "AMD", "BUY", 2.0, 549.11, "entry", "r1", broker_order_id="amd-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("AMD", "TRAIL_STOP", 2.0, 500.0, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
 
     broker = MagicMock()
     broker.get_positions.return_value = []  # broker flat: the stop fired
     broker.list_filled_sell_orders.return_value = [
-        {"id": "untracked-stop-fill", "qty": 2.0, "price": 500.0,
-         "filled_at": "2026-09-22 14:00:00", "order_type": "stop_limit"},
+        {
+            "id": "untracked-stop-fill",
+            "qty": 2.0,
+            "price": 500.0,
+            "filled_at": "2026-09-22 14:00:00",
+            "order_type": "stop_limit",
+        },
     ]
 
     pipeline = _mk_pipeline(db, broker)
@@ -985,12 +1023,12 @@ def test_reconciler_stays_a_no_op_on_a_genuinely_flat_symbol(tmp_path):
     no broker query or owner page happens."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("COP", "BUY", 5.3194, 100.0, "entry", "r1",
-                    broker_order_id="cop-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "COP", "BUY", 5.3194, 100.0, "entry", "r1", broker_order_id="cop-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("COP", "TRAIL_STOP", 5.3194, 95.0, "protect", "r1")
     _rest_the_stops(db, clear_order_id=True)
-    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2",
-                    broker_order_id="cop-sell", fill_status="filled")
+    db.insert_trade("COP", "SELL", 5.3194, 99.0, "exit", "r2", broker_order_id="cop-sell", fill_status="filled")
     _set_fill(db, "cop-sell", status="filled", qty=5.3194)
 
     broker = MagicMock()
@@ -1011,20 +1049,24 @@ def test_calibration_and_ledger_qty_agree_on_trail_stop_fill_state(tmp_path):
     db.initialize()
     # Three symbols whose protective stop really fired...
     for sym in ("AAA", "CCC", "DDD"):
-        db.insert_trade(sym, "BUY", 10, 100.0, "entry", "r1",
-                        broker_order_id=f"{sym}-buy", fill_status="filled", stop_loss=90.0)
-        db.insert_trade(sym, "TRAIL_STOP", 10, 90.0, "protect", "r1",
-                        broker_order_id=f"{sym}-stop", fill_status="submitted")
+        db.insert_trade(
+            sym, "BUY", 10, 100.0, "entry", "r1", broker_order_id=f"{sym}-buy", fill_status="filled", stop_loss=90.0
+        )
+        db.insert_trade(
+            sym, "TRAIL_STOP", 10, 90.0, "protect", "r1", broker_order_id=f"{sym}-stop", fill_status="submitted"
+        )
         db.conn.execute(
-            "UPDATE trades SET fill_price = 90.0, fill_qty = 10.0, "
-            "fill_status = 'filled' WHERE broker_order_id = ?", (f"{sym}-stop",))
+            "UPDATE trades SET fill_price = 90.0, fill_qty = 10.0, fill_status = 'filled' WHERE broker_order_id = ?",
+            (f"{sym}-stop",),
+        )
     # ...and one whose stop is still resting, in the production row shape.
-    db.insert_trade("BBB", "BUY", 10, 100.0, "entry", "r1",
-                    broker_order_id="bbb-buy", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "BBB", "BUY", 10, 100.0, "entry", "r1", broker_order_id="bbb-buy", fill_status="filled", stop_loss=90.0
+    )
     db.insert_trade("BBB", "TRAIL_STOP", 10, 90.0, "protect", "r1")
     db.conn.execute(
-        "UPDATE trades SET fill_status = NULL, fill_qty = NULL "
-        "WHERE action = 'TRAIL_STOP' AND broker_order_id IS NULL")
+        "UPDATE trades SET fill_status = NULL, fill_qty = NULL WHERE action = 'TRAIL_STOP' AND broker_order_id IS NULL"
+    )
     db.conn.commit()
 
     net = db.get_symbols_with_open_ledger_qty()
@@ -1050,8 +1092,10 @@ def test_calibration_and_ledger_qty_agree_on_trail_stop_fill_state(tmp_path):
 # now produces owner-facing output where before it produced none.
 # ---------------------------------------------------------------------------
 
+
 def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The exact ONDS incident: a reconciled broker stop-out now sends a
     standalone owner alert carrying WHY (symbol, shares, price, realized
@@ -1066,11 +1110,17 @@ def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
 
     def _fills(symbol, after):
         if symbol == "ONDS":
-            return [_stop_order(
-                "865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93,
-                "2026-08-28T16:16:07.476647+00:00",
-            )]
+            return [
+                _stop_order(
+                    "00000000-0000-4000-8000-0000000000b1",
+                    "ONDS",
+                    17.0,
+                    7.93,
+                    "2026-08-28T16:16:07.476647+00:00",
+                )
+            ]
         return []
+
     broker.list_filled_sell_orders.side_effect = _fills
 
     pipeline = _mk_pipeline(db, broker)
@@ -1078,9 +1128,11 @@ def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
     assert next(r for r in reco if r["symbol"] == "ONDS")["recorded"] == 1
 
     import src.notifier as notifier
+
     sent = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert",
+        notifier,
+        "send_owner_alert",
         lambda text, **kw: sent.append((text, kw)) or True,
     )
 
@@ -1090,15 +1142,16 @@ def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
     text, kw = sent[0]
     assert "BROKER STOPPED YOU OUT" in text
     assert "ONDS" in text
-    assert "17 share" in text          # the WHY: how many
-    assert "7.93" in text              # the WHY: at what price
-    assert "$10.20" in text            # the WHY: realized loss magnitude
-    assert "−" in text                 # ...and it was a LOSS (signed)
+    assert "17 share" in text  # the WHY: how many
+    assert "7.93" in text  # the WHY: at what price
+    assert "$10.20" in text  # the WHY: realized loss magnitude
+    assert "−" in text  # ...and it was a LOSS (signed)
     assert kw.get("symbols") == ["ONDS"]
 
 
 def test_surface_reconcile_outcomes_pages_re_protection_count(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """A drained (re-protected) naked position is a live-risk event; its
     count now reaches the owner instead of being silently discarded."""
@@ -1107,9 +1160,11 @@ def test_surface_reconcile_outcomes_pages_re_protection_count(
     pipeline = _mk_pipeline(db, MagicMock())
 
     import src.notifier as notifier
+
     sent = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert",
+        notifier,
+        "send_owner_alert",
         lambda text, **kw: sent.append((text, kw)) or True,
     )
 
@@ -1122,7 +1177,8 @@ def test_surface_reconcile_outcomes_pages_re_protection_count(
 
 
 def test_surface_reconcile_outcomes_silent_when_nothing_happened(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """No stop-out recorded and nothing drained → no owner page. An
     unexplained-gap result (matched False / recorded 0) is handled by the
@@ -1133,16 +1189,18 @@ def test_surface_reconcile_outcomes_silent_when_nothing_happened(
     pipeline = _mk_pipeline(db, MagicMock())
 
     import src.notifier as notifier
+
     sent = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert",
+        notifier,
+        "send_owner_alert",
         lambda text, **kw: sent.append((text, kw)) or True,
     )
 
     pipeline._surface_reconcile_outcomes(
-        [{"symbol": "XYZ", "ledger_qty": 5.0, "broker_qty": 0.0,
-          "matched": False, "recorded": 0}],
-        0, run_id="r1",
+        [{"symbol": "XYZ", "ledger_qty": 5.0, "broker_qty": 0.0, "matched": False, "recorded": 0}],
+        0,
+        run_id="r1",
     )
 
     assert sent == []
@@ -1160,8 +1218,10 @@ def test_surface_reconcile_outcomes_silent_when_nothing_happened(
 # `run_evening`.
 # ===========================================================================
 
+
 def test_a_submitted_but_unreconciled_sell_fakes_a_records_disagree_gap(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The bug the reorder fixes. A SELL this pipeline submitted is still
     'submitted' (fill not yet reconciled). `get_symbols_with_open_ledger_qty`
@@ -1176,40 +1236,55 @@ def test_a_submitted_but_unreconciled_sell_fakes_a_records_disagree_gap(
     db.initialize()
     _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
     # A SELL this pipeline submitted: broker id known, fill NOT yet reconciled.
-    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
-                    broker_order_id="amd-sell", fill_status="submitted")
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1", broker_order_id="amd-sell", fill_status="submitted")
 
     broker = MagicMock()
     broker.get_positions.return_value = []  # broker already flat (the SELL filled)
-    broker.list_filled_sell_orders.return_value = [{
-        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
-        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
-    }]
+    broker.list_filled_sell_orders.return_value = [
+        {
+            "id": "amd-sell",
+            "symbol": "AMD",
+            "qty": 10.0,
+            "price": 520.0,
+            "filled_at": "2026-09-25T15:00:00+00:00",
+            "order_type": "market",
+        }
+    ]
 
     pipeline = _mk_pipeline(db, broker)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
 
-    assert results == [{
-        "symbol": "AMD", "ledger_qty": 10.0, "broker_qty": 0.0,
-        "matched": False, "recorded": 0,
-    }]
-    assert any("RECORDS DISAGREE" in t for t in sent), (
-        "the unreconciled SELL provokes the false records-disagree page"
-    )
+    assert results == [
+        {
+            "symbol": "AMD",
+            "ledger_qty": 10.0,
+            "broker_qty": 0.0,
+            "matched": False,
+            "recorded": 0,
+        }
+    ]
+    assert any("RECORDS DISAGREE" in t for t in sent), "the unreconciled SELL provokes the false records-disagree page"
     # No double-record: the known broker id kept any duplicate exit row out.
-    exits = [r for r in db.get_trades(symbol="AMD", executed_only=True)
-             if r["action"] in ("STOP_OUT", "SELL", "RECONCILED_EXIT")]
+    exits = [
+        r
+        for r in db.get_trades(symbol="AMD", executed_only=True)
+        if r["action"] in ("STOP_OUT", "SELL", "RECONCILED_EXIT")
+    ]
     assert exits == []
 
 
 def test_reconciling_the_sell_first_prevents_the_false_records_disagree_page(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The fix (item 173(2)). Reconciling submitted fills BEFORE the stop-out
     check — the intra/evening ordering — flips that SELL to 'filled', so the
@@ -1219,30 +1294,37 @@ def test_reconciling_the_sell_first_prevents_the_false_records_disagree_page(
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _filled_buy(db, "AMD", 10, 500.0, "amd-buy")
-    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1",
-                    broker_order_id="amd-sell", fill_status="submitted")
+    db.insert_trade("AMD", "SELL", 10, 520.0, "exit", "r1", broker_order_id="amd-sell", fill_status="submitted")
     # This is exactly what `_reconcile_fills` does when it runs first.
-    db.update_trade_fill(broker_order_id="amd-sell", fill_status="filled",
-                         fill_qty=10.0, fill_price=520.0)
+    db.update_trade_fill(broker_order_id="amd-sell", fill_status="filled", fill_qty=10.0, fill_price=520.0)
 
     broker = MagicMock()
     broker.get_positions.return_value = []
-    broker.list_filled_sell_orders.return_value = [{
-        "id": "amd-sell", "symbol": "AMD", "qty": 10.0, "price": 520.0,
-        "filled_at": "2026-09-25T15:00:00+00:00", "order_type": "market",
-    }]
+    broker.list_filled_sell_orders.return_value = [
+        {
+            "id": "amd-sell",
+            "symbol": "AMD",
+            "qty": 10.0,
+            "price": 520.0,
+            "filled_at": "2026-09-25T15:00:00+00:00",
+            "order_type": "market",
+        }
+    ]
 
     pipeline = _mk_pipeline(db, broker)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
 
-    assert results == []            # no gap, nothing to reconcile
-    assert sent == []               # and therefore no false page
+    assert results == []  # no gap, nothing to reconcile
+    assert sent == []  # and therefore no false page
     broker.list_filled_sell_orders.assert_not_called()
 
 
@@ -1258,8 +1340,10 @@ def test_reconciling_the_sell_first_prevents_the_false_records_disagree_page(
 # by building short-cover reconciliation here.
 # ===========================================================================
 
+
 def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """A SHORT the broker covered unilaterally (buy-to-cover stop fired). The
     ledger still believes the short is open (a negative net qty); the broker is
@@ -1269,8 +1353,17 @@ def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
     the deferred short-cover path — not a bug to close in this change."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
-                    broker_order_id="flnc-short", fill_status="filled", stop_loss=110.0)
+    db.insert_trade(
+        "FLNC",
+        "SHORT",
+        36,
+        7.39,
+        "short entry",
+        "r1",
+        broker_order_id="flnc-short",
+        fill_status="filled",
+        stop_loss=110.0,
+    )
 
     # Sanity: the ledger's own count is a negative (short) number.
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == -36.0
@@ -1280,9 +1373,12 @@ def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
 
     pipeline = _mk_pipeline(db, broker)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     results = pipeline._reconcile_stop_out_fills(run_id="r1")
@@ -1291,8 +1387,11 @@ def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
     broker.list_filled_sell_orders.assert_not_called()
     assert sent == []
     # No exit row invented for the short.
-    exits = [r for r in db.get_trades(symbol="FLNC", executed_only=True)
-             if r["action"] in ("STOP_OUT", "COVER", "RECONCILED_EXIT")]
+    exits = [
+        r
+        for r in db.get_trades(symbol="FLNC", executed_only=True)
+        if r["action"] in ("STOP_OUT", "COVER", "RECONCILED_EXIT")
+    ]
     assert exits == []
 
 
@@ -1303,17 +1402,18 @@ def test_reconcile_skips_a_broker_covered_short_no_writeback_no_page(
 # SHORT 36 fully covered read -72 instead of 0 [measured 2026-09-23].
 # ---------------------------------------------------------------------------
 
+
 def test_full_cover_retires_a_short_to_zero(tmp_path):
     """SHORT 36 opened, COVER 36 filled — the ledger must read flat (0),
     not -72 (the pre-fix double-subtract)."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
-                    broker_order_id="gme-short", fill_status="filled", stop_loss=110.0)
+    db.insert_trade(
+        "GME", "SHORT", 36, 20.0, "open short", "r1", broker_order_id="gme-short", fill_status="filled", stop_loss=110.0
+    )
     # Sanity: the short alone reads negative.
     assert db.get_symbols_with_open_ledger_qty()["GME"] == -36.0
-    db.insert_trade("GME", "COVER", 36, 18.0, "cover short", "r2",
-                    broker_order_id="gme-cover", fill_status="filled")
+    db.insert_trade("GME", "COVER", 36, 18.0, "cover short", "r2", broker_order_id="gme-cover", fill_status="filled")
     assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
 
 
@@ -1321,10 +1421,10 @@ def test_partial_cover_reduces_the_short_toward_zero(tmp_path):
     """A COVER of 10 against a SHORT 36 leaves -26, not -46."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
-                    broker_order_id="gme-short", fill_status="filled", stop_loss=110.0)
-    db.insert_trade("GME", "COVER", 10, 19.0, "trim short", "r2",
-                    broker_order_id="gme-cover", fill_status="filled")
+    db.insert_trade(
+        "GME", "SHORT", 36, 20.0, "open short", "r1", broker_order_id="gme-short", fill_status="filled", stop_loss=110.0
+    )
+    db.insert_trade("GME", "COVER", 10, 19.0, "trim short", "r2", broker_order_id="gme-cover", fill_status="filled")
     assert db.get_symbols_with_open_ledger_qty()["GME"] == -26.0
 
 
@@ -1333,10 +1433,12 @@ def test_partial_cover_pct_label_is_normalised_and_adds(tmp_path):
     as _symbols_already_trimmed_today normalises the label."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("GME", "SHORT", 36, 20.0, "open short", "r1",
-                    broker_order_id="gme-short", fill_status="filled", stop_loss=110.0)
-    db.insert_trade("GME", "PARTIAL_COVER(50%)", 18, 19.0, "cover half", "r2",
-                    broker_order_id="gme-pcover", fill_status="filled")
+    db.insert_trade(
+        "GME", "SHORT", 36, 20.0, "open short", "r1", broker_order_id="gme-short", fill_status="filled", stop_loss=110.0
+    )
+    db.insert_trade(
+        "GME", "PARTIAL_COVER(50%)", 18, 19.0, "cover half", "r2", broker_order_id="gme-pcover", fill_status="filled"
+    )
     assert db.get_symbols_with_open_ledger_qty()["GME"] == -18.0
 
 
@@ -1344,10 +1446,12 @@ def test_emergency_cover_retires_a_short(tmp_path):
     """EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL and must add."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("GME", "SHORT", 12, 20.0, "open short", "r1",
-                    broker_order_id="gme-short", fill_status="filled", stop_loss=110.0)
-    db.insert_trade("GME", "EMERGENCY_COVER", 12, 25.0, "panic cover", "r2",
-                    broker_order_id="gme-ecover", fill_status="filled")
+    db.insert_trade(
+        "GME", "SHORT", 12, 20.0, "open short", "r1", broker_order_id="gme-short", fill_status="filled", stop_loss=110.0
+    )
+    db.insert_trade(
+        "GME", "EMERGENCY_COVER", 12, 25.0, "panic cover", "r2", broker_order_id="gme-ecover", fill_status="filled"
+    )
     assert db.get_symbols_with_open_ledger_qty()["GME"] == 0.0
 
 
@@ -1356,14 +1460,12 @@ def test_long_exits_still_subtract_after_cover_fix(tmp_path):
     the COVER fix must not turn every buy-ish word into an add."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AAPL", "BUY", 20, 100.0, "entry", "r1",
-                    broker_order_id="a-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("AAPL", "SELL", 4, 110.0, "trim", "r2",
-                    broker_order_id="a-sell", fill_status="filled")
-    db.insert_trade("AAPL", "REDUCE", 3, 108.0, "trim", "r3",
-                    broker_order_id="a-red", fill_status="filled")
-    db.insert_trade("AAPL", "STOP_OUT", 2, 95.0, "stopped", "r4",
-                    broker_order_id="a-stop", fill_status="filled")
+    db.insert_trade(
+        "AAPL", "BUY", 20, 100.0, "entry", "r1", broker_order_id="a-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("AAPL", "SELL", 4, 110.0, "trim", "r2", broker_order_id="a-sell", fill_status="filled")
+    db.insert_trade("AAPL", "REDUCE", 3, 108.0, "trim", "r3", broker_order_id="a-red", fill_status="filled")
+    db.insert_trade("AAPL", "STOP_OUT", 2, 95.0, "stopped", "r4", broker_order_id="a-stop", fill_status="filled")
     assert db.get_symbols_with_open_ledger_qty()["AAPL"] == 11.0
 
 
@@ -1375,10 +1477,20 @@ def test_filled_buy_to_cover_trail_stop_retires_a_short(tmp_path):
     of a 36-share short reads 0, not -72 (the pre-fix double-subtract)."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("FLNC", "SHORT", 36, 7.39, "short entry", "r1",
-                    broker_order_id="flnc-short", fill_status="filled", stop_loss=110.0)
-    db.insert_trade("FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1",
-                    broker_order_id="flnc-stop", fill_status="submitted")
+    db.insert_trade(
+        "FLNC",
+        "SHORT",
+        36,
+        7.39,
+        "short entry",
+        "r1",
+        broker_order_id="flnc-short",
+        fill_status="filled",
+        stop_loss=110.0,
+    )
+    db.insert_trade(
+        "FLNC", "TRAIL_STOP", 36, 8.2, "protect", "r1", broker_order_id="flnc-stop", fill_status="submitted"
+    )
     _set_fill(db, "flnc-stop", status="filled", qty=36.0)
     assert db.get_symbols_with_open_ledger_qty()["FLNC"] == 0.0
 
@@ -1389,9 +1501,9 @@ def test_long_fired_trail_stop_still_subtracts_after_cover_fix(tmp_path):
     side-read signs it -1."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("LLY", "BUY", 8, 900.0, "entry", "r1",
-                    broker_order_id="lly-buy", fill_status="filled", stop_loss=90.0)
-    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1",
-                    broker_order_id="lly-stop", fill_status="submitted")
+    db.insert_trade(
+        "LLY", "BUY", 8, 900.0, "entry", "r1", broker_order_id="lly-buy", fill_status="filled", stop_loss=90.0
+    )
+    db.insert_trade("LLY", "TRAIL_STOP", 8, 850.0, "protect", "r1", broker_order_id="lly-stop", fill_status="submitted")
     _set_fill(db, "lly-stop", status="filled", qty=8.0)
     assert db.get_symbols_with_open_ledger_qty()["LLY"] == 0.0

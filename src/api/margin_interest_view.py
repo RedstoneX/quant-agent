@@ -1,4 +1,5 @@
 """Account margin-interest view, carved out of routes_live.py."""
+
 from __future__ import annotations
 
 import logging
@@ -31,7 +32,8 @@ def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
             is_estimate=cumulative_data.get("is_estimate"),
             source=cumulative_data.get("source"),
         )
-        if cumulative_data else None
+        if cumulative_data
+        else None
     )
     return MarginInterestEstimate(
         debit_balance=data.get("debit_balance"),

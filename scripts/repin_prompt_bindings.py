@@ -9,6 +9,7 @@ first and reading never is the one way to defeat the check; it is a
 convention at that edge, exactly like the deletion-site registry it sits
 beside (`src/retired_mechanisms.py`).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,8 +52,7 @@ def repin(registry_path: Path = REGISTRY_PATH) -> list[str]:
         name = match.group(1)
         if name != order[index]:  # pragma: no cover - parser/regex disagreement
             raise SystemExit(
-                f"registry order disagrees with the text scan at {name!r}; "
-                f"fix the file by hand",
+                f"registry order disagrees with the text scan at {name!r}; fix the file by hand",
             )
         index += 1
         code, prose = digests[name]
@@ -63,7 +63,7 @@ def repin(registry_path: Path = REGISTRY_PATH) -> list[str]:
                 raise SystemExit(f"{name}: no `{key}:` line to re-pin")
             if found.group(2) != value:
                 changed.append(f"{name}.{key}: {found.group(2)} -> {value}")
-            block = pattern.sub(rf'\g<1>{value}\g<3>', block, count=1)
+            block = pattern.sub(rf"\g<1>{value}\g<3>", block, count=1)
         out.append(block)
     registry_path.write_text("".join(out))
     return changed

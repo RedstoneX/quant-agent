@@ -46,6 +46,7 @@ Manager decision rendered into its prompt, so no deterministic input
 drives it; a trim that the stand-in cannot fill in whole; shorts; the
 cash-sweep vehicle; anything a model seat says — every seat is scripted.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,21 +57,31 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.models import (
-    MacroNarrative, NewsIntelligenceReport, OHLCV, RiskReasoningChain,
+    MacroNarrative,
+    NewsIntelligenceReport,
+    OHLCV,
+    RiskReasoningChain,
     RiskVerdict,
 )
 from src.models.positions import (
-    PositionAction, PositionReasoningChain, PositionReview,
+    PositionAction,
+    PositionReasoningChain,
+    PositionReview,
 )
 import tests.test_e2e_morning_session as morning
 from tests.test_e2e_morning_session import (
-    SESSION_AT, _build_config, _earnings_feed_stub, _macro_feed_stub,
-    _market_stub, _news_feed_stub, _scripted_model_seats,
+    SESSION_AT,
+    _build_config,
+    _earnings_feed_stub,
+    _macro_feed_stub,
+    _market_stub,
+    _news_feed_stub,
+    _scripted_model_seats,
 )
 
 CLOSE_AT = SESSION_AT.replace(hour=15, minute=30)
 ENTRY_AT = CLOSE_AT - timedelta(days=14)
-PRICE = 100.0                       # every name marks here today
+PRICE = 100.0  # every name marks here today
 N_BARS = 160
 
 #: symbol -> (qty, avg entry, resting stop). Entered two weeks ago.
@@ -83,11 +94,11 @@ BOOK: dict[str, tuple[float, float, float]] = {
     "XLE": (40.0, 98.0, 93.0),
     "XLV": (40.0, 100.0, 95.0),
 }
-HELD_VALUE = sum(qty * PRICE for qty, _, _ in BOOK.values())        # 12,000
-CASH = -3_500.0                      # borrowed: the book is on margin
-EQUITY = CASH + HELD_VALUE                                           # 8,500
-PEAK_EQUITY = 10_200.0               # the high-water mark on the curve
-DRAWDOWN_PCT = (EQUITY / PEAK_EQUITY - 1.0) * 100.0                  # -16.67%
+HELD_VALUE = sum(qty * PRICE for qty, _, _ in BOOK.values())  # 12,000
+CASH = -3_500.0  # borrowed: the book is on margin
+EQUITY = CASH + HELD_VALUE  # 8,500
+PEAK_EQUITY = 10_200.0  # the high-water mark on the curve
+DRAWDOWN_PCT = (EQUITY / PEAK_EQUITY - 1.0) * 100.0  # -16.67%
 
 
 def _ladder_ceiling_x(drawdown_pct: float) -> float:
@@ -98,14 +109,14 @@ def _ladder_ceiling_x(drawdown_pct: float) -> float:
 
 
 CEILING_X = _ladder_ceiling_x(DRAWDOWN_PCT)
-CEILING_USD = CEILING_X * EQUITY                                     # 8,500
-OVER = HELD_VALUE - CEILING_USD                                      # 3,500
-LOSER = min(BOOK, key=lambda s: BOOK[s][0] * (PRICE - BOOK[s][1]))   # XLF
+CEILING_USD = CEILING_X * EQUITY  # 8,500
+OVER = HELD_VALUE - CEILING_USD  # 3,500
+LOSER = min(BOOK, key=lambda s: BOOK[s][0] * (PRICE - BOOK[s][1]))  # XLF
 LOSER_QTY, _, LOSER_STOP = BOOK[LOSER]
 # The cut is OVER / the loser's value, rounded to a tenth of a percent,
 # then whole shares (the position is whole-share).
 EXPECTED_SELL_QTY = float(int(LOSER_QTY * round(OVER / (LOSER_QTY * PRICE) * 100, 1) / 100))
-RESIDUAL_QTY = LOSER_QTY - EXPECTED_SELL_QTY                         # 5
+RESIDUAL_QTY = LOSER_QTY - EXPECTED_SELL_QTY  # 5
 
 
 def _bars() -> list[OHLCV]:
@@ -119,10 +130,16 @@ def _bars() -> list[OHLCV]:
         if d.weekday() >= 5:
             continue
         close = PRICE - 15.0 * (N_BARS - 1 - i) / (N_BARS - 1)
-        bars.append(OHLCV(
-            date=d, open=round(close - 0.1, 2), high=round(close + 0.4, 2),
-            low=round(close - 0.4, 2), close=round(close, 2), volume=1_000_000,
-        ))
+        bars.append(
+            OHLCV(
+                date=d,
+                open=round(close - 0.1, 2),
+                high=round(close + 0.4, 2),
+                low=round(close - 0.4, 2),
+                close=round(close, 2),
+                volume=1_000_000,
+            )
+        )
         i += 1
     assert abs(bars[-1].close - PRICE) < 1e-9 and bars[-1].date < CLOSE_AT.date()
     return bars
@@ -131,28 +148,41 @@ def _bars() -> list[OHLCV]:
 def _scripts() -> dict[str, dict]:
     review = PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="x", thesis_progress_check="x",
-            thesis_integrity_check="x", winners_discipline_check="x",
-            session_disposition_check="x", execution_rationale="x",
+            macro_continuity_check="x",
+            thesis_progress_check="x",
+            thesis_integrity_check="x",
+            winners_discipline_check="x",
+            session_disposition_check="x",
+            execution_rationale="x",
         ),
-        actions=[PositionAction(action="HOLD", symbol=s, reason="thesis intact")
-                 for s in BOOK],
-        overall_assessment="scripted", risk_level="low",
+        actions=[PositionAction(action="HOLD", symbol=s, reason="thesis intact") for s in BOOK],
+        overall_assessment="scripted",
+        risk_level="low",
     )
     rm = RiskVerdict(
-        approved=True, modifications=[], reasoning="approved",
+        approved=True,
+        modifications=[],
+        reasoning="approved",
         reasoning_chain=RiskReasoningChain(
-            rr_audit="x", signal_fidelity="x", correlation_check="x",
-            event_risk="x", sizing_sanity="x", overall="x",
+            rr_audit="x",
+            signal_fidelity="x",
+            correlation_check="x",
+            event_risk="x",
+            sizing_sanity="x",
+            overall="x",
         ),
     )
     news = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=str(CLOSE_AT.date()), era_themes=["synthetic"],
+            last_updated=str(CLOSE_AT.date()),
+            era_themes=["synthetic"],
             current_regime="risk-on",
         ),
-        state_changes=[], stock_news={}, pm_briefing="stub",
-        market_sentiment="neutral", confidence="medium",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="stub",
+        market_sentiment="neutral",
+        confidence="medium",
     )
     return {
         "position": json.loads(review.model_dump_json()),
@@ -164,9 +194,7 @@ def _scripts() -> dict[str, dict]:
 def _market(bars: list[OHLCV]):
     m = _market_stub()
     m.get_ohlcv.side_effect = lambda symbol, lookback_days=120: list(bars)
-    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {
-        s: list(bars) for s in symbols
-    }
+    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {s: list(bars) for s in symbols}
     m.get_upcoming_ex_dividend.return_value = None
     m.get_valuation_metrics.return_value = None
     return m
@@ -189,9 +217,17 @@ def _seed_book_and_curve(db) -> None:
     whose high-water mark sets today's drawdown."""
     for symbol, (qty, entry, stop) in BOOK.items():
         row_id = db.insert_trade(
-            symbol, "BUY", qty, entry, "synthetic entry", "seed-entry",
-            stop_loss=stop, take_profit=entry + 10.0, fill_status="filled",
-            setup_type="range", expected_horizon_sessions=60,
+            symbol,
+            "BUY",
+            qty,
+            entry,
+            "synthetic entry",
+            "seed-entry",
+            stop_loss=stop,
+            take_profit=entry + 10.0,
+            fill_status="filled",
+            setup_type="range",
+            expected_horizon_sessions=60,
             thesis_invalid_if=f"closes below {stop}",
         )
         db.conn.execute(
@@ -246,24 +282,37 @@ def _run_close(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(morning, "_scripted_answers", _scripts)
     attempts: list[str] = []
     gross_seen: list[float] = []
-    with no_network(attempts), _sentinel_credentials(), \
-         patch("src.pipeline.MarketDataProvider", return_value=_market(bars)), \
-         patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()), \
-         patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()), \
-         patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()), \
-         frozen_clock(now, run_id="e2e-close-delever"), \
-         _scripted_model_seats(trace):
+    with (
+        no_network(attempts),
+        _sentinel_credentials(),
+        patch("src.pipeline.MarketDataProvider", return_value=_market(bars)),
+        patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()),
+        patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()),
+        patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()),
+        frozen_clock(now, run_id="e2e-close-delever"),
+        _scripted_model_seats(trace),
+    ):
         from src.pipeline import TradingPipeline
 
         pipeline = TradingPipeline(config)
         _seed_book_and_curve(pipeline.db)
         snapshot = BrokerSnapshot(
-            as_of=now.date(), cash=CASH, portfolio_value=EQUITY, last_equity=EQUITY,
-            positions=[{
-                "symbol": s, "qty": qty, "avg_entry": entry, "current_price": PRICE,
-                "market_value": qty * PRICE, "unrealized_pnl": qty * (PRICE - entry),
-                "sector": "ETF",
-            } for s, (qty, entry, _) in BOOK.items()],
+            as_of=now.date(),
+            cash=CASH,
+            portfolio_value=EQUITY,
+            last_equity=EQUITY,
+            positions=[
+                {
+                    "symbol": s,
+                    "qty": qty,
+                    "avg_entry": entry,
+                    "current_price": PRICE,
+                    "market_value": qty * PRICE,
+                    "unrealized_pnl": qty * (PRICE - entry),
+                    "sector": "ETF",
+                }
+                for s, (qty, entry, _) in BOOK.items()
+            ],
             prices={s: PRICE for s in BOOK},
             standing_stops={s: stop for s, (_, _, stop) in BOOK.items()},
         )
@@ -274,8 +323,7 @@ def _run_close(tmp_path: Path, monkeypatch):
 
         symbols_of = pipeline.broker._data_client._symbols
         pipeline.broker._data_client.get_stock_latest_trade = lambda request: {
-            sym: SimpleNamespace(price=PRICE, timestamp=now)
-            for sym in symbols_of(request)
+            sym: SimpleNamespace(price=PRICE, timestamp=now) for sym in symbols_of(request)
         }
         pipeline.broker.get_intraday_snapshots = lambda symbols, *a, **k: {
             s: {"last_price": PRICE, "last_trade_at": now} for s in symbols
@@ -295,23 +343,25 @@ def _run_close(tmp_path: Path, monkeypatch):
 
 def _resting_sell_stops(trading, symbol: str) -> list:
     return [
-        o for o in trading._orders.values()
-        if o.symbol == symbol and o.side == "sell" and "stop" in o.order_type
+        o
+        for o in trading._orders.values()
+        if o.symbol == symbol
+        and o.side == "sell"
+        and "stop" in o.order_type
         and o.status in ("pre_existing", "new", "accepted")
     ]
 
 
 def test_close_on_a_levered_book_in_drawdown_sells_the_loser_down_to_the_ladder(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     assert math.isclose(HELD_VALUE / EQUITY, 1.4117647, abs_tol=1e-6)
     result, trace, trading, attempts, gross_seen = _run_close(tmp_path, monkeypatch)
 
     # the wall
     assert attempts == [], f"the session tried to leave the box: {attempts}"
-    assert result["status"] == "reviewed", {
-        k: v for k, v in result.items() if k in ("status", "error", "orders")
-    }
+    assert result["status"] == "reviewed", {k: v for k, v in result.items() if k in ("status", "error", "orders")}
     assert [k for _, k in trace].count("position") >= 1, trace
 
     # the ladder, as the session read it
@@ -320,11 +370,10 @@ def test_close_on_a_levered_book_in_drawdown_sells_the_loser_down_to_the_ladder(
     assert lev["ceiling_x"] == CEILING_X, lev
 
     # the cut: one sale, the loser, the whole-share quantity that clears OVER
-    sells = [o for o in trading.submitted
-             if o.side == "sell" and "stop" not in o.order_type]
-    assert [(o.symbol, o.qty, o.status) for o in sells] == [
-        (LOSER, EXPECTED_SELL_QTY, "filled")
-    ], [o.as_plain() for o in trading.submitted]
+    sells = [o for o in trading.submitted if o.side == "sell" and "stop" not in o.order_type]
+    assert [(o.symbol, o.qty, o.status) for o in sells] == [(LOSER, EXPECTED_SELL_QTY, "filled")], [
+        o.as_plain() for o in trading.submitted
+    ]
     sale = sells[0]
     assert sale.order_type == "limit" and sale.limit_price == PRICE, sale.as_plain()
     buys = [o for o in trading.submitted if o.side == "buy"]
@@ -351,7 +400,7 @@ def test_close_on_a_levered_book_in_drawdown_sells_the_loser_down_to_the_ladder(
         if symbol == LOSER:
             continue
         stops = _resting_sell_stops(trading, symbol)
-        assert [(s.qty, s.stop_price, s.status) for s in stops] == [
-            (qty, stop, "pre_existing")
-        ], [s.as_plain() for s in stops]
+        assert [(s.qty, s.stop_price, s.status) for s in stops] == [(qty, stop, "pre_existing")], [
+            s.as_plain() for s in stops
+        ]
     assert result["stop_coverage_gaps"] == [], result["stop_coverage_gaps"]

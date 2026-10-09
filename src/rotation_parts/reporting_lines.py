@@ -13,8 +13,8 @@ from src.rotation_parts.reporting import (
 )
 from src.rotation_unrecorded import empty_pass_lines
 
-def _full_book_cause(record: dict, *, headroom: str, ceiling: str,
-                     floor: str) -> str:
+
+def _full_book_cause(record: dict, *, headroom: str, ceiling: str, floor: str) -> str:
     """Why the book is full, in the owner's words, naming the limit that
     actually stopped it.
 
@@ -23,9 +23,7 @@ def _full_book_cause(record: dict, *, headroom: str, ceiling: str,
     different answers and collapsing them would hide whichever the owner
     could do something about.
     """
-    binding = [
-        b for b in str(record.get("binding") or "").split(",") if b
-    ]
+    binding = [b for b in str(record.get("binding") or "").split(",") if b]
     causes: list[str] = []
     if "risk_budget" in binding:
         causes.append(
@@ -39,17 +37,13 @@ def _full_book_cause(record: dict, *, headroom: str, ceiling: str,
         causes.append(
             f"only ${float(budget):,.0f} of cash and borrowing room left, "
             f"below the ${float(minimum):,.0f} smallest order worth placing"
-            if isinstance(budget, (int, float))
-            and isinstance(minimum, (int, float))
+            if isinstance(budget, (int, float)) and isinstance(minimum, (int, float))
             else "no cash or borrowing room left to open a new position"
         )
     if not causes:
         # An older row, written before `binding` existed. Say what that row
         # can support rather than inventing a cause for it.
-        causes.append(
-            f"only {headroom} of risk headroom left under the desk's "
-            f"{ceiling} ceiling"
-        )
+        causes.append(f"only {headroom} of risk headroom left under the desk's {ceiling} ceiling")
     return " and ".join(causes) + "."
 
 
@@ -80,7 +74,8 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
         # a figure that came back unreadable is the same silence this change
         # exists to remove, wearing a reassuring sentence.
         if funding_view_measured(
-            record.get("entry_budget_usd"), record.get("min_order_usd"),
+            record.get("entry_budget_usd"),
+            record.get("min_order_usd"),
         ):
             return [
                 f"🔄 Rotation check: not needed — there is still {headroom} "
@@ -106,13 +101,18 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     # categorical tier can now reach this block with every limit slack, and
     # "the book is FULL" was being asserted there from the outcome name
     # alone — true of the outcome's original case, false of the new one.
-    constrained = bool(
-        [b for b in str(record.get("binding") or "").split(",") if b]
-    )
+    constrained = bool([b for b in str(record.get("binding") or "").split(",") if b])
     if constrained:
-        full = "🔄 Rotation check: the book is FULL — " + _full_book_cause(
-            record, headroom=headroom, ceiling=ceiling, floor=floor,
-        ) + " This is a normal state, not a fault."
+        full = (
+            "🔄 Rotation check: the book is FULL — "
+            + _full_book_cause(
+                record,
+                headroom=headroom,
+                ceiling=ceiling,
+                floor=floor,
+            )
+            + " This is a normal state, not a fault."
+        )
     else:
         full = (
             f"🔄 Rotation check: the book has room — {headroom} of risk "
@@ -122,12 +122,8 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
 
     if outcome == ROTATION_HOLDING_BELOW_BAR:
         held = str(record.get("held_symbol") or "").upper()
-        reasons = [
-            s for s in str(record.get("held_reasons") or "").split(",") if s
-        ]
-        why = "; ".join(reasons) if reasons else (
-            "it no longer clears the desk's own entry bar"
-        )
+        reasons = [s for s in str(record.get("held_reasons") or "").split(",") if s]
+        why = "; ".join(reasons) if reasons else ("it no longer clears the desk's own entry bar")
         subject = held if held else "A holding"
         lines = [
             full,
@@ -165,9 +161,7 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     # limit was binding — it was not competing for anything.
     if not (held and new):
         return [full]
-    weakest = (
-        ", the weakest thing currently using the room" if constrained else ""
-    )
+    weakest = ", the weakest thing currently using the room" if constrained else ""
     lines = [
         full,
         f"   Every new candidate was ranked against what is already held, "
@@ -176,8 +170,7 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     ]
     if not record.get("execute_enabled"):
         lines.append(
-            "   The desk is not switched on to act on this by itself, so "
-            "this is information only — nothing was sold."
+            "   The desk is not switched on to act on this by itself, so this is information only — nothing was sold."
         )
     elif tier == "ranked_margin" and not record.get("ranked_margin_enabled"):
         lines.append(
@@ -206,9 +199,7 @@ def pruning_pass_lines(record: dict | None) -> list[str]:
         return []
     examined = [s for s in str(record.get("held_examined") or "").split(",") if s]
     count = int(record.get("held_examined_count") or 0)
-    below = [
-        s for s in str(record.get("held_below_entry_bar") or "").split(",") if s
-    ]
+    below = [s for s in str(record.get("held_below_entry_bar") or "").split(",") if s]
     reasons = [s for s in str(record.get("held_reasons") or "").split(",") if s]
     cut = str(record.get("held_symbol") or "").upper()
     tier = str(record.get("tier") or "")
@@ -217,17 +208,12 @@ def pruning_pass_lines(record: dict | None) -> list[str]:
         return empty_pass_lines(record) + _tier_two_line(record)
 
     noun = "holding" if count == 1 else "holdings"
-    lines = [
-        f"\u2702\ufe0f Pruning pass: ran, and examined all {count} {noun} "
-        f"the desk holds ({', '.join(examined)})."
-    ]
+    lines = [f"\u2702\ufe0f Pruning pass: ran, and examined all {count} {noun} the desk holds ({', '.join(examined)})."]
     # (b) Anything cut, and the CONVICTION reason it was cut on. The
     # categorical tier cuts a name because it no longer clears the desk's
     # own entry bar — never because it is down.
     if cut and tier == "ineligible_hold":
-        why = "; ".join(reasons) if reasons else (
-            "it no longer clears the desk's own entry bar"
-        )
+        why = "; ".join(reasons) if reasons else ("it no longer clears the desk's own entry bar")
         lines.append(
             f"   Put up to be cut: {cut} \u2014 {why}. That is a conviction "
             "reason, not a profit-or-loss one: the case for holding it is "

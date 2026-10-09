@@ -15,6 +15,7 @@ guards close the mechanical part:
 Plus: position facts must show the LIVE broker stop (post-trail), not the
 stale-wide BUY-row stop that kept the ratchet feedback going.
 """
+
 from datetime import date as _date
 from unittest.mock import MagicMock
 
@@ -49,15 +50,22 @@ def _mk_pipeline(position: Position) -> TradingPipeline:
 def _trail_review(symbol: str, new_stop: float, reason: str) -> PositionReview:
     return PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(action="TRAIL_STOP", symbol=symbol,
-                                reason=reason, new_stop_price=new_stop)],
-        overall_assessment="trail", risk_level="low",
+        actions=[PositionAction(action="TRAIL_STOP", symbol=symbol, reason=reason, new_stop_price=new_stop)],
+        overall_assessment="trail",
+        risk_level="low",
     )
 
 
-GE = Position(symbol="GE", qty=26.0, avg_entry=316.0, current_price=360.0,
-              market_value=9360.0, unrealized_pnl=1144.0,
-              unrealized_intraday_pnl=0.0, sector="Industrials")
+GE = Position(
+    symbol="GE",
+    qty=26.0,
+    avg_entry=316.0,
+    current_price=360.0,
+    market_value=9360.0,
+    unrealized_pnl=1144.0,
+    unrealized_intraday_pnl=0.0,
+    sector="Industrials",
+)
 
 
 def test_trail_inside_noise_band_is_rejected():
@@ -66,7 +74,8 @@ def test_trail_inside_noise_band_is_rejected():
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", 355.0, "TARGET_BREACH — locking in gains"),
     )
     assert orders == []
@@ -77,7 +86,8 @@ def test_trail_outside_noise_band_passes():
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", 344.0, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1
@@ -90,9 +100,9 @@ def test_trail_hard_trigger_bypasses_noise_clamp():
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
-        review=_trail_review("GE", 355.0,
-                             "thesis_invalid_if triggered — guidance withdrawn"),
+        positions=[GE],
+        run_id="r-1",
+        review=_trail_review("GE", 355.0, "thesis_invalid_if triggered — guidance withdrawn"),
     )
     assert len(orders) == 1
 
@@ -103,7 +113,8 @@ def test_trail_unknowable_atr_degrades_open():
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: None
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", 355.0, "TARGET_BREACH"),
     )
     assert len(orders) == 1
@@ -113,14 +124,19 @@ def test_trail_ratchet_cooldown_blocks_repeat_tighten():
     """A non-canceled TRAIL_STOP within the last ~2 trading days blocks a
     second soft-reason tighten (GE was ratcheted 7× in 8 sessions)."""
     from datetime import datetime, timezone
+
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
-    pipeline.db.get_trades.return_value = [{
-        "action": "TRAIL_STOP", "fill_status": "submitted",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }]
+    pipeline.db.get_trades.return_value = [
+        {
+            "action": "TRAIL_STOP",
+            "fill_status": "submitted",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    ]
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", 344.0, "TARGET_BREACH — trail up again"),
     )
     assert orders == []
@@ -133,16 +149,23 @@ def test_trail_cooldown_counts_superseded_rows_but_not_old_ones():
     later-trail — the tighten still happened and still counts for the
     cooldown. Only age (and ex-div rows) exclude."""
     from datetime import datetime, timezone
+
     pipeline = _mk_pipeline(GE)
     pipeline._atr_for_symbol = lambda s: 8.0
     pipeline.db.get_trades.return_value = [
-        {"action": "TRAIL_STOP", "fill_status": "submitted",
-         "timestamp": "2026-06-01T14:00:00+00:00"},   # weeks old → excluded
+        {
+            "action": "TRAIL_STOP",
+            "fill_status": "submitted",
+            "timestamp": "2026-06-01T14:00:00+00:00",
+        },  # weeks old → excluded
     ]
     assert pipeline._trail_tightened_recently("GE") is False
     pipeline.db.get_trades.return_value = [
-        {"action": "TRAIL_STOP", "fill_status": "canceled",
-         "timestamp": datetime.now(timezone.utc).isoformat()},  # superseded today
+        {
+            "action": "TRAIL_STOP",
+            "fill_status": "canceled",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },  # superseded today
     ]
     assert pipeline._trail_tightened_recently("GE") is True
 
@@ -171,7 +194,8 @@ def test_trail_below_min_ratchet_floor_rejected_prior_stop_kept():
     pipeline._atr_for_symbol = lambda s: 1.0  # noise floor 358.75, irrelevant
     new_stop = 340.0 + venue_tick(340.0) / 4.0  # a quarter-tick: same price
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
     )
     assert orders == []
@@ -184,7 +208,8 @@ def test_trail_at_or_above_min_ratchet_floor_passes():
     pipeline._atr_for_symbol = lambda s: 1.0
     new_stop = _floor_over(340.0) + 1.0  # comfortably above the tick floor
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1
@@ -198,7 +223,8 @@ def test_trail_exactly_at_min_ratchet_floor_passes():
     pipeline._atr_for_symbol = lambda s: 1.0
     new_stop = _floor_over(340.0)  # identical float to the code's computation
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1
@@ -213,9 +239,9 @@ def test_trail_min_ratchet_floor_not_bypassed_by_hard_trigger():
     pipeline._atr_for_symbol = lambda s: 1.0
     new_stop = _floor_over(340.0) - 0.5
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
-        review=_trail_review("GE", new_stop,
-                             "thesis_invalid_if triggered — guidance withdrawn"),
+        positions=[GE],
+        run_id="r-1",
+        review=_trail_review("GE", new_stop, "thesis_invalid_if triggered — guidance withdrawn"),
     )
     assert orders == []
     pipeline.broker.replace_stop_loss.assert_not_called()
@@ -228,7 +254,8 @@ def test_trail_missing_old_stop_establishes_protection():
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = lambda s: None  # no noise clamp
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-1",
+        positions=[GE],
+        run_id="r-1",
         review=_trail_review("GE", 345.0, "TARGET_BREACH — establishing stop"),
     )
     assert len(orders) == 1
@@ -237,18 +264,22 @@ def test_trail_missing_old_stop_establishes_protection():
 
 # ---------- live stop reference in position facts ----------
 
+
 def test_position_facts_prefer_live_broker_stop():
     """After a trail to $350, the BUY row still says $300 — the reviewer
     must see the live $350 (distance 2.8%), not a stale-wide 16.7%."""
     pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = 350.0
     pipeline.db.get_symbol_last_buy.return_value = {
-        "stop_loss": 300.0, "take_profit": 400.0,
+        "stop_loss": 300.0,
+        "take_profit": 400.0,
         "timestamp": "2026-07-01 14:00:00",
     }
     pipeline._atr_for_symbol = lambda s: 8.0
     facts = pipeline._build_position_facts(
-        [GE], morning_trades=[], total_value=100_000.0,
+        [GE],
+        morning_trades=[],
+        total_value=100_000.0,
     )
     dist = facts["GE"]["distance_to_stop_pct"]
     assert dist is not None and abs(dist - (360 - 350) / 360 * 100) < 0.01
@@ -261,16 +292,19 @@ def test_position_facts_fall_back_to_buy_row_stop():
     pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline.db.get_symbol_last_buy.return_value = {
-        "stop_loss": 300.0, "take_profit": 400.0,
+        "stop_loss": 300.0,
+        "take_profit": 400.0,
         "timestamp": "2026-07-01 14:00:00",
     }
     pipeline._atr_for_symbol = lambda s: None
     facts = pipeline._build_position_facts(
-        [GE], morning_trades=[], total_value=100_000.0,
+        [GE],
+        morning_trades=[],
+        total_value=100_000.0,
     )
     dist = facts["GE"]["distance_to_stop_pct"]
     assert dist is not None and abs(dist - (360 - 300) / 360 * 100) < 0.01
-    assert facts["GE"]["stop_distance_atrs"] is None   # unknown ≠ zero
+    assert facts["GE"]["stop_distance_atrs"] is None  # unknown ≠ zero
 
 
 def test_distance_to_stop_pct_is_side_aware_for_shorts():
@@ -284,30 +318,45 @@ def test_distance_to_stop_pct_is_side_aware_for_shorts():
     negative (read as "worse") as the position got safer.
     """
     SHORT = Position(
-        symbol="XYZ", qty=-10.0, avg_entry=100.0, current_price=90.0,
-        market_value=-900.0, unrealized_pnl=100.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="XYZ",
+        qty=-10.0,
+        avg_entry=100.0,
+        current_price=90.0,
+        market_value=-900.0,
+        unrealized_pnl=100.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline.db.get_symbol_last_buy.return_value = {
-        "stop_loss": 110.0, "take_profit": 70.0,
+        "stop_loss": 110.0,
+        "take_profit": 70.0,
         "timestamp": "2026-07-01 14:00:00",
     }
     pipeline._atr_for_symbol = lambda s: None
 
     facts_favorable = pipeline._build_position_facts(
-        [SHORT], morning_trades=[], total_value=100_000.0,
+        [SHORT],
+        morning_trades=[],
+        total_value=100_000.0,
     )
     dist_favorable = facts_favorable["XYZ"]["distance_to_stop_pct"]
 
     ADVERSE = Position(
-        symbol="XYZ", qty=-10.0, avg_entry=100.0, current_price=105.0,
-        market_value=-1050.0, unrealized_pnl=-50.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="XYZ",
+        qty=-10.0,
+        avg_entry=100.0,
+        current_price=105.0,
+        market_value=-1050.0,
+        unrealized_pnl=-50.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     facts_adverse = pipeline._build_position_facts(
-        [ADVERSE], morning_trades=[], total_value=100_000.0,
+        [ADVERSE],
+        morning_trades=[],
+        total_value=100_000.0,
     )
     dist_adverse = facts_adverse["XYZ"]["distance_to_stop_pct"]
 
@@ -324,13 +373,20 @@ def test_distance_to_stop_pct_is_side_aware_for_shorts():
 
 def _pm_rc():
     from src.models import ReasoningChain
+
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
+
 # ---------- entry ATR stop floor (ExecutionStage) ----------
+
 
 def test_entry_stop_floor_widens_tight_stop_and_resizes():
     """Stop 0.5×ATR from entry gets widened to 1×ATR; qty_by_risk sizes
@@ -344,22 +400,33 @@ def test_entry_stop_floor_widens_tight_stop_and_resizes():
     pipeline.broker.submit_order.return_value = {"id": "b1", "status": "accepted"}
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {"NVDA": 100.0},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {"NVDA": 100.0},
     )
     pipeline.broker.get_latest_price.return_value = 100.0
 
     # 20 synthetic daily bars with true range ≈ $4 → ATR14 ≈ 4.
-    bars = [OHLCV(date=_date(2026, 6, d + 1), open=100, high=102,
-                  low=98, close=100, volume=1_000_000) for d in range(20)]
+    bars = [
+        OHLCV(date=_date(2026, 6, d + 1), open=100, high=102, low=98, close=100, volume=1_000_000) for d in range(20)
+    ]
 
     ctx = RunContext.start("morning")
     ctx.positions, ctx.cash, ctx.total_value, ctx.last_equity = [], 50_000.0, 100_000.0, 100_000.0
     ctx.symbols_bars = {"NVDA": bars}
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_pm_rc(),
-        decisions=[TradeDecision(action="BUY", symbol="NVDA", allocation_pct=10.0,
-                                 entry_price=100.0, stop_loss=98.0,  # 0.5×ATR — too tight
-                                 take_profit=120.0, reasoning="test")],
+        decisions=[
+            TradeDecision(
+                action="BUY",
+                symbol="NVDA",
+                allocation_pct=10.0,
+                entry_price=100.0,
+                stop_loss=98.0,  # 0.5×ATR — too tight
+                take_profit=120.0,
+                reasoning="test",
+            )
+        ],
         portfolio_view="test",
     )
 
@@ -367,7 +434,7 @@ def test_entry_stop_floor_widens_tight_stop_and_resizes():
 
     submit = pipeline.broker.submit_order.call_args.kwargs
     assert submit["symbol"] == "NVDA"
-    assert submit["stop_loss_price"] == 96.0        # 100 - 1×ATR(=4)
+    assert submit["stop_loss_price"] == 96.0  # 100 - 1×ATR(=4)
     # alloc sizing binds here (10% of $100k / $100 = 100 sh; the ratified 5%
     # risk budget of $100k = $5,000 / $4 risk-per-share = 1,250 sh doesn't).
     # The floor's effect on qty shows via qty_by_risk when alloc is large;
@@ -388,20 +455,31 @@ def test_entry_stop_floor_leaves_wide_stop_alone():
     pipeline.broker.submit_order.return_value = {"id": "b1", "status": "accepted"}
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {"NVDA": 100.0},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {"NVDA": 100.0},
     )
     pipeline.broker.get_latest_price.return_value = 100.0
-    bars = [OHLCV(date=_date(2026, 6, d + 1), open=100, high=102,
-                  low=98, close=100, volume=1_000_000) for d in range(20)]
+    bars = [
+        OHLCV(date=_date(2026, 6, d + 1), open=100, high=102, low=98, close=100, volume=1_000_000) for d in range(20)
+    ]
 
     ctx = RunContext.start("morning")
     ctx.positions, ctx.cash, ctx.total_value, ctx.last_equity = [], 50_000.0, 100_000.0, 100_000.0
     ctx.symbols_bars = {"NVDA": bars}
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_pm_rc(),
-        decisions=[TradeDecision(action="BUY", symbol="NVDA", allocation_pct=10.0,
-                                 entry_price=100.0, stop_loss=90.0,  # 2.5×ATR — fine
-                                 take_profit=120.0, reasoning="test")],
+        decisions=[
+            TradeDecision(
+                action="BUY",
+                symbol="NVDA",
+                allocation_pct=10.0,
+                entry_price=100.0,
+                stop_loss=90.0,  # 2.5×ATR — fine
+                take_profit=120.0,
+                reasoning="test",
+            )
+        ],
         portfolio_view="test",
     )
     ExecutionStage(pipeline=pipeline).run(ctx)
@@ -413,6 +491,7 @@ def test_entry_stop_floor_leaves_wide_stop_alone():
 # Board item 185 — the stop-sanity typo guard reads the instrument
 # ----------------------------------------------------------------------
 
+
 def _unprotected_pipeline() -> TradingPipeline:
     """A position with NO readable live stop, so the min-ratchet floor cannot
     run and the typo guard is the only thing between a mistyped price and the
@@ -421,6 +500,7 @@ def _unprotected_pipeline() -> TradingPipeline:
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = lambda s: 8.0
     from src.portfolio_constructor import ConstructorConfig
+
     pipeline.portfolio_constructor = MagicMock()
     pipeline.portfolio_constructor.cfg = ConstructorConfig()
     return pipeline
@@ -440,7 +520,8 @@ def test_an_unprotected_position_is_always_left_WITH_a_stop():
     pipeline = _unprotected_pipeline()
     pipeline._record_exit_refusal = MagicMock()
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-185",
+        positions=[GE],
+        run_id="r-185",
         review=_trail_review("GE", 300.0, "TARGET_BREACH — locking in gains"),
     )
     # A stop IS placed, at the widest the desk's own rules can produce.
@@ -448,6 +529,7 @@ def test_an_unprotected_position_is_always_left_WITH_a_stop():
     pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 336.0)
     # And the substitution is durable and per-symbol, not just a log line.
     from src.risk.exit_refusal import CODE_TRAIL_CLAMPED_TO_WIDEST
+
     kwargs = pipeline._record_exit_refusal.call_args.kwargs
     assert kwargs["symbol"] == "GE"
     assert kwargs["code"] == CODE_TRAIL_CLAMPED_TO_WIDEST
@@ -460,7 +542,8 @@ def test_a_stop_the_desk_could_legitimately_place_is_left_alone():
     stop, and outside the noise band, reaches the broker untouched."""
     pipeline = _unprotected_pipeline()
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-185",
+        positions=[GE],
+        run_id="r-185",
         review=_trail_review("GE", 340.0, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1
@@ -473,7 +556,8 @@ def test_the_clamped_stop_cannot_then_be_thrown_out_by_the_noise_band():
     stop it will reject — which would put the naked position back."""
     pipeline = _unprotected_pipeline()
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-185",
+        positions=[GE],
+        run_id="r-185",
         # No hard trigger in the reason, so the RC1 clamps below DO run.
         review=_trail_review("GE", 10.0, "trimming risk into the close"),
     )
@@ -490,7 +574,8 @@ def test_a_readable_live_stop_is_governed_by_the_ratchet_not_the_clamp():
     pipeline._atr_for_symbol = lambda s: 8.0
     pipeline.broker.get_current_stop_price.return_value = 300.0
     orders = pipeline._midday_execute_llm_actions(
-        positions=[GE], run_id="r-185",
+        positions=[GE],
+        run_id="r-185",
         review=_trail_review("GE", 330.0, "TARGET_BREACH — locking in gains"),
     )
     assert len(orders) == 1

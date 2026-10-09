@@ -11,6 +11,7 @@ which the dashboard joins). This module adds one run-scoped
 reasons it fails the bar on and, where the pass never reached it, the exact
 "not reached: <why>". No threshold, limit or lookback is introduced.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ def _walk_order(precheck) -> list[tuple[str, tuple[str, ...]]]:
 
 
 def disposition_payload(
-    precheck, closed: set[str], execution_enabled: bool,
+    precheck,
+    closed: set[str],
+    execution_enabled: bool,
 ) -> dict[str, str]:
     """Pure: the per-name reasons for one pass. Empty when nothing is below the bar."""
     order = _walk_order(precheck)
@@ -48,8 +51,7 @@ def disposition_payload(
             )
         elif cut_seen:
             not_reached.append(
-                f"{sym}=not reached: the pass closes one below-bar name per "
-                f"run and {first_cut} was closed first"
+                f"{sym}=not reached: the pass closes one below-bar name per run and {first_cut} was closed first"
             )
     return {
         "below_bar_reasons": "|".join(fail_on),
@@ -58,7 +60,11 @@ def disposition_payload(
 
 
 def apply_rotation_recording_dispositions(
-    pipeline, ctx, portfolio_decision, positions, position_history,
+    pipeline,
+    ctx,
+    portfolio_decision,
+    positions,
+    position_history,
 ) -> None:
     """Run the rotation acting path, then record why each below-bar name stayed.
 
@@ -72,12 +78,17 @@ def apply_rotation_recording_dispositions(
     from src.pipeline_stages import _record_pipeline_event
 
     _apply_rotation_execution(
-        pipeline, ctx, portfolio_decision, positions, position_history,
+        pipeline,
+        ctx,
+        portfolio_decision,
+        positions,
+        position_history,
     )
     try:
         precheck = getattr(
             getattr(pipeline, "portfolio_manager", None),
-            "last_rotation_precheck", None,
+            "last_rotation_precheck",
+            None,
         )
         closed = {
             str(getattr(t, "symbol", "")).upper()
@@ -85,12 +96,19 @@ def apply_rotation_recording_dispositions(
             if getattr(t, "is_close", False)
         }
         payload = disposition_payload(
-            precheck, closed, _rotation_execution_enabled(pipeline),
+            precheck,
+            closed,
+            _rotation_execution_enabled(pipeline),
         )
         if payload:
             _record_pipeline_event(
-                pipeline, ctx, None, "rotation", "dispositions",
-                "below_bar_names", **payload,
+                pipeline,
+                ctx,
+                None,
+                "rotation",
+                "dispositions",
+                "below_bar_names",
+                **payload,
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Rotation dispositions record failed: %s", exc)

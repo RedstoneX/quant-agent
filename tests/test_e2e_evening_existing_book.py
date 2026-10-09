@@ -17,6 +17,7 @@ file asserts that, on a book that already holds one long:
 
 Every seat is scripted; every expectation derives from the inputs.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,12 @@ import json
 from src.models.evening import EveningReasoningChain, EveningReport
 from tests.e2e_held_book_support import NO_STOP, run_held_book
 from tests.test_e2e_close_existing_book import (
-    INITIAL_STOP, ONE_R_PRICE, QTY, SYMBOL, _bars, _news_says_nothing,
+    INITIAL_STOP,
+    ONE_R_PRICE,
+    QTY,
+    SYMBOL,
+    _bars,
+    _news_says_nothing,
     _resting_sell_stops,
 )
 
@@ -36,21 +42,25 @@ def _analyst_says() -> dict:
     step = "x"
     report = EveningReport(
         reasoning_chain=EveningReasoningChain(
-            performance_attribution=step, outlook_retrospection=step,
-            thesis_health_review=step, decision_quality_review=step,
-            calibration_meta=step, market_regime_read=step,
+            performance_attribution=step,
+            outlook_retrospection=step,
+            thesis_health_review=step,
+            decision_quality_review=step,
+            calibration_meta=step,
+            market_regime_read=step,
             tomorrow_preparation=step,
         ),
-        daily_summary="synthetic day", lessons="none",
-        tomorrow_outlook="synthetic", risk_rating="low",
+        daily_summary="synthetic day",
+        lessons="none",
+        tomorrow_outlook="synthetic",
+        risk_rating="low",
     )
     return json.loads(report.model_dump_json())
 
 
 def _evening(tmp_path, monkeypatch, **kw):
     answers = {"evening": _analyst_says(), "news": _news_says_nothing()}
-    return run_held_book(tmp_path, monkeypatch, session="evening", hour=HOUR,
-                         bars=BARS, answers=answers, **kw)
+    return run_held_book(tmp_path, monkeypatch, session="evening", hour=HOUR, bars=BARS, answers=answers, **kw)
 
 
 def _llm(trace, key):
@@ -58,18 +68,19 @@ def _llm(trace, key):
 
 
 def test_evening_on_a_covered_book_audits_records_and_places_nothing(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     result, trace, trading, attempts, pipeline = _evening(tmp_path, monkeypatch)
     assert attempts == [], attempts
-    assert result["status"] == "analyzed", {
-        k: result.get(k) for k in ("status", "error")}
+    assert result["status"] == "analyzed", {k: result.get(k) for k in ("status", "error")}
     assert result["stop_coverage_gaps"] == [], result["stop_coverage_gaps"]
     assert len(_llm(trace, "evening")) == 1, trace
     assert trading.submitted == [] and trading.cancelled == [], (
-        [o.as_plain() for o in trading.submitted], trading.cancelled)
-    assert [(s.stop_price, s.qty) for s in _resting_sell_stops(trading)] == [
-        (INITIAL_STOP, QTY)]
+        [o.as_plain() for o in trading.submitted],
+        trading.cancelled,
+    )
+    assert [(s.stop_price, s.qty) for s in _resting_sell_stops(trading)] == [(INITIAL_STOP, QTY)]
     stored = pipeline.db.get_evening_report()
     assert stored is not None, "the evening result was not persisted"
     assert stored["run_id"] == result["run_id"], stored
@@ -77,29 +88,26 @@ def test_evening_on_a_covered_book_audits_records_and_places_nothing(
 
 
 def test_evening_names_a_position_that_has_no_resting_stop(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
-    result, trace, trading, attempts, pipeline = _evening(
-        tmp_path, monkeypatch, standing_stop=NO_STOP)
+    result, trace, trading, attempts, pipeline = _evening(tmp_path, monkeypatch, standing_stop=NO_STOP)
     assert attempts == [], attempts
     gaps = result["stop_coverage_gaps"]
-    assert gaps and SYMBOL in json.dumps(gaps), (
-        f"an unprotected overnight position was not reported: {gaps}")
-    assert trading.submitted == [] or all(
-        "stop" in o.order_type for o in trading.submitted), (
-        [o.as_plain() for o in trading.submitted])
+    assert gaps and SYMBOL in json.dumps(gaps), f"an unprotected overnight position was not reported: {gaps}"
+    assert trading.submitted == [] or all("stop" in o.order_type for o in trading.submitted), [
+        o.as_plain() for o in trading.submitted
+    ]
 
 
 def test_evening_on_a_non_trading_day_reports_it_and_does_nothing(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
-    result, trace, trading, attempts, pipeline = _evening(
-        tmp_path, monkeypatch, trading_day=False)
+    result, trace, trading, attempts, pipeline = _evening(tmp_path, monkeypatch, trading_day=False)
     assert attempts == [], attempts
     assert result["status"] == "market_holiday", result
     assert result["analysis"] is None
-    assert [k for k, _ in trace if k == "llm"] == [], (
-        f"a model seat was asked on a shut market: {trace}")
+    assert [k for k, _ in trace if k == "llm"] == [], f"a model seat was asked on a shut market: {trace}"
     assert trading.submitted == [] and trading.cancelled == []
-    assert [(s.stop_price, s.qty) for s in _resting_sell_stops(trading)] == [
-        (INITIAL_STOP, QTY)]
+    assert [(s.stop_price, s.qty) for s in _resting_sell_stops(trading)] == [(INITIAL_STOP, QTY)]

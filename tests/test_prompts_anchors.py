@@ -19,6 +19,7 @@ The position_reviewer 6-anchor round-trip is already covered by
 test_position_reviewer.py::test_hard_trigger_keywords_round_trip; we
 don't duplicate that here.
 """
+
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,8 @@ _HARD_ANCHORS = (
         # deleted would otherwise leave the sheet simply not stating the cap.
         # `tests/test_risk_prompt_limits_live.py` enforces the rendering
         # itself; this anchor guards the sentence it lives in.
-        "portfolio_manager.md", "{{risk.max_position_pct}}% single-name",
+        "portfolio_manager.md",
+        "{{risk.max_position_pct}}% single-name",
         "single-name hard cap is RENDERED from RiskConfig.max_position_pct "
         "(20 -> 100 on 2026-09-04, then 100 -> 33 -> 65 on 2026-09-11, the "
         "last an owner risk-appetite override of the survival-ceiling "
@@ -68,148 +70,167 @@ _HARD_ANCHORS = (
         # also fixes the weakness this entry's own comment describes: "75%"
         # was a bare string that other, unrelated mechanisms could satisfy.
         # The placeholder cannot be satisfied by accident.
-        "portfolio_manager.md", "{{risk.max_sector_pct}}%",
-        "sector cap is RENDERED from RiskConfig.max_sector_pct (spec §12.3) + "
-        "HARD_BLOCK_RULES['max_sector_hard_pct']",
+        "portfolio_manager.md",
+        "{{risk.max_sector_pct}}%",
+        "sector cap is RENDERED from RiskConfig.max_sector_pct (spec §12.3) + HARD_BLOCK_RULES['max_sector_hard_pct']",
     ),
     (
-        "portfolio_manager.md", "sector notional PER SIDE",
+        "portfolio_manager.md",
+        "sector notional PER SIDE",
         "spec §12.2 — long and short sector exposure are separate budgets "
         "against the same limit and must never be netted; the prompt has to "
         "say PER SIDE or the PM reasons about a book the engine does not "
         "enforce",
     ),
     (
-        "portfolio_manager.md", "JUST FILED",
+        "portfolio_manager.md",
+        "JUST FILED",
         "the queued-earnings tag that REFUSES the BUY — the 5% weight cap "
         "it used to trigger was deleted 2026-10-01 (item 186), so the "
         "anchor on the literal 5.0 went with it",
     ),
     (
-        "portfolio_manager.md", "base × rr_mult",
+        "portfolio_manager.md",
+        "base × rr_mult",
         "the explicit sizing formula — code-equivalent contract; "
         "changing the multipliers without updating prompt would "
         "produce inconsistent PM behavior across morning vs midday",
     ),
     (
-        "portfolio_manager.md", "Rule Priority",
-        "the priority-table heading; the table itself encodes the "
-        "conflict-resolution ordering used by RM in its audit",
+        "portfolio_manager.md",
+        "Rule Priority",
+        "the priority-table heading; the table itself encodes the conflict-resolution ordering used by RM in its audit",
     ),
     (
-        "portfolio_manager.md", "`thesis_invalid_if` is mandatory on every non-zero target",
+        "portfolio_manager.md",
+        "`thesis_invalid_if` is mandatory on every non-zero target",
         "soft-exit is required on every open/add; catalyst stays optional",
     ),
     (
-        "portfolio_manager.md", "TargetPosition",
-        "the schema class PM emits (NOT TradeDecision with prices) — "
-        "contract boundary with PortfolioConstructor",
+        "portfolio_manager.md",
+        "TargetPosition",
+        "the schema class PM emits (NOT TradeDecision with prices) — contract boundary with PortfolioConstructor",
     ),
     # NOTE: FORCE_DELEVER is a pipeline.py action name, not a prompt
     # anchor — PM sees it only in `recent_sells` runtime data, never
     # in the prompt text. Don't add it here.
-
     # ---- evening_analyst.md ----
     # The buy_grades loss_root_cause taxonomy is consumed by
     # meta_reflector.quarterly_digest's loss_patterns aggregation.
     # Any reshuffle that drops a category breaks the autopsy.
     (
-        "evening_analyst.md", "greed_top_chasing",
+        "evening_analyst.md",
+        "greed_top_chasing",
         "loss_root_cause taxonomy value; meta_reflector aggregates",
     ),
     (
-        "evening_analyst.md", "macro_warning_ignored",
+        "evening_analyst.md",
+        "macro_warning_ignored",
         "loss_root_cause taxonomy + risk_rating escalation rule",
     ),
     (
-        "evening_analyst.md", "systemic_drawdown",
+        "evening_analyst.md",
+        "systemic_drawdown",
         "loss_root_cause taxonomy value",
     ),
     (
-        "evening_analyst.md", "tail_event",
+        "evening_analyst.md",
+        "tail_event",
         "loss_root_cause taxonomy value",
     ),
     (
-        "evening_analyst.md", "thesis_trajectory",
-        "the strengthening/intact/weakening/broken enum that drives "
-        "sell/buy_grades AND the risk_rating escalation",
+        "evening_analyst.md",
+        "thesis_trajectory",
+        "the strengthening/intact/weakening/broken enum that drives sell/buy_grades AND the risk_rating escalation",
     ),
     (
-        "evening_analyst.md", "broken",
+        "evening_analyst.md",
+        "broken",
         "thesis_trajectory value that triggers the operator banner",
     ),
     (
-        "evening_analyst.md", "value_entry_missed",
+        "evening_analyst.md",
+        "value_entry_missed",
         "miss_category that pairs with the VALUE_ENTRY_CANDIDATE flag",
     ),
     (
-        "evening_analyst.md", "universe_addition_recommendation",
+        "evening_analyst.md",
+        "universe_addition_recommendation",
         "schema field meta_reflector reads to populate watchlist",
     ),
     (
-        "evening_analyst.md", "Calibration > looking smart",
+        "evening_analyst.md",
+        "Calibration > looking smart",
         "load-bearing principle phrase; "
         "test_evening_analyst_v2.py::test_prompt_contains_money_making_"
         "principles also pins it",
     ),
     (
-        "evening_analyst.md", "Good stocks are meant to be held",
+        "evening_analyst.md",
+        "Good stocks are meant to be held",
         "load-bearing principle phrase; same v2 test pins it",
     ),
     (
-        "evening_analyst.md", "Intraday noise",
+        "evening_analyst.md",
+        "Intraday noise",
         "load-bearing principle phrase; same v2 test pins it. "
         "Lost once during prose compression — keeping the exact "
         "phrase here so future compression doesn't drop it again",
     ),
-
     # ---- meta_reflector.md ----
     # The 6 editable agents + 7-step CoT + retract operation.
     (
-        "meta_reflector.md", "tech_analyst",
+        "meta_reflector.md",
+        "tech_analyst",
         "one of the 6 editable agents listed in MetaReflectionAgentName",
     ),
     (
-        "meta_reflector.md", "evening_analyst",
+        "meta_reflector.md",
+        "evening_analyst",
         "one of the 6 editable agents",
     ),
     (
-        "meta_reflector.md", "portfolio_manager",
+        "meta_reflector.md",
+        "portfolio_manager",
         "one of the 6 editable agents",
     ),
     (
-        "meta_reflector.md", "risk_manager",
+        "meta_reflector.md",
+        "risk_manager",
         "must be named as schema-protected (excluded from edits)",
     ),
     (
-        "meta_reflector.md", "position_reviewer",
+        "meta_reflector.md",
+        "position_reviewer",
         "must be named as schema-protected (excluded from edits)",
     ),
     (
-        "meta_reflector.md", "## Learnings (system-evolved)",
-        "the exact section header PromptEditor (prompt_editor.py:82) "
-        "appends entries to — string MUST be verbatim",
+        "meta_reflector.md",
+        "## Learnings (system-evolved)",
+        "the exact section header PromptEditor (prompt_editor.py:82) appends entries to — string MUST be verbatim",
     ),
     (
-        "meta_reflector.md", "retract",
+        "meta_reflector.md",
+        "retract",
         "the operation type for removing a prior learning",
     ),
     (
-        "meta_reflector.md", "corrigibility_trend",
+        "meta_reflector.md",
+        "corrigibility_trend",
         "the prior-quarter input signal that gates new learnings",
     ),
     (
-        "meta_reflector.md", "agent_prompts_snapshot",
+        "meta_reflector.md",
+        "agent_prompts_snapshot",
         "the digest input that step 6 existing_prompt_audit consumes",
     ),
-
     # ---- Coherence-audit anchors (Commit 7 fixes) ----
     # Anchors locking the 4 fixes that closed real prompt/code coherence
     # gaps. Each one ties a piece of prompt language to a specific
     # Python-side behavior — losing the anchor would re-open the gap.
-
     (
-        "earnings_analyst.md", "Echo identifiers verbatim",
+        "earnings_analyst.md",
+        "Echo identifiers verbatim",
         "_validate_analysis in src/agents/earnings_analyst.py silently "
         "drops analyses with mismatched symbol/form_type/filing_date "
         "AND record_failure() marks the filing abandoned after 3 drops. "
@@ -218,14 +239,16 @@ _HARD_ANCHORS = (
         "the test_prompts_anchors guard re-pins it",
     ),
     (
-        "news_analyst.md", "State changes must be grounded",
+        "news_analyst.md",
+        "State changes must be grounded",
         "_filter_hallucinated_state_changes in src/agents/news_analyst.py "
         "silently drops state_changes whose event keywords / symbols "
         "aren't in news_text. Telling the LLM about this guard prevents "
         "wasted-token ungrounded state changes",
     ),
     (
-        "risk_manager.md", "post-translation",
+        "risk_manager.md",
+        "post-translation",
         "the explicit acknowledgment that PortfolioConstructor "
         "translates PM's TargetPosition into TradeDecision before RM "
         "sees it — without this transparency line, RM's prompt would "
@@ -240,56 +263,62 @@ _HARD_ANCHORS = (
         "unknown is not a falsifier and the name is not traded",
     ),
     (
-        "tech_analyst.md", "signal-validity horizon",
+        "tech_analyst.md",
+        "signal-validity horizon",
         "decouples Tech's 5-15d signal-freshness window from the "
         "system's actual holding period (PM/position_reviewer let "
         "winners run past 15d when thesis is intact). Original phrasing "
         "'swing-trade signals (typical holding period 5-15 days)' "
         "created false tension with the medium-long-term mandate",
     ),
-
     # ---- 2026-06-07 profit-reflection optimizations (P1-P5) ----
     # 2-month reflection: account +3.8% vs SPY +11.9% — winners whipsawed
     # out by too-tight stops, chased extended entries, macro over-caution
     # mis-learned into "default neutral". These anchors pin the fixes.
     (
-        "tech_analyst.md", "never place the stop inside 1*ATR",
+        "tech_analyst.md",
+        "never place the stop inside 1*ATR",
         "P1: the hard floor that stops the documented winner-whipsaw — a "
         "sub-1-ATR stop sits inside one day's range = guaranteed shakeout",
     ),
     (
-        "tech_analyst.md", "Entry Extension Guard",
+        "tech_analyst.md",
+        "Entry Extension Guard",
         "P2: don't-chase rule (downgrade fresh BUY when >8-10% above MA20 "
         "/ upper-band + RSI>70). Bought-the-top losses (MSFT/ORCL)",
     ),
     (
-        "position_reviewer.md", "FRESH or FAST winner",
+        "position_reviewer.md",
+        "FRESH or FAST winner",
         "P3: don't TRAIL_STOP-tighten a <5d / pace≥2x winner — tightening "
         "into the noise band is the documented premature stop-hit cause",
     ),
     (
-        "macro_analyst.md", "Valuation is NOT a regime signal",
+        "macro_analyst.md",
+        "Valuation is NOT a regime signal",
         "P4a: long-run valuation (Buffett Indicator etc.) must NOT flip "
         "regime/equity_outlook bearish — regime comes from cyclical "
         "indicators only; valuation is a size-with-care advisory",
     ),
     (
-        "evening_analyst.md", "5-session",
+        "evening_analyst.md",
+        "5-session",
         "P4b: the multi-day trend hit-rate evening must weigh over the "
         "noisy next-day hit rate (mirrors *_trend_hit_rate_pct from "
         "pipeline._build_recent_outlook_calibration) so it stops "
         "mis-learning a low next-day rate into 'default neutral'",
     ),
     (
-        "portfolio_manager.md", "Momentum-leader starter sleeve",
+        "portfolio_manager.md",
+        "Momentum-leader starter sleeve",
         "P5: small (≤5%) starter in repeatedly-missed confirmed-uptrend "
         "leaders, subordinate to all hard caps — stops the book "
         "perpetually missing the trend's leaders",
     ),
-
     # ---- 2026-06-07 CoT-logic optimizations (#1 independence, #2 pre-mortem) ----
     (
-        "portfolio_manager.md", "is REAL conviction",
+        "portfolio_manager.md",
+        "is REAL conviction",
         "#1 (post-review reframe): 4/4 in a CONFIRMED UPTREND is real "
         "conviction — NOT discountable as 'just beta' (that reading caused "
         "the under-owned-leaders miss). The independence/cluster caveat lives "
@@ -297,7 +326,8 @@ _HARD_ANCHORS = (
         "ONLY outside a confirmed uptrend.",
     ),
     (
-        "portfolio_manager.md", "premortem_check",
+        "portfolio_manager.md",
+        "premortem_check",
         "#2: the mandatory red-team CoT field (mirrors ReasoningChain."
         "premortem_check in src/models.py) — biggest-bet bear case + "
         "falsifier + book-wide cluster pre-mortem; catches the systematic "

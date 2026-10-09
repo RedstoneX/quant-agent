@@ -4,6 +4,7 @@ Every collaborator is an explicit keyword-only constructor argument, so each
 entry builder is built from stubs alone (clause 5 of tests/boundary_harness.py);
 the exit builders take no collaborators at all.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -48,6 +49,7 @@ def test_every_lifted_module_passes_the_boundary_check(module):
 
 def test_each_module_is_under_the_new_file_floor():
     from tests.boundary_harness import _mod_path
+
     floor = 400  # the new-file cap these lifted modules were built under
     for module in MODULES:
         assert len(_mod_path(module).read_text().splitlines()) <= floor, module
@@ -66,7 +68,9 @@ def test_exit_builders_need_no_collaborators():
         assert isinstance(inspect.getattr_static(ExitOrderBuilders, name), staticmethod)
 
 
-@pytest.mark.parametrize("factory, cls", [("_long_entry_builder", LongEntryBuilder), ("_short_entry_builder", ShortEntryBuilder)])
+@pytest.mark.parametrize(
+    "factory, cls", [("_long_entry_builder", LongEntryBuilder), ("_short_entry_builder", ShortEntryBuilder)]
+)
 def test_held_part_builds_the_object_per_call_from_the_owner(factory, cls):
     """A collaborator swapped on the owner after construction is what the body sees."""
     from src.portfolio_constructor.assembly import order_builder_collaborators

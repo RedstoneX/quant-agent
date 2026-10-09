@@ -59,10 +59,14 @@ def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
     logger.error(
         "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "
         "broker or LLM work. touch/rm that file to stop/resume the "
-        "desk.", self._kill_switch_path, run_id,
+        "desk.",
+        self._kill_switch_path,
+        run_id,
     )
     payload = {
-        "status": "kill_switch_halted", "run_id": run_id, "orders": [],
+        "status": "kill_switch_halted",
+        "run_id": run_id,
+        "orders": [],
         "kill_switch_path": str(self._kill_switch_path),
     }
     payload.update(extra)
@@ -70,7 +74,11 @@ def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
 
 
 def _evidence_gate_skip(
-    self, ctx, run_id: str, *, session: str = "morning",
+    self,
+    ctx,
+    run_id: str,
+    *,
+    session: str = "morning",
 ) -> dict | None:
     """docs/WORK.md item 20 — refuse to DECIDE on evidence that never
     arrived. Returns a terminal result dict when the run must skip, or
@@ -125,13 +133,8 @@ def _evidence_gate_skip(
         # Give the outer intraday wrapper a narrow exception to propagate;
         # ordinary opportunity-scan crashes remain contained there.
         record_swallowed("pipeline_halt_gates._evidence_gate_skip", exc, log=logger)
-        logger.exception(
-            "evidence gate raised — REFUSING the decision. "
-            "This is a bug in src/evidence_gate.py."
-        )
-        raise evidence_gate.EvidenceGateEvaluationError(
-            f"evidence gate evaluation failed: {exc}"
-        ) from exc
+        logger.exception("evidence gate raised — REFUSING the decision. This is a bug in src/evidence_gate.py.")
+        raise evidence_gate.EvidenceGateEvaluationError(f"evidence gate evaluation failed: {exc}") from exc
 
     def _record(symbol, outcome, reason, **details):
         # Forensic persistence must never be able to break the trading
@@ -140,7 +143,12 @@ def _evidence_gate_skip(
         # covers a caller with no `db` wired at all.
         try:
             _record_pipeline_event(
-                self, ctx, symbol, "evidence_gate", outcome, reason,
+                self,
+                ctx,
+                symbol,
+                "evidence_gate",
+                outcome,
+                reason,
                 **details,
             )
         except Exception as exc:  # noqa: BLE001
@@ -161,13 +169,11 @@ def _evidence_gate_skip(
         prior = {}
         try:
             if getattr(self, "db", None) is not None:
-                prior = self.db.last_fresh_seat_reads(
-                    seats=list(verdict.freshness.data_status)
-                )
+                prior = self.db.last_fresh_seat_reads(seats=list(verdict.freshness.data_status))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "evidence gate: prior seat-read lookup failed (%s) — "
-                "carried seats will report an unknown age", exc,
+                "evidence gate: prior seat-read lookup failed (%s) — carried seats will report an unknown age",
+                exc,
             )
         stamped = verdict.freshness.stamped(
             run_id=pinned_evidence(ctx, "run_id"),
@@ -210,7 +216,9 @@ def _evidence_gate_skip(
         symbol = getattr(analysis, "symbol", None)
         if symbol:
             _record(
-                symbol, "not_decided", "evidence_gate_skip",
+                symbol,
+                "not_decided",
+                "evidence_gate_skip",
                 lost_seats=list(verdict.lost),
                 blocking_lost_seats=list(verdict.blocking_lost),
                 data_status=dict(verdict.data_status),
@@ -244,13 +252,15 @@ def _evidence_gate_skip(
             # Plain words only — no run id, no seat key, no state token
             # and no `verdict.reason`. The machine reason is unchanged in
             # the result dict, the event rows and the log line above.
-            send_owner_alert("\n".join(
-                describe_skipped_decision(verdict.lost, verdict.data_status)
-            ), category=CATEGORY_OPERATIONAL)
+            send_owner_alert(
+                "\n".join(describe_skipped_decision(verdict.lost, verdict.data_status)), category=CATEGORY_OPERATIONAL
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("evidence gate: owner alert failed: %s", exc)
     return {
-        "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
+        "status": "evidence_gate_skip",
+        "orders": [],
+        "run_id": run_id,
         "data_status": dict(ctx.data_status),
         "lost_seats": list(verdict.lost),
         "blocking_lost_seats": list(verdict.blocking_lost),

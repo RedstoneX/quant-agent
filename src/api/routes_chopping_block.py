@@ -18,6 +18,7 @@ any fall is reported as closing in, any rise as widening, and the owner judges.
 R3, R6 and R7 are membership tests with no distance. Standing and its streak
 come from the `precheck` rows as before.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,10 +31,7 @@ from src.api.db_reads import _connect
 
 router = APIRouter()
 
-_UNREADABLE = (
-    "The pruning record could not be read, which is not the same as every "
-    "holding being healthy."
-)
+_UNREADABLE = "The pruning record could not be read, which is not the same as every holding being healthy."
 _NO_MARGIN = (
     "Margins are rating steps from neutral (rule R2) and independent "
     "net-evidence points above failing (rule R5), compared day against day. "
@@ -104,8 +102,10 @@ def _reason(sym: str, record: dict, disposition: dict) -> str:
         return f"fails the entry bar on: {why}. Put up to be sold this pass."
     if why:
         return f"fails the entry bar on: {why}"
-    return ("below the entry bar; the record does not say which rule it "
-            "fails, because the pass stored reasons only for the name it cut")
+    return (
+        "below the entry bar; the record does not say which rule it "
+        "fails, because the pass stored reasons only for the name it cut"
+    )
 
 
 def _margins(sym: str, passes: list[dict]) -> list[Margin]:
@@ -121,56 +121,54 @@ def _margins(sym: str, passes: list[dict]) -> list[Margin]:
             continue
         vals = list(by_day.values())
         now, prev = vals[-1], (vals[-2] if len(vals) > 1 else None)
-        d = ("first_record" if prev is None else
-             "closing_in" if now < prev else "widening" if now > prev else "steady")
-        out.append(Margin(rule=label, unit=unit, now=now, previous=prev,
-                          first=vals[0], direction=d))
+        d = "first_record" if prev is None else "closing_in" if now < prev else "widening" if now > prev else "steady"
+        out.append(Margin(rule=label, unit=unit, now=now, previous=prev, first=vals[0], direction=d))
     return out
 
 
 def _distance(standing: str, ms: list[Margin]) -> tuple[bool, str]:
     """What the owner reads as 'how far from the bar'. Never blank, never a guess."""
     if standing == "below_bar":
-        return True, ("Already below the bar. The desk sells any name below "
-                      "it; being close earns no grace.")
+        return True, ("Already below the bar. The desk sells any name below it; being close earns no grace.")
     if not ms:
-        return False, ("Distance to the bar is NOT recorded for this name "
-                       "(no margin record yet), so it cannot be called safe.")
+        return False, (
+            "Distance to the bar is NOT recorded for this name (no margin record yet), so it cannot be called safe."
+        )
     return True, "; ".join(
-        f"{m.rule} {m.now} {m.unit}"
-        + ("" if m.previous is None else f" (was {m.previous})") for m in ms)
+        f"{m.rule} {m.now} {m.unit}" + ("" if m.previous is None else f" (was {m.previous})") for m in ms
+    )
 
 
 def _summary(rows: list[ChoppingBlockRow]) -> str:
     below = sum(r.standing == "below_bar" for r in rows)
     closing = sum(r.direction == "closing_in" for r in rows)
     blind = sum(not r.distance_known for r in rows)
-    return (f"{len(rows)} holdings: {below} below the bar, {closing} closing "
-            f"in, {blind} with no distance recorded.")
+    return f"{len(rows)} holdings: {below} below the bar, {closing} closing in, {blind} with no distance recorded."
 
 
 def _closing_text(ms: list[Margin]) -> str:
-    return "; ".join(
-        f"{m.rule} fell from {m.previous} to {m.now} {m.unit}"
-        for m in ms if m.direction == "closing_in")
+    return "; ".join(f"{m.rule} fell from {m.previous} to {m.now} {m.unit}" for m in ms if m.direction == "closing_in")
 
 
 def build_rows(passes: list[dict]) -> ChoppingBlockResponse:
     """Pure. `passes` is oldest-first: {ts, record, disposition}."""
     if not passes:
         return ChoppingBlockResponse(
-            as_of=None, holdings=[],
-            note="No pruning pass has been recorded yet, which is not the "
-                 "same as every holding being healthy.")
+            as_of=None,
+            holdings=[],
+            note="No pruning pass has been recorded yet, which is not the same as every holding being healthy.",
+        )
     latest = passes[-1]
     rec = latest["record"]
     below_now = set(_split(rec.get("held_below_entry_bar")))
     rows: list[ChoppingBlockRow] = []
     for sym in _split(rec.get("held_examined")):
+
         def below(p: dict) -> bool | None:
             if sym not in _split(p["record"].get("held_examined")):
                 return None
             return sym in _split(p["record"].get("held_below_entry_bar"))
+
         now = below(latest)
         i = len(passes) - 1
         while i >= 0 and below(passes[i]) == now:
@@ -182,42 +180,55 @@ def build_rows(passes: list[dict]) -> ChoppingBlockResponse:
             standing, why = "below_bar", _reason(sym, rec, latest["disposition"])
             if prior is not None:
                 direction = "slipped"
-                head = (f"Slipped below the entry bar on {_day(streak['ts'])}; "
-                        f"below it on {n} pass{'es' if n != 1 else ''} since. "
-                        "This is the kind of name the desk sells.")
+                head = (
+                    f"Slipped below the entry bar on {_day(streak['ts'])}; "
+                    f"below it on {n} pass{'es' if n != 1 else ''} since. "
+                    "This is the kind of name the desk sells."
+                )
             else:
                 direction = "first_seen" if n == 1 else "steady"
-                head = (f"Below the entry bar on every recorded pass since "
-                        f"{_day(streak['ts'])}. This is the kind of name the "
-                        "desk sells.")
+                head = (
+                    f"Below the entry bar on every recorded pass since "
+                    f"{_day(streak['ts'])}. This is the kind of name the "
+                    "desk sells."
+                )
         else:
             standing = "clears_bar"
             why = "clears the desk's own entry bar, so the case for holding stands"
             if prior is not None:
                 direction = "recovered"
-                head = (f"Back above the entry bar since {_day(streak['ts'])}; "
-                        f"it had been below it on {_day(prior['ts'])}.")
+                head = (
+                    f"Back above the entry bar since {_day(streak['ts'])}; it had been below it on {_day(prior['ts'])}."
+                )
             else:
                 direction = "steady"
-                head = (f"Clears the entry bar on every recorded pass since "
-                        f"{_day(streak['ts'])}.")
+                head = f"Clears the entry bar on every recorded pass since {_day(streak['ts'])}."
         ms = _margins(sym, passes)
         closing = _closing_text(ms)
         if standing == "clears_bar" and closing:
             direction = "closing_in"
-            head = (f"Still clears the entry bar but is closing in on it: "
-                    f"{closing}. " + head)
+            head = f"Still clears the entry bar but is closing in on it: {closing}. " + head
         known, dist = _distance(standing, ms)
-        rows.append(ChoppingBlockRow(
-            symbol=sym, standing=standing, direction=direction, margins=ms,
-            headline=head, reason=why, distance_known=known, distance=dist))
-    rows.sort(key=lambda r: (
-        r.standing != "below_bar", r.direction != "closing_in",
-        r.distance_known, r.symbol))
+        rows.append(
+            ChoppingBlockRow(
+                symbol=sym,
+                standing=standing,
+                direction=direction,
+                margins=ms,
+                headline=head,
+                reason=why,
+                distance_known=known,
+                distance=dist,
+            )
+        )
+    rows.sort(key=lambda r: (r.standing != "below_bar", r.direction != "closing_in", r.distance_known, r.symbol))
     return ChoppingBlockResponse(
-        as_of=latest["ts"], holdings=rows, summary=_summary(rows),
+        as_of=latest["ts"],
+        holdings=rows,
+        summary=_summary(rows),
         note=_NO_MARGIN + " Holdings are those the latest pass examined; a "
-             "name bought since appears after the next pass.")
+        "name bought since appears after the next pass.",
+    )
 
 
 def read_passes(conn: sqlite3.Connection) -> list[dict]:
@@ -244,8 +255,7 @@ def read_passes(conn: sqlite3.Connection) -> list[dict]:
             except (TypeError, ValueError):
                 pass
         elif data.get("outcome") == "precheck" and "held_examined" in data:
-            passes.append({"run_id": row["run_id"], "ts": row["timestamp"],
-                           "record": data})
+            passes.append({"run_id": row["run_id"], "ts": row["timestamp"], "record": data})
     for p in passes:
         p["disposition"] = dispositions.get(p["run_id"], {})
         p["margins"] = margin_rows.get(p["run_id"], {})

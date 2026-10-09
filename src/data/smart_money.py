@@ -5,6 +5,7 @@ the SEC full-text-search index, caches complete submissions by accession, and
 parses exact non-derivative P/S rows. ``fetch`` is cache-only and applies the
 materiality/cluster reduction before any LLM can see the evidence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,6 +64,7 @@ def _history_entry_date(entry: str) -> date | None:
     except ValueError:
         return None
 
+
 EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 SEC_TICKERS_EXCHANGE = "https://www.sec.gov/files/company_tickers_exchange.json"
@@ -85,10 +87,7 @@ SEC_TICKERS_EXCHANGE = "https://www.sec.gov/files/company_tickers_exchange.json"
 # day). An index that cannot see today cannot decide whether today's evidence
 # is stale.
 SEC_SUBMISSIONS = "https://data.sec.gov/submissions"
-DEFAULT_USER_AGENT = (
-    "QAMC/1.0 research-intelligence "
-    "https://github.com/yebof/quant-agent"
-)
+DEFAULT_USER_AGENT = "QAMC/1.0 research-intelligence https://github.com/yebof/quant-agent"
 _LISTED_EXCHANGES = {"Nasdaq", "NYSE", "CBOE"}
 _ET = ZoneInfo("America/New_York")
 _ACCEPTED_RE = re.compile(r"<ACCEPTANCE-DATETIME>(\d{14})", re.I)
@@ -178,9 +177,7 @@ def _sale_census(parsed: list["SmartMoneyObservation"]) -> dict:
         bands[key] = bands.get(key, 0) + 1
     ordered = sorted(
         sales,
-        key=lambda item: (
-            item.accepted_at.timestamp() if item.accepted_at else 0.0,
-        ),
+        key=lambda item: (item.accepted_at.timestamp() if item.accepted_at else 0.0,),
         reverse=True,
     )[:MAX_SALE_CENSUS_ROWS]
     return {
@@ -305,10 +302,12 @@ class SECForm4Provider:
             for entry in entries:
                 day, _, direction = str(entry).partition("|")
                 try:
-                    parsed.append(InsiderPriorTrade(
-                        transaction_date=date.fromisoformat(day),
-                        direction=direction,
-                    ))
+                    parsed.append(
+                        InsiderPriorTrade(
+                            transaction_date=date.fromisoformat(day),
+                            direction=direction,
+                        )
+                    )
                 except ValueError:
                     continue
             if parsed:
@@ -343,9 +342,9 @@ class SECForm4Provider:
         pruned: dict[str, list[str]] = {}
         for key, values in merged.items():
             kept = sorted(
-                value for value in values
-                if _history_entry_date(value) is not None
-                and _history_entry_date(value) >= cutoff
+                value
+                for value in values
+                if _history_entry_date(value) is not None and _history_entry_date(value) >= cutoff
             )
             if kept:
                 pruned[key] = kept
@@ -393,7 +392,7 @@ class SECForm4Provider:
                         raise
                 if attempt == 2:
                     break
-                backoff = min(2 ** attempt, self._remaining(deadline))
+                backoff = min(2**attempt, self._remaining(deadline))
                 time.sleep(backoff)
         if last_exc is not None:
             raise last_exc
@@ -403,7 +402,9 @@ class SECForm4Provider:
         if self.stores.tickers_stale():
             try:
                 payload = self._get(
-                    SEC_TICKERS_EXCHANGE, params=None, deadline=deadline,
+                    SEC_TICKERS_EXCHANGE,
+                    params=None,
+                    deadline=deadline,
                 ).json()
                 self.stores.save_tickers(payload)
             except Exception as exc:
@@ -569,7 +570,9 @@ class SECForm4Provider:
                 }
                 while not _budget_spent():
                     payload = self._get(
-                        self.search_url, params=params, deadline=deadline,
+                        self.search_url,
+                        params=params,
+                        deadline=deadline,
                     ).json()
                     # Counted only once a request for this day actually
                     # returned: a day the budget never reached is a day this
@@ -629,11 +632,7 @@ class SECForm4Provider:
                         # complete coverage of filings it never sent.
                         if well_formed_hit(hit):
                             day_usable[day].add(accession)
-                        if (
-                            accession in processed
-                            or not ACCESSION_RE.fullmatch(accession)
-                            or form not in {"4", "4/A"}
-                        ):
+                        if accession in processed or not ACCESSION_RE.fullmatch(accession) or form not in {"4", "4/A"}:
                             continue
                         ciks: list[str] = []
                         for raw_cik in source.get("ciks", []) or []:
@@ -718,10 +717,7 @@ class SECForm4Provider:
         # fraction. Only days that ended by exhaustion are held to it — a
         # day the cap or the deadline stopped never claimed to be complete,
         # and its shortfall is named by its own reason instead.
-        if any(
-            len(day_usable.get(day) or ()) < (day_total.get(day) or 0)
-            for day in exhausted_days
-        ):
+        if any(len(day_usable.get(day) or ()) < (day_total.get(day) or 0) for day in exhausted_days):
             coverage_reasons.add("edgar_rows_unreadable")
         if stats is not None:
             stats["candidates"] = len(seen)
@@ -743,10 +739,7 @@ class SECForm4Provider:
         return out
 
     def _archive_url(self, cik: str, accession: str) -> str:
-        return (
-            f"{self.archives_url}/{int(cik)}/{accession.replace('-', '')}/"
-            f"{accession}.txt"
-        )
+        return f"{self.archives_url}/{int(cik)}/{accession.replace('-', '')}/{accession}.txt"
 
     def _submission(self, filing: dict, deadline: float) -> tuple[str, str]:
         accession = filing["accession"]
@@ -789,7 +782,8 @@ class SECForm4Provider:
         if not accepted_match or not xml_match:
             raise ValueError("missing_acceptance_or_ownership_xml")
         accepted_at = datetime.strptime(
-            accepted_match.group(1), "%Y%m%d%H%M%S",
+            accepted_match.group(1),
+            "%Y%m%d%H%M%S",
         ).replace(tzinfo=_ET)
         root = ET.fromstring(xml_match.group(1))
         form = _text(root, "documentType")
@@ -825,9 +819,7 @@ class SECForm4Provider:
         is_10b5_1 = _bool(_text(root, "aff10b5One"))
 
         rows: list[SmartMoneyObservation] = []
-        for index, transaction in enumerate(
-            root.findall("nonDerivativeTable/nonDerivativeTransaction")
-        ):
+        for index, transaction in enumerate(root.findall("nonDerivativeTable/nonDerivativeTransaction")):
             code = _text(transaction, "transactionCoding/transactionCode").upper()
             if code not in {"P", "S"}:
                 continue
@@ -835,77 +827,87 @@ class SECForm4Provider:
                 transaction,
                 "transactionAmounts/transactionAcquiredDisposedCode/value",
             ).upper()
-            if (code == "P" and acquired_disposed != "A") or (
-                code == "S" and acquired_disposed != "D"
-            ):
+            if (code == "P" and acquired_disposed != "A") or (code == "S" and acquired_disposed != "D"):
                 logger.warning(
                     "Dropping direction-inconsistent SEC row %s#%d: code=%s A/D=%s",
-                    accession, index, code, acquired_disposed,
+                    accession,
+                    index,
+                    code,
+                    acquired_disposed,
                 )
                 continue
             try:
-                transaction_date = date.fromisoformat(
-                    _text(transaction, "transactionDate/value")
-                )
+                transaction_date = date.fromisoformat(_text(transaction, "transactionDate/value"))
             except ValueError:
                 continue
-            shares = _number(_text(
-                transaction, "transactionAmounts/transactionShares/value",
-            ))
-            price = _number(_text(
-                transaction, "transactionAmounts/transactionPricePerShare/value",
-            ))
+            shares = _number(
+                _text(
+                    transaction,
+                    "transactionAmounts/transactionShares/value",
+                )
+            )
+            price = _number(
+                _text(
+                    transaction,
+                    "transactionAmounts/transactionPricePerShare/value",
+                )
+            )
             value = shares * price if shares is not None and price is not None else None
-            post_shares = _number(_text(
-                transaction,
-                "postTransactionAmounts/sharesOwnedFollowingTransaction/value",
-            ))
+            post_shares = _number(
+                _text(
+                    transaction,
+                    "postTransactionAmounts/sharesOwnedFollowingTransaction/value",
+                )
+            )
             directness = {
-                "D": "direct", "I": "indirect",
-            }.get(_text(
-                transaction, "ownershipNature/directOrIndirectOwnership/value",
-            ).upper(), "unknown")
+                "D": "direct",
+                "I": "indirect",
+            }.get(
+                _text(
+                    transaction,
+                    "ownershipNature/directOrIndirectOwnership/value",
+                ).upper(),
+                "unknown",
+            )
             lag_days = max(0, (accepted_at.date() - transaction_date).days)
             age_days = max(0, (et_today() - accepted_at.date()).days)
-            freshness = "fresh" if age_days <= 7 else (
-                "delayed" if age_days <= self.lookback_days else "stale"
+            freshness = "fresh" if age_days <= 7 else ("delayed" if age_days <= self.lookback_days else "stale")
+            rows.append(
+                SmartMoneyObservation(
+                    symbol=symbol,
+                    stream="insider",
+                    actor=actor,
+                    actor_cik=owner_ciks[0] if owner_ciks else "",
+                    actor_roles=owner_roles,
+                    joint_owner_ciks=owner_ciks[1:],
+                    direction="buy" if code == "P" else "sell",
+                    transaction_date=transaction_date,
+                    disclosure_date=accepted_at.date(),
+                    accepted_at=accepted_at,
+                    known_at=accepted_at,
+                    source_url=source_url,
+                    accession_number=accession,
+                    filing_form=form,
+                    transaction_code=code,
+                    transaction_row=index,
+                    security_title=_text(transaction, "securityTitle/value"),
+                    shares=shares,
+                    price_per_share=price,
+                    transaction_value_usd=value,
+                    post_transaction_shares=post_shares,
+                    ownership_nature=directness,
+                    amendment=(form == "4/A"),
+                    # Calendar lag spans weekends; only the filing's explicit
+                    # timeliness code can truthfully label the transaction late.
+                    late_filing=(_text(transaction, "transactionTimeliness/value").upper() == "L"),
+                    is_10b5_1=is_10b5_1,
+                    listed_exchange=exchange,
+                    lag_days=lag_days,
+                    disclosure_age_days=age_days,
+                    freshness=freshness,
+                    economic_role="confirmatory",
+                )
             )
-            rows.append(SmartMoneyObservation(
-                symbol=symbol,
-                stream="insider",
-                actor=actor,
-                actor_cik=owner_ciks[0] if owner_ciks else "",
-                actor_roles=owner_roles,
-                joint_owner_ciks=owner_ciks[1:],
-                direction="buy" if code == "P" else "sell",
-                transaction_date=transaction_date,
-                disclosure_date=accepted_at.date(),
-                accepted_at=accepted_at,
-                known_at=accepted_at,
-                source_url=source_url,
-                accession_number=accession,
-                filing_form=form,
-                transaction_code=code,
-                transaction_row=index,
-                security_title=_text(transaction, "securityTitle/value"),
-                shares=shares,
-                price_per_share=price,
-                transaction_value_usd=value,
-                post_transaction_shares=post_shares,
-                ownership_nature=directness,
-                amendment=(form == "4/A"),
-                # Calendar lag spans weekends; only the filing's explicit
-                # timeliness code can truthfully label the transaction late.
-                late_filing=(
-                    _text(transaction, "transactionTimeliness/value").upper() == "L"
-                ),
-                is_10b5_1=is_10b5_1,
-                listed_exchange=exchange,
-                lag_days=lag_days,
-                disclosure_age_days=age_days,
-                freshness=freshness,
-                economic_role="confirmatory",
-            ))
         return rows
 
     def known_accessions(self) -> set[str]:
@@ -945,7 +947,9 @@ class SECForm4Provider:
     # runs its own discovery — so it was dead code kept alive only by tests.
 
     def _submissions_form4(
-        self, cik: str, deadline: float,
+        self,
+        cik: str,
+        deadline: float,
     ) -> list[tuple[str, str]]:
         """(accession, filing_date) for every Form 4/4-A under one CIK.
 
@@ -984,7 +988,10 @@ class SECForm4Provider:
         return out
 
     def recent_filings(
-        self, symbol: str, deadline: float, listed: dict | None = None,
+        self,
+        symbol: str,
+        deadline: float,
+        listed: dict | None = None,
     ) -> list[tuple[str, str, str]] | None:
         """(form, filing_date, items) for an issuer's recent filings.
 
@@ -999,7 +1006,8 @@ class SECForm4Provider:
         if listed is None:  # pass `listed_map()` in when screening many
             listed = self._listed_map(deadline)
         cik = next(
-            (c for c, tickers in listed.items() if wanted in tickers), None,
+            (c for c, tickers in listed.items() if wanted in tickers),
+            None,
         )
         if cik is None:
             return None
@@ -1022,7 +1030,9 @@ class SECForm4Provider:
         return self._listed_map(deadline)
 
     def watched_form4_index(
-        self, ciks, deadline: float,
+        self,
+        ciks,
+        deadline: float,
     ) -> tuple[dict[str, list[tuple[str, str]]], list[str]]:
         """Form 4 history for each watched CIK, plus the CIKs that failed.
 
@@ -1042,7 +1052,9 @@ class SECForm4Provider:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "SEC Form 4 filing history unavailable for CIK %s: %s", cik, exc,
+                    "SEC Form 4 filing history unavailable for CIK %s: %s",
+                    cik,
+                    exc,
                 )
                 failed.append(cik)
         return index, failed
@@ -1065,7 +1077,7 @@ class SECForm4Provider:
         manifest = self.stores.load_manifest()
         raw = manifest.get("watched_read_through_by_cik") if isinstance(manifest, dict) else None
         out: dict[str, str] = {}
-        for cik, day in (raw.items() if isinstance(raw, dict) else []):
+        for cik, day in raw.items() if isinstance(raw, dict) else []:
             text = str(day or "").strip()[:10]
             if str(cik).strip() and text:
                 out[str(cik).strip()] = text
@@ -1082,10 +1094,17 @@ class SECForm4Provider:
         manifest = self.stores.load_manifest()
         blank_edgar = blank_edgar_coverage()
         if not isinstance(manifest, dict) or not manifest.get("coverage_as_of"):
-            return {"known": False, "as_of": "", "watched": 0,
-                    "read_through": 0, "unread": [], "edgar": blank_edgar,
-                    "market_wide_blind": False, "market_wide_read": 0,
-                    "market_wide_pending": 0}
+            return {
+                "known": False,
+                "as_of": "",
+                "watched": 0,
+                "read_through": 0,
+                "unread": [],
+                "edgar": blank_edgar,
+                "market_wide_blind": False,
+                "market_wide_read": 0,
+                "market_wide_pending": 0,
+            }
         as_of = str(manifest.get("coverage_as_of") or "")[:10]
         recorded = manifest.get("edgar_coverage")
         if not isinstance(recorded, dict):
@@ -1096,10 +1115,10 @@ class SECForm4Provider:
             # and accepting it would reintroduce this item's defect one day
             # late: nothing fetched today, seat reports clean.
             recorded = {
-                **recorded, "verified": False,
+                **recorded,
+                "verified": False,
                 "reasons": sorted(
-                    {str(r) for r in (recorded.get("reasons") or [])}
-                    | {"edgar_coverage_stale"},
+                    {str(r) for r in (recorded.get("reasons") or [])} | {"edgar_coverage_stale"},
                 ),
             }
         return {
@@ -1117,10 +1136,7 @@ class SECForm4Provider:
             # not-blind, which is right: absence of the record is not
             # evidence of a blind pass, and the ordinary `partial` path
             # still covers the day it is first written.
-            "market_wide_blind": bool(
-                manifest.get("market_wide_blind")
-                and as_of == et_today().isoformat()
-            ),
+            "market_wide_blind": bool(manifest.get("market_wide_blind") and as_of == et_today().isoformat()),
             "market_wide_read": int(manifest.get("market_wide_read") or 0),
             "market_wide_pending": int(manifest.get("pending_filings") or 0),
             # EDGAR's own denominator, as the last pass recorded it. A
@@ -1177,8 +1193,7 @@ class SECForm4Provider:
         verdict["read_through"] = self.read_through_date()
         if not by_cik:
             verdict["reason"] = (
-                "no watched name has ever been confirmed fully read — "
-                "nothing to measure freshness against"
+                "no watched name has ever been confirmed fully read — nothing to measure freshness against"
             )
             return verdict
         try:
@@ -1203,10 +1218,7 @@ class SECForm4Provider:
         unread_names: list[str] = []
         unread_filings = 0
         for cik, rows in index.items():
-            unread = [
-                accession for accession, filed in rows
-                if accession not in known and filed and filed >= horizon
-            ]
+            unread = [accession for accession, filed in rows if accession not in known and filed and filed >= horizon]
             if cik in by_cik:
                 new_filings.update(unread)
             elif not unread:
@@ -1237,7 +1249,8 @@ class SECForm4Provider:
         verdict["ok"] = True
         verdict["reason"] = (
             f"{len(new_filings)} new filing(s) on names read through"
-            if new_filings else "every watched name read through; nothing new"
+            if new_filings
+            else "every watched name read through; nothing new"
         )
         return verdict
 
@@ -1288,7 +1301,9 @@ class SECForm4Provider:
                 try:
                     body, source_url = self._submission(filing, deadline)
                     for row in self._parse_submission(
-                        body, source_url=source_url, listed=listed,
+                        body,
+                        source_url=source_url,
+                        listed=listed,
                     ):
                         key = f"{row.accession_number}:{row.transaction_row}"
                         if key not in observations:
@@ -1350,11 +1365,10 @@ class SECForm4Provider:
                 drain_deadline = time.monotonic() + self.watched_drain_deadline_s
                 watched_ciks = self._ciks_for_symbols(listed, symbols)
                 index, drain_unchecked = self.watched_form4_index(
-                    watched_ciks, drain_deadline,
+                    watched_ciks,
+                    drain_deadline,
                 )
-                horizon = (
-                    et_today() - timedelta(days=self.lookback_days)
-                ).isoformat()
+                horizon = (et_today() - timedelta(days=self.lookback_days)).isoformat()
                 outstanding: dict[str, list[dict]] = {}
                 for cik, rows in index.items():
                     outstanding[cik] = []
@@ -1378,10 +1392,13 @@ class SECForm4Provider:
                         for filing in outstanding[cik]:
                             try:
                                 body, source_url = self._submission(
-                                    filing, drain_deadline,
+                                    filing,
+                                    drain_deadline,
                                 )
                                 for row in self._parse_submission(
-                                    body, source_url=source_url, listed=listed,
+                                    body,
+                                    source_url=source_url,
+                                    listed=listed,
                                 ):
                                     key = f"{row.accession_number}:{row.transaction_row}"
                                     if key not in observations:
@@ -1398,7 +1415,8 @@ class SECForm4Provider:
                                 issuer_failed = True
                                 logger.warning(
                                     "SEC Form 4 watched drain failed for %s: %s",
-                                    filing["accession"], exc,
+                                    filing["accession"],
+                                    exc,
                                 )
                                 errors.append(
                                     f"drain:{filing['accession']}:{type(exc).__name__}",
@@ -1465,9 +1483,7 @@ class SECForm4Provider:
         # No threshold and no new constant — zero is zero, and the backlog
         # is the pass's own `pending_filings`. A pass that read zero because
         # there was genuinely nothing unread is NOT this, and does not fire.
-        market_wide_blind = bool(
-            market_wide_ran and market_wide_read == 0 and pending_filings > 0
-        )
+        market_wide_blind = bool(market_wide_ran and market_wide_read == 0 and pending_filings > 0)
         if market_wide_blind:
             logger.error(
                 "SEC Form 4 market-wide pass read ZERO filings with %s unread "
@@ -1480,7 +1496,8 @@ class SECForm4Provider:
                 drain_read,
             )
         watched_pending = max(
-            0, int(discovery.get("watched_candidates", 0) or 0) - watched_processed,
+            0,
+            int(discovery.get("watched_candidates", 0) or 0) - watched_processed,
         )
         # The drain is the authoritative watched-residue number ONLY when it
         # actually reached every watched name: it then asked each issuer
@@ -1502,19 +1519,16 @@ class SECForm4Provider:
         # filings as new, which is what they are.
         watched_symbols = {_symbol(s) for s in (symbols or []) if str(s).strip()}
         current_ciks = sorted(
-            cik for cik in watched_ciks
-            if cik in read_through_by_cik
-            and cik in residue_by_cik
-            and residue_by_cik[cik] == 0
+            cik
+            for cik in watched_ciks
+            if cik in read_through_by_cik and cik in residue_by_cik and residue_by_cik[cik] == 0
         )
         unread_symbols: list[str] = []
         for cik in sorted(watched_ciks):
             if cik in current_ciks:
                 continue
             tickers = listed.get(cik) if isinstance(listed, dict) else None
-            names = sorted(
-                _symbol(t) for t in (tickers or {}) if _symbol(t) in watched_symbols
-            ) or [cik]
+            names = sorted(_symbol(t) for t in (tickers or {}) if _symbol(t) in watched_symbols) or [cik]
             unread_symbols.append(names[0])
         # The single date is kept for the pre-open check and for anything
         # that reads the old key. It is a CLAIM that EVERY watched issuer is
@@ -1522,8 +1536,10 @@ class SECForm4Provider:
         # longer reads it — it reads the per-issuer map.
         watermark = str(
             (self.stores.load_manifest() or {}).get(
-                "watched_read_through", "",
-            ) or "",
+                "watched_read_through",
+                "",
+            )
+            or "",
         ).strip()[:10]
         drain_clean = bool(
             drain_ran
@@ -1544,49 +1560,46 @@ class SECForm4Provider:
             except OSError as exc:
                 logger.warning("Insider history index write failed: %s", exc)
             self.stores.save_observations(kept)
-            self.stores.save_manifest({
-                "processed_accessions": sorted(processed),
-                "last_refresh_at": datetime.now(tz=_ET).isoformat(),
-                # Durable record of the backlog, so successive mornings can
-                # be compared without re-crawling EDGAR.
-                "pending_filings": pending_filings,
-                "watched_pending_filings": watched_pending,
-                # The market-wide pass's own read count and the blind flag
-                # derived from it. Persisted for the same reason the EDGAR
-                # coverage record is: the morning seat reads this without
-                # the network, through `form4_coverage`.
-                "market_wide_read": market_wide_read,
-                "market_wide_blind": market_wide_blind,
-                "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
-                # Date through which EVERY watched name is read. Advanced
-                # only by a clean drain; reported, no longer read by freshness.
-                "watched_read_through": watermark,
-                # Per issuer (CIK -> ET date): the last pre-market pass that
-                # left nothing unread on that issuer. The ONLY thing
-                # `form4_freshness` accepts as coverage. Merged across runs,
-                # so progress on one issuer is never lost to another.
-                "watched_read_through_by_cik": dict(sorted(read_through_by_cik.items())),
-                # Coverage as of this pass, for the morning seat status and
-                # the pre-open check, which must not need the network.
-                "coverage_as_of": today_iso if drain_ran else "",
-                "watched_names": len(watched_ciks),
-                "watched_names_read_through": len(current_ciks),
-                "watched_names_unread": unread_symbols,
-                # EDGAR's own denominator for this pass. Persisted so the
-                # morning seat can read it without the network, exactly as
-                # it reads the watched-name coverage above.
-                "edgar_coverage": edgar,
-            })
+            self.stores.save_manifest(
+                {
+                    "processed_accessions": sorted(processed),
+                    "last_refresh_at": datetime.now(tz=_ET).isoformat(),
+                    # Durable record of the backlog, so successive mornings can
+                    # be compared without re-crawling EDGAR.
+                    "pending_filings": pending_filings,
+                    "watched_pending_filings": watched_pending,
+                    # The market-wide pass's own read count and the blind flag
+                    # derived from it. Persisted for the same reason the EDGAR
+                    # coverage record is: the morning seat reads this without
+                    # the network, through `form4_coverage`.
+                    "market_wide_read": market_wide_read,
+                    "market_wide_blind": market_wide_blind,
+                    "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
+                    # Date through which EVERY watched name is read. Advanced
+                    # only by a clean drain; reported, no longer read by freshness.
+                    "watched_read_through": watermark,
+                    # Per issuer (CIK -> ET date): the last pre-market pass that
+                    # left nothing unread on that issuer. The ONLY thing
+                    # `form4_freshness` accepts as coverage. Merged across runs,
+                    # so progress on one issuer is never lost to another.
+                    "watched_read_through_by_cik": dict(sorted(read_through_by_cik.items())),
+                    # Coverage as of this pass, for the morning seat status and
+                    # the pre-open check, which must not need the network.
+                    "coverage_as_of": today_iso if drain_ran else "",
+                    "watched_names": len(watched_ciks),
+                    "watched_names_read_through": len(current_ciks),
+                    "watched_names_unread": unread_symbols,
+                    # EDGAR's own denominator for this pass. Persisted so the
+                    # morning seat can read it without the network, exactly as
+                    # it reads the watched-name coverage above.
+                    "edgar_coverage": edgar,
+                }
+            )
         error = None
         if errors:
-            error = (
-                "provider_partial_error" if kept else "provider_error"
-            ) + ":" + ",".join(errors[:20])
+            error = ("provider_partial_error" if kept else "provider_error") + ":" + ",".join(errors[:20])
         return {
-            "status": (
-                "provider_error" if error and not kept else
-                "partial" if error else "ok"
-            ),
+            "status": ("provider_error" if error and not kept else "partial" if error else "ok"),
             "new_observations": new_count,
             "processed_filings": processed_count,
             "discovered_filings": discovered_count,
@@ -1665,18 +1678,18 @@ class SECForm4Provider:
                 continue
             verdict = classify_transaction(item, history, self._signal_thresholds)
             fraction, band = holdings_fraction(item)
-            item = item.model_copy(update={
-                "signal_class": verdict.label,
-                "signal_class_reason": verdict.reason,
-                "signal_class_detail": verdict.detail,
-                "signal_weight": verdict.weight,
-                "holdings_fraction": fraction,
-                "holdings_fraction_band": band,
-            })
-            age_days = max(0, (et_today() - item.disclosure_date).days)
-            freshness = "fresh" if age_days <= 7 else (
-                "delayed" if age_days <= self.lookback_days else "stale"
+            item = item.model_copy(
+                update={
+                    "signal_class": verdict.label,
+                    "signal_class_reason": verdict.reason,
+                    "signal_class_detail": verdict.detail,
+                    "signal_weight": verdict.weight,
+                    "holdings_fraction": fraction,
+                    "holdings_fraction_band": band,
+                }
             )
+            age_days = max(0, (et_today() - item.disclosure_date).days)
+            freshness = "fresh" if age_days <= 7 else ("delayed" if age_days <= self.lookback_days else "stale")
             if age_days > self.lookback_days:
                 continue
             # Board item 52: no published study supports single-transaction
@@ -1698,15 +1711,19 @@ class SECForm4Provider:
                 and item.transaction_value_usd is not None
                 and item.freshness != "stale"
             )
-            parsed.append(item.model_copy(update={
-                "in_core_universe": item.symbol in core,
-                "in_trading_universe": item.symbol in core,
-                "admission_eligible": admission,
-                "transient_admission_eligible": admission,
-                "economic_role": "actionable" if admission else "confirmatory",
-                "disclosure_age_days": age_days,
-                "freshness": freshness,
-            }))
+            parsed.append(
+                item.model_copy(
+                    update={
+                        "in_core_universe": item.symbol in core,
+                        "in_trading_universe": item.symbol in core,
+                        "admission_eligible": admission,
+                        "transient_admission_eligible": admission,
+                        "economic_role": "actionable" if admission else "confirmatory",
+                        "disclosure_age_days": age_days,
+                        "freshness": freshness,
+                    }
+                )
+            )
 
         # The research-defined purchase cluster (board item 124) is computed
         # over EVERY parsed row, before the materiality filter and the
@@ -1714,13 +1731,19 @@ class SECForm4Provider:
         # reaches the seat whichever of the symbol's rows survive. Configured
         # universe only; it changes neither admission nor sort order.
         clusters = insider_purchase_clusters(
-            parsed, universe=core, today=et_today(),
+            parsed,
+            universe=core,
+            today=et_today(),
         )
         if clusters:
             parsed = [
-                item.model_copy(update={
-                    "purchase_cluster": clusters[item.symbol],
-                }) if item.symbol in clusters else item
+                item.model_copy(
+                    update={
+                        "purchase_cluster": clusters[item.symbol],
+                    }
+                )
+                if item.symbol in clusters
+                else item
                 for item in parsed
             ]
 

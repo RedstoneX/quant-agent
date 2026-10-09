@@ -87,9 +87,14 @@ def _response(status: int = 200, payload: dict | None = None) -> MagicMock:
     """A stand-in for a `requests` Response at the transport boundary."""
     response = MagicMock()
     response.status_code = status
-    response.json.return_value = payload if payload is not None else {
-        "ok": True, "result": {"message_id": 4242},
-    }
+    response.json.return_value = (
+        payload
+        if payload is not None
+        else {
+            "ok": True,
+            "result": {"message_id": 4242},
+        }
+    )
     if status >= 400:
         response.raise_for_status.side_effect = RuntimeError(f"HTTP {status}")
     return response
@@ -98,6 +103,7 @@ def _response(status: int = 200, payload: dict | None = None) -> MagicMock:
 # ===========================================================================
 # 1. The drift alarm could not send — and now can
 # ===========================================================================
+
 
 def _behind_report():
     from scripts.check_deploy_drift import DriftReport
@@ -113,7 +119,9 @@ def _behind_report():
 
 
 def test_drift_alert_reaches_nobody_without_the_wrappers_environment(
-    no_telegram_env, monkeypatch, capsys,
+    no_telegram_env,
+    monkeypatch,
+    capsys,
 ):
     """BEFORE: the unit ran Python directly, so the process had no
     credentials and the notifier disabled itself. The alert went to the
@@ -133,14 +141,14 @@ def test_drift_alert_reaches_nobody_without_the_wrappers_environment(
 
     assert exit_code == 1, "drift is still a finding"
     assert mock_post.call_count == 0, (
-        "nothing was transmitted: the alarm that exists to report an "
-        "undeployed merge reached nobody"
+        "nothing was transmitted: the alarm that exists to report an undeployed merge reached nobody"
     )
     assert "Telegram not configured" in capsys.readouterr().err
 
 
 def test_drift_alert_transmits_under_the_wrappers_environment(
-    wrapper_env, monkeypatch,
+    wrapper_env,
+    monkeypatch,
 ):
     """AFTER: the wrapper sources `.env`, the notifier enables itself, and
     the same code path puts the alert on the wire. Transport mocked at the
@@ -194,6 +202,7 @@ def test_the_drift_finding_still_does_not_mark_the_unit_failed():
 # wrapper-based units and simply forgot. This test makes the next one fail
 # in CI instead.
 
+
 def _invoked_repo_file(exec_start: str) -> Path | None:
     """The repo script a unit's ExecStart runs, mapped by basename.
 
@@ -213,7 +222,9 @@ def _can_alert(script: Path) -> bool:
 
 
 @pytest.mark.parametrize(
-    "service", sorted(SYSTEMD_DIR.glob("*.service")), ids=lambda p: p.name,
+    "service",
+    sorted(SYSTEMD_DIR.glob("*.service")),
+    ids=lambda p: p.name,
 )
 def test_every_unit_that_can_alert_sources_env(service: Path):
     """A unit whose script can raise a Telegram alert MUST go through a
@@ -247,14 +258,13 @@ def test_every_unit_that_can_alert_sources_env(service: Path):
         f"{script.name} is the entry point for {service.name} but does not "
         f"source .env; anything it runs will have no credentials"
     )
-    assert script.stat().st_mode & stat.S_IXUSR, (
-        f"systemd refuses to start a non-executable ExecStart ({script.name})"
-    )
+    assert script.stat().st_mode & stat.S_IXUSR, f"systemd refuses to start a non-executable ExecStart ({script.name})"
 
 
 # ===========================================================================
 # 3. The probe exercises the real send path — not a variable check
 # ===========================================================================
+
 
 def test_probe_reports_missing_credentials_as_its_own_stage(no_telegram_env):
     from src.notifier import TelegramNotifier
@@ -285,7 +295,8 @@ def test_probe_catches_a_revoked_token(wrapper_env):
 
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = _response(
-            401, {"ok": False, "error_code": 401, "description": "Unauthorized"},
+            401,
+            {"ok": False, "error_code": 401, "description": "Unauthorized"},
         )
         result = TelegramNotifier().probe()
 
@@ -300,7 +311,8 @@ def test_probe_catches_a_wrong_chat_id(wrapper_env):
 
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = _response(
-            400, {"ok": False, "description": "Bad Request: chat not found"},
+            400,
+            {"ok": False, "description": "Bad Request: chat not found"},
         )
         result = TelegramNotifier().probe()
 
@@ -314,7 +326,8 @@ def test_probe_catches_a_blocked_bot(wrapper_env):
 
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = _response(
-            403, {"ok": False, "description": "Forbidden: bot was blocked by the user"},
+            403,
+            {"ok": False, "description": "Forbidden: bot was blocked by the user"},
         )
         result = TelegramNotifier().probe()
 
@@ -438,8 +451,7 @@ def test_the_probe_transmits_the_same_message_shape_as_a_real_alert(wrapper_env)
 
     for key in ("chat_id", "parse_mode", "disable_web_page_preview"):
         assert probe_body[key] == send_body[key], (
-            f"the probe and a real alert disagree on {key!r}; the probe is "
-            f"then not exercising the path the alarm uses"
+            f"the probe and a real alert disagree on {key!r}; the probe is then not exercising the path the alarm uses"
         )
     assert probe_body["parse_mode"] == "HTML"
     # ...but never carrying the tap-through link a real alert carries.
@@ -485,6 +497,7 @@ def test_send_is_unchanged_by_the_payload_refactor(wrapper_env):
 # 4. The heartbeat script: quiet on success, loud and recorded on failure
 # ===========================================================================
 
+
 @pytest.fixture
 def state_path(tmp_path, monkeypatch):
     import scripts.alert_heartbeat as hb
@@ -495,7 +508,8 @@ def state_path(tmp_path, monkeypatch):
 
 
 def test_a_healthy_probe_sends_the_operator_nothing_and_exits_zero(
-    wrapper_env, state_path,
+    wrapper_env,
+    state_path,
 ):
     import scripts.alert_heartbeat as hb
 
@@ -524,7 +538,8 @@ def test_a_broken_channel_exits_nonzero_and_is_recorded(wrapper_env, state_path)
 
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = _response(
-            401, {"ok": False, "description": "Unauthorized"},
+            401,
+            {"ok": False, "description": "Unauthorized"},
         )
         assert hb.main([]) == 1
 
@@ -544,7 +559,8 @@ def test_a_failed_probe_still_attempts_a_best_effort_alert(wrapper_env, state_pa
 
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = _response(
-            403, {"ok": False, "description": "Forbidden"},
+            403,
+            {"ok": False, "description": "Forbidden"},
         )
         assert hb.main([]) == 1
 
@@ -553,7 +569,8 @@ def test_a_failed_probe_still_attempts_a_best_effort_alert(wrapper_env, state_pa
 
 
 def test_a_credential_less_heartbeat_fails_rather_than_reporting_health(
-    no_telegram_env, state_path,
+    no_telegram_env,
+    state_path,
 ):
     """The detector must not be able to pass by being misconfigured."""
     import scripts.alert_heartbeat as hb
@@ -616,6 +633,7 @@ def test_the_record_does_not_grow_without_bound(state_path):
 # a day and write the verdict somewhere that does not depend on Telegram
 # working (tests/test_alert_watchdog.py). The operator now hears nothing at
 # all until something is actually wrong.
+
 
 def test_the_weekly_digest_mode_is_gone():
     """Not deprecated, not hidden behind a flag — gone. A CLI that still
@@ -728,6 +746,7 @@ def test_the_status_output_promises_no_out_of_band_cover(wrapper_env, state_path
 # 6. The units
 # ===========================================================================
 
+
 def test_the_heartbeat_units_are_shipped_as_a_pair():
     for path in (HEARTBEAT_SERVICE, HEARTBEAT_TIMER):
         assert path.is_file(), f"{path.name} is missing"
@@ -761,9 +780,7 @@ def test_the_daily_floor_is_never_looser_than_the_staleness_threshold():
         "the staleness threshold must leave room for one daily firing plus "
         "timer slack, or a healthy desk reports itself stale"
     )
-    assert STALE_AFTER_HOURS < 48.0, (
-        "a threshold that tolerates two missed days is not a threshold"
-    )
+    assert STALE_AFTER_HOURS < 48.0, "a threshold that tolerates two missed days is not a threshold"
 
 
 def test_the_probe_fires_before_the_first_scheduled_job_of_the_day():
@@ -775,12 +792,9 @@ def test_the_probe_fires_before_the_first_scheduled_job_of_the_day():
 
     pricing = _parse_unit(SYSTEMD_DIR / "quant-agent-pricing-refresh.timer")
     earliest = min(
-        int(s.split()[1].split(":")[0]) * 60 + int(s.split()[1].split(":")[1])
-        for s in pricing["Timer.OnCalendar"]
+        int(s.split()[1].split(":")[0]) * 60 + int(s.split()[1].split(":")[1]) for s in pricing["Timer.OnCalendar"]
     )
-    assert probe_minute < earliest, (
-        f"the probe at {spec} fires after the first alertable job of the day"
-    )
+    assert probe_minute < earliest, f"the probe at {spec} fires after the first alertable job of the day"
 
 
 def test_the_daily_probe_never_fires_inside_a_trading_session_window():
@@ -795,8 +809,7 @@ def test_the_daily_probe_never_fires_inside_a_trading_session_window():
         minute_of_day = int(hh) * 60 + int(mm)
         for mode, (lo, hi) in SESSION_WINDOWS.items():
             assert not (lo <= minute_of_day <= hi), (
-                f"{HEARTBEAT_TIMER.name}: OnCalendar={spec!r} fires inside "
-                f"the {mode} window"
+                f"{HEARTBEAT_TIMER.name}: OnCalendar={spec!r} fires inside the {mode} window"
             )
 
 
@@ -828,8 +841,7 @@ def test_the_heartbeat_unit_deploy_path_matches_the_other_qamc_units():
     assert parsed["Service.ExecStart"][0].startswith(reference[0])
 
 
-@pytest.mark.parametrize("wrapper", [DRIFT_WRAPPER, HEARTBEAT_WRAPPER],
-                         ids=lambda p: p.name)
+@pytest.mark.parametrize("wrapper", [DRIFT_WRAPPER, HEARTBEAT_WRAPPER], ids=lambda p: p.name)
 def test_the_new_wrappers_are_executable(wrapper: Path):
     """A wrapper committed without its executable bit fails on the box with
     203/EXEC and nothing else."""

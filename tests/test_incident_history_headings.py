@@ -20,9 +20,7 @@ over heading lines.
 import re
 from pathlib import Path
 
-INCIDENT_HISTORY = (
-    Path(__file__).resolve().parent.parent / "docs" / "INCIDENT_HISTORY.md"
-)
+INCIDENT_HISTORY = Path(__file__).resolve().parent.parent / "docs" / "INCIDENT_HISTORY.md"
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 DATE_ENTRY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\b")
@@ -83,6 +81,5 @@ def test_no_misleveled_incident_entry_headings():
     bad = _misleveled_entries(headings)
     assert not bad, (
         "found incident entry heading(s) at '##' that should be '###' "
-        "(the merge driver only recognizes '###' entries): "
-        + "; ".join(f"line {ln}: {title!r}" for ln, title in bad)
+        "(the merge driver only recognizes '###' entries): " + "; ".join(f"line {ln}: {title!r}" for ln, title in bad)
     )

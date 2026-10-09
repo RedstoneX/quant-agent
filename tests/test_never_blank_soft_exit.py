@@ -11,6 +11,7 @@ text explains; it cannot create the sell. Never invent a falsifier or
 catalyst string. Catalyst stays optional. Missing symbol-specific news
 alone stays warn/log, not a warrant.
 """
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -32,17 +33,23 @@ from src.seat_heal import merge_retry_falsifiers, restore_stated_soft_exits
 
 
 def _trc() -> dict:
-    return dict(trend="t", momentum="m", volatility="v", volume="vol",
-                support_resistance="sr")
+    return dict(trend="t", momentum="m", volatility="v", volume="vol", support_resistance="sr")
 
 
 def _tech(**over) -> dict:
     base = dict(
-        symbol="SPY", rating="buy", conviction="high",
-        entry_price=500.0, stop_loss=490.0, reference_target=525.0,
-        support_levels=[490.0], resistance_levels=[525.0],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="x", reasoning_chain=_trc(),
+        symbol="SPY",
+        rating="buy",
+        conviction="high",
+        entry_price=500.0,
+        stop_loss=490.0,
+        reference_target=525.0,
+        support_levels=[490.0],
+        resistance_levels=[525.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="x",
+        reasoning_chain=_trc(),
         thesis_invalid_if="closes below 490",
     )
     base.update(over)
@@ -52,16 +59,23 @@ def _tech(**over) -> dict:
 def test_stated_falsifier_and_catalyst_survive_assignment_before_risk():
     """A later size cap must not wipe stated soft-exits to blank."""
     target = TargetPosition(
-        symbol="AAPL", risk_allocation_pct=2.0, conviction="medium",
-        thesis="add", thesis_invalid_if="closes below 191.5",
+        symbol="AAPL",
+        risk_allocation_pct=2.0,
+        conviction="medium",
+        thesis="add",
+        thesis_invalid_if="closes below 191.5",
         catalyst="2026-09-16 8-K",
     )
     target.risk_allocation_pct = 0.5
     assert target.thesis_invalid_if == "closes below 191.5"
     assert target.catalyst == "2026-09-16 8-K"
     decision = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=3.0,
-        entry_price=190.0, stop_loss=185.0, take_profit=205.0,
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=3.0,
+        entry_price=190.0,
+        stop_loss=185.0,
+        take_profit=205.0,
         reasoning="stated",
         thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
     )
@@ -87,7 +101,8 @@ def test_heal_restores_stated_falsifier_null_is_not_a_delete():
     assert "thesis_invalid_if" in restored
     # Heal never invents when the seat wrote nothing.
     empty, restored_empty = restore_stated_soft_exits(
-        {"thesis_invalid_if": ""}, {"thesis_invalid_if": None},
+        {"thesis_invalid_if": ""},
+        {"thesis_invalid_if": None},
     )
     assert empty["thesis_invalid_if"] == ""
     assert restored_empty == []
@@ -96,24 +111,38 @@ def test_heal_restores_stated_falsifier_null_is_not_a_delete():
 def test_empty_open_name_is_refused_with_soft_exit_missing_after_retry():
     """Last-resort refuse after heal+retry. Empty on a BUY is missing."""
     empty_buy = TradeDecision(
-        action="BUY", symbol="MRVL", allocation_pct=3.0,
-        entry_price=80.0, stop_loss=75.0, take_profit=90.0,
-        reasoning="blank", thesis_invalid_if=None,
+        action="BUY",
+        symbol="MRVL",
+        allocation_pct=3.0,
+        entry_price=80.0,
+        stop_loss=75.0,
+        take_profit=90.0,
+        reasoning="blank",
+        thesis_invalid_if=None,
     )
     stated_buy = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=3.0,
-        entry_price=190.0, stop_loss=185.0, take_profit=205.0,
-        reasoning="stated", thesis_invalid_if="closes below 185",
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=3.0,
+        entry_price=190.0,
+        stop_loss=185.0,
+        take_profit=205.0,
+        reasoning="stated",
+        thesis_invalid_if="closes below 185",
     )
     plan = SimpleNamespace(
         decisions=[empty_buy, stated_buy],
         targets=[
             TargetPosition(
-                symbol="MRVL", risk_allocation_pct=1.0, thesis="retry",
+                symbol="MRVL",
+                risk_allocation_pct=1.0,
+                thesis="retry",
                 thesis_invalid_if="",
             ),
             TargetPosition(
-                symbol="AAPL", risk_allocation_pct=1.0, thesis="add",
+                symbol="AAPL",
+                risk_allocation_pct=1.0,
+                thesis="add",
                 thesis_invalid_if="closes below 185",
             ),
         ],
@@ -127,15 +156,14 @@ def test_empty_open_name_is_refused_with_soft_exit_missing_after_retry():
     # Target stays on the proposal so Risk is told the name was refused,
     # not silently deleted from both lists.
     assert [t.symbol for t in plan.targets] == ["MRVL", "AAPL"]
-    assert any(
-        SOFT_EXIT_MISSING_AFTER_RETRY in str(c)
-        for c in pipeline.db.insert_specialist_evidence.mock_calls
-    )
+    assert any(SOFT_EXIT_MISSING_AFTER_RETRY in str(c) for c in pipeline.db.insert_specialist_evidence.mock_calls)
 
 
 def test_catalyst_stays_optional_on_a_non_zero_target():
     target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=1.0, thesis="breakout",
+        symbol="NVDA",
+        risk_allocation_pct=1.0,
+        thesis="breakout",
         thesis_invalid_if="closes back inside the range",
         catalyst="",
     )
@@ -145,7 +173,9 @@ def test_catalyst_stays_optional_on_a_non_zero_target():
 
 def test_close_target_may_omit_falsifier():
     close = TargetPosition(
-        symbol="AAPL", risk_allocation_pct=0.0, thesis="exit",
+        symbol="AAPL",
+        risk_allocation_pct=0.0,
+        thesis="exit",
         thesis_invalid_if="",
     )
     assert close.is_close
@@ -155,15 +185,20 @@ def test_close_target_may_omit_falsifier():
 def test_paid_retry_merge_does_not_change_size_or_invent_catalyst():
     original = [
         TargetPosition(
-            symbol="AAPL", risk_allocation_pct=1.0, thesis="add",
+            symbol="AAPL",
+            risk_allocation_pct=1.0,
+            thesis="add",
             thesis_invalid_if="",
         ),
     ]
-    retry = [{
-        "symbol": "AAPL", "risk_allocation_pct": 5.0,
-        "thesis_invalid_if": "closes below 191.5",
-        "catalyst": "made-up 8-K",
-    }]
+    retry = [
+        {
+            "symbol": "AAPL",
+            "risk_allocation_pct": 5.0,
+            "thesis_invalid_if": "closes below 191.5",
+            "catalyst": "made-up 8-K",
+        }
+    ]
     merged, filled = merge_retry_falsifiers(original, retry)
     assert filled == ["AAPL"]
     assert merged[0].risk_allocation_pct == 1.0
@@ -191,28 +226,42 @@ def test_pm_fill_retry_copies_stated_falsifier_and_never_invents():
     def _plan(*, falsifier: str) -> PortfolioDecision:
         return PortfolioDecision(
             reasoning_chain=ReasoningChain(
-                macro_filter="m", news_check="n", earnings_check="e",
-                signal_conflicts="s", sizing_logic="z",
-                portfolio_balance="b", cash_target="c",
+                macro_filter="m",
+                news_check="n",
+                earnings_check="e",
+                signal_conflicts="s",
+                sizing_logic="z",
+                portfolio_balance="b",
+                cash_target="c",
             ),
-            targets=[TargetPosition(
-                symbol="AAPL", risk_allocation_pct=1.0, thesis="add",
-                thesis_invalid_if=falsifier, catalyst="",
-            )],
+            targets=[
+                TargetPosition(
+                    symbol="AAPL",
+                    risk_allocation_pct=1.0,
+                    thesis="add",
+                    thesis_invalid_if=falsifier,
+                    catalyst="",
+                )
+            ],
             portfolio_view="v",
         )
 
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     first = AgentResult(
-        raw_text="{}", tokens_used=1, model="test",
+        raw_text="{}",
+        tokens_used=1,
+        model="test",
         user_message="original user message",
     )
     retry_payload = {
-        "targets": [{
-            "symbol": "AAPL", "risk_allocation_pct": 9.0,
-            "thesis_invalid_if": "closes below 191.5",
-            "catalyst": "invented 8-K",
-        }],
+        "targets": [
+            {
+                "symbol": "AAPL",
+                "risk_allocation_pct": 9.0,
+                "thesis_invalid_if": "closes below 191.5",
+                "catalyst": "invented 8-K",
+            }
+        ],
     }
     calls: list[tuple] = []
 
@@ -221,8 +270,11 @@ def test_pm_fill_retry_copies_stated_falsifier_and_never_invents():
             (user_message, kwargs.get("retry_kind"), kwargs.get("optional_retry")),
         )
         import json
+
         return AgentResult(
-            raw_text=json.dumps(retry_payload), tokens_used=1, model="test",
+            raw_text=json.dumps(retry_payload),
+            tokens_used=1,
+            model="test",
             user_message=user_message,
         )
 
@@ -239,9 +291,12 @@ def test_pm_fill_retry_copies_stated_falsifier_and_never_invents():
 
     def _empty_retry(self, user_message, **kwargs):
         import json
+
         return AgentResult(
             raw_text=json.dumps({"targets": [{"symbol": "AAPL", "thesis_invalid_if": ""}]}),
-            tokens_used=1, model="test", user_message=user_message,
+            tokens_used=1,
+            model="test",
+            user_message=user_message,
         )
 
     agent2._execute = _empty_retry.__get__(agent2, PortfolioManagerAgent)
@@ -253,15 +308,20 @@ def test_pm_fill_retry_copies_stated_falsifier_and_never_invents():
 def test_blank_open_target_is_refused_before_the_constructor():
     """A missing falsifier never consumes risk budget as a ticket."""
     from src.pipeline_stages import (
-        _dropped_since_proposal, _targets_admitted_to_book,
+        _dropped_since_proposal,
+        _targets_admitted_to_book,
     )
 
     blank = TargetPosition(
-        symbol="MRVL", risk_allocation_pct=1.0, thesis="retry",
+        symbol="MRVL",
+        risk_allocation_pct=1.0,
+        thesis="retry",
         thesis_invalid_if="",
     )
     stated = TargetPosition(
-        symbol="AAPL", risk_allocation_pct=1.0, thesis="add",
+        symbol="AAPL",
+        risk_allocation_pct=1.0,
+        thesis="add",
         thesis_invalid_if="closes below 185",
     )
     admitted, refused = _targets_admitted_to_book([blank, stated])
@@ -277,9 +337,15 @@ def test_blank_open_target_is_refused_before_the_constructor():
 
 def _held(symbol: str, qty: float, price: float, *, sector="Technology"):
     from src.models import Position
+
     return Position(
-        symbol=symbol, qty=qty, avg_entry=price, current_price=price,
-        market_value=qty * price, unrealized_pnl=0.0, sector=sector,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=price,
+        current_price=price,
+        market_value=qty * price,
+        unrealized_pnl=0.0,
+        sector=sector,
     )
 
 
@@ -291,7 +357,9 @@ def test_build_sell_free_text_without_checkable_size_down_is_not_a_sell():
 
     pos = _held("AAPL", 10, 100.0)
     target = TargetPosition(
-        symbol="AAPL", risk_allocation_pct=1.0, thesis="trim to fund NET",
+        symbol="AAPL",
+        risk_allocation_pct=1.0,
+        thesis="trim to fund NET",
         thesis_invalid_if="",
     )
     assert PortfolioConstructor._build_sell(target, pos, 5.0, 5.0) is None
@@ -306,8 +374,10 @@ def test_mechanical_size_down_is_not_a_midday_hard_trigger():
     from src.portfolio_constructor import format_mechanical_size_down_reason
 
     reason = format_mechanical_size_down_reason(
-        current_weight_pct=3.35, target_weight_pct=1.76,
-        current_risk_pct=1.91, target_risk_pct=1.0,
+        current_weight_pct=3.35,
+        target_weight_pct=1.76,
+        current_risk_pct=1.91,
+        target_risk_pct=1.0,
     )
     assert not _reason_cites_hard_trigger(reason)
 
@@ -323,19 +393,27 @@ def test_fill_retry_is_not_spent_on_a_held_trim():
     held = _held("AAPL", 100, 230.0)
     decision = PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter="m", news_check="n", earnings_check="e",
-            signal_conflicts="s", sizing_logic="z",
-            portfolio_balance="b", cash_target="c",
+            macro_filter="m",
+            news_check="n",
+            earnings_check="e",
+            signal_conflicts="s",
+            sizing_logic="z",
+            portfolio_balance="b",
+            cash_target="c",
         ),
-        targets=[TargetPosition(
-            symbol="AAPL", risk_allocation_pct=1.0, thesis="trim",
-            thesis_invalid_if="", catalyst="",
-        )],
+        targets=[
+            TargetPosition(
+                symbol="AAPL",
+                risk_allocation_pct=1.0,
+                thesis="trim",
+                thesis_invalid_if="",
+                catalyst="",
+            )
+        ],
         portfolio_view="v",
     )
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
-    first = AgentResult(raw_text="{}", tokens_used=1, model="test",
-                        user_message="original user message")
+    first = AgentResult(raw_text="{}", tokens_used=1, model="test", user_message="original user message")
     calls: list = []
 
     def _execute(self, user_message, **kwargs):
@@ -344,7 +422,10 @@ def test_fill_retry_is_not_spent_on_a_held_trim():
 
     agent._execute = _execute.__get__(agent, PortfolioManagerAgent)
     filled, _ = agent._fill_missing_open_falsifiers(
-        decision, first, positions=[held], total_value=100_000.0,
+        decision,
+        first,
+        positions=[held],
+        total_value=100_000.0,
         existing_risk_pct={"AAPL": 1.91},
     )
     assert calls == []
@@ -359,33 +440,48 @@ def test_blank_falsifier_buy_from_a_risk_down_target_is_still_isolated():
     drops the constructed BUY. Never invents a falsifier.
     """
     from src.pipeline_stages import (
-        _isolate_empty_soft_exit_entries, _targets_admitted_to_book,
+        _isolate_empty_soft_exit_entries,
+        _targets_admitted_to_book,
     )
     from src.portfolio_constructor import PortfolioConstructor
 
     equity = 100_000.0
     held = _held("NVDA", 100, 100.0)  # 10% weight
     trim = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=1.5, thesis="lower risk",
+        symbol="NVDA",
+        risk_allocation_pct=1.5,
+        thesis="lower risk",
         thesis_invalid_if="",
     )
     # Current stop ~$80 (2% risk on 100 shares). Fresh stop $95 is tighter,
     # so 1.5% risk sizes MORE shares than 100 — a BUY, not a SELL.
-    analysis = TechAnalysisResult(**_tech(
-        symbol="NVDA", entry_price=100.0, stop_loss=95.0,
-        reference_target=140.0, support_levels=[95.0],
-        resistance_levels=[140.0], computed_levels=[95.0, 140.0],
-        atr_14=5.0 / 3.5, thesis_invalid_if="closes below 95",
-    ))
+    analysis = TechAnalysisResult(
+        **_tech(
+            symbol="NVDA",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=140.0,
+            support_levels=[95.0],
+            resistance_levels=[140.0],
+            computed_levels=[95.0, 140.0],
+            atr_14=5.0 / 3.5,
+            thesis_invalid_if="closes below 95",
+        )
+    )
     admitted, refused = _targets_admitted_to_book(
-        [trim], positions=[held], total_value=equity,
+        [trim],
+        positions=[held],
+        total_value=equity,
         existing_risk_pct={"NVDA": 2.0},
     )
     assert refused == []
     assert admitted[0].thesis_invalid_if == ""
     decisions = PortfolioConstructor().construct_orders(
-        targets=admitted, positions=[held], analyses=[analysis],
-        total_value=equity, price_map={"NVDA": 100.0},
+        targets=admitted,
+        positions=[held],
+        analyses=[analysis],
+        total_value=equity,
+        price_map={"NVDA": 100.0},
         existing_risk_pct={"NVDA": 2.0},
     )
     buys = [d for d in decisions if d.action == "BUY" and d.symbol == "NVDA"]
@@ -409,6 +505,7 @@ def test_owner_missing_data_rule_forbids_skip_as_the_product():
     """Owner 2026-09-17: skip/drop/ignore is not the permanent product.
     Isolate stays labelled TEMPORARY. The producing step must fill."""
     from pathlib import Path
+
     repo = Path(__file__).resolve().parents[1]
     agents = (repo / "AGENTS.md").read_text()
     assert "Never make skip/drop/ignore-and-continue the permanent product" in agents
@@ -418,30 +515,42 @@ def test_owner_missing_data_rule_forbids_skip_as_the_product():
     assert "Missing data is a defect in the step that should have produced it" in outcome
 
 
-
 # ---------------------------------------------------------------------------
 # Board item 78: the heal must be recorded, and the refusal must not assert a
 # retry that never happened. The isolate stays; it is the last resort, not the
 # product.
 # ---------------------------------------------------------------------------
 
+
 def _blank_buy_plan():
     return SimpleNamespace(
-        decisions=[TradeDecision(
-            action="BUY", symbol="MRVL", allocation_pct=3.0,
-            entry_price=80.0, stop_loss=75.0, take_profit=90.0,
-            reasoning="blank", thesis_invalid_if=None,
-        )],
-        targets=[TargetPosition(
-            symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
-            thesis_invalid_if="",
-        )],
+        decisions=[
+            TradeDecision(
+                action="BUY",
+                symbol="MRVL",
+                allocation_pct=3.0,
+                entry_price=80.0,
+                stop_loss=75.0,
+                take_profit=90.0,
+                reasoning="blank",
+                thesis_invalid_if=None,
+            )
+        ],
+        targets=[
+            TargetPosition(
+                symbol="MRVL",
+                risk_allocation_pct=1.0,
+                thesis="t",
+                thesis_invalid_if="",
+            )
+        ],
         constructor_dropped=[],
     )
 
 
 def _evidence_payloads(db):
     import json
+
     out = []
     for call in db.insert_specialist_evidence.mock_calls:
         raw = call.kwargs.get("evidence_json")
@@ -456,6 +565,7 @@ def _evidence_payloads(db):
 def test_isolate_still_exists_and_still_refuses():
     """Item 78 is NOT retired here: the last-resort isolate must stay live."""
     from src.pipeline_stages import _isolate_empty_soft_exit_entries as iso
+
     assert callable(iso)
     pipeline = SimpleNamespace(db=MagicMock())
     plan = _blank_buy_plan()
@@ -467,10 +577,7 @@ def test_refusal_does_not_claim_a_retry_that_never_ran():
     pipeline = SimpleNamespace(db=MagicMock())
     plan = _blank_buy_plan()
     _isolate_empty_soft_exit_entries(pipeline, RunContext.start("morning"), plan)
-    rows = [
-        p for p in _evidence_payloads(pipeline.db)
-        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
-    ]
+    rows = [p for p in _evidence_payloads(pipeline.db) if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY]
     assert len(rows) == 1
     assert rows[0]["heal_outcome"] == "none_recorded"
     assert "one paid retry" not in rows[0]["detail"]
@@ -480,16 +587,14 @@ def test_refusal_does_not_claim_a_retry_that_never_ran():
 def test_refusal_quotes_the_real_heal_outcome_per_name():
     """A name whose retry was blocked by the cap says exactly that."""
     from src.seat_heal import HEAL_CAP_BLOCKED
+
     pipeline = SimpleNamespace(db=MagicMock())
     ctx = RunContext.start("morning")
     ctx.soft_exit_heals = {
         "MRVL": {"outcome": HEAL_CAP_BLOCKED, "detail": "spend cap refused it"},
     }
     _isolate_empty_soft_exit_entries(pipeline, ctx, _blank_buy_plan())
-    rows = [
-        p for p in _evidence_payloads(pipeline.db)
-        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
-    ]
+    rows = [p for p in _evidence_payloads(pipeline.db) if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY]
     assert rows[0]["heal_outcome"] == HEAL_CAP_BLOCKED
     assert "spend cap refused it" in rows[0]["detail"]
 
@@ -498,26 +603,34 @@ def test_nothing_is_silently_dropped_every_isolated_name_has_a_row():
     """Two blank BUYs, two durable per-name rows. No silent drop."""
     pipeline = SimpleNamespace(db=MagicMock())
     plan = _blank_buy_plan()
-    plan.decisions.append(TradeDecision(
-        action="SHORT", symbol="XYZ", allocation_pct=2.0,
-        entry_price=50.0, stop_loss=55.0, take_profit=40.0,
-        reasoning="blank", thesis_invalid_if=None,
-    ))
-    plan.targets.append(TargetPosition(
-        symbol="XYZ", risk_allocation_pct=1.0, thesis="t",
-        thesis_invalid_if="",
-    ))
+    plan.decisions.append(
+        TradeDecision(
+            action="SHORT",
+            symbol="XYZ",
+            allocation_pct=2.0,
+            entry_price=50.0,
+            stop_loss=55.0,
+            take_profit=40.0,
+            reasoning="blank",
+            thesis_invalid_if=None,
+        )
+    )
+    plan.targets.append(
+        TargetPosition(
+            symbol="XYZ",
+            risk_allocation_pct=1.0,
+            thesis="t",
+            thesis_invalid_if="",
+        )
+    )
     isolated = _isolate_empty_soft_exit_entries(
-        pipeline, RunContext.start("morning"), plan,
+        pipeline,
+        RunContext.start("morning"),
+        plan,
     )
     assert sorted(isolated) == ["MRVL", "XYZ"]
-    named = {
-        p.get("reason"): 0 for p in _evidence_payloads(pipeline.db)
-    }
-    rows = [
-        p for p in _evidence_payloads(pipeline.db)
-        if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY
-    ]
+    named = {p.get("reason"): 0 for p in _evidence_payloads(pipeline.db)}
+    rows = [p for p in _evidence_payloads(pipeline.db) if p.get("reason") == SOFT_EXIT_MISSING_AFTER_RETRY]
     assert len(rows) == 2, named
     assert sorted(plan.constructor_dropped) == ["MRVL", "XYZ"]
 
@@ -527,24 +640,20 @@ def test_heal_outcomes_are_drained_to_durable_rows_and_onto_ctx():
     from src.models import SOFT_EXIT_HEAL_EVENT_REASON
     from src.pipeline_stages import _record_soft_exit_heals
     from src.seat_heal import HEAL_NOT_ATTEMPTED
+
     agent = SimpleNamespace(
         last_soft_exit_heals={
             "MRVL": {"outcome": HEAL_NOT_ATTEMPTED, "detail": "never asked"},
         },
     )
-    agent.drain_soft_exit_heals = (
-        lambda: (lambda d: (setattr(agent, "last_soft_exit_heals", {}), d)[1])(
-            dict(agent.last_soft_exit_heals)
-        )
+    agent.drain_soft_exit_heals = lambda: (lambda d: (setattr(agent, "last_soft_exit_heals", {}), d)[1])(
+        dict(agent.last_soft_exit_heals)
     )
     pipeline = SimpleNamespace(db=MagicMock(), portfolio_manager=agent)
     ctx = RunContext.start("morning")
     _record_soft_exit_heals(pipeline, ctx)
     assert ctx.soft_exit_heals["MRVL"]["outcome"] == HEAL_NOT_ATTEMPTED
-    rows = [
-        p for p in _evidence_payloads(pipeline.db)
-        if p.get("reason") == SOFT_EXIT_HEAL_EVENT_REASON
-    ]
+    rows = [p for p in _evidence_payloads(pipeline.db) if p.get("reason") == SOFT_EXIT_HEAL_EVENT_REASON]
     assert len(rows) == 1
     assert rows[0]["outcome"] == HEAL_NOT_ATTEMPTED
     assert rows[0]["detail"] == "never asked"
@@ -558,13 +667,20 @@ def test_pm_records_heal_not_attempted_when_there_is_nothing_to_replay():
     """The silent bail-out now leaves a per-name machine-readable reason."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
     from src.seat_heal import HEAL_NOT_ATTEMPTED
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     agent._soft_exit_retry_used = False
     agent.last_soft_exit_heals = {}
-    decision = SimpleNamespace(targets=[TargetPosition(
-        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
-        thesis_invalid_if="",
-    )])
+    decision = SimpleNamespace(
+        targets=[
+            TargetPosition(
+                symbol="MRVL",
+                risk_allocation_pct=1.0,
+                thesis="t",
+                thesis_invalid_if="",
+            )
+        ]
+    )
     result = SimpleNamespace(user_message="")
     out, _ = agent._fill_missing_open_falsifiers(decision, result)
     heals = agent.drain_soft_exit_heals()
@@ -580,19 +696,28 @@ def test_pm_records_a_filled_falsifier_as_a_paid_retry_heal():
     """A healed name is recorded as healed, and is never refused."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
     from src.seat_heal import HEAL_PAID_RETRY
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     agent._soft_exit_retry_used = False
     agent.last_soft_exit_heals = {}
     agent._target_intent = lambda t, *a, **k: "buy"
     agent._execute = lambda *a, **k: SimpleNamespace(
-        parse_json=lambda: {"targets": [
-            {"symbol": "MRVL", "thesis_invalid_if": "closes below 75"},
-        ]},
+        parse_json=lambda: {
+            "targets": [
+                {"symbol": "MRVL", "thesis_invalid_if": "closes below 75"},
+            ]
+        },
     )
-    decision = SimpleNamespace(targets=[TargetPosition(
-        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
-        thesis_invalid_if="",
-    )])
+    decision = SimpleNamespace(
+        targets=[
+            TargetPosition(
+                symbol="MRVL",
+                risk_allocation_pct=1.0,
+                thesis="t",
+                thesis_invalid_if="",
+            )
+        ]
+    )
     result = SimpleNamespace(user_message="original prompt")
     out, _ = agent._fill_missing_open_falsifiers(decision, result)
     assert out.targets[0].thesis_invalid_if == "closes below 75"
@@ -601,23 +726,37 @@ def test_pm_records_a_filled_falsifier_as_a_paid_retry_heal():
     # A healed name reaches the isolate with a real falsifier, so the
     # isolate is unreachable for it.
     plan = SimpleNamespace(
-        decisions=[TradeDecision(
-            action="BUY", symbol="MRVL", allocation_pct=3.0,
-            entry_price=80.0, stop_loss=75.0, take_profit=90.0,
-            reasoning="healed", thesis_invalid_if="closes below 75",
-        )],
-        targets=out.targets, constructor_dropped=[],
+        decisions=[
+            TradeDecision(
+                action="BUY",
+                symbol="MRVL",
+                allocation_pct=3.0,
+                entry_price=80.0,
+                stop_loss=75.0,
+                take_profit=90.0,
+                reasoning="healed",
+                thesis_invalid_if="closes below 75",
+            )
+        ],
+        targets=out.targets,
+        constructor_dropped=[],
     )
     pipeline = SimpleNamespace(db=MagicMock())
-    assert _isolate_empty_soft_exit_entries(
-        pipeline, RunContext.start("morning"), plan,
-    ) == []
+    assert (
+        _isolate_empty_soft_exit_entries(
+            pipeline,
+            RunContext.start("morning"),
+            plan,
+        )
+        == []
+    )
 
 
 def test_pm_records_a_retry_that_ran_and_still_produced_nothing():
     """`failed` and `not_attempted` must not be confusable."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
     from src.seat_heal import HEAL_FAILED
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     agent._soft_exit_retry_used = False
     agent.last_soft_exit_heals = {}
@@ -625,12 +764,19 @@ def test_pm_records_a_retry_that_ran_and_still_produced_nothing():
     agent._execute = lambda *a, **k: SimpleNamespace(
         parse_json=lambda: {"targets": [{"symbol": "MRVL"}]},
     )
-    decision = SimpleNamespace(targets=[TargetPosition(
-        symbol="MRVL", risk_allocation_pct=1.0, thesis="t",
-        thesis_invalid_if="",
-    )])
+    decision = SimpleNamespace(
+        targets=[
+            TargetPosition(
+                symbol="MRVL",
+                risk_allocation_pct=1.0,
+                thesis="t",
+                thesis_invalid_if="",
+            )
+        ]
+    )
     out, _ = agent._fill_missing_open_falsifiers(
-        decision, SimpleNamespace(user_message="original prompt"),
+        decision,
+        SimpleNamespace(user_message="original prompt"),
     )
     heals = agent.drain_soft_exit_heals()
     assert heals["MRVL"]["outcome"] == HEAL_FAILED
@@ -679,15 +825,20 @@ def test_mechanical_restore_outcome_is_recorded_durably():
     def _writer(*, observations, run_id=None, dropped=0):
         rows = [
             (
-                o.get("symbol"), int(bool(o.get("blank_found"))),
-                int(bool(o.get("healed"))), o.get("source"), run_id, dropped,
+                o.get("symbol"),
+                int(bool(o.get("blank_found"))),
+                int(bool(o.get("healed"))),
+                o.get("source"),
+                run_id,
+                dropped,
             )
             for o in observations
         ]
         conn.executemany(
             "INSERT INTO soft_exit_heal_restores"
             " (symbol, blank_found, healed, source, run_id, dropped_before)"
-            " VALUES (?,?,?,?,?,?)", rows,
+            " VALUES (?,?,?,?,?,?)",
+            rows,
         )
         written["n"] = len(rows)
         return len(rows)
@@ -699,8 +850,7 @@ def test_mechanical_restore_outcome_is_recorded_durably():
     assert written["n"] == 2
 
     rows = conn.execute(
-        "SELECT symbol, blank_found, healed, source FROM"
-        " soft_exit_heal_restores ORDER BY id"
+        "SELECT symbol, blank_found, healed, source FROM soft_exit_heal_restores ORDER BY id"
     ).fetchall()
     assert rows[0] == ("MRVL", 1, 1, "raw_model_output")
     # Unknown stays NULL: no symbol on the payload, nothing healed.
@@ -721,17 +871,20 @@ def test_real_database_records_mechanical_restores(tmp_path):
     n = db.record_soft_exit_heal_restores(
         observations=[
             {
-                "symbol": "mrvl", "blank_found": True, "healed": True,
+                "symbol": "mrvl",
+                "blank_found": True,
+                "healed": True,
                 "source": "raw_model_output",
             },
-            {"symbol": None, "blank_found": False, "healed": False,
-             "source": None},
+            {"symbol": None, "blank_found": False, "healed": False, "source": None},
         ],
-        run_id="run-1", dropped=3,
+        run_id="run-1",
+        dropped=3,
     )
     assert n == 2
     rows = [
-        tuple(r) for r in db.conn.execute(
+        tuple(r)
+        for r in db.conn.execute(
             "SELECT symbol, blank_found, healed, source, run_id,"
             " dropped_before FROM soft_exit_heal_restores ORDER BY id"
         ).fetchall()

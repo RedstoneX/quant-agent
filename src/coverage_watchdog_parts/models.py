@@ -70,9 +70,7 @@ class UnguardedWindow:
     @property
     def over_bound(self) -> bool:
         return (
-            self.seconds_open is not None
-            and self.bound_seconds is not None
-            and self.seconds_open > self.bound_seconds
+            self.seconds_open is not None and self.bound_seconds is not None and self.seconds_open > self.bound_seconds
         )
 
 
@@ -102,8 +100,8 @@ class CoverageStatus:
     """`should_alert` and `should_alert_repair_failure` are the only fields
     callers act on."""
 
-    trading_day: str | None            # the session judged, YYYY-MM-DD (ET)
-    session_ran: bool | None           # None: database unreadable
+    trading_day: str | None  # the session judged, YYYY-MM-DD (ET)
+    session_ran: bool | None  # None: database unreadable
     gaps: list[CoverageGap] = field(default_factory=list)
     broker_error: str | None = None
     db_error: str | None = None
@@ -215,9 +213,7 @@ class CoverageStatus:
         if not self.repaired:
             return False
         told = {str(s).strip().upper() for s in self.resolution_notice_symbols}
-        return any(
-            str(r.symbol).strip().upper() not in told for r in self.repaired
-        )
+        return any(str(r.symbol).strip().upper() not in told for r in self.repaired)
 
     @property
     def repairs_awaiting_print(self) -> list[RepairOutcome]:
@@ -226,9 +222,12 @@ class CoverageStatus:
         of the desk and not this run's to page — see `awaiting_first_print`.
         """
         return [
-            r for r in self.repairs
-            if not r.placed and awaiting_first_print(
-                refusal_code=r.refusal_code, still_covered=r.still_covered,
+            r
+            for r in self.repairs
+            if not r.placed
+            and awaiting_first_print(
+                refusal_code=r.refusal_code,
+                still_covered=r.still_covered,
                 market_open=self.market_open,
             )
         ]
@@ -236,10 +235,7 @@ class CoverageStatus:
     @property
     def repair_failures(self) -> list[RepairOutcome]:
         awaiting = {id(r) for r in self.repairs_awaiting_print}
-        return [
-            r for r in self.repairs
-            if not r.placed and id(r) not in awaiting
-        ]
+        return [r for r in self.repairs if not r.placed and id(r) not in awaiting]
 
     @property
     def is_exposed(self) -> bool:

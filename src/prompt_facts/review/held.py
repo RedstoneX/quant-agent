@@ -23,8 +23,13 @@ from src.prompt_facts.review.replay import ReviewReplay
 #: The part's keyword collaborators, in constructor order. Every one defaults to None so the
 #: part builds bare; the family parts tolerate a missing collaborator exactly as before.
 COLLABORATORS = (
-    "db", "broker", "market", "sweeper", "build_post_exit_reality",
-    "exit_audit_actions", "log_conviction_outcome_for_operator",
+    "db",
+    "broker",
+    "market",
+    "sweeper",
+    "build_post_exit_reality",
+    "exit_audit_actions",
+    "log_conviction_outcome_for_operator",
 )
 
 
@@ -36,8 +41,15 @@ class PromptFactsReview:
     a test passed in), never a body it owns, so no recursion guard is needed."""
 
     def __init__(
-        self, *, db=None, broker=None, market=None, sweeper=None, build_post_exit_reality=None,
-        exit_audit_actions=None, log_conviction_outcome_for_operator=None,
+        self,
+        *,
+        db=None,
+        broker=None,
+        market=None,
+        sweeper=None,
+        build_post_exit_reality=None,
+        exit_audit_actions=None,
+        log_conviction_outcome_for_operator=None,
     ) -> None:
         self.db = db
         self.broker = broker
@@ -49,13 +61,18 @@ class PromptFactsReview:
 
     def _review_grading(self) -> ReviewGrading:
         return ReviewGrading(
-            db=self.db, broker=self.broker, market=self.market, sweeper=self.sweeper,
+            db=self.db,
+            broker=self.broker,
+            market=self.market,
+            sweeper=self.sweeper,
             build_post_exit_reality=self.build_post_exit_reality,
         )
 
     def _review_exits(self) -> ReviewExits:
         return ReviewExits(
-            db=self.db, broker=self.broker, sweeper=self.sweeper,
+            db=self.db,
+            broker=self.broker,
+            sweeper=self.sweeper,
             exit_audit_actions=self.exit_audit_actions,
         )
 

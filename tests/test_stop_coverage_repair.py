@@ -15,6 +15,7 @@ A test that only checks "the gap is flagged" is not enough: a BUY-only lookup
 or a sell-only place path can still leave a short naked while the long tests
 stay green. The short cases below require the SHORT row's stop and side="buy".
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,7 +38,8 @@ def _pipeline(
         MagicMock(symbol=symbol, qty=held_qty),
     ]
     p.broker.snapshot_protective_stops.return_value = (
-        True, ([{"qty": covered, "stop_price": 158.0}] if covered else []),
+        True,
+        ([{"qty": covered, "stop_price": 158.0}] if covered else []),
     )
     p.broker.get_latest_price.return_value = price
     p.broker.STOP_LIMIT_BUFFER_PCT = 0.03
@@ -56,11 +58,13 @@ def _opening_lookup(**stops_by_action):
     A BUY-only half-fix fails the short tests because `action='SHORT'` returns
     None. A SHORT-only table cannot accidentally feed the long path.
     """
+
     def _lookup(symbol, include_in_flight=False, action="BUY"):
         stop = stops_by_action.get(action)
         if stop is None:
             return None
         return {"stop_loss": stop, "action": action, "symbol": symbol}
+
     return _lookup
 
 
@@ -74,8 +78,8 @@ def test_naked_long_is_repaired_from_the_recorded_buy_stop():
     assert len(gaps) == 1 and gaps[0]["repaired"] is True
     kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["symbol"] == "VST"
-    assert kwargs["qty"] == 31.0            # the whole uncovered position
-    assert kwargs["stop_price"] == 158.75   # the level PM/RM actually approved
+    assert kwargs["qty"] == 31.0  # the whole uncovered position
+    assert kwargs["stop_price"] == 158.75  # the level PM/RM actually approved
     assert abs(kwargs["limit_price"] - 158.75 * 0.97) < 0.01
     assert kwargs["side"] == "sell"
 
@@ -95,7 +99,9 @@ def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating(
     so this pass keeps escalating rather than going quiet on a real gap."""
     p = _pipeline(held_qty=12.3456, covered=0.0)
     p.broker._submit_protective_stop_retrying.return_value = {
-        "id": "stop-1", "covered_qty": 12.0, "uncovered_qty": 0.3456,
+        "id": "stop-1",
+        "covered_qty": 12.0,
+        "uncovered_qty": 0.3456,
     }
     gaps = p._reconcile_stop_coverage()
     assert gaps[0]["repaired"] is False
@@ -125,7 +131,7 @@ def test_repair_failure_still_reports_the_gap():
     p = _pipeline()
     p.broker._submit_protective_stop_retrying.return_value = None
     gaps = p._reconcile_stop_coverage()
-    assert len(gaps) == 1 and gaps[0]["repaired"] is False   # no raise
+    assert len(gaps) == 1 and gaps[0]["repaired"] is False  # no raise
 
 
 def test_covered_long_needs_no_repair():
@@ -142,7 +148,10 @@ def test_fractional_remainder_on_a_short_is_repaired_with_a_buy_stop():
     that branch: GTC buy-stop intact, sub-share remainder missing, market
     open."""
     p = _pipeline(
-        held_qty=-40.4, covered=40.0, price=200.0, symbol="TSLA",
+        held_qty=-40.4,
+        covered=40.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(BUY=180.0, SHORT=220.0),
     )
     p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-frac"}
@@ -162,7 +171,10 @@ def test_naked_short_is_repaired_from_the_recorded_short_stop():
     row's recorded level. A BUY-only lookup returns None here, so a half-fix
     that only un-skips shorts cannot pass."""
     p = _pipeline(
-        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        held_qty=-40.0,
+        covered=0.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(SHORT=220.0),
     )
     p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
@@ -185,7 +197,10 @@ def test_short_repair_does_not_use_a_stale_buy_stop():
     buy-stop, would fire immediately — or as a sell-stop would be the wrong
     side. Repair must read the SHORT row."""
     p = _pipeline(
-        held_qty=-10.0, covered=0.0, price=200.0, symbol="TSLA",
+        held_qty=-10.0,
+        covered=0.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(BUY=80.0, SHORT=220.0),
     )
     p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
@@ -201,7 +216,10 @@ def test_buy_only_lookup_cannot_repair_a_short():
     """Half-fix tripwire: un-skipping shorts while still reading action=BUY
     finds no row and must leave the gap flagged, not invent a level."""
     p = _pipeline(
-        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        held_qty=-40.0,
+        covered=0.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(BUY=180.0),
     )
     gaps = p._reconcile_stop_coverage()
@@ -213,7 +231,10 @@ def test_short_repair_refuses_a_stop_at_or_below_the_live_price():
     """Recorded buy-stop $180 but the stock is now $200 — placing it would
     cover the short instantly. That's an exit decision; flag, don't act."""
     p = _pipeline(
-        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        held_qty=-40.0,
+        covered=0.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(SHORT=180.0),
     )
     gaps = p._reconcile_stop_coverage()
@@ -223,7 +244,10 @@ def test_short_repair_refuses_a_stop_at_or_below_the_live_price():
 
 def test_short_repair_skipped_when_the_short_row_has_no_stop():
     p = _pipeline(
-        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        held_qty=-40.0,
+        covered=0.0,
+        price=200.0,
+        symbol="TSLA",
         last_buy=_opening_lookup(SHORT=0.0),
     )
     gaps = p._reconcile_stop_coverage()
@@ -235,7 +259,10 @@ def test_long_path_ignores_a_short_row_on_the_same_symbol():
     """Mirror of the stale-BUY case: a currently-held long must not pick up
     a later SHORT row's stop above the tape."""
     p = _pipeline(
-        held_qty=10.0, covered=0.0, price=150.0, symbol="NVDA",
+        held_qty=10.0,
+        covered=0.0,
+        price=150.0,
+        symbol="NVDA",
         last_buy=_opening_lookup(BUY=140.0, SHORT=170.0),
     )
     p.broker._submit_protective_stop_retrying.return_value = {"id": "sell-stop-1"}
@@ -252,13 +279,23 @@ def test_get_symbol_last_buy_default_does_not_see_a_short_row(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="TSLA", action="BUY", qty=5, price=180.0,
-        reasoning="old long", run_id="r0", stop_loss=160.0,
+        symbol="TSLA",
+        action="BUY",
+        qty=5,
+        price=180.0,
+        reasoning="old long",
+        run_id="r0",
+        stop_loss=160.0,
         fill_status="filled",
     )
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=8, price=200.0,
-        reasoning="new short", run_id="r1", stop_loss=220.0,
+        symbol="TSLA",
+        action="SHORT",
+        qty=8,
+        price=200.0,
+        reasoning="new short",
+        run_id="r1",
+        stop_loss=220.0,
         fill_status="filled",
     )
     last_buy = db.get_symbol_last_buy("TSLA")
@@ -276,18 +313,31 @@ def test_get_symbol_last_buy_short_include_in_flight(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=8, price=190.0,
-        reasoning="old short", run_id="r0", stop_loss=210.0,
+        symbol="TSLA",
+        action="SHORT",
+        qty=8,
+        price=190.0,
+        reasoning="old short",
+        run_id="r0",
+        stop_loss=210.0,
         fill_status="filled",
     )
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=8, price=200.0,
-        reasoning="today", run_id="r1", stop_loss=222.0,
-        broker_order_id="s9", fill_status="submitted",
+        symbol="TSLA",
+        action="SHORT",
+        qty=8,
+        price=200.0,
+        reasoning="today",
+        run_id="r1",
+        stop_loss=222.0,
+        broker_order_id="s9",
+        fill_status="submitted",
     )
     strict = db.get_symbol_last_buy("TSLA", action="SHORT")
     in_flight = db.get_symbol_last_buy(
-        "TSLA", include_in_flight=True, action="SHORT",
+        "TSLA",
+        include_in_flight=True,
+        action="SHORT",
     )
     assert strict["stop_loss"] == 210.0
     assert in_flight["stop_loss"] == 222.0
@@ -300,8 +350,13 @@ def test_naked_short_repair_through_a_real_short_row(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=40, price=200.0,
-        reasoning="opened short", run_id="r1", stop_loss=220.0,
+        symbol="TSLA",
+        action="SHORT",
+        qty=40,
+        price=200.0,
+        reasoning="opened short",
+        run_id="r1",
+        stop_loss=220.0,
         fill_status="filled",
     )
     p = build_pipeline(broker=MagicMock(), db=db)
@@ -334,8 +389,11 @@ def test_one_arg_last_buy_cannot_repair_a_short_from_a_stale_long_stop():
         return {"stop_loss": 270.0}
 
     out = repair_stop_coverage(
-        broker=broker, last_buy=_one_arg, symbol="TSLA",
-        uncovered_qty=40.0, is_short=True,
+        broker=broker,
+        last_buy=_one_arg,
+        symbol="TSLA",
+        uncovered_qty=40.0,
+        is_short=True,
     )
     assert out is False
     broker._submit_protective_stop_retrying.assert_not_called()
@@ -369,12 +427,16 @@ def test_repair_stop_coverage_refuses_to_guess_direction():
 # while today's real price is already through the stop.
 # ---------------------------------------------------------------------------
 
+
 def _stamped(price, *, source="last_trade", is_today=True, is_today_print=True):
     from src.execution.broker import LivePrice
 
     return LivePrice(
-        price=price, source=source, trade_at=None,
-        is_today=is_today, is_today_print=is_today_print,
+        price=price,
+        source=source,
+        trade_at=None,
+        is_today=is_today,
+        is_today_print=is_today_print,
     )
 
 
@@ -393,7 +455,9 @@ def test_repair_refuses_a_price_that_is_not_from_today():
     produces for every other unverifiable input."""
     p = _pipeline()
     p.broker.get_latest_price_stamped.return_value = _stamped(
-        165.0, is_today=False, is_today_print=False,
+        165.0,
+        is_today=False,
+        is_today_print=False,
     )
     gaps = p._reconcile_stop_coverage()
     assert len(gaps) == 1 and gaps[0]["repaired"] is not True
@@ -403,7 +467,10 @@ def test_repair_refuses_a_price_that_is_not_from_today():
 def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
     p = _pipeline()
     p.broker.get_latest_price_stamped.return_value = _stamped(
-        165.0, source="quote_mid", is_today=True, is_today_print=False,
+        165.0,
+        source="quote_mid",
+        is_today=True,
+        is_today_print=False,
     )
     gaps = p._reconcile_stop_coverage()
     assert len(gaps) == 1 and gaps[0]["repaired"] is not True
@@ -421,6 +488,7 @@ def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
 # owner alarm.
 # ---------------------------------------------------------------------------
 
+
 def _today_snapshot(**overrides):
     """An intraday-snapshot payload with a today session_bar_at.
 
@@ -432,9 +500,12 @@ def _today_snapshot(**overrides):
     from src.trading_calendar import et_now
 
     payload = {
-        "last_price": None, "last_trade_at": None,
-        "minute_close": None, "minute_bar_at": None,
-        "session_open": 164.0, "session_close": None,
+        "last_price": None,
+        "last_trade_at": None,
+        "minute_close": None,
+        "minute_bar_at": None,
+        "session_open": 164.0,
+        "session_close": None,
         "session_bar_at": et_now(),
     }
     payload.update(overrides)
@@ -447,7 +518,9 @@ def test_stale_last_trade_is_repaired_off_a_live_today_bar():
     the repair through."""
     p = _pipeline()
     p.broker.get_latest_price_stamped.return_value = _stamped(
-        165.0, is_today=False, is_today_print=False,
+        165.0,
+        is_today=False,
+        is_today_print=False,
     )
     p.broker.get_intraday_snapshots.return_value = {
         "VST": _today_snapshot(session_open=164.0),
@@ -464,7 +537,9 @@ def test_no_last_trade_and_no_today_bar_still_refuses():
     exactly as before this fix."""
     p = _pipeline()
     p.broker.get_latest_price_stamped.return_value = _stamped(
-        165.0, is_today=False, is_today_print=False,
+        165.0,
+        is_today=False,
+        is_today_print=False,
     )
     p.broker.get_intraday_snapshots.return_value = {"VST": {}}
     gaps = p._reconcile_stop_coverage()
@@ -488,7 +563,10 @@ def test_no_last_trade_and_no_today_bar_still_refuses():
 
 def _fractional_pipeline(symbol, held, covered, price, *, buy_stop=1.0):
     p = _pipeline(
-        held_qty=held, covered=covered, price=price, symbol=symbol,
+        held_qty=held,
+        covered=covered,
+        price=price,
+        symbol=symbol,
         buy_stop=buy_stop,
     )
     p.broker.get_positions.return_value = [
@@ -509,9 +587,11 @@ def shared_marker(tmp_path, monkeypatch):
 
 
 def _run(p):
-    with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline_protection._market_is_open_now", return_value=True), \
-            patch("src.trader_feed._profiles", return_value={}):
+    with (
+        patch("src.notifier.send_owner_alert") as send,
+        patch("src.pipeline_protection._market_is_open_now", return_value=True),
+        patch("src.trader_feed._profiles", return_value={}),
+    ):
         gaps = p._reconcile_stop_coverage()
     return gaps, send
 
@@ -521,7 +601,7 @@ def test_failed_session_hours_repair_alerts_the_owner_from_the_session(
 ):
     p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
     gaps, send = _run(p)
-    assert gaps[0]["coverage"] == "partial"     # unchanged classification
+    assert gaps[0]["coverage"] == "partial"  # unchanged classification
     assert gaps[0]["session_repair_failed"] is True
     assert send.call_count == 1, "the session that saw it must be the one that tells him"
     text = send.call_args.args[0]
@@ -535,8 +615,10 @@ def test_failed_session_hours_repair_alerts_the_owner_from_the_session(
 def test_the_overnight_fractional_lapse_still_says_nothing(shared_marker):
     """Owner-ratified, bounded, happens every night — it must stay silent."""
     p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
-    with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline_protection._market_is_open_now", return_value=False):
+    with (
+        patch("src.notifier.send_owner_alert") as send,
+        patch("src.pipeline_protection._market_is_open_now", return_value=False),
+    ):
         gaps = p._reconcile_stop_coverage()
     assert gaps[0]["coverage"] == "fractional_overnight"
     assert "session_repair_failed" not in gaps[0]
@@ -583,7 +665,7 @@ def test_a_failure_that_actually_landed_does_not_page(shared_marker):
 
     def _snapshot(symbol, side="sell", **_kw):
         reads["n"] += 1
-        if reads["n"] == 1:               # the survey pass: really short
+        if reads["n"] == 1:  # the survey pass: really short
             return True, [{"qty": 1.0, "stop_price": 501.06}]
         # by the time we would alert, the sibling process's order is resting
         return True, [
@@ -593,7 +675,7 @@ def test_a_failure_that_actually_landed_does_not_page(shared_marker):
 
     p.broker.snapshot_protective_stops.side_effect = _snapshot
     gaps, send = _run(p)
-    assert gaps[0]["session_repair_failed"] is True   # the gap is still reported
+    assert gaps[0]["session_repair_failed"] is True  # the gap is still reported
     send.assert_not_called()
     assert reads["n"] >= 2, "the broker must be re-read before paging"
 
@@ -625,8 +707,8 @@ def _elected_pipeline(symbol, held, price, stop, *, covered=None):
         MagicMock(symbol=symbol, qty=qty, current_price=price),
     ]
     p.broker.snapshot_protective_stops.return_value = (
-        True, [{"qty": abs(held) if covered is None else covered,
-                "stop_price": stop}],
+        True,
+        [{"qty": abs(held) if covered is None else covered, "stop_price": stop}],
     )
     return p
 
@@ -676,8 +758,10 @@ def test_an_elected_unfilled_stop_is_not_detected_while_the_market_is_shut(
     shared_marker,
 ):
     p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
-    with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline_protection._market_is_open_now", return_value=False):
+    with (
+        patch("src.notifier.send_owner_alert") as send,
+        patch("src.pipeline_protection._market_is_open_now", return_value=False),
+    ):
         p._reconcile_stop_coverage()
     send.assert_not_called()
 
@@ -725,8 +809,8 @@ def test_the_worst_elected_trigger_is_the_one_reported(shared_marker):
     trigger the tape is furthest past — read off the orders, not chosen."""
     p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
     p.broker.snapshot_protective_stops.return_value = (
-        True, [{"qty": 20.0, "stop_price": 155.0},
-               {"qty": 11.0, "stop_price": 160.0}],
+        True,
+        [{"qty": 20.0, "stop_price": 155.0}, {"qty": 11.0, "stop_price": 160.0}],
     )
     _gaps, send = _run(p)
     assert "$160.00 fired and did not fill" in send.call_args.args[0]
@@ -752,8 +836,7 @@ def test_evening_reports_a_blown_through_stop_as_its_own_state():
     rows = p._evening_stop_proximity(positions)
     assert len(rows) == 1
     assert rows[0]["status"] == "through", (
-        "a stop the tape has passed without filling is not the same fact as "
-        "a stop that is merely close"
+        "a stop the tape has passed without filling is not the same fact as a stop that is merely close"
     )
     assert rows[0]["through"] == pytest.approx(8.0)
 
@@ -771,10 +854,18 @@ def test_the_evening_feed_spells_out_a_blown_through_stop():
     lines: list[str] = []
     _append_evening_watchlist(
         lines,
-        {"stop_proximity": [{
-            "symbol": "VST", "status": "through", "price": 150.0,
-            "stop": 158.0, "through": 8.0, "atr": 2.0,
-        }]},
+        {
+            "stop_proximity": [
+                {
+                    "symbol": "VST",
+                    "status": "through",
+                    "price": 150.0,
+                    "stop": 158.0,
+                    "through": 8.0,
+                    "atr": 2.0,
+                }
+            ]
+        },
         {},
     )
     text = "\n".join(lines)
@@ -807,8 +898,11 @@ def _no_print_pipeline(symbol, held, covered, price, *, buy_stop):
 
     p = _fractional_pipeline(symbol, held, covered, price, buy_stop=buy_stop)
     p.broker.get_latest_price_stamped.return_value = LivePrice(
-        price=price, source="last_trade", trade_at=None,
-        is_today=False, is_today_print=False,
+        price=price,
+        source="last_trade",
+        trade_at=None,
+        is_today=False,
+        is_today_print=False,
     )
     return p
 
@@ -822,8 +916,7 @@ def test_the_bell_adjacent_no_print_refusal_does_not_page(shared_marker):
     assert gaps[0]["awaiting_first_print"] is True
     assert gaps[0]["session_repair_failed"] is False
     assert gaps[0]["coverage"] == "partial", (
-        "the shortfall is real and must stay visible in the banner; only the "
-        "interruption is withheld"
+        "the shortfall is real and must stay visible in the banner; only the interruption is withheld"
     )
     send.assert_not_called()
 
@@ -833,9 +926,7 @@ def test_the_repair_is_still_attempted_on_the_quiet_pass(shared_marker):
     That ruling stands: only the page waits."""
     p = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
     _run(p)
-    assert p.broker.get_latest_price_stamped.called, (
-        "the pass must still have tried to price and place the stop"
-    )
+    assert p.broker.get_latest_price_stamped.called, "the pass must still have tried to price and place the stop"
 
 
 def test_a_broker_rejection_still_pages_on_the_first_attempt(shared_marker):
@@ -872,9 +963,11 @@ def test_a_name_that_never_printed_all_session_pages_after_the_close(
     send.assert_not_called()
 
     after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
-    with patch("src.notifier.send_owner_alert") as shut, \
-            patch("src.pipeline_protection._market_is_open_now", return_value=False), \
-            patch("src.trader_feed._profiles", return_value={}):
+    with (
+        patch("src.notifier.send_owner_alert") as shut,
+        patch("src.pipeline_protection._market_is_open_now", return_value=False),
+        patch("src.trader_feed._profiles", return_value={}),
+    ):
         gaps = after_close._reconcile_stop_coverage()
     assert gaps[0]["coverage"] != "fractional_overnight"
     assert gaps[0]["never_printed_today"] is True
@@ -891,13 +984,16 @@ def test_a_repaired_name_is_not_reported_after_the_close(shared_marker):
 
     repaired = _fractional_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
     repaired.broker._submit_protective_stop_retrying.return_value = {
-        "id": "ord-1", "status": "accepted",
+        "id": "ord-1",
+        "status": "accepted",
     }
     _gaps, _send = _run(repaired)
 
     after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
-    with patch("src.notifier.send_owner_alert") as shut, \
-            patch("src.pipeline_protection._market_is_open_now", return_value=False):
+    with (
+        patch("src.notifier.send_owner_alert") as shut,
+        patch("src.pipeline_protection._market_is_open_now", return_value=False),
+    ):
         gaps = after_close._reconcile_stop_coverage()
     assert gaps[0]["coverage"] == "fractional_overnight"
     shut.assert_not_called()
@@ -911,7 +1007,8 @@ def test_a_repaired_name_is_not_reported_after_the_close(shared_marker):
 def _repairing_pipeline(symbol, held, covered, price, *, buy_stop):
     p = _fractional_pipeline(symbol, held, covered, price, buy_stop=buy_stop)
     p.broker._submit_protective_stop_retrying.return_value = {
-        "id": "ord-1", "status": "accepted",
+        "id": "ord-1",
+        "status": "accepted",
     }
     return p
 
@@ -920,15 +1017,11 @@ def test_a_red_alarm_that_clears_tells_the_owner_it_cleared(shared_marker):
     """2026-09-23: paged at 13:30:45, repaired by the desk at 13:45:45,
     never retracted. The owner spent the day holding an instruction to place
     by hand a stop that already existed."""
-    _gaps, first = _run(
-        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, first = _run(_fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert first.call_count == 1
     assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in first.call_args.args[0]
 
-    _gaps, second = _run(
-        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, second = _run(_repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert second.call_count == 1, "the all-clear must reach the same channel"
     text = second.call_args.args[0]
     assert "THE PROTECTIVE STOP IS BACK" in text
@@ -942,30 +1035,20 @@ def test_the_once_a_day_cap_does_not_swallow_the_all_clear(shared_marker):
     swallowed — so it carries its own marker."""
     from src import coverage_watchdog
 
-    _gaps, _first = _run(
-        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, _first = _run(_fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert coverage_watchdog.claim_repair_failure_alert(["BRK-B"]) == [], (
         "precondition: the failure is already claimed for today"
     )
-    _gaps, second = _run(
-        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, second = _run(_repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert second.call_count == 1
     assert "THE PROTECTIVE STOP IS BACK" in second.call_args.args[0]
 
 
 def test_the_all_clear_is_sent_once_per_symbol_per_day(shared_marker):
-    _gaps, _first = _run(
-        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
-    _gaps, second = _run(
-        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, _first = _run(_fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
+    _gaps, second = _run(_repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert second.call_count == 1
-    _gaps, third = _run(
-        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, third = _run(_repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     third.assert_not_called()
 
 
@@ -973,9 +1056,7 @@ def test_a_routine_repair_nobody_was_alarmed_about_stays_silent(shared_marker):
     """Every fractional position is re-covered at the open every single day.
     If that sent an all-clear the channel would carry one per position per
     morning, which is the noise the alarm design forbids."""
-    _gaps, send = _run(
-        _repairing_pipeline("AAPL", 9.7630, 9.0, 330.0, buy_stop=315.0)
-    )
+    _gaps, send = _run(_repairing_pipeline("AAPL", 9.7630, 9.0, 330.0, buy_stop=315.0))
     send.assert_not_called()
 
 
@@ -985,10 +1066,6 @@ def test_the_failure_claim_is_not_released_by_the_all_clear(shared_marker):
     flapping name send two messages a cycle."""
     from src import coverage_watchdog
 
-    _gaps, _first = _run(
-        _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
-    _gaps, _second = _run(
-        _repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
-    )
+    _gaps, _first = _run(_fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
+    _gaps, _second = _run(_repairing_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0))
     assert coverage_watchdog.claim_repair_failure_alert(["BRK-B"]) == []

@@ -7,7 +7,9 @@ import pytest
 import requests
 
 from ops.rehearsal.live_capture import (
-    LiveCaptureError, _assert_disk_headroom, _isolate_broker_environment,
+    LiveCaptureError,
+    _assert_disk_headroom,
+    _isolate_broker_environment,
 )
 
 
@@ -27,21 +29,20 @@ def test_broker_environment_bypasses_only_alpaca_without_losing_onecli(monkeypat
     assert "REQUESTS_CA_BUNDLE" not in os.environ
     assert os.environ["SSL_CERT_FILE"] == "/onecli/private-ca.pem"
     assert os.environ["HTTPS_PROXY"] == "http://onecli.invalid:8080"
-    assert requests.utils.should_bypass_proxies(
-        "https://paper-api.alpaca.markets/v2/account", no_proxy=None
-    )
-    assert requests.utils.should_bypass_proxies(
-        "https://data.alpaca.markets/v2/stocks/bars", no_proxy=None
-    )
-    assert not requests.utils.should_bypass_proxies(
-        "https://api.openai.com/v1/responses", no_proxy=None
-    )
+    assert requests.utils.should_bypass_proxies("https://paper-api.alpaca.markets/v2/account", no_proxy=None)
+    assert requests.utils.should_bypass_proxies("https://data.alpaca.markets/v2/stocks/bars", no_proxy=None)
+    assert not requests.utils.should_bypass_proxies("https://api.openai.com/v1/responses", no_proxy=None)
     assert "internal.example" in os.environ["NO_PROXY"]
 
 
 def test_capture_refuses_insufficient_disk_headroom(monkeypatch, tmp_path):
-    monkeypatch.setattr(os, "statvfs", lambda _path: SimpleNamespace(
-        f_bavail=7, f_frsize=1,
-    ))
+    monkeypatch.setattr(
+        os,
+        "statvfs",
+        lambda _path: SimpleNamespace(
+            f_bavail=7,
+            f_frsize=1,
+        ),
+    )
     with pytest.raises(LiveCaptureError, match="disk headroom"):
         _assert_disk_headroom(tmp_path, 1)

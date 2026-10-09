@@ -16,6 +16,7 @@ from src.notifier.sections import (
     describe_ai_cost,
 )
 
+
 def _session_cost_line(run_id: str | None) -> str | None:
     """Return '💵 cost: $X.XX (N calls)' for a session's run_id, or
     None when the lookup can't produce a clean answer.
@@ -34,6 +35,7 @@ def _session_cost_line(run_id: str | None) -> str | None:
         return None
     try:
         import sqlite3
+
         if not _DB_PATH.exists():
             return None
         conn = sqlite3.connect(str(_DB_PATH))
@@ -53,10 +55,7 @@ def _session_cost_line(run_id: str | None) -> str | None:
         # Unknown model in the pricing table for at least one call —
         # cannot honestly sum. Say so; never show a partial total as though
         # it were the whole, and never show a fabricated figure.
-        return (
-            "\U0001f4b5 AI cost for this run: not available — one of "
-            "the models used has no price on file"
-        )
+        return "\U0001f4b5 AI cost for this run: not available — one of the models used has no price on file"
     # The provider-request count that used to sit in brackets here is gone
     # (owner review, 2026-09-18). It is an implementation detail, it is not
     # a number he can act on, and it had already been removed from the
@@ -84,9 +83,11 @@ def _day_cost_line() -> str | None:
     """
     try:
         import sqlite3
+
         if not _DB_PATH.exists():
             return None
         from src.trading_calendar import et_now
+
         day = et_now().strftime("%Y-%m-%d")
         conn = sqlite3.connect(str(_DB_PATH))
         try:
@@ -112,22 +113,17 @@ def _day_cost_line() -> str | None:
     if spent <= 0:
         if not limit:
             return "\U0001f4c5 Spent today: nothing yet"
-        return (
-            f"\U0001f4c5 Spent today: nothing yet, against a ${limit:,.2f} "
-            f"cap for the day"
-        )
+        return f"\U0001f4c5 Spent today: nothing yet, against a ${limit:,.2f} cap for the day"
     if not limit:
         return f"\U0001f4c5 Spent today: ${spent:,.2f} so far"
-    return (
-        f"\U0001f4c5 Spent today: ${spent:,.2f} of the ${limit:,.2f} cap "
-        f"for the day"
-    )
+    return f"\U0001f4c5 Spent today: ${spent:,.2f} of the ${limit:,.2f} cap for the day"
 
 
 def _daily_cost_limit() -> float | None:
     """The configured daily cap, or None if it cannot be read."""
     try:
         from src.config import load_config
+
         cfg = load_config("config/settings.yaml")
         return float(cfg.llm_cost_circuit.daily_cost_limit_usd)
     except Exception:  # noqa: BLE001
@@ -162,6 +158,7 @@ def _openrouter_balance_line() -> str | None:
     try:
         import json as _json
         import urllib.request
+
         req = urllib.request.Request(
             "https://openrouter.ai/api/v1/credits",
             headers={"Authorization": f"Bearer {key}"},
@@ -182,15 +179,17 @@ def _openrouter_balance_line() -> str | None:
     clean_day_usd = 1.02
     days = max(0, int(remaining / clean_day_usd))
     warn = " ⚠️ top up" if days <= 7 else ""
-    return (
-        f"🔋 OpenRouter: ${remaining:,.2f} left of ${purchased:,.2f} "
-        f"(~{days} trading days){warn}"
-    )
+    return f"🔋 OpenRouter: ${remaining:,.2f} left of ${purchased:,.2f} (~{days} trading days){warn}"
 
 
 def _persist_margin_interest_daily(
-    trading_day, debit_balance: float, rate_pct: float, daily_usd: float,
-    days_charged: int, period_usd: float, source: str = "estimate",
+    trading_day,
+    debit_balance: float,
+    rate_pct: float,
+    daily_usd: float,
+    days_charged: int,
+    period_usd: float,
+    source: str = "estimate",
 ) -> None:
     """Write today's margin-interest row so the cumulative view
     (`src.margin_interest.compute_cumulative_margin_interest`) has
@@ -216,13 +215,19 @@ def _persist_margin_interest_daily(
     """
     try:
         from src.storage.db import Database
+
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         db = Database(str(_DB_PATH))
         try:
             db.initialize()
             db.insert_margin_interest_daily(
-                str(trading_day), debit_balance, rate_pct, daily_usd,
-                days_charged, period_usd, source,
+                str(trading_day),
+                debit_balance,
+                rate_pct,
+                daily_usd,
+                days_charged,
+                period_usd,
+                source,
             )
         finally:
             db.close()
@@ -239,6 +244,7 @@ def _read_margin_interest_daily_all() -> list[dict]:
     reads as `source="no_data"`, never a fabricated zero."""
     try:
         import sqlite3
+
         if not _DB_PATH.exists():
             return []
         conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
@@ -293,9 +299,13 @@ def _margin_interest_lines() -> list[str]:
     the line would be theatre.
     """
     from src.margin_interest import (
-        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
-        compare_estimate_to_broker_activity, compute_cumulative_margin_interest,
-        days_charged_until_next_trading_day, format_cumulative_line,
+        RATE_UNAVAILABLE_LINE,
+        UNAVAILABLE_LINE,
+        build_estimate,
+        compare_estimate_to_broker_activity,
+        compute_cumulative_margin_interest,
+        days_charged_until_next_trading_day,
+        format_cumulative_line,
         overnight_debit_balance,
     )
 
@@ -303,6 +313,7 @@ def _margin_interest_lines() -> list[str]:
         return []
     try:
         from src.config import load_config
+
         cfg = load_config("config/settings.yaml")
         rate_pct = cfg.risk.margin_interest_rate_pct
     except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
@@ -312,6 +323,7 @@ def _margin_interest_lines() -> list[str]:
     try:
         from src.api.deps import get_alpaca_credentials, get_alpaca_paper
         from src.execution.broker import AlpacaBroker
+
         key, secret = get_alpaca_credentials()
         broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
         account = broker.get_account()
@@ -322,6 +334,7 @@ def _margin_interest_lines() -> list[str]:
         # exchange calendar for how many days tonight's carry spans; the
         # helper never raises and degrades to 1 if the calendar can't be read.
         from src.util.time import et_today
+
         today = et_today()
         days_charged = days_charged_until_next_trading_day(broker.is_trading_day, today)
         estimate = build_estimate(debit_balance, rate_pct, days_charged)
@@ -347,9 +360,13 @@ def _margin_interest_lines() -> list[str]:
         full_history = []
 
     _persist_margin_interest_daily(
-        today, debit_balance, rate_pct,
+        today,
+        debit_balance,
+        rate_pct,
         estimate.daily_usd if estimate is not None else 0.0,
-        days_charged, period_usd, source,
+        days_charged,
+        period_usd,
+        source,
     )
 
     try:

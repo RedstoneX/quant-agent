@@ -2,7 +2,14 @@ from datetime import date
 from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from src.models.base import LLMOutputModel, _normalize_enum_case_fields, _normalize_symbol
-from src.models.analysis import AnalystVerdict, NO_STATED_STRENGTH, Nomination, VerdictEvidence, _sanitize_nominations_field
+from src.models.analysis import (
+    AnalystVerdict,
+    NO_STATED_STRENGTH,
+    Nomination,
+    VerdictEvidence,
+    _sanitize_nominations_field,
+)
+
 
 class EarningsSegment(LLMOutputModel):
     name: str
@@ -51,10 +58,11 @@ class EarningsReasoningChain(LLMOutputModel):
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
     """
-    fundamental_quality: str = Field(min_length=1)       # revenue, margin, cash flow trajectory
-    growth_trajectory: str = Field(min_length=1)         # YoY / QoQ direction, momentum, inflection
-    strategic_risks: str = Field(min_length=1)           # biggest strategic bets and their execution risk
-    management_execution: str = Field(min_length=1)      # is management doing what they said? any pivots?
+
+    fundamental_quality: str = Field(min_length=1)  # revenue, margin, cash flow trajectory
+    growth_trajectory: str = Field(min_length=1)  # YoY / QoQ direction, momentum, inflection
+    strategic_risks: str = Field(min_length=1)  # biggest strategic bets and their execution risk
+    management_execution: str = Field(min_length=1)  # is management doing what they said? any pivots?
     # NOT "is the market pricing this fairly" — the agent is given filing text
     # and nothing else (no share price, no market cap, no multiple), so it
     # cannot answer that and inventing an answer is what it used to do. Reads
@@ -75,7 +83,8 @@ class EarningsInvestmentImplications(LLMOutputModel):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(
-            values, lower_fields=("sentiment", "conviction"),
+            values,
+            lower_fields=("sentiment", "conviction"),
         )
 
 
@@ -169,8 +178,11 @@ class EarningsAnalysis(LLMOutputModel):
             evidence.append(VerdictEvidence(label="key_thesis", text=impl.key_thesis.strip()))
         chain = impl.reasoning_chain
         for label in (
-            "fundamental_quality", "growth_trajectory", "strategic_risks",
-            "management_execution", "valuation_context",
+            "fundamental_quality",
+            "growth_trajectory",
+            "strategic_risks",
+            "management_execution",
+            "valuation_context",
         ):
             text = getattr(chain, label, "") or ""
             if text.strip():
@@ -221,5 +233,3 @@ class EarningsAnalysis(LLMOutputModel):
     @classmethod
     def _sanitize_nominations(cls, values):
         return _sanitize_nominations_field(values)
-
-

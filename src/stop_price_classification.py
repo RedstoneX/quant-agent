@@ -5,6 +5,7 @@ ledger can refuse an entry row with no stop WITHOUT importing the broker
 seam (`scripts/import_graph.py`, rule "broker-seam"). `stop_records`
 re-exports every name below, so every existing importer is untouched.
 """
+
 from __future__ import annotations
 
 import math

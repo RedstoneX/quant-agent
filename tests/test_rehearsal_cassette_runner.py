@@ -25,9 +25,7 @@ class _ClosedCalendarClient:
 
 def _closed_day_cassette(on_date):
     cassette = BrokerCassette()
-    client = RecordingBrokerClient(
-        _ClosedCalendarClient(), cassette, "trading"
-    )
+    client = RecordingBrokerClient(_ClosedCalendarClient(), cassette, "trading")
     client.get_calendar(GetCalendarRequest(start=on_date, end=on_date))
     # Force the same JSON boundary a checked-in public bundle uses.
     return json.loads(json.dumps(cassette.to_payload()))
@@ -59,14 +57,8 @@ def test_runner_drives_real_morning_session_through_strict_broker_replay(tmp_pat
     assert report.status == "market_holiday"
     assert report.fill_model == "cassette"
     assert report.network_attempts == []
-    assert any(
-        "every recorded broker call was consumed exactly once" in check
-        for check in report.isolation_checks
-    )
-    assert any(
-        "synthetic cassette proves this wiring only" in note
-        for note in report.notes
-    )
+    assert any("every recorded broker call was consumed exactly once" in check for check in report.isolation_checks)
+    assert any("synthetic cassette proves this wiring only" in note for note in report.notes)
 
 
 def test_runner_voids_a_broker_gap_at_the_real_calendar_path(tmp_path):
@@ -120,9 +112,12 @@ def test_exact_session_provider_ledger_rejects_unused_calls(tmp_path):
             now_et=now,
             config_overrides={"execution.fill_stream_enabled": False},
             broker_cassette=_closed_day_cassette(now.date()),
-            session_input_payload={"schema": 1, "entries": [
-                {"kind": "yfinance.download", "key": "unused", "value": None},
-            ]},
+            session_input_payload={
+                "schema": 1,
+                "entries": [
+                    {"kind": "yfinance.download", "key": "unused", "value": None},
+                ],
+            },
         )
 
     assert caught.value.report.network_attempts == []

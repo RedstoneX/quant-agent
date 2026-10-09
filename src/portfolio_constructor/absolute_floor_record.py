@@ -34,6 +34,7 @@ byte-identical to what the resolver emitted before. The decision itself is
 still the resolver's -- `inside_hard_floor` arrives already decided and is
 recomputed nowhere here.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,8 +74,7 @@ def distance_in_atrs(entry_price: float, stop_loss: float, atr: float) -> float 
 def emit_row(symbol: str, rule: str, bound: bool, observed: float | None) -> str:
     """Write one counted row for a level-backed placement and return it."""
     row = json.dumps(
-        {"symbol": symbol, "rule": rule, "floor_bound": bound,
-         "distance_atr": observed},
+        {"symbol": symbol, "rule": rule, "floor_bound": bound, "distance_atr": observed},
         sort_keys=True,
     )
     logger.info("%s%s", ROW_TAG, row)
@@ -104,10 +104,7 @@ def summarise(rows) -> dict[str, object]:
     """
     rows = list(rows)
     binds = sum(1 for r in rows if r.get("floor_bound"))
-    seen = [
-        float(r["distance_atr"]) for r in rows
-        if isinstance(r.get("distance_atr"), (int, float))
-    ]
+    seen = [float(r["distance_atr"]) for r in rows if isinstance(r.get("distance_atr"), (int, float))]
     return {
         "level_backed_total": len(rows),
         "floor_binds": binds,
@@ -156,10 +153,16 @@ def noted(
             "range is a coin flip, so it is moved out to the "
             "%.2f x ATR floor — not to the %.2f x ATR noise "
             "band, which the level exempts it from.",
-            side_label, symbol, stop_loss, honoured,
-            STOP_RULE_ABSOLUTE_FLOOR, level,
-            abs(entry_price - stop_loss) / atr, entry_price,
-            floor_multiple, multiple,
+            side_label,
+            symbol,
+            stop_loss,
+            honoured,
+            STOP_RULE_ABSOLUTE_FLOOR,
+            level,
+            abs(entry_price - stop_loss) / atr,
+            entry_price,
+            floor_multiple,
+            multiple,
         )
         return honoured, rule
 
@@ -172,9 +175,15 @@ def noted(
         "noise band would have moved it to $%.2f, which "
         "is not a level anyone is defending, so the band "
         "does not apply.",
-        side_label, symbol, stop_loss,
-        STOP_RULE_LEVEL_HONOURED, level,
-        abs(entry_price - stop_loss) / atr, side_word,
-        entry_price, multiple, band_edge,
+        side_label,
+        symbol,
+        stop_loss,
+        STOP_RULE_LEVEL_HONOURED,
+        level,
+        abs(entry_price - stop_loss) / atr,
+        side_word,
+        entry_price,
+        multiple,
+        band_edge,
     )
     return honoured, rule

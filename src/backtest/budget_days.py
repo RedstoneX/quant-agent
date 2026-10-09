@@ -4,6 +4,7 @@ Moved out of ``engine`` unchanged so that module can stop growing: whether a
 day's risk-budget allocation bound, and whether ticker spelling arbitrated it.
 ``engine`` re-exports both names.
 """
+
 from __future__ import annotations
 
 from src.risk.budget import BudgetAllocation
@@ -19,10 +20,7 @@ def _budget_binds(allocation: BudgetAllocation) -> bool:
     tie-break as alphabetical because this engine never passes
     `priority` and every ask is the same size.
     """
-    return any(
-        grant.requested_pct > 0.0 and grant.limited_by is not None
-        for grant in allocation.grants.values()
-    )
+    return any(grant.requested_pct > 0.0 and grant.limited_by is not None for grant in allocation.grants.values())
 
 
 def _tie_break_arbitrated(allocation: BudgetAllocation, new_request_count: int) -> bool:

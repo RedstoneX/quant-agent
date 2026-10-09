@@ -14,18 +14,22 @@ from src.agents.base import (
 # optional explicit provider). Single list reused by LLMConfig.get_provider
 # and AppConfig._check_llm_provider_keys so the two can't drift apart.
 AGENT_NAMES = (
-    "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+    "tech_analyst",
+    "news_analyst",
+    "macro_analyst",
+    "earnings_analyst",
     "smart_money_analyst",
-    "portfolio_manager", "risk_manager", "position_reviewer",
-    "evening_analyst", "meta_reflector",
+    "portfolio_manager",
+    "risk_manager",
+    "position_reviewer",
+    "evening_analyst",
+    "meta_reflector",
 )
 
 
 # OpenRouter's documented reasoning.effort values — see
 # https://openrouter.ai/docs/use-cases/reasoning-tokens.
-_VALID_REASONING_EFFORTS = frozenset(
-    {"max", "xhigh", "high", "medium", "low", "minimal", "none"}
-)
+_VALID_REASONING_EFFORTS = frozenset({"max", "xhigh", "high", "medium", "low", "minimal", "none"})
 
 
 class LLMConfig(BaseModel):
@@ -171,9 +175,7 @@ class LLMConfig(BaseModel):
         # A non-positive or trivially small max_tokens will fail at LLM-call
         # time with an opaque provider error. Fail fast at config load instead.
         if v < 512:
-            raise ValueError(
-                f"llm.max_tokens must be >= 512 for agent outputs; got {v}"
-            )
+            raise ValueError(f"llm.max_tokens must be >= 512 for agent outputs; got {v}")
         return v
 
     @field_validator(
@@ -195,20 +197,14 @@ class LLMConfig(BaseModel):
         if v is None:
             return None
         if v < 512:
-            raise ValueError(
-                f"per-agent max_tokens override must be >= 512 (or null to "
-                f"inherit global); got {v}"
-            )
+            raise ValueError(f"per-agent max_tokens override must be >= 512 (or null to inherit global); got {v}")
         return v
 
     @field_validator("reasoning_effort")
     @classmethod
     def _reasoning_effort_is_valid(cls, v: str) -> str:
         if v not in _VALID_REASONING_EFFORTS:
-            raise ValueError(
-                f"llm.reasoning_effort must be one of "
-                f"{sorted(_VALID_REASONING_EFFORTS)}; got {v!r}"
-            )
+            raise ValueError(f"llm.reasoning_effort must be one of {sorted(_VALID_REASONING_EFFORTS)}; got {v!r}")
         return v
 
     def get_max_tokens(self, agent_name: str) -> int:
@@ -237,10 +233,16 @@ class LLMConfig(BaseModel):
         return getattr(self, f"{agent_name}_provider_order", None)
 
     @field_validator(
-        "tech_analyst_provider", "news_analyst_provider", "macro_analyst_provider",
-        "earnings_analyst_provider", "portfolio_manager_provider", "risk_manager_provider",
+        "tech_analyst_provider",
+        "news_analyst_provider",
+        "macro_analyst_provider",
+        "earnings_analyst_provider",
+        "portfolio_manager_provider",
+        "risk_manager_provider",
         "smart_money_analyst_provider",
-        "position_reviewer_provider", "evening_analyst_provider", "meta_reflector_provider",
+        "position_reviewer_provider",
+        "evening_analyst_provider",
+        "meta_reflector_provider",
     )
     @classmethod
     def _provider_is_valid_or_unset(cls, v: str | None) -> str | None:
@@ -252,9 +254,7 @@ class LLMConfig(BaseModel):
             return None
         normalized = v.strip().lower()
         if normalized not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset"
-            )
+            raise ValueError(f"Invalid provider {v!r}; must be one of {sorted(VALID_PROVIDERS)} or unset")
         return normalized
 
     @field_validator("fallback_provider")
@@ -266,10 +266,7 @@ class LLMConfig(BaseModel):
         # `fallback_model`'s prefix happens to imply.
         normalized = (v or "").strip().lower()
         if normalized not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid llm.fallback_provider {v!r}; must be one of "
-                f"{sorted(VALID_PROVIDERS)}"
-            )
+            raise ValueError(f"Invalid llm.fallback_provider {v!r}; must be one of {sorted(VALID_PROVIDERS)}")
         return normalized
 
     @field_validator("fallback_model")
@@ -288,10 +285,7 @@ class LLMConfig(BaseModel):
         # the desk's last line of defence.
         normalized = (v or "").strip().lower()
         if normalized not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid llm.tertiary_provider {v!r}; must be one of "
-                f"{sorted(VALID_PROVIDERS)}"
-            )
+            raise ValueError(f"Invalid llm.tertiary_provider {v!r}; must be one of {sorted(VALID_PROVIDERS)}")
         return normalized
 
     @field_validator("tertiary_model")
@@ -301,7 +295,7 @@ class LLMConfig(BaseModel):
         # turns route 3 off, and `AppConfig.tertiary_available` reads it as
         # such so the attempt-budget floor drops back to 3 in step.
         if not isinstance(v, str):
-            raise ValueError("llm.tertiary_model must be a string model id or \"\"")
+            raise ValueError('llm.tertiary_model must be a string model id or ""')
         return v.strip()
 
     @field_validator("tertiary_alt_provider")
@@ -313,10 +307,7 @@ class LLMConfig(BaseModel):
         # on the road it was added to escape.
         normalized = (v or "").strip().lower()
         if normalized not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid llm.tertiary_alt_provider {v!r}; must be one of "
-                f"{sorted(VALID_PROVIDERS)}"
-            )
+            raise ValueError(f"Invalid llm.tertiary_alt_provider {v!r}; must be one of {sorted(VALID_PROVIDERS)}")
         return normalized
 
     @field_validator("tertiary_alt_model")
@@ -325,17 +316,20 @@ class LLMConfig(BaseModel):
         # Empty turns the substitution off and restores the pre-2026-09-30
         # behaviour exactly; it never turns route 3 itself off.
         if not isinstance(v, str):
-            raise ValueError(
-                "llm.tertiary_alt_model must be a string model id or \"\""
-            )
+            raise ValueError('llm.tertiary_alt_model must be a string model id or ""')
         return v.strip()
 
     @field_validator(
-        "tech_analyst_provider_order", "news_analyst_provider_order",
-        "macro_analyst_provider_order", "earnings_analyst_provider_order",
-        "smart_money_analyst_provider_order", "portfolio_manager_provider_order",
-        "risk_manager_provider_order", "position_reviewer_provider_order",
-        "evening_analyst_provider_order", "meta_reflector_provider_order",
+        "tech_analyst_provider_order",
+        "news_analyst_provider_order",
+        "macro_analyst_provider_order",
+        "earnings_analyst_provider_order",
+        "smart_money_analyst_provider_order",
+        "portfolio_manager_provider_order",
+        "risk_manager_provider_order",
+        "position_reviewer_provider_order",
+        "evening_analyst_provider_order",
+        "meta_reflector_provider_order",
     )
     @classmethod
     def _provider_order_is_wellformed(cls, v: list[str] | None) -> list[str] | None:
@@ -346,15 +340,12 @@ class LLMConfig(BaseModel):
             return None
         if not v:
             raise ValueError(
-                "provider_order must be null (no preference) or a non-empty "
-                "list of OpenRouter endpoint slugs; got []"
+                "provider_order must be null (no preference) or a non-empty list of OpenRouter endpoint slugs; got []"
             )
         cleaned: list[str] = []
         for entry in v:
             if not isinstance(entry, str) or not entry.strip():
-                raise ValueError(
-                    f"provider_order entries must be non-empty strings; got {entry!r}"
-                )
+                raise ValueError(f"provider_order entries must be non-empty strings; got {entry!r}")
             cleaned.append(entry.strip())
         return cleaned
 

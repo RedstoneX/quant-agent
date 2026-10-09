@@ -14,6 +14,7 @@ import json as _json
 #: binding the name rather than `__name__` keeps log records byte-identical.
 from src.sentinel.guarded import record_guarded_pass
 from src.protection.wal_restore_write import write_ahead_restore_row
+
 logger = logging.getLogger("src.pipeline")
 
 # audit F1: a pending_protection_restores row written BEFORE the SELL is
@@ -28,18 +29,21 @@ _WAL_SELL_SENTINEL = "__WAL_PENDING__"
 class SellFinalization:
     """Protection after a sell: the write-ahead restore row, the post-sell finalisation of stop coverage, and the restore after an unconfirmed sell."""
 
-    def __init__(self, *,
-                 broker,
-                 db,
-                 terminal_order_statuses,
-                 finalize_protection_after_sell,
-                 register_exit_settlement,
-                 finalize_protection_after_sell_core,
-                 cancel_stray_stops_on_flat,
-                 current_position_qty_for_finalize,
-                 persist_orphaned_protection_restore,
-                 reprotect_residual_after_partial_sell,
-                 derive_close_side_for_drain) -> None:
+    def __init__(
+        self,
+        *,
+        broker,
+        db,
+        terminal_order_statuses,
+        finalize_protection_after_sell,
+        register_exit_settlement,
+        finalize_protection_after_sell_core,
+        cancel_stray_stops_on_flat,
+        current_position_qty_for_finalize,
+        persist_orphaned_protection_restore,
+        reprotect_residual_after_partial_sell,
+        derive_close_side_for_drain,
+    ) -> None:
         self.broker = broker
         self.db = db
         self._TERMINAL_ORDER_STATUSES = terminal_order_statuses
@@ -74,8 +78,13 @@ class SellFinalization:
             positions = self.broker.get_positions()
             record_guarded_pass((self.db, self.broker), "sell_finalization.position_qty_for_finalize")
         except Exception as exc:
-            record_guarded_pass((self.db, self.broker), "sell_finalization.position_qty_for_finalize", exc,
-                           log=logger, context={"effect": "cached residual math"})
+            record_guarded_pass(
+                (self.db, self.broker),
+                "sell_finalization.position_qty_for_finalize",
+                exc,
+                log=logger,
+                context={"effect": "cached residual math"},
+            )
             return None
         if not isinstance(positions, list):
             return None
@@ -131,17 +140,22 @@ class SellFinalization:
                     # tell "waited, not terminal" from "never waited".
                     prot["terminal_status"] = None
                     logger.warning(
-                        "%s: wait failed for %s order %s: %s — finalize will "
-                        "use whatever fill_info reads now",
-                        context, prot["symbol"], prot["order_id"], exc,
+                        "%s: wait failed for %s order %s: %s — finalize will use whatever fill_info reads now",
+                        context,
+                        prot["symbol"],
+                        prot["order_id"],
+                        exc,
                     )
                 self._register_exit_settlement(prot)
             finalize_side = prot.get("side")
             side_kwargs = {} if not finalize_side or finalize_side == "sell" else {"side": finalize_side}
             ok, _retry_specs = self._finalize_protection_after_sell(
-                prot["order_id"], prot["symbol"],
-                prot["position_qty_before_sell"], prot["specs"],
-                wal_row_id=prot.get("wal_row_id"), **side_kwargs,
+                prot["order_id"],
+                prot["symbol"],
+                prot["position_qty_before_sell"],
+                prot["specs"],
+                wal_row_id=prot.get("wal_row_id"),
+                **side_kwargs,
             )
             prot["coverage_confirmed"] = bool(ok)
             if not ok:
@@ -149,7 +163,9 @@ class SellFinalization:
                     "%s: finalize for %s (order %s) did not confirm stop "
                     "coverage — recovery intent persisted; drain rebuilds "
                     "next session",
-                    context, prot["symbol"], prot["order_id"],
+                    context,
+                    prot["symbol"],
+                    prot["order_id"],
                 )
 
     def _finalize_protection_after_sell(
@@ -179,8 +195,13 @@ class SellFinalization:
         core.
         """
         ok, retry_specs = self._finalize_protection_after_sell_core(
-            order_id, symbol, position_qty_before_sell, cancelled_specs,
-            from_drain=from_drain, wal_row_id=wal_row_id, side=side,
+            order_id,
+            symbol,
+            position_qty_before_sell,
+            cancelled_specs,
+            from_drain=from_drain,
+            wal_row_id=wal_row_id,
+            side=side,
         )
         if ok and wal_row_id is not None and not from_drain:
             try:
@@ -189,7 +210,9 @@ class SellFinalization:
                 logger.warning(
                     "WAL: failed to clear discharged protection-restore "
                     "row %d for %s: %s (drain will no-op it next session)",
-                    wal_row_id, symbol, exc,
+                    wal_row_id,
+                    symbol,
+                    exc,
                 )
         return ok, retry_specs
 
@@ -281,7 +304,9 @@ class SellFinalization:
             logger.warning(
                 "%s on %s did not reach terminal in wait window "
                 "(status=%s) — cancelling so protection state can settle",
-                order_word, symbol, status or "?",
+                order_word,
+                symbol,
+                status or "?",
             )
             try:
                 if not self.broker.cancel_entry_order(order_id):
@@ -292,11 +317,17 @@ class SellFinalization:
                 logger.warning(
                     "Failed to cancel lingering %s on %s (order %s): %s "
                     "— persisting orphaned restore intent for next session.",
-                    order_word, symbol, order_id, exc,
+                    order_word,
+                    symbol,
+                    order_id,
+                    exc,
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
-                        order_id, symbol, position_qty_before_sell, cancelled_specs,
+                        order_id,
+                        symbol,
+                        position_qty_before_sell,
+                        cancelled_specs,
                         wal_row_id=wal_row_id,
                         side=side,
                     )
@@ -306,9 +337,11 @@ class SellFinalization:
             fill_info = self.broker.get_order_fill_info(order_id) or {}
             status = (fill_info.get("status") or "").lower()
             logger.info(
-                "Cancelled lingering %s on %s — post-cancel status=%s, "
-                "filled_qty=%s",
-                order_word, symbol, status, fill_info.get("filled_qty"),
+                "Cancelled lingering %s on %s — post-cancel status=%s, filled_qty=%s",
+                order_word,
+                symbol,
+                status,
+                fill_info.get("filled_qty"),
             )
             # Cancel propagation can take longer than the 5s wait window,
             # especially during halts or illiquid conditions. If status
@@ -322,11 +355,16 @@ class SellFinalization:
                     "Cancel of lingering %s on %s did not converge to "
                     "terminal within 5s (post-cancel status=%s) — "
                     "persisting orphaned restore intent for next session.",
-                    order_word, symbol, status or "?",
+                    order_word,
+                    symbol,
+                    status or "?",
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
-                        order_id, symbol, position_qty_before_sell, cancelled_specs,
+                        order_id,
+                        symbol,
+                        position_qty_before_sell,
+                        cancelled_specs,
                         wal_row_id=wal_row_id,
                         side=side,
                     )
@@ -355,7 +393,8 @@ class SellFinalization:
                 logger.info(
                     "%s on %s had no fill, but broker reports position=0 "
                     "— concurrent path fully exited; skipping restore",
-                    order_word, symbol,
+                    order_word,
+                    symbol,
                 )
                 self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
                 return True, []
@@ -370,14 +409,23 @@ class SellFinalization:
                         "%s on %s had no fill, but broker position=%.4f "
                         "< original spec qty=%.4f — concurrent path reduced "
                         "position; collapsing restore to single reprotect",
-                        order_word, symbol, current_qty, total_spec_qty,
+                        order_word,
+                        symbol,
+                        current_qty,
+                        total_spec_qty,
                     )
                     if not self._reprotect_residual_after_partial_sell(
-                        symbol, current_qty, cancelled_specs, **side_kwargs,
+                        symbol,
+                        current_qty,
+                        cancelled_specs,
+                        **side_kwargs,
                     ):
                         if not from_drain:
                             self._persist_orphaned_protection_restore(
-                                order_id, symbol, current_qty, cancelled_specs,
+                                order_id,
+                                symbol,
+                                current_qty,
+                                cancelled_specs,
                                 wal_row_id=wal_row_id,
                                 side=side,
                             )
@@ -389,22 +437,32 @@ class SellFinalization:
                 # re-submit dupes that broke down on held_for_orders
                 # before the audit fix.
                 restored, failed_specs = self.broker._restore_stop_orders(
-                    symbol, cancelled_specs, check_idempotency=from_drain, **side_kwargs,
+                    symbol,
+                    cancelled_specs,
+                    check_idempotency=from_drain,
+                    **side_kwargs,
                 )
                 logger.info(
-                    "%s on %s terminated with no fill (status=%s) — "
-                    "restored %d/%d original protective stop(s)",
-                    order_word, symbol, status or "?", restored, len(cancelled_specs),
+                    "%s on %s terminated with no fill (status=%s) — restored %d/%d original protective stop(s)",
+                    order_word,
+                    symbol,
+                    status or "?",
+                    restored,
+                    len(cancelled_specs),
                 )
             except Exception as exc:
                 logger.warning(
-                    "Failed to restore stops for %s after no-fill %s: %s — "
-                    "persisting recovery intent",
-                    symbol, order_word, exc,
+                    "Failed to restore stops for %s after no-fill %s: %s — persisting recovery intent",
+                    symbol,
+                    order_word,
+                    exc,
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
-                        order_id, symbol, position_qty_before_sell, cancelled_specs,
+                        order_id,
+                        symbol,
+                        position_qty_before_sell,
+                        cancelled_specs,
                         wal_row_id=wal_row_id,
                         side=side,
                     )
@@ -417,13 +475,18 @@ class SellFinalization:
             # already alive at the broker, retrying would double-stack).
             if failed_specs:
                 logger.warning(
-                    "Restore for %s submitted %d/%d stops — %d failed; "
-                    "persisting failed spec(s) for retry",
-                    symbol, restored, len(cancelled_specs), len(failed_specs),
+                    "Restore for %s submitted %d/%d stops — %d failed; persisting failed spec(s) for retry",
+                    symbol,
+                    restored,
+                    len(cancelled_specs),
+                    len(failed_specs),
                 )
                 if not from_drain:
                     self._persist_orphaned_protection_restore(
-                        order_id, symbol, position_qty_before_sell, failed_specs,
+                        order_id,
+                        symbol,
+                        position_qty_before_sell,
+                        failed_specs,
                         wal_row_id=wal_row_id,
                         side=side,
                     )
@@ -442,7 +505,8 @@ class SellFinalization:
             logger.info(
                 "Finalize for %s: cached residual=%.4f but broker shows "
                 "position=0 — concurrent path fully exited; skipping reprotect",
-                symbol, computed_residual,
+                symbol,
+                computed_residual,
             )
             self._cancel_stray_stops_on_flat(symbol, **side_kwargs)
             return True, []
@@ -450,7 +514,9 @@ class SellFinalization:
             logger.warning(
                 "Finalize for %s: clipping residual from %.4f to %.4f "
                 "(broker position decreased — concurrent SELL took shares)",
-                symbol, computed_residual, current_qty,
+                symbol,
+                computed_residual,
+                current_qty,
             )
             actual_residual = current_qty
         else:
@@ -469,7 +535,10 @@ class SellFinalization:
             return True, []  # full exit — no residual to re-protect
 
         if not self._reprotect_residual_after_partial_sell(
-            symbol, actual_residual, cancelled_specs, **side_kwargs,
+            symbol,
+            actual_residual,
+            cancelled_specs,
+            **side_kwargs,
         ):
             # Reprotect submit raised. Persist so a later session can retry.
             # Codex r9 #1: previously this just returned False without
@@ -489,7 +558,10 @@ class SellFinalization:
             # this correct even if a concurrent SELL took shares meanwhile.
             if not from_drain:
                 self._persist_orphaned_protection_restore(
-                    order_id, symbol, position_qty_before_sell, cancelled_specs,
+                    order_id,
+                    symbol,
+                    position_qty_before_sell,
+                    cancelled_specs,
                     wal_row_id=wal_row_id,
                     side=side,
                 )
@@ -517,7 +589,9 @@ class SellFinalization:
             logger.warning(
                 "stray-stop cleanup after full exit of %s failed: %s — a "
                 "protective stop may still rest on the flat position; the "
-                "operator should confirm it is gone", symbol, exc,
+                "operator should confirm it is gone",
+                symbol,
+                exc,
             )
 
     def _write_ahead_protection_restore(
@@ -555,8 +629,13 @@ class SellFinalization:
         to guess it back from live broker state later.
         """
         return write_ahead_restore_row(
-            self.db, logger, _WAL_SELL_SENTINEL, symbol,
-            position_qty_before_sell, specs, side,
+            self.db,
+            logger,
+            _WAL_SELL_SENTINEL,
+            symbol,
+            position_qty_before_sell,
+            specs,
+            side,
         )
 
     def _restore_after_unconfirmed_sell(
@@ -601,49 +680,61 @@ class SellFinalization:
         current = current_raw if current_raw is None else abs(current_raw)
         if current == 0:
             logger.info(
-                "WAL drain: %s now flat — SELL must have filled / position "
-                "gone; no protection to restore", symbol,
+                "WAL drain: %s now flat — SELL must have filled / position gone; no protection to restore",
+                symbol,
             )
             return True, []
         if current is None:
             logger.warning(
-                "WAL drain: %s position unknown (broker error) — leaving "
-                "row for next session", symbol,
+                "WAL drain: %s position unknown (broker error) — leaving row for next session",
+                symbol,
             )
             return False, list(cancelled_specs)
-        total_spec_qty = sum(
-            float(s.get("qty", 0) or 0) for s in cancelled_specs
-        )
+        total_spec_qty = sum(float(s.get("qty", 0) or 0) for s in cancelled_specs)
         if current + 1e-6 < total_spec_qty:
             logger.warning(
                 "WAL drain: %s position=%.4f < original spec qty=%.4f "
                 "(SELL partially filled before crash) — collapsing to a "
-                "single most-protective stop", symbol, current, total_spec_qty,
+                "single most-protective stop",
+                symbol,
+                current,
+                total_spec_qty,
             )
             if not self._reprotect_residual_after_partial_sell(
-                symbol, current, cancelled_specs, **side_kwargs,
+                symbol,
+                current,
+                cancelled_specs,
+                **side_kwargs,
             ):
                 return False, list(cancelled_specs)
             return True, []
         try:
             restored, failed = self.broker._restore_stop_orders(
-                symbol, cancelled_specs, check_idempotency=True, **side_kwargs,
+                symbol,
+                cancelled_specs,
+                check_idempotency=True,
+                **side_kwargs,
             )
         except Exception as exc:
             logger.warning(
                 "WAL drain: restore raised for %s: %s — leaving row",
-                symbol, exc,
+                symbol,
+                exc,
             )
             return False, list(cancelled_specs)
         if failed:
             logger.warning(
                 "WAL drain: %s restored %d/%d stop(s) — %d still failing",
-                symbol, restored, len(cancelled_specs), len(failed),
+                symbol,
+                restored,
+                len(cancelled_specs),
+                len(failed),
             )
             return False, list(failed)
         logger.info(
             "WAL drain: %s restored %d original protective stop(s)",
-            symbol, restored,
+            symbol,
+            restored,
         )
         return True, []
 
@@ -686,6 +777,7 @@ class SellFinalization:
         if not cancelled_specs:
             return
         import json as _json
+
         specs_json = _json.dumps(cancelled_specs)
         try:
             if wal_row_id is not None:
@@ -699,7 +791,10 @@ class SellFinalization:
                 logger.info(
                     "WAL: updated protection-restore row %d for %s "
                     "(order %s, %d cancelled stop(s)) — drain retries next "
-                    "session", wal_row_id, symbol, order_id,
+                    "session",
+                    wal_row_id,
+                    symbol,
+                    order_id,
                     len(cancelled_specs),
                 )
             else:
@@ -713,14 +808,17 @@ class SellFinalization:
                 logger.info(
                     "Persisted orphaned protection-restore for %s (order %s, "
                     "%d cancelled stop(s)) — drain pass will retry next session",
-                    symbol, order_id, len(cancelled_specs),
+                    symbol,
+                    order_id,
+                    len(cancelled_specs),
                 )
         except Exception as exc:
             logger.error(
                 "Failed to persist orphaned protection-restore for %s: %s — "
                 "position is unprotected with no recovery plan; manual "
                 "intervention required",
-                symbol, exc,
+                symbol,
+                exc,
             )
 
     def _derive_close_side_for_drain(self, symbol: str) -> str | None:

@@ -12,6 +12,7 @@ it never imports `src.pipeline`.
 `sweeper` is a zero-argument callable returning the cash sweeper or None; a
 caller with none gets a gate whose sweep hooks are structural no-ops.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -24,12 +25,16 @@ def _no_sweeper() -> None:
 
 
 def build_risk_gate(
-    *, config, risk_engine=None, db=None,
+    *,
+    config,
+    risk_engine=None,
+    db=None,
     sweeper: Callable[[], object | None] | None = None,
 ) -> RiskGate:
     """The risk-verdict gate, from plain collaborators."""
     return RiskGate(
-        risk_engine=risk_engine, db=db,
+        risk_engine=risk_engine,
+        db=db,
         sweeper=sweeper if sweeper is not None else _no_sweeper,
         config=config,
     )
@@ -64,8 +69,7 @@ class RiskGateSlot:
             and gate._sweeper == sweeper
         ):
             return gate
-        gate = build_risk_gate(
-            config=config, risk_engine=risk_engine, db=db, sweeper=sweeper)
+        gate = build_risk_gate(config=config, risk_engine=risk_engine, db=db, sweeper=sweeper)
         obj.__dict__[self._key] = gate
         return gate
 

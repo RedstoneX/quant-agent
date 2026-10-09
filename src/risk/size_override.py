@@ -163,4 +163,3 @@ class SizeOverride:
         # no_trading/close/reduce_only combined with their own kind is
         # idempotent — there is no magnitude to reconcile.
         return self
-

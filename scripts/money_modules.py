@@ -25,6 +25,7 @@ A list a human must remember to extend is silent on exactly the module the
 last refactor created. If the SDK cannot be imported the derivation REFUSES
 (``ReferenceUnavailable``); it never falls back to a pinned set.
 """
+
 from __future__ import annotations
 
 import ast
@@ -120,12 +121,10 @@ def _source_paths(root: Path, source_dir: str | None) -> list[Path]:
     """Modules to load: git's tracked production ``.py`` set, or one named directory for tests."""
     if source_dir is not None:
         return sorted((root / source_dir).rglob("*.py"))
-    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"],
-                         capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"], capture_output=True, text=True)
     if out.returncode or not out.stdout.strip():
         raise ReferenceUnavailable(f"git ls-files listed no sources under {root}; refusing")
-    return [root / p for p in sorted(out.stdout.splitlines())
-            if p.endswith(".py") and p.split("/", 1)[0] != "tests"]
+    return [root / p for p in sorted(out.stdout.splitlines()) if p.endswith(".py") and p.split("/", 1)[0] != "tests"]
 
 
 def _load(root: Path, source_dir: str | None) -> dict[str, _Module]:
@@ -161,9 +160,7 @@ def _candidates(
         # no local def and no import: the name was bound by assignment
         # (``size = pipeline._size_shares``); fall back to every def of that name
         return same or [(m, name) for m in owners.get(name, ())]
-    found = same + [
-        (m, name) for m in mod.imported_modules if m in mods and m != mod.rel and name in mods[m].defs
-    ]
+    found = same + [(m, name) for m in mod.imported_modules if m in mods and m != mod.rel and name in mods[m].defs]
     return found or [(m, name) for m in owners.get(name, ())]
 
 

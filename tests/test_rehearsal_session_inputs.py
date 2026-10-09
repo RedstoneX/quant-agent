@@ -136,8 +136,7 @@ def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
 
     def fallback(*_args):
         counts["fallback"] += 1
-        return [OHLCV(date=date(2026, 9, 1), open=10, high=11,
-                      low=9, close=10, volume=100)]
+        return [OHLCV(date=date(2026, 9, 1), open=10, high=11, low=9, close=10, volume=100)]
 
     monkeypatch.setattr(yf, "download", empty_download)
     market = MarketDataProvider(fallback_bars=fallback)
@@ -152,9 +151,14 @@ def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
 
 
 def test_unconsumed_provider_answer_fails_closed():
-    ledger = SessionInputs({"schema": 1, "entries": [
-        {"kind": "FRED.get_series", "key": "DGS10", "value": 42},
-    ]})
+    ledger = SessionInputs(
+        {
+            "schema": 1,
+            "entries": [
+                {"kind": "FRED.get_series", "key": "DGS10", "value": 42},
+            ],
+        }
+    )
     with pytest.raises(SessionInputError, match="not consumed"):
         ledger.assert_consumed()
 

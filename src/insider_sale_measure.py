@@ -93,12 +93,14 @@ def join_forward_returns(
             if fr is None:
                 rec["excluded_reason"] = EXCLUDED_UNRESOLVED
             else:
-                rec.update({
-                    "forward_return_pct": fr["forward_return_pct"],
-                    "entry_date": fr["entry_date"],
-                    "exit_date": fr["exit_date"],
-                    "sessions_forward": fr["sessions_forward"],
-                })
+                rec.update(
+                    {
+                        "forward_return_pct": fr["forward_return_pct"],
+                        "entry_date": fr["entry_date"],
+                        "exit_date": fr["exit_date"],
+                        "sessions_forward": fr["sessions_forward"],
+                    }
+                )
         if rec["excluded_reason"]:
             excluded[rec["excluded_reason"]] = excluded.get(rec["excluded_reason"], 0) + 1
         records.append(rec)
@@ -126,8 +128,14 @@ def summarize(values: Sequence[float]) -> dict:
     vals = [float(v) for v in values if v is not None]
     n = len(vals)
     if n == 0:
-        return {"n": 0, "mean_pct": None, "median_pct": None,
-                "stdev_pct": None, "stderr_pct": None, "share_negative_pct": None}
+        return {
+            "n": 0,
+            "mean_pct": None,
+            "median_pct": None,
+            "stdev_pct": None,
+            "stderr_pct": None,
+            "share_negative_pct": None,
+        }
     mean = sum(vals) / n
     stdev = statistics.stdev(vals) if n > 1 else None
     return {
@@ -135,10 +143,8 @@ def summarize(values: Sequence[float]) -> dict:
         "mean_pct": round(mean, 4),
         "median_pct": round(statistics.median(vals), 4),
         "stdev_pct": round(stdev, 4) if stdev is not None else None,
-        "stderr_pct": round(stdev / (n ** 0.5), 4) if stdev is not None else None,
-        "share_negative_pct": round(
-            100.0 * sum(1 for v in vals if v < 0) / n, 2
-        ),
+        "stderr_pct": round(stdev / (n**0.5), 4) if stdev is not None else None,
+        "share_negative_pct": round(100.0 * sum(1 for v in vals if v < 0) / n, 2),
     }
 
 

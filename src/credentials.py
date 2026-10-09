@@ -201,10 +201,10 @@ from src.credential_placeholder import (  # noqa: E402,F401  re-export
 )
 
 
-
 # ---------------------------------------------------------------------------
 # Startup reporting
 # ---------------------------------------------------------------------------
+
 
 def describe_delivery(
     resolved: dict[str, str],
@@ -231,9 +231,7 @@ def describe_delivery(
     for field_name, env_name in broker_fields.items():
         value = getattr(api_keys, field_name, "") or ""
         source = "systemd credential" if env_name in resolved else "environment (.env)"
-        facts.append(
-            f"{field_name}: delivered via {source}, {len(value)} characters"
-        )
+        facts.append(f"{field_name}: delivered via {source}, {len(value)} characters")
         reason = placeholder_reason(value)
         if reason is not None:
             problems.append(
@@ -270,9 +268,7 @@ def describe_delivery(
 # is the same once-a-day marker shape the coverage and silence watchdogs already
 # use — no new mechanism, no tunable number. The log line is UNCHANGED and still
 # written on every single start; only the push is rationed.
-STATE_PATH = (
-    alerting_dir() / "credential_placeholder.json"
-)
+STATE_PATH = alerting_dir() / "credential_placeholder.json"
 
 
 def _today() -> date:
@@ -315,7 +311,11 @@ def save_state(state: dict[str, object], path: Path | None = None) -> bool:
 
 
 def report_startup_credentials(
-    api_keys: object, *, logger, alert: bool = True, state_path: Path | None = None,
+    api_keys: object,
+    *,
+    logger,
+    alert: bool = True,
+    state_path: Path | None = None,
 ) -> list[str]:
     """Log how the broker credentials arrived and shout about placeholder-shaped ones.
 
@@ -346,8 +346,7 @@ def report_startup_credentials(
         state = load_state(state_path)
         if state.get("alerted_for_day") == day:
             logger.info(
-                "placeholder credential already reported to the owner today (%s) — "
-                "logging only, not pushing again",
+                "placeholder credential already reported to the owner today (%s) — logging only, not pushing again",
                 day,
             )
         else:
@@ -360,8 +359,7 @@ def report_startup_credentials(
                 # is re-stated daily rather than paged on every entrypoint.
                 body = " ".join(problems)
                 send_owner_alert(
-                    "Placeholder trading credential in use "
-                    "(reported once a day while this stays true). " + body
+                    "Placeholder trading credential in use (reported once a day while this stays true). " + body
                 )
             except Exception as exc:  # noqa: BLE001 - notification must never block startup
                 logger.warning("could not alert the owner about a placeholder credential: %s", exc)

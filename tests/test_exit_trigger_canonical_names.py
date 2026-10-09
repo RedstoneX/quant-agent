@@ -54,7 +54,9 @@ SANCTIONED = tuple(t for t in ExitTrigger if t is not ExitTrigger.CANNOT_SUBSTAN
 
 def _classify(reason, trigger=None, trigger_evidence=None):
     return classify_trigger_reason(
-        reason, cites=_reason_cites_hard_trigger, trigger=trigger,
+        reason,
+        cites=_reason_cites_hard_trigger,
+        trigger=trigger,
         trigger_evidence=trigger_evidence,
     )
 
@@ -105,10 +107,14 @@ EVIDENCE = "state_change row 2026-09-25 for the symbol, direction bearish"
 def test_every_sanctioned_trigger_is_classifiable_by_the_structured_field(trigger):
     """No PROSE exclusions on this path — a seat that fills the typed field
     with a sanctioned trigger AND says what it rests on has named one."""
-    assert _classify(
-        "no recognised wording here at all",
-        trigger=trigger, trigger_evidence=EVIDENCE,
-    ) == "named"
+    assert (
+        _classify(
+            "no recognised wording here at all",
+            trigger=trigger,
+            trigger_evidence=EVIDENCE,
+        )
+        == "named"
+    )
     assert _classify("", trigger=trigger.value, trigger_evidence=EVIDENCE) == "named"
 
 
@@ -130,13 +136,23 @@ def test_the_bare_structured_field_does_not_settle_the_judgment():
     assert _classify(laundered, trigger="adverse_news") == "unnamed"
     assert _classify(laundered, trigger="adverse_news", trigger_evidence="") == "unnamed"
     # Evidence that only recites the trigger's own phrases is not evidence.
-    assert _classify(
-        laundered, trigger="adverse_news", trigger_evidence="adverse news",
-    ) == "unnamed"
+    assert (
+        _classify(
+            laundered,
+            trigger="adverse_news",
+            trigger_evidence="adverse news",
+        )
+        == "unnamed"
+    )
     # With a real record behind it, the seat has named and supported one.
-    assert _classify(
-        laundered, trigger="adverse_news", trigger_evidence=EVIDENCE,
-    ) == "named"
+    assert (
+        _classify(
+            laundered,
+            trigger="adverse_news",
+            trigger_evidence=EVIDENCE,
+        )
+        == "named"
+    )
 
 
 def test_a_field_without_evidence_still_falls_through_to_the_prose_gate():
@@ -175,9 +191,12 @@ def test_the_prose_exclusion_list_is_exactly_these_two_and_says_why():
     that occurs in prose naming no event ("earnings in three days"), and
     admitting it as a substring would widen the gate to a non-event.
     """
-    assert CANONICAL_NAME_NOT_MATCHED_IN_PROSE == frozenset({
-        ExitTrigger.CANNOT_SUBSTANTIATE, ExitTrigger.EARNINGS,
-    })
+    assert CANONICAL_NAME_NOT_MATCHED_IN_PROSE == frozenset(
+        {
+            ExitTrigger.CANNOT_SUBSTANTIATE,
+            ExitTrigger.EARNINGS,
+        }
+    )
 
 
 def test_the_honest_decline_never_passes_the_gate():
@@ -206,9 +225,7 @@ def assert_trigger_vocabulary_matches_executor_gate() -> None:
     assert "earnings" not in _HARD_TRIGGER_KEYWORDS
     assert "cannot_substantiate" not in _HARD_TRIGGER_KEYWORDS
     assert not (_CHART_VERIFIED_TRIGGER_NAMES & set(_HARD_TRIGGER_KEYWORDS))
-    grouped = {
-        p for phrases in TRIGGER_PHRASES.values() for p in phrases
-    } - _CHART_VERIFIED_TRIGGER_NAMES
+    grouped = {p for phrases in TRIGGER_PHRASES.values() for p in phrases} - _CHART_VERIFIED_TRIGGER_NAMES
     assert grouped == set(_HARD_TRIGGER_KEYWORDS)
 
 
@@ -256,17 +273,19 @@ def test_the_recorded_verifier_gap_is_four_of_the_seven_triggers():
     and updates this list.
     """
     assert set(NO_VERIFIER_EXISTS) == {
-        ExitTrigger.THESIS_INVALID,   # consulted advisory-only, never judged
-        ExitTrigger.SECTOR_SHOCK,     # desk records no sector-scope row
-        ExitTrigger.EARNINGS,         # no branch reads an earnings row
-        ExitTrigger.STOP_FIRED,       # nothing asks the broker for the fill
+        ExitTrigger.THESIS_INVALID,  # consulted advisory-only, never judged
+        ExitTrigger.SECTOR_SHOCK,  # desk records no sector-scope row
+        ExitTrigger.EARNINGS,  # no branch reads an earnings row
+        ExitTrigger.STOP_FIRED,  # nothing asks the broker for the fill
         ExitTrigger.CANNOT_SUBSTANTIATE,  # not a trigger; nothing to verify
     }
-    assert EVENT_TRIGGERS == frozenset({
-        ExitTrigger.BEARISH_STATE_CHANGE,
-        ExitTrigger.ADVERSE_NEWS,
-        ExitTrigger.REGIME_SHIFT,
-    })
+    assert EVENT_TRIGGERS == frozenset(
+        {
+            ExitTrigger.BEARISH_STATE_CHANGE,
+            ExitTrigger.ADVERSE_NEWS,
+            ExitTrigger.REGIME_SHIFT,
+        }
+    )
 
 
 def test_clamp_bypass_divergence_is_pinned_per_trigger():
@@ -299,11 +318,15 @@ def test_clamp_bypass_divergence_is_pinned_per_trigger():
         return any(re.search(p, phrase) for p in EXTERNAL_INFORMATION_PATTERNS)
 
     split = {
-        t.value for t, phrases in TRIGGER_PHRASES.items()
+        t.value
+        for t, phrases in TRIGGER_PHRASES.items()
         if any(bypasses(p) for p in phrases) and not all(bypasses(p) for p in phrases)
     }
     assert split == {
-        "bearish_state_change", "adverse_news", "sector_shock", "regime_shift",
+        "bearish_state_change",
+        "adverse_news",
+        "sector_shock",
+        "regime_shift",
         "stop_fired",
     }, (
         "A trigger's phrases must be all-clamp-bypassing or none, or the "
@@ -320,10 +343,17 @@ def test_no_soft_signal_was_admitted_by_the_widening():
     in through the enum."""
     joined = " ".join(_HARD_TRIGGER_KEYWORDS).lower()
     for banned in (
-        "target", "stretched", "extended", "taking profits", "profit",
-        "de-risk", "concentration", "drift", "correlation", "downgrade",
-        "circuit breaker", "daily loss",
+        "target",
+        "stretched",
+        "extended",
+        "taking profits",
+        "profit",
+        "de-risk",
+        "concentration",
+        "drift",
+        "correlation",
+        "downgrade",
+        "circuit breaker",
+        "daily loss",
     ):
         assert banned not in joined
-
-

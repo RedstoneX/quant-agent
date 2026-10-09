@@ -4,6 +4,7 @@ Alpaca refuses `replace_order_by_id` on an `accepted` order (HTTP 422, measured 
 2026-10-02), the status every resting stop carries after the 16:00 ET close. The row is written
 instead of the amend and discharged by the next open's coverage preamble. Idempotent.
 """
+
 from __future__ import annotations
 
 import sqlite3

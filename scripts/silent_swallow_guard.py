@@ -31,6 +31,7 @@ a listed entry that no longer occurs. It reads no git ref.
 
 Run it directly: ``python -m scripts.silent_swallow_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -41,6 +42,7 @@ from scripts.money_modules import derive as derive_money_modules
 from scripts.swallow_resolver import Resolver, import_bindings  # noqa: F401 -- re-exported
 from scripts.check_allowlist import ALLOWLIST_DIR, compare, report
 from scripts.guard_reference import ROOT, ReferenceUnavailable, enclosing_scopes, site_identity
+
 
 #: Money-touching modules are DERIVED at check time (scripts/money_modules.py):
 #: every module holding a function from which an exchange write is reachable,
@@ -58,8 +60,20 @@ BROAD_NAMES = {"Exception", "BaseException"}
 #: A callee whose first name-token (leading underscores stripped) is one of
 #: these, or which contains one of DURABLE_ANYWHERE, is a durable record.
 DURABLE_FIRST = {
-    "record", "insert", "persist", "save", "upsert", "write", "mark",
-    "claim", "release", "send", "commit", "execute", "replace", "reconcile",
+    "record",
+    "insert",
+    "persist",
+    "save",
+    "upsert",
+    "write",
+    "mark",
+    "claim",
+    "release",
+    "send",
+    "commit",
+    "execute",
+    "replace",
+    "reconcile",
 }
 DURABLE_ANYWHERE = {"alert", "notify", "journal", "record"}
 EMPTY_CALLS = {"list", "dict", "set", "tuple", "str", "int", "float"}
@@ -125,9 +139,7 @@ def _handler_body_nodes(handler: ast.ExceptHandler):
         stack.extend(ast.iter_child_nodes(n))
 
 
-def _swallows_and_returns_empty(
-    handler: ast.ExceptHandler, resolver: Resolver | None = None
-) -> bool:
+def _swallows_and_returns_empty(handler: ast.ExceptHandler, resolver: Resolver | None = None) -> bool:
     returns_empty = False
     for n in _handler_body_nodes(handler):
         if isinstance(n, ast.Raise):
@@ -151,9 +163,7 @@ class _Finder(ast.NodeVisitor):
     function is still seen as an addition (scripts/guard_reference.py).
     """
 
-    def __init__(
-        self, rel: str, scopes: dict[int, str], resolver: Resolver | None = None
-    ) -> None:
+    def __init__(self, rel: str, scopes: dict[int, str], resolver: Resolver | None = None) -> None:
         self.rel, self.scopes, self.hits, self.resolver = rel, scopes, [], resolver
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
@@ -195,9 +205,7 @@ def violations(modules: tuple[str, ...] | None = None) -> list[tuple[Site, int]]
 ALLOWLIST = ALLOWLIST_DIR / "code_silent_swallow.txt"
 
 
-def check(
-    modules: tuple[str, ...] | None = None, allowlist: Path = ALLOWLIST
-) -> tuple[list[str], list[str]]:
+def check(modules: tuple[str, ...] | None = None, allowlist: Path = ALLOWLIST) -> tuple[list[str], list[str]]:
     """``(unlisted, stale)``: swallows missing from the fixed list, and listed ones now gone."""
     return compare([site for site, _ in violations(modules)], allowlist)
 
@@ -223,7 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if unlisted or stale:
         print(
-            "Silent swallows on money paths differ from " + ALLOWLIST.name + ":\n"
+            "Silent swallows on money paths differ from "
+            + ALLOWLIST.name
+            + ":\n"
             + delta_report(unlisted, stale)
             + ("\n" + FIX_ADVICE if unlisted else ""),
             file=sys.stderr,

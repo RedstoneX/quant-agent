@@ -33,6 +33,7 @@ declaration, not a comment: ``git grep NO_LEDGER`` lists every exempt site, so
 Prefer finding a handle over declaring exemption; declare it only when the
 walk above genuinely has nothing to walk.
 """
+
 from __future__ import annotations
 
 import logging

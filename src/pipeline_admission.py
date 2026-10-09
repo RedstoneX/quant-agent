@@ -21,7 +21,12 @@ class AdmissionService:
     """Universe admission, standalone: no `TradingPipeline` required."""
 
     def __init__(
-        self, *, config, broker, market, journal: EventJournal,
+        self,
+        *,
+        config,
+        broker,
+        market,
+        journal: EventJournal,
         sec_form4_provider=None,
         constructor_cfg_fn: Callable[[], object | None] = lambda: None,
     ) -> None:
@@ -44,9 +49,7 @@ class AdmissionService:
     ) -> tuple[list[TradeDecision], list[str]]:
         universe = {symbol.strip().upper() for symbol in self.config.trading.universe}
         buy_allowlist = universe | {
-            str(symbol).strip().upper()
-            for symbol in (admitted_symbols or set())
-            if str(symbol).strip()
+            str(symbol).strip().upper() for symbol in (admitted_symbols or set()) if str(symbol).strip()
         }
         analyzed_symbols = {analysis.symbol.strip().upper() for analysis in analyses}
         held_symbols = {position.symbol.strip().upper() for position in positions}
@@ -70,9 +73,7 @@ class AdmissionService:
                     )
                     continue
             elif decision.action == "SELL" and symbol not in held_symbols:
-                blocked_reasons.append(
-                    f"{symbol} is not an existing holding and cannot be sold"
-                )
+                blocked_reasons.append(f"{symbol} is not an existing holding and cannot be sold")
                 continue
             # Stage 3 (shorts). SHORT is the sell-side entry twin of BUY —
             # same universe/analyst-coverage bar, because it opens/adds new
@@ -95,9 +96,7 @@ class AdmissionService:
             # COVER is the buy-side exit twin of SELL — same held-position
             # bar. Same fail-OPEN gap as SHORT above without this branch.
             elif decision.action == "COVER" and symbol not in held_symbols:
-                blocked_reasons.append(
-                    f"{symbol} is not an existing holding and cannot be covered"
-                )
+                blocked_reasons.append(f"{symbol} is not an existing holding and cannot be covered")
                 continue
 
             allowed_decisions.append(decision)
@@ -144,10 +143,13 @@ class AdmissionService:
             logger.info("%s admission rejected %s: %s", context, symbol, reason)
             return False, reason, {}
         try:
-            bars = self.market.get_ohlcv(
-                symbol,
-                max(self.config.trading.lookback_days, cfg.min_external_history_days + 5),
-            ) or []
+            bars = (
+                self.market.get_ohlcv(
+                    symbol,
+                    max(self.config.trading.lookback_days, cfg.min_external_history_days + 5),
+                )
+                or []
+            )
         except Exception as exc:
             logger.warning("%s admission bars failed for %s: %s", context, symbol, exc)
             return False, "market_data_error", {}
@@ -172,13 +174,18 @@ class AdmissionService:
         if last_price < cfg.min_external_price_usd:
             logger.info(
                 "%s admission rejected %s: price %.2f < %.2f",
-                context, symbol, last_price, cfg.min_external_price_usd,
+                context,
+                symbol,
+                last_price,
+                cfg.min_external_price_usd,
             )
             return False, "price_below_minimum", {}
         if avg_dollar_volume_usd < cfg.min_external_avg_dollar_volume_usd:
             logger.info(
                 "%s admission rejected %s: avg dollar volume %.0f < %.0f",
-                context, symbol, avg_dollar_volume_usd,
+                context,
+                symbol,
+                avg_dollar_volume_usd,
                 cfg.min_external_avg_dollar_volume_usd,
             )
             return False, "dollar_volume_below_minimum", {}
@@ -186,12 +193,16 @@ class AdmissionService:
         if sector == "Unknown":
             logger.info("%s admission rejected %s: unresolved_sector", context, symbol)
             return False, "unresolved_sector", {}
-        return True, None, {
-            "last_price": round(last_price, 4),
-            "avg_dollar_volume_20d_usd": round(avg_dollar_volume_usd, 2),
-            "sector": sector,
-            "broker": broker_fact,
-        }
+        return (
+            True,
+            None,
+            {
+                "last_price": round(last_price, 4),
+                "avg_dollar_volume_20d_usd": round(avg_dollar_volume_usd, 2),
+                "sector": sector,
+                "broker": broker_fact,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Universe expansion and pruning (src/universe_screen.py). Everything
@@ -231,7 +242,10 @@ class AdmissionService:
         )
 
     def _evaluate_screened_admission(
-        self, symbol: str, *, context: str,
+        self,
+        symbol: str,
+        *,
+        context: str,
     ) -> tuple[bool, str | None, dict]:
         """The side-door gate when the universe screen is on: the SAME
         `screen_symbol` the weekly screen runs, so a Form 4 purchase or a
@@ -246,24 +260,32 @@ class AdmissionService:
         # issuer filing history, one request timeout each.
         deadline = _time.monotonic() + float(self.config.smart_money.request_timeout_s) * 2
         result = screen_symbol(
-            symbol, self._universe_screen_sources(deadline),
+            symbol,
+            self._universe_screen_sources(deadline),
             ScreenThresholds.from_config(
-                self.config, self._constructor_cfg_or_none(),
+                self.config,
+                self._constructor_cfg_or_none(),
             ),
         )
         if not result.passed:
             logger.info(
                 "UNIVERSE_SCREEN %s admission rejected %s: %s",
-                context, symbol, ", ".join(result.failures),
+                context,
+                symbol,
+                ", ".join(result.failures),
             )
             return False, result.reason, {}
         measured = dict(result.measured)
-        return True, None, {
-            "last_price": measured.get("last_price"),
-            "sector": measured.get("sector"),
-            "screen": "universe_screen",
-            "screen_measured": measured,
-        }
+        return (
+            True,
+            None,
+            {
+                "last_price": measured.get("last_price"),
+                "sector": measured.get("sector"),
+                "screen": "universe_screen",
+                "screen_measured": measured,
+            },
+        )
 
     def _form4_admission_is_current(self, observation) -> bool:
         """The Form 4 door's age gate, restored (screen on only).
@@ -303,13 +325,11 @@ class AdmissionService:
 
         store = UniverseStore(self.config.universe_screen.data_dir)
         state = store.load()
-        held = {
-            str(getattr(p, "symbol", "") or "").strip().upper()
-            for p in (positions or [])
-        }
+        held = {str(getattr(p, "symbol", "") or "").strip().upper() for p in (positions or [])}
         configured = {str(s).strip().upper() for s in self.config.trading.universe}
         chosen = select_for_run(
-            state, held=held,
+            state,
+            held=held,
             cap=int(self.config.nominations.max_per_seat_per_run),
             today=et_today(),
         )
@@ -330,7 +350,10 @@ class AdmissionService:
         import time as _time
 
         from src.universe_screen import (
-            HISTORY_FETCH_DAYS, ScreenThresholds, UniverseStore, run_screen,
+            HISTORY_FETCH_DAYS,
+            ScreenThresholds,
+            UniverseStore,
+            run_screen,
         )
         from src.util.time import et_today
 
@@ -353,10 +376,12 @@ class AdmissionService:
                 assets=assets,
                 sources=self._universe_screen_sources(deadline, listed=listed),
                 get_bars_batch=lambda chunk: self.market.get_ohlcv_batch(
-                    chunk, HISTORY_FETCH_DAYS,
+                    chunk,
+                    HISTORY_FETCH_DAYS,
                 ),
                 th=ScreenThresholds.from_config(
-                    self.config, self._constructor_cfg_or_none(),
+                    self.config,
+                    self._constructor_cfg_or_none(),
                 ),
                 today=et_today(),
                 held=held,
@@ -371,23 +396,32 @@ class AdmissionService:
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         for event in run.events:
             self.journal.persist_evidence(
-                run_id=run_id, agent_name="universe_screen",
-                kind="universe_change", scope="symbol", symbol=event.get("symbol"),
+                run_id=run_id,
+                agent_name="universe_screen",
+                kind="universe_change",
+                scope="symbol",
+                symbol=event.get("symbol"),
                 evidence_json=_json.dumps(event, sort_keys=True),
             )
         summary = run.summary()
         self.journal.persist_evidence(
-            run_id=run_id, agent_name="universe_screen",
-            kind="universe_screen_run", scope="run",
+            run_id=run_id,
+            agent_name="universe_screen",
+            kind="universe_screen_run",
+            scope="run",
             evidence_json=_json.dumps(
-                {k: v for k, v in summary.items() if k != "events"}, sort_keys=True,
+                {k: v for k, v in summary.items() if k != "events"},
+                sort_keys=True,
             ),
         )
         logger.info(
-            "UNIVERSE_SCREEN pass: %d candidates, %d screened, %d passed, %d "
-            "unreadable, %d change(s), deadline %s",
-            run.candidates, run.screened, run.passed, run.inconclusive,
-            len(run.events), "hit" if run.deadline_hit else "not hit",
+            "UNIVERSE_SCREEN pass: %d candidates, %d screened, %d passed, %d unreadable, %d change(s), deadline %s",
+            run.candidates,
+            run.screened,
+            run.passed,
+            run.inconclusive,
+            len(run.events),
+            "hit" if run.deadline_hit else "not hit",
         )
         return summary
 
@@ -405,10 +439,7 @@ class AdmissionService:
             result["universe_changes"] = {
                 "events": events,
                 "admitted_count": len(state.get("admitted") or {}),
-                "flagged_count": sum(
-                    1 for r in (state.get("admitted") or {}).values()
-                    if r.get("status") == "flagged"
-                ),
+                "flagged_count": sum(1 for r in (state.get("admitted") or {}).values() if r.get("status") == "flagged"),
             }
             if events:
                 state["events"] = []
@@ -439,11 +470,10 @@ class AdmissionService:
         """
         admitted: set[str] = set()
         details: dict[str, dict] = {}
-        for symbol in sorted({
-            str(s).strip().upper() for s in symbols if str(s).strip()
-        }):
+        for symbol in sorted({str(s).strip().upper() for s in symbols if str(s).strip()}):
             eligible, _reason, gate_details = self._evaluate_external_admission_gates(
-                symbol, context="nomination",
+                symbol,
+                context="nomination",
             )
             if not eligible:
                 continue
@@ -470,11 +500,7 @@ class AdmissionService:
         RunContext.
         """
         cfg = self.config.smart_money
-        configured = {
-            str(symbol).strip().upper()
-            for symbol in self.config.trading.universe
-            if str(symbol).strip()
-        }
+        configured = {str(symbol).strip().upper() for symbol in self.config.trading.universe if str(symbol).strip()}
         screen_on = self._universe_screen_enabled()
         grouped: dict[str, list] = {}
         for observation in observations or []:
@@ -489,7 +515,8 @@ class AdmissionService:
                 logger.info(
                     "UNIVERSE_SCREEN SEC transient admission skipped %s: purchase "
                     "disclosed %s, older than the desk's %d-session horizon",
-                    symbol, getattr(observation, "disclosure_date", "?"),
+                    symbol,
+                    getattr(observation, "disclosure_date", "?"),
                     int(self.config.risk.max_target_horizon_sessions),
                 )
                 continue
@@ -507,31 +534,38 @@ class AdmissionService:
             if len(admitted) >= cfg.max_external_candidates:
                 break
             eligible, _reason, gate_details = self._evaluate_external_admission_gates(
-                symbol, context="SEC transient",
+                symbol,
+                context="SEC transient",
             )
             if not eligible:
                 continue
-            accessions = sorted({
-                str(getattr(row, "accession_number", "") or "") for row in rows
-                if getattr(row, "accession_number", None)
-            })
-            total_value = round(sum(
-                float(getattr(row, "transaction_value_usd", 0) or 0) for row in rows
-            ), 2)
-            owners = sorted({
-                str(getattr(row, "actor", "") or "").strip() for row in rows
-                if str(getattr(row, "actor", "") or "").strip()
-            })
+            accessions = sorted(
+                {
+                    str(getattr(row, "accession_number", "") or "")
+                    for row in rows
+                    if getattr(row, "accession_number", None)
+                }
+            )
+            total_value = round(sum(float(getattr(row, "transaction_value_usd", 0) or 0) for row in rows), 2)
+            owners = sorted(
+                {
+                    str(getattr(row, "actor", "") or "").strip()
+                    for row in rows
+                    if str(getattr(row, "actor", "") or "").strip()
+                }
+            )
             # Every admitting row is opportunistic by construction — the
             # provider strips routine purchases from ``admission_eligible``.
             # Carrying the reasons through anyway makes the operator's
             # admission record self-explaining rather than requiring a
             # re-derivation from the raw filing.
-            signal_reasons = sorted({
-                str(getattr(row, "signal_class_reason", "") or "")
-                for row in rows
-                if getattr(row, "signal_class_reason", "")
-            })
+            signal_reasons = sorted(
+                {
+                    str(getattr(row, "signal_class_reason", "") or "")
+                    for row in rows
+                    if getattr(row, "signal_class_reason", "")
+                }
+            )
             details[symbol] = {
                 "temporary": True,
                 "reason": "material_sec_form4_purchase",

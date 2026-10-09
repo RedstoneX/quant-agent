@@ -9,6 +9,7 @@ anywhere in sight.
 
 Disclosure only. Nothing here refuses, scores or holds a threshold.
 """
+
 from __future__ import annotations
 
 import logging
@@ -74,24 +75,18 @@ class EvidenceFreshness:
         parts = [
             f"{len(self.fresh)} of {self.seats} research seat(s) were read on "
             f"this tick ({', '.join(self.fresh) or 'none'})",
-            f"carried from earlier without being re-read: "
-            f"{', '.join(self.carried) or 'none'}",
+            f"carried from earlier without being re-read: {', '.join(self.carried) or 'none'}",
             f"no answer at all: {', '.join(self.absent) or 'none'}",
         ]
         if self.known_out_of_date:
-            parts.append(
-                "carried answers the desk knows are superseded: "
-                + ", ".join(self.known_out_of_date)
-            )
+            parts.append("carried answers the desk knows are superseded: " + ", ".join(self.known_out_of_date))
         if self.unknown:
             parts.append(
-                "seats whose state this desk cannot classify (NOT counted as "
-                "read): " + ", ".join(self.unknown)
+                "seats whose state this desk cannot classify (NOT counted as read): " + ", ".join(self.unknown)
             )
         return "; ".join(parts)
 
-    def stamped(self, *, run_id=None, mode=None, stamped_at=None,
-                prior_reads=None) -> "EvidenceFreshness":
+    def stamped(self, *, run_id=None, mode=None, stamped_at=None, prior_reads=None) -> "EvidenceFreshness":
         """Return the same classification carrying WHEN and WHICH RUN.
 
         A separate step from `freshness()` because the classification is
@@ -147,8 +142,10 @@ class EvidenceFreshness:
         stamps: dict[str, dict] = {}
         for seat in self.fresh:
             stamps[seat] = {
-                "state": READ_REFRESHED, "run_id": self.run_id,
-                "mode": self.mode, "at": self.stamped_at,
+                "state": READ_REFRESHED,
+                "run_id": self.run_id,
+                "mode": self.mode,
+                "at": self.stamped_at,
                 # Zero by construction, not by a literal: this module is
                 # held to carrying no numeric constant at all.
                 "age_seconds": _age(self.stamped_at),
@@ -158,18 +155,26 @@ class EvidenceFreshness:
             at = prior.get("at")
             stamps[seat] = {
                 "state": READ_CARRIED,
-                "run_id": prior.get("run_id"), "mode": prior.get("mode"),
-                "at": at, "age_seconds": _age(at),
+                "run_id": prior.get("run_id"),
+                "mode": prior.get("mode"),
+                "at": at,
+                "age_seconds": _age(at),
             }
         for seat in self.absent:
             stamps[seat] = {
-                "state": READ_ABSENT, "run_id": None, "mode": None,
-                "at": None, "age_seconds": None,
+                "state": READ_ABSENT,
+                "run_id": None,
+                "mode": None,
+                "at": None,
+                "age_seconds": None,
             }
         for seat in self.unknown:
             stamps[seat] = {
-                "state": READ_UNKNOWN, "run_id": None, "mode": None,
-                "at": None, "age_seconds": None,
+                "state": READ_UNKNOWN,
+                "run_id": None,
+                "mode": None,
+                "at": None,
+                "age_seconds": None,
             }
         return stamps
 
@@ -194,8 +199,13 @@ class FreshnessReader:
     """Classifies a `data_status` mapping using the tables it was handed."""
 
     def __init__(
-        self, *, status_freshness, expired_statuses,
-        fresh_label, carried_label, absent_label,
+        self,
+        *,
+        status_freshness,
+        expired_statuses,
+        fresh_label,
+        carried_label,
+        absent_label,
     ) -> None:
         self._status_freshness = dict(status_freshness)
         self._expired_statuses = frozenset(str(s) for s in expired_statuses)
@@ -237,18 +247,26 @@ class FreshnessReader:
                     "evidence freshness: data_status[%r]=%r is not in "
                     "the freshness table it was built with — reporting it as "
                     "unknown freshness, NOT as read-this-tick. Classify it.",
-                    seat_name, text,
+                    seat_name,
+                    text,
                 )
         return EvidenceFreshness(
-            fresh=sorted(fresh), carried=sorted(carried), absent=sorted(absent),
-            unknown=sorted(unknown), known_out_of_date=sorted(stale),
+            fresh=sorted(fresh),
+            carried=sorted(carried),
+            absent=sorted(absent),
+            unknown=sorted(unknown),
+            known_out_of_date=sorted(stale),
             data_status=clean,
         )
 
 
 def build_freshness_reader(
-    *, status_freshness, expired_statuses,
-    fresh_label, carried_label, absent_label,
+    *,
+    status_freshness,
+    expired_statuses,
+    fresh_label,
+    carried_label,
+    absent_label,
 ) -> FreshnessReader:
     """Build the reader from plain values — it reaches back into nothing.
 

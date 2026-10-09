@@ -13,9 +13,18 @@ def test_no_level_below_entry_reads_the_instrument_stop_instead_of_declining():
 
     constructor = PortfolioConstructor(ConstructorConfig())
     stop = _resolve_stop_for_signal(
-        constructor, symbol="TEST", direction="long", structural_stop=None,
-        target=None, atr_14=2.0, setup_type="breakout", ref_entry=100.0,
-        signal_bar_low=96.0, signal_bar_high=101.0,
-        computed_levels=[], computed_level_touches={}, computed_level_bars={},
+        constructor,
+        symbol="TEST",
+        direction="long",
+        structural_stop=None,
+        target=None,
+        atr_14=2.0,
+        setup_type="breakout",
+        ref_entry=100.0,
+        signal_bar_low=96.0,
+        signal_bar_high=101.0,
+        computed_levels=[],
+        computed_level_touches={},
+        computed_level_bars={},
     )
     assert stop is not None and 0 < stop < 100.0

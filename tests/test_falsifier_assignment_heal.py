@@ -6,6 +6,7 @@ durable `soft_exit_heal_restores` rows (via `drain_restore_observations`):
 present (no row), healed (healed=True, source `prior_assigned_value`) and
 genuinely absent (blank_found=True, healed=False, source None).
 """
+
 import pytest
 
 from src.models import TargetPosition
@@ -17,6 +18,7 @@ def drain_restore_observations():
     # on every re-validation; they are not what these tests are about.
     obs, dropped = _drain()
     return [o for o in obs if o["blank_found"]], dropped
+
 
 SENTENCE = "closes below the 50-day average on volume"
 
@@ -33,10 +35,15 @@ def test_later_blank_write_heals_back_the_stated_sentence(blank):
     t.thesis_invalid_if = blank
     assert t.thesis_invalid_if == SENTENCE
     obs, _ = drain_restore_observations()
-    assert obs == [{
-        "symbol": "NVDA", "blank_found": True,
-        "healed": True, "source": "prior_assigned_value", "occurrences": 1,
-    }]
+    assert obs == [
+        {
+            "symbol": "NVDA",
+            "blank_found": True,
+            "healed": True,
+            "source": "prior_assigned_value",
+            "occurrences": 1,
+        }
+    ]
 
 
 def test_blank_write_with_no_original_reads_gone_and_is_counted():
@@ -45,10 +52,15 @@ def test_blank_write_with_no_original_reads_gone_and_is_counted():
     t.thesis_invalid_if = None
     assert t.thesis_invalid_if == "unknown"  # never filled with a sentence
     obs, _ = drain_restore_observations()
-    assert obs == [{
-        "symbol": "NVDA", "blank_found": True,
-        "healed": False, "source": None, "occurrences": 1,
-    }]
+    assert obs == [
+        {
+            "symbol": "NVDA",
+            "blank_found": True,
+            "healed": False,
+            "source": None,
+            "occurrences": 1,
+        }
+    ]
 
 
 def test_a_new_stated_sentence_replaces_the_old_and_records_nothing():

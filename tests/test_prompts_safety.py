@@ -20,6 +20,7 @@ These three checks together are the cross-prompt safety contract.
 Touching them without updating both the prompt and this test is the
 exact regression class we want to catch loudly.
 """
+
 from pathlib import Path
 
 import pytest
@@ -51,11 +52,11 @@ ALL_AGENT_PROMPTS = (
 # strings) — both vectors for prompt injection via content the system
 # does not directly control.
 _UNTRUSTED_INPUT_PROMPTS = (
-    "earnings_analyst.md",     # SEC 10-Q / 10-K text (HTML-derived, highest risk)
-    "news_analyst.md",         # RSS feed headlines + article bodies
-    "macro_analyst.md",        # FRED description prose + news-narrative tracker text
-    "position_reviewer.md",    # persisted thesis text written by upstream LLM calls
-    "evening_analyst.md",      # quoted upstream LLM reasoning_chain + recent_buy/sell prose
+    "earnings_analyst.md",  # SEC 10-Q / 10-K text (HTML-derived, highest risk)
+    "news_analyst.md",  # RSS feed headlines + article bodies
+    "macro_analyst.md",  # FRED description prose + news-narrative tracker text
+    "position_reviewer.md",  # persisted thesis text written by upstream LLM calls
+    "evening_analyst.md",  # quoted upstream LLM reasoning_chain + recent_buy/sell prose
 )
 
 
@@ -63,11 +64,11 @@ _UNTRUSTED_INPUT_PROMPTS = (
 # they produce structured analysis and downstream consumers must be
 # able to grep / discount missing-data fields.
 _UNSOURCED_TOKEN_PROMPTS = (
-    "earnings_analyst.md",     # not_in_filing / truncated / ambiguous
-    "macro_analyst.md",        # stale_<indicator>
-    "evening_analyst.md",      # no_8w_tech / no_valuation / no_deep_dive
-    "news_analyst.md",         # headline_imprecise (vague figures in headlines)
-    "portfolio_manager.md",    # no_rm_history / no_calibration / no_drawdown_data
+    "earnings_analyst.md",  # not_in_filing / truncated / ambiguous
+    "macro_analyst.md",  # stale_<indicator>
+    "evening_analyst.md",  # no_8w_tech / no_valuation / no_deep_dive
+    "news_analyst.md",  # headline_imprecise (vague figures in headlines)
+    "portfolio_manager.md",  # no_rm_history / no_calibration / no_drawdown_data
 )
 
 
@@ -168,10 +169,15 @@ def test_guardrails_close_with_autonomy_boundary() -> None:
     vary so we look for the canonical "Autonomy" anchor.
     """
     for prompt_name in (
-        "tech_analyst.md", "news_analyst.md", "macro_analyst.md",
-        "earnings_analyst.md", "portfolio_manager.md",
-        "risk_manager.md", "position_reviewer.md",
-        "evening_analyst.md", "meta_reflector.md",
+        "tech_analyst.md",
+        "news_analyst.md",
+        "macro_analyst.md",
+        "earnings_analyst.md",
+        "portfolio_manager.md",
+        "risk_manager.md",
+        "position_reviewer.md",
+        "evening_analyst.md",
+        "meta_reflector.md",
     ):
         text = (PROMPT_DIR / prompt_name).read_text()
         # The autonomy bullet is anchored on a bolded **Autonomy** /

@@ -25,16 +25,19 @@ from src.data.smart_money import SECForm4Provider  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=Path,
+        "--config",
+        type=Path,
         default=PROJECT_ROOT / "config" / "settings.yaml",
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
-        "--max-filings", type=int,
+        "--max-filings",
+        type=int,
         help="Bound this commissioning run below the configured refresh cap.",
     )
     parser.add_argument(
-        "--deadline", type=float,
+        "--deadline",
+        type=float,
         help="Bound this commissioning run below the configured deadline.",
     )
     args = parser.parse_args()
@@ -64,14 +67,16 @@ def main() -> int:
         "provider_error": provider_error,
         "surviving_observations": len(observations),
         "symbols": sorted({item.symbol for item in observations}),
-        "admission_source_eligible_symbols": sorted({
-            item.symbol for item in observations
-            if bool(getattr(item, "admission_eligible", False))
-        }),
-        "accessions": sorted({
-            str(getattr(item, "accession_number", ""))
-            for item in observations if getattr(item, "accession_number", None)
-        })[:20],
+        "admission_source_eligible_symbols": sorted(
+            {item.symbol for item in observations if bool(getattr(item, "admission_eligible", False))}
+        ),
+        "accessions": sorted(
+            {
+                str(getattr(item, "accession_number", ""))
+                for item in observations
+                if getattr(item, "accession_number", None)
+            }
+        )[:20],
         "llm_calls": 0,
     }
     if args.json:

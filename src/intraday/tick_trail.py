@@ -69,9 +69,15 @@ def _readable_positions(positions, atr_for_symbol, skipped: list) -> list:
 
 
 def trail_on_tick(
-    *, positions, run_id: str, preamble_deferred: str = "",
-    apply_deterministic_trails=None, atr_for_symbol=None,
-    process_lock=None, blocking_owner_session=None, split_positions=None,
+    *,
+    positions,
+    run_id: str,
+    preamble_deferred: str = "",
+    apply_deterministic_trails=None,
+    atr_for_symbol=None,
+    process_lock=None,
+    blocking_owner_session=None,
+    split_positions=None,
 ) -> dict:
     """Run the existing deterministic trail over this tick's broker positions.
 

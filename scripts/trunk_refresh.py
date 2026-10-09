@@ -10,6 +10,7 @@ raises: when the network is down the local ref is used and the returned note say
 the verdict is STALE, so a stale verdict is never mistaken for a fresh one. In CI
 (full history already checked out) nothing is fetched, which keeps CI deterministic.
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,9 @@ def refresh_trunk(root: Path, remote_ref: str = "origin/main") -> str:
         try:
             done = subprocess.run(
                 ["git", "fetch", "--quiet", "--no-tags", remote, branch],
-                cwd=root, capture_output=True, text=True,
+                cwd=root,
+                capture_output=True,
+                text=True,
                 timeout=FETCH_TIMEOUT_SECONDS,
                 env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             )
@@ -45,8 +48,10 @@ def refresh_trunk(root: Path, remote_ref: str = "origin/main") -> str:
         except (OSError, subprocess.TimeoutExpired) as exc:
             note = f"git fetch could not run: {type(exc).__name__}"
     if note:
-        note = (f"WARNING: {remote_ref} could not be refreshed ({note}); this verdict "
-                "uses the LOCAL, possibly STALE ref and may charge you for main's own growth")
+        note = (
+            f"WARNING: {remote_ref} could not be refreshed ({note}); this verdict "
+            "uses the LOCAL, possibly STALE ref and may charge you for main's own growth"
+        )
         print(note, file=sys.stderr)
     _notes[key] = note
     return note

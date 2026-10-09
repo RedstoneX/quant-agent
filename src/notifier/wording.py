@@ -145,6 +145,7 @@ def _smart_money_seat_label(congress_enabled: bool) -> str:
         return "the insider-and-congressional-trading feed"
     return "the insider-trading feed"
 
+
 _DATA_STATUS_WORDS: dict[str, str] = {
     "failed": "did not return an answer",
     "partial": "returned only part of an answer",
@@ -171,19 +172,12 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     # owner the raw token instead. Each phrase below is read straight off
     # that module's own comment for the state — not a guess at what it might
     # mean.
-    "expired": (
-        "had only an out-of-date answer, and this check did not fetch a "
-        "fresh one"
-    ),
+    "expired": ("had only an out-of-date answer, and this check did not fetch a fresh one"),
     "content_missing": "answered, but the answer had no content in it",
     "carry_forward_empty": (
-        "had nothing to carry forward from this morning — the morning never "
-        "wrote an answer for today"
+        "had nothing to carry forward from this morning — the morning never wrote an answer for today"
     ),
-    "carry_forward_failed": (
-        "could not be carried forward from this morning — the lookup itself "
-        "failed"
-    ),
+    "carry_forward_failed": ("could not be carried forward from this morning — the lookup itself failed"),
 }
 
 
@@ -192,9 +186,7 @@ def seat_words(seat: Any) -> str:
     key = str(seat or "").strip().lower()
     if key == "smart_money":
         return _smart_money_seat_label(_congress_enabled_now())
-    return _SEAT_WORDS.get(key) or (
-        f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})"
-    )
+    return _SEAT_WORDS.get(key) or (f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})")
 
 
 def describe_data_status(bad: dict) -> list[str]:
@@ -217,7 +209,7 @@ def describe_data_status(bad: dict) -> list[str]:
 
 
 def _seat_list_words(seats: Any) -> str:
-    """"the chart research and the news research" — never internal keys."""
+    """ "the chart research and the news research" — never internal keys."""
     words = [seat_words(seat) for seat in (seats or []) if str(seat).strip()]
     if not words:
         return ""
@@ -247,41 +239,24 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
     fresh = [s for s in (freshness.get("fresh_seats") or []) if str(s).strip()]
     carried = [s for s in (freshness.get("carried_seats") or []) if str(s).strip()]
     absent = [s for s in (freshness.get("absent_seats") or []) if str(s).strip()]
-    unknown = [
-        s for s in (freshness.get("unknown_freshness_seats") or [])
-        if str(s).strip()
-    ]
-    stale = [
-        s for s in (freshness.get("known_out_of_date_seats") or [])
-        if str(s).strip()
-    ]
+    unknown = [s for s in (freshness.get("unknown_freshness_seats") or []) if str(s).strip()]
+    stale = [s for s in (freshness.get("known_out_of_date_seats") or []) if str(s).strip()]
     total = len(fresh) + len(carried) + len(absent) + len(unknown)
     if not total:
         return []
-    lines = [
-        f"<b>HOW FRESH THIS DECISION'S EVIDENCE WAS</b> "
-        f"({len(fresh)} of {total} research seats read just now)"
-    ]
+    lines = [f"<b>HOW FRESH THIS DECISION'S EVIDENCE WAS</b> ({len(fresh)} of {total} research seats read just now)"]
     if fresh:
         lines.append(f"   • read just now: {_seat_list_words(fresh)}")
     else:
         lines.append("   • read just now: none of them")
     if carried:
-        lines.append(
-            f"   • carried over from earlier, not re-read: "
-            f"{_seat_list_words(carried)}"
-        )
+        lines.append(f"   • carried over from earlier, not re-read: {_seat_list_words(carried)}")
     if stale:
-        lines.append(
-            f"   • already known to be out of date: {_seat_list_words(stale)}"
-        )
+        lines.append(f"   • already known to be out of date: {_seat_list_words(stale)}")
     if absent:
         lines.append(f"   • no answer at all: {_seat_list_words(absent)}")
     if unknown:
-        lines.append(
-            f"   • state the desk cannot classify, so not counted as read: "
-            f"{_seat_list_words(unknown)}"
-        )
+        lines.append(f"   • state the desk cannot classify, so not counted as read: {_seat_list_words(unknown)}")
     return lines
 
 
@@ -316,8 +291,7 @@ def describe_short_handed_decision(freshness: Any) -> list[str]:
     return [
         "<b>DECIDED SHORT-HANDED — a research seat could not be reached</b>",
         f"   • the desk went ahead and decided without {_seat_list_words(absent)}",
-        "   • that research returned no answer this tick, so its view is "
-        "missing from this decision",
+        "   • that research returned no answer this tick, so its view is missing from this decision",
     ]
 
 
@@ -341,7 +315,8 @@ def describe_universe_changes(block: Any) -> list[str]:
     flagged = block.get("flagged_count")
     size = (
         f" — {admitted} screened stock(s) on the list, {flagged} flagged"
-        if isinstance(admitted, int) and isinstance(flagged, int) else ""
+        if isinstance(admitted, int) and isinstance(flagged, int)
+        else ""
     )
     if not events:
         return [f"\U0001f50e Stock list: no changes since the last morning{size}"]
@@ -353,20 +328,28 @@ def describe_universe_changes(block: Any) -> list[str]:
     for action, label in grouped.items():
         names = [str(e.get("symbol", "?")) for e in events if e.get("action") == action]
         if names:
-            out.append(_clip_text(
-                "\u2022 " + label.format(n=len(names)) + ", ".join(names), 600,
-            ))
+            out.append(
+                _clip_text(
+                    "\u2022 " + label.format(n=len(names)) + ", ".join(names),
+                    600,
+                )
+            )
     flagged_events = [e for e in events if e.get("action") == "flagged"]
     if flagged_events:
-        out.append(_clip_text(
-            f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
-            "next week): " + "; ".join(
-                "{} ({})".format(
-                    e.get("symbol", "?"), plain_reasons(e.get("reasons") or []),
-                )
-                for e in flagged_events
-            ), 600,
-        ))
+        out.append(
+            _clip_text(
+                f"\u2022 Flagged {len(flagged_events)} (removed if they fail again "
+                "next week): "
+                + "; ".join(
+                    "{} ({})".format(
+                        e.get("symbol", "?"),
+                        plain_reasons(e.get("reasons") or []),
+                    )
+                    for e in flagged_events
+                ),
+                600,
+            )
+        )
     for event in events:
         if event.get("action") in ("removed", "removal_deferred_held"):
             out.append(_clip_text(f"\u2022 {describe_event(event)}", 300))

@@ -12,6 +12,7 @@ against the live tree, the second proves each failure mode actually fires
 against a synthetic fixture, because an untested gate is indistinguishable
 from one that passes everything.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -48,8 +49,7 @@ def test_every_boolean_switch_is_declared_and_current() -> None:
     """
     problems = audit()
     assert not problems, "\n".join(
-        ["undeclared, stale or orphaned feature switches:", ""]
-        + [f"  {p}" for p in problems]
+        ["undeclared, stale or orphaned feature switches:", ""] + [f"  {p}" for p in problems]
     )
 
 
@@ -91,9 +91,7 @@ def _fixture(tmp_path: Path, config_py: str, settings_yaml: str, declarations_ya
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
     (tmp_path / "src" / "config.py").write_text(textwrap.dedent(config_py))
     (tmp_path / "config" / "settings.yaml").write_text(textwrap.dedent(settings_yaml))
-    (tmp_path / "config" / "feature_flags.yaml").write_text(
-        textwrap.dedent(declarations_yaml)
-    )
+    (tmp_path / "config" / "feature_flags.yaml").write_text(textwrap.dedent(declarations_yaml))
     return tmp_path
 
 
@@ -306,7 +304,8 @@ def test_a_switch_in_a_second_config_module_is_found(tmp_path: Path) -> None:
     """
     pkg = tmp_path / "src" / "config"
     pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text(textwrap.dedent("""
+    (pkg / "__init__.py").write_text(
+        textwrap.dedent("""
         from src.config.widget import WidgetConfig
 
 
@@ -317,11 +316,14 @@ def test_a_switch_in_a_second_config_module_is_found(tmp_path: Path) -> None:
         class AppConfig:
             widget: WidgetConfig
             gadget: GadgetConfig
-    """))
-    (pkg / "widget.py").write_text(textwrap.dedent("""
+    """)
+    )
+    (pkg / "widget.py").write_text(
+        textwrap.dedent("""
         class WidgetConfig:
             enabled: bool = False
-    """))
+    """)
+    )
     ids = {s.flag_id for s in collect_switches(config_location(tmp_path))}
     assert ids == {"src.config.GadgetConfig.armed", "src.config.WidgetConfig.enabled"}
     assert _appconfig_sections(tmp_path) == {"WidgetConfig": "widget", "GadgetConfig": "gadget"}

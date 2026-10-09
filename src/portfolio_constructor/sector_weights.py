@@ -3,6 +3,7 @@ verbatim. `_current_sector_weights` is a pure function of (positions,
 total_value); `_note_reducing_order_sectors` touches only
 `self.last_order_sectors`, so both run against a `SimpleNamespace` stub.
 """
+
 from __future__ import annotations
 
 from src.models import Position
@@ -14,16 +15,16 @@ def _note_reducing_order_sectors(self, orders) -> None:
     SELL/COVER orders never pass through sizing, so resolve theirs here
     with the same lookup and the same None-means-unknown rule."""
     from src.sector_reference import _get_sector
-    for d in (orders or ()):
+
+    for d in orders or ():
         if getattr(d, "action", None) in ("SELL", "COVER"):
             sector = _get_sector(d.symbol)
-            self.last_order_sectors[d.symbol] = (
-                sector if sector and sector != "Unknown" else None
-            )
+            self.last_order_sectors[d.symbol] = sector if sector and sector != "Unknown" else None
 
 
 def _current_sector_weights(
-    positions: list[Position], total_value: float,
+    positions: list[Position],
+    total_value: float,
 ) -> dict[tuple[str, str], float]:
     """Held GROSS exposure per `(sector, side)`, as % of equity.
 
@@ -46,4 +47,5 @@ def _current_sector_weights(
     `_apply_sector_dial` does the same.
     """
     from src.risk.rules import sector_side_weights
+
     return sector_side_weights(positions, total_value)

@@ -10,6 +10,7 @@ Every collaborator is an explicit keyword-only constructor argument (clause 5 of
 tests/boundary_harness.py). Follows tests/test_intraday_parts_boundary.py. This file never
 imports the pipeline class. This is the live stop path: a structural witness only.
 """
+
 from __future__ import annotations
 
 import ast
@@ -70,8 +71,11 @@ def test_every_new_protection_module_passes_the_boundary_check(module):
 def test_every_part_reads_only_what_it_is_handed(cls):
     """Every `self.` read in a body is a constructor argument, a state-backed property or the part's own method."""
     tree = ast.parse(inspect.getsource(cls))
-    reads = {n.attr for n in ast.walk(tree)
-             if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self"}
+    reads = {
+        n.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self"
+    }
     handed = set(vars(_build(cls)))
     own = {n for n in dir(cls) if not n.startswith("__")}
     foreign = reads - handed - own
@@ -134,8 +138,14 @@ def test_the_shim_builder_reads_the_host_live_at_each_call():
     assert _build_ex_dividends(host).market == "M1"
     host.market = "M2"
     assert _build_ex_dividends(host).market == "M2"
-    host2 = SimpleNamespace(broker=object(), db=object(), _alert_owner_exit_declined=None, _order_accepted=None,
-                            _write_ahead_protection_restore=None, _cancel_stops_with_write_ahead=None)
+    host2 = SimpleNamespace(
+        broker=object(),
+        db=object(),
+        _alert_owner_exit_declined=None,
+        _order_accepted=None,
+        _write_ahead_protection_restore=None,
+        _cancel_stops_with_write_ahead=None,
+    )
     sell = _build_protected_sell(host2)
     assert getattr(sell, "_last_stop_clear_refusal", "DEFAULT") == "DEFAULT"
     sell._last_stop_clear_refusal = {"symbol": "Y"}

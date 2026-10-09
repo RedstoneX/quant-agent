@@ -3,6 +3,7 @@
 made LOUD. Pure rendering over the rows it is handed; ``spent_trigger``
 re-exports it under the same name.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -11,16 +12,14 @@ if TYPE_CHECKING:
     from src.risk.spent_trigger import ActedTrigger
 
 
-def format_spent_triggers_block(acted: list[ActedTrigger] | None,
-                                symbols: set[str] | None = None) -> str:
+def format_spent_triggers_block(acted: list[ActedTrigger] | None, symbols: set[str] | None = None) -> str:
     """Prompt text naming what is already spent, verbatim.
 
     The seat must be able to see what it may not re-cite; an invisible
     filter is the shape `position_reviewer.md` already calls out as unfair
     to the seat. Empty string when nothing is spent.
     """
-    rows = [r for r in (acted or [])
-            if r.trigger and (symbols is None or r.symbol in symbols)]
+    rows = [r for r in (acted or []) if r.trigger and (symbols is None or r.symbol in symbols)]
     if not rows:
         return ""
     lines = []
@@ -28,9 +27,7 @@ def format_spent_triggers_block(acted: list[ActedTrigger] | None,
         ev = r.evidence.strip() or "(no record cited)"
         lines.append(f"  - {r.symbol} · `{r.trigger}` · already acted on: {ev}")
     return (
-        "**Triggers already SPENT today (the desk has acted on these):**\n"
-        + "\n".join(lines)
-        + "\n"
+        "**Triggers already SPENT today (the desk has acted on these):**\n" + "\n".join(lines) + "\n"
         "A SELL / REDUCE / COVER whose `exit_trigger` is one of the above "
         "for that symbol AND whose `trigger_evidence` is that same record is "
         "REFUSED by the executor and recorded as `trigger_already_spent` — "

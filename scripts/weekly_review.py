@@ -40,6 +40,7 @@ CALIBRATION_EXIT_ACTIONS = ("EMERGENCY_SELL", "FORCE_DELEVER", "REDUCE", "TAKE_P
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
+
 def _pct(num: int, denom: int) -> str:
     if not denom:
         return "n/a"
@@ -70,6 +71,7 @@ def _indent(line: str, n: int = 2) -> str:
 # Query helpers
 # ---------------------------------------------------------------------------
 
+
 def _open_db(path: Path) -> sqlite3.Connection:
     # Read-only URI so a rogue typo can never mutate prod data.
     uri = f"file:{path.resolve()}?mode=ro"
@@ -86,9 +88,7 @@ def _et_cutoff_date(days: int) -> date:
 
 
 def _existing_tables(conn: sqlite3.Connection) -> set[str]:
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     return {r["name"] for r in rows}
 
 
@@ -104,6 +104,7 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
 # Individual sections
 # ---------------------------------------------------------------------------
 
+
 def report_header(days: int, cutoff: date) -> None:
     end = datetime.now(ET).date()
     print("═" * 70)
@@ -115,8 +116,7 @@ def report_header(days: int, cutoff: date) -> None:
 def report_performance(conn: sqlite3.Connection, cutoff: date) -> None:
     _section("Performance")
     rows = conn.execute(
-        "SELECT date, total_value, daily_pnl, daily_return_pct "
-        "FROM daily_pnl WHERE date >= ? ORDER BY date",
+        "SELECT date, total_value, daily_pnl, daily_return_pct FROM daily_pnl WHERE date >= ? ORDER BY date",
         (cutoff.isoformat(),),
     ).fetchall()
     if not rows:
@@ -135,14 +135,10 @@ def report_performance(conn: sqlite3.Connection, cutoff: date) -> None:
     print(_indent(f"Ending equity:   ${ending:,.2f}"))
     print(_indent(f"Cumulative P&L:  {_fmt_money_pct(total_pnl, starting)}"))
     print(_indent(f"Winning days:    {wins}   Losing days: {losses}"))
-    print(_indent(
-        f"Best day:  {best['date']} {best['daily_return_pct']:+.2f}% "
-        f"({_fmt_money(best['daily_pnl'] or 0)})"
-    ))
-    print(_indent(
-        f"Worst day: {worst['date']} {worst['daily_return_pct']:+.2f}% "
-        f"({_fmt_money(worst['daily_pnl'] or 0)})"
-    ))
+    print(_indent(f"Best day:  {best['date']} {best['daily_return_pct']:+.2f}% ({_fmt_money(best['daily_pnl'] or 0)})"))
+    print(
+        _indent(f"Worst day: {worst['date']} {worst['daily_return_pct']:+.2f}% ({_fmt_money(worst['daily_pnl'] or 0)})")
+    )
 
 
 def report_outlook_calibration(conn: sqlite3.Connection, cutoff: date) -> None:
@@ -152,8 +148,7 @@ def report_outlook_calibration(conn: sqlite3.Connection, cutoff: date) -> None:
     _section("Evening outlook calibration (own bias vs actual next day)")
 
     insights = conn.execute(
-        "SELECT date, tomorrow_bias, tomorrow_conviction "
-        "FROM insights WHERE date >= ? ORDER BY date",
+        "SELECT date, tomorrow_bias, tomorrow_conviction FROM insights WHERE date >= ? ORDER BY date",
         (cutoff.isoformat(),),
     ).fetchall()
     if not insights:
@@ -186,13 +181,15 @@ def report_outlook_calibration(conn: sqlite3.Connection, cutoff: date) -> None:
                 break
         if actual is None:
             continue
-        samples.append({
-            "date": ins["date"],
-            "bias": (ins["tomorrow_bias"] or "neutral").lower(),
-            "conv": (ins["tomorrow_conviction"] or "medium").lower(),
-            "actual": actual,
-            "matched": _match((ins["tomorrow_bias"] or "neutral").lower(), actual),
-        })
+        samples.append(
+            {
+                "date": ins["date"],
+                "bias": (ins["tomorrow_bias"] or "neutral").lower(),
+                "conv": (ins["tomorrow_conviction"] or "medium").lower(),
+                "actual": actual,
+                "matched": _match((ins["tomorrow_bias"] or "neutral").lower(), actual),
+            }
+        )
 
     if not samples:
         print(_indent("(not enough bias→outcome pairs yet)"))
@@ -204,21 +201,30 @@ def report_outlook_calibration(conn: sqlite3.Connection, cutoff: date) -> None:
         return f"{hits}/{len(eligible)} ({_pct(hits, len(eligible))})" if eligible else "n/a"
 
     print(_indent(f"Overall:     {_rate(lambda s: True)}"))
-    print(_indent(f"By bias:     bullish {_rate(lambda s: s['bias']=='bullish')}   "
-                  f"bearish {_rate(lambda s: s['bias']=='bearish')}   "
-                  f"neutral {_rate(lambda s: s['bias']=='neutral')}"))
-    print(_indent(f"By conviction:  high {_rate(lambda s: s['conv']=='high')}   "
-                  f"medium {_rate(lambda s: s['conv']=='medium')}   "
-                  f"low {_rate(lambda s: s['conv']=='low')}"))
+    print(
+        _indent(
+            f"By bias:     bullish {_rate(lambda s: s['bias'] == 'bullish')}   "
+            f"bearish {_rate(lambda s: s['bias'] == 'bearish')}   "
+            f"neutral {_rate(lambda s: s['bias'] == 'neutral')}"
+        )
+    )
+    print(
+        _indent(
+            f"By conviction:  high {_rate(lambda s: s['conv'] == 'high')}   "
+            f"medium {_rate(lambda s: s['conv'] == 'medium')}   "
+            f"low {_rate(lambda s: s['conv'] == 'low')}"
+        )
+    )
 
     print(_indent("Recent pairs (newest first):"))
     for s in reversed(samples[-8:]):
         mark = "✓" if s["matched"] else "✗"
-        print(_indent(
-            f"{mark} {s['date']}: predicted {s['bias']} ({s['conv']}) "
-            f"→ actual {s['actual']:+.2f}%",
-            n=4,
-        ))
+        print(
+            _indent(
+                f"{mark} {s['date']}: predicted {s['bias']} ({s['conv']}) → actual {s['actual']:+.2f}%",
+                n=4,
+            )
+        )
 
 
 def report_trade_grading(conn: sqlite3.Connection, cutoff: date) -> None:
@@ -230,20 +236,22 @@ def report_trade_grading(conn: sqlite3.Connection, cutoff: date) -> None:
         return
 
     rows = conn.execute(
-        "SELECT date, sell_grades_json, buy_grades_json "
-        "FROM insights WHERE date >= ? ORDER BY date",
+        "SELECT date, sell_grades_json, buy_grades_json FROM insights WHERE date >= ? ORDER BY date",
         (cutoff.isoformat(),),
     ).fetchall()
 
     sell_counts = {"correct": 0, "premature": 0, "wrong": 0}
     buy_counts = {"correct": 0, "premature": 0, "wrong": 0}
-    sell_by_symbol: dict[str, dict[str, int]] = defaultdict(lambda: {
-        "correct": 0, "premature": 0, "wrong": 0,
-    })
+    sell_by_symbol: dict[str, dict[str, int]] = defaultdict(
+        lambda: {
+            "correct": 0,
+            "premature": 0,
+            "wrong": 0,
+        }
+    )
 
     for r in rows:
-        for col, bucket in (("sell_grades_json", sell_counts),
-                            ("buy_grades_json", buy_counts)):
+        for col, bucket in (("sell_grades_json", sell_counts), ("buy_grades_json", buy_counts)):
             raw = r[col]
             if not raw:
                 continue
@@ -276,10 +284,12 @@ def report_trade_grading(conn: sqlite3.Connection, cutoff: date) -> None:
         print(_indent(f"{g:>10}: {n} ({_pct(n, total_sells)})", n=4))
     miss = sell_counts["premature"] + sell_counts["wrong"]
     if total_sells >= 5 and miss / total_sells >= 0.5:
-        print(_indent(
-            "⚠️  SELL miss rate ≥ 50% — position_reviewer should already be "
-            "tilted PATIENT. Verify in its prompt if behavior doesn't reflect this."
-        ))
+        print(
+            _indent(
+                "⚠️  SELL miss rate ≥ 50% — position_reviewer should already be "
+                "tilted PATIENT. Verify in its prompt if behavior doesn't reflect this."
+            )
+        )
 
     print()
     print(_indent(f"BUYs graded: {total_buys}"))
@@ -287,20 +297,20 @@ def report_trade_grading(conn: sqlite3.Connection, cutoff: date) -> None:
         print(_indent(f"{g:>10}: {n} ({_pct(n, total_buys)})", n=4))
 
     # Repeat-offender symbols (same symbol flagged non-correct >= 2 times)
-    repeat_premature = sorted(
-        s for s, g in sell_by_symbol.items() if g["premature"] >= 2
-    )
-    repeat_wrong = sorted(
-        s for s, g in sell_by_symbol.items() if g["wrong"] >= 2
-    )
+    repeat_premature = sorted(s for s, g in sell_by_symbol.items() if g["premature"] >= 2)
+    repeat_wrong = sorted(s for s, g in sell_by_symbol.items() if g["wrong"] >= 2)
     if repeat_premature:
-        print(_indent(
-            f"Repeat premature SELLs (≥2×): {', '.join(repeat_premature)}",
-        ))
+        print(
+            _indent(
+                f"Repeat premature SELLs (≥2×): {', '.join(repeat_premature)}",
+            )
+        )
     if repeat_wrong:
-        print(_indent(
-            f"Repeat wrong SELLs (≥2×):     {', '.join(repeat_wrong)}",
-        ))
+        print(
+            _indent(
+                f"Repeat wrong SELLs (≥2×):     {', '.join(repeat_wrong)}",
+            )
+        )
 
 
 def report_pm_calibration(conn: sqlite3.Connection) -> None:
@@ -340,8 +350,7 @@ def report_pm_calibration(conn: sqlite3.Connection) -> None:
             continue
         if act == "BUY":
             open_lots[sym].append({"qty": qty, "price": price, "ts": ts})
-        elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
-              or act in CALIBRATION_EXIT_ACTIONS):
+        elif act.startswith("SELL") or act.startswith("PARTIAL_SELL") or act in CALIBRATION_EXIT_ACTIONS:
             remaining = qty
             while remaining > 0 and open_lots[sym]:
                 lot = open_lots[sym][0]
@@ -362,8 +371,9 @@ def report_pm_calibration(conn: sqlite3.Connection) -> None:
     wins = sum(1 for r in closed_returns if r > 0)
     avg_ret = sum(closed_returns) / n
     avg_hold = sum(hold_days) / n
-    print(_indent(f"n = {n} closed   win rate: {_pct(wins, n)}   "
-                  f"avg return: {avg_ret:+.2f}%   avg hold: {avg_hold:.1f}d"))
+    print(
+        _indent(f"n = {n} closed   win rate: {_pct(wins, n)}   avg return: {avg_ret:+.2f}%   avg hold: {avg_hold:.1f}d")
+    )
 
 
 def report_safety_nets(conn: sqlite3.Connection, cutoff: date) -> None:
@@ -371,13 +381,11 @@ def report_safety_nets(conn: sqlite3.Connection, cutoff: date) -> None:
     cutoff_ts = cutoff.isoformat() + " 00:00:00"
 
     force_rows = conn.execute(
-        "SELECT symbol, timestamp FROM trades WHERE action = 'FORCE_DELEVER' "
-        "AND timestamp >= ? ORDER BY timestamp",
+        "SELECT symbol, timestamp FROM trades WHERE action = 'FORCE_DELEVER' AND timestamp >= ? ORDER BY timestamp",
         (cutoff_ts,),
     ).fetchall()
     emerg_rows = conn.execute(
-        "SELECT symbol, timestamp FROM trades WHERE action = 'EMERGENCY_SELL' "
-        "AND timestamp >= ? ORDER BY timestamp",
+        "SELECT symbol, timestamp FROM trades WHERE action = 'EMERGENCY_SELL' AND timestamp >= ? ORDER BY timestamp",
         (cutoff_ts,),
     ).fetchall()
 
@@ -389,8 +397,7 @@ def report_safety_nets(conn: sqlite3.Connection, cutoff: date) -> None:
         for d, syms in sorted(by_date.items()):
             print(_indent(f"{d}: {', '.join(syms)}", n=4))
 
-    print(_indent(f"emergency_liquidate: {len(emerg_rows)} symbol-trades "
-                  f"(intra_check circuit-breaker)"))
+    print(_indent(f"emergency_liquidate: {len(emerg_rows)} symbol-trades (intra_check circuit-breaker)"))
     if emerg_rows:
         by_date = defaultdict(list)
         for r in emerg_rows:
@@ -407,8 +414,7 @@ def report_llm_cost(conn: sqlite3.Connection, cutoff: date) -> None:
     cutoff_ts = cutoff.isoformat() + " 00:00:00"
 
     total_row = conn.execute(
-        "SELECT SUM(tokens_used) AS total, COUNT(*) AS calls "
-        "FROM agent_logs WHERE timestamp >= ?",
+        "SELECT SUM(tokens_used) AS total, COUNT(*) AS calls FROM agent_logs WHERE timestamp >= ?",
         (cutoff_ts,),
     ).fetchone()
     total_tokens = total_row["total"] or 0
@@ -427,10 +433,12 @@ def report_llm_cost(conn: sqlite3.Connection, cutoff: date) -> None:
     ).fetchall()
     for r in by_agent:
         pct = _pct(r["tokens"] or 0, total_tokens)
-        print(_indent(
-            f"{r['agent_name']:<32} {r['tokens'] or 0:>10,}  ({pct:>4})  [{r['calls']} calls]",
-            n=4,
-        ))
+        print(
+            _indent(
+                f"{r['agent_name']:<32} {r['tokens'] or 0:>10,}  ({pct:>4})  [{r['calls']} calls]",
+                n=4,
+            )
+        )
 
 
 def report_universe_activity(conn: sqlite3.Connection, cutoff: date) -> None:
@@ -462,14 +470,18 @@ def report_universe_activity(conn: sqlite3.Connection, cutoff: date) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="quant-agent weekly review")
     parser.add_argument(
-        "--days", type=int, default=7,
+        "--days",
+        type=int,
+        default=7,
         help="Calendar days to look back (default: 7)",
     )
     parser.add_argument(
-        "--db", type=Path,
+        "--db",
+        type=Path,
         default=Path(__file__).resolve().parent.parent / "data" / "quant_agent.db",
         help="Path to quant_agent.db (default: data/quant_agent.db)",
     )

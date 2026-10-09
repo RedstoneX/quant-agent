@@ -38,38 +38,35 @@ def _exposure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("exposure_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("repair_failure_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def _record_repair_failure_alert(
-    state: dict[str, Any], day: str, symbols: Iterable[str],
+    state: dict[str, Any],
+    day: str,
+    symbols: Iterable[str],
 ) -> None:
     merged = _repair_failure_alerted_symbols(state, day) | {
         str(sym).strip().upper() for sym in symbols if str(sym).strip()
     }
     state["repair_failure_alerted_symbols"] = {
-        "day": day, "symbols": sorted(merged),
+        "day": day,
+        "symbols": sorted(merged),
     }
     state["repair_failure_alerted_for_day"] = day
 
 
 def claim_repair_failure_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> list[str]:
     """Reserve today's placement-failure alert for `symbols` and return the
@@ -85,9 +82,8 @@ def claim_repair_failure_alert(
     state = load_state(path)
     already = _repair_failure_alerted_symbols(state, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym not in already
     ]
     if not fresh:
@@ -101,16 +97,15 @@ def _resolution_notified_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("repair_resolution_notified_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def claim_repair_resolution_notice(
-    symbols: Iterable[str], *, now: datetime | None = None,
-    path: Path | None = None, state: dict[str, Any] | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
+    state: dict[str, Any] | None = None,
 ) -> list[str]:
     """Reserve today's RESOLUTION notice and return the symbols entitled to
     one: the names the owner was actually paged about today and has not yet
@@ -140,15 +135,15 @@ def claim_repair_resolution_notice(
     paged = _repair_failure_alerted_symbols(st, day)
     already = _resolution_notified_symbols(st, day)
     fresh = [
-        sym for sym in dict.fromkeys(
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        )
+        sym
+        for sym in dict.fromkeys(str(raw).strip().upper() for raw in symbols if str(raw).strip())
         if sym in paged and sym not in already
     ]
     if not fresh:
         return []
     st["repair_resolution_notified_symbols"] = {
-        "day": day, "symbols": sorted(already | set(fresh)),
+        "day": day,
+        "symbols": sorted(already | set(fresh)),
     }
     if own_state:
         save_state(st, path)

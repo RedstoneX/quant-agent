@@ -26,7 +26,8 @@ class IntradayCandidates:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         config=None,
         broker=None,
         db=None,
@@ -120,7 +121,8 @@ class IntradayCandidates:
         return out
 
     def _intraday_scan_mover_candidates(
-        self, ctx: RunContext,
+        self,
+        ctx: RunContext,
     ) -> tuple[list[tuple[str, float]], dict]:
         """Cheap snapshot of who moved. No paid calls.
 
@@ -129,7 +131,9 @@ class IntradayCandidates:
         symbols in a durable reason instead of dropping them silently.
         """
         from src.data.live_price import (
-            NO_PRICE_AT_ALL, NO_SNAPSHOT, resolve_live_price,
+            NO_PRICE_AT_ALL,
+            NO_SNAPSHOT,
+            resolve_live_price,
         )
 
         cfg = self.config.intraday_scan
@@ -157,9 +161,7 @@ class IntradayCandidates:
             # would be a false alarm. A symbol the feed returned nothing
             # for at all is still a miss.
             fed_nothing = resolved.unavailable in (NO_SNAPSHOT, NO_PRICE_AT_ALL)
-            if not isinstance(prev, (int, float)) or (
-                last is None and fed_nothing
-            ):
+            if not isinstance(prev, (int, float)) or (last is None and fed_nothing):
                 self._track_intraday_snapshot_miss(symbol)
                 continue
             self._track_intraday_snapshot_ok(symbol)
@@ -181,7 +183,9 @@ class IntradayCandidates:
 
     @staticmethod
     def _intraday_move_in_atr(
-        move_pct: float, atr_14: float | None, prev_close: float | None,
+        move_pct: float,
+        atr_14: float | None,
+        prev_close: float | None,
     ) -> tuple[float | None, float | None]:
         """The trigger's move expressed in the NAME'S OWN daily range.
 
@@ -216,8 +220,13 @@ class IntradayCandidates:
         return atr_pct, float(move_pct) / atr_pct
 
     def _record_intraday_trigger_atr_context(
-        self, ctx: RunContext, symbol: str, mover_symbols: set[str],
-        move_by_symbol: dict, snapshots: dict, indicators,
+        self,
+        ctx: RunContext,
+        symbol: str,
+        mover_symbols: set[str],
+        move_by_symbol: dict,
+        snapshots: dict,
+        indicators,
     ) -> None:
         """Stamp the ATR denominator onto a mover's existing ledger row.
 
@@ -235,7 +244,8 @@ class IntradayCandidates:
             return
         snap = snapshots.get(symbol) or snapshots.get(upper) or {}
         atr_pct, move_atr = self._intraday_move_in_atr(
-            float(move_pct), getattr(indicators, "atr_14", None),
+            float(move_pct),
+            getattr(indicators, "atr_14", None),
             snap.get("prev_close"),
         )
         detail = f"move_pct={float(move_pct):.4f}"
@@ -245,7 +255,9 @@ class IntradayCandidates:
             detail += f";atr_pct={atr_pct:.4f};move_atr={move_atr:.4f}"
         try:
             self.db.record_intraday_evaluation(
-                symbol=upper, run_id=ctx.run_id, status="selected",
+                symbol=upper,
+                run_id=ctx.run_id,
+                status="selected",
                 detail=detail,
             )
         except Exception as exc:  # noqa: BLE001 — measurement, never the scan
@@ -255,15 +267,18 @@ class IntradayCandidates:
         """Durable skip: lock still held, movers named, no silent drop."""
         blocking = self._blocking_owner_session() or "owner_lock"
         named = ",".join(movers) if movers else "none"
-        reason = (
-            f"paid discovery skipped: {blocking} still held; movers={named}"
-        )
+        reason = f"paid discovery skipped: {blocking} still held; movers={named}"
         logger.warning("Intraday scan: %s", reason)
         for symbol in movers:
             try:
                 _record_pipeline_event(
-                    self, ctx, symbol, "opportunity", "skipped",
-                    "intraday_scan_lock_contended", detail=reason,
+                    self,
+                    ctx,
+                    symbol,
+                    "opportunity",
+                    "skipped",
+                    "intraday_scan_lock_contended",
+                    detail=reason,
                 )
             except Exception as exc:  # noqa: BLE001
                 _site(self, "skip_reason_lock_contended", exc, context={"symbol": symbol})
@@ -284,16 +299,18 @@ class IntradayCandidates:
         existing half-hour fire, which sees no lock at all, runs normally.
         """
         named = ",".join(movers) if movers else "none"
-        reason = (
-            "paid discovery skipped: this fire shares the 09:30 open with "
-            f"morning; movers={named}"
-        )
+        reason = f"paid discovery skipped: this fire shares the 09:30 open with morning; movers={named}"
         logger.info("Intraday scan: %s", reason)
         for symbol in movers:
             try:
                 _record_pipeline_event(
-                    self, ctx, symbol, "opportunity", "skipped",
-                    "intraday_scan_open_overlap", detail=reason,
+                    self,
+                    ctx,
+                    symbol,
+                    "opportunity",
+                    "skipped",
+                    "intraday_scan_open_overlap",
+                    detail=reason,
                 )
             except Exception as exc:  # noqa: BLE001
                 _site(self, "skip_reason_open_overlap", exc, context={"symbol": symbol})

@@ -6,6 +6,7 @@ and a site that is never reached logs nothing. A clean pass logs nothing
 either, because a row would need a database write the dashboard may not make.
 Nothing is stored and nothing is returned for a caller to branch on.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,5 +21,4 @@ def record_dashboard_fault(where: str, exc: BaseException | None = None) -> None
     exception currently being handled, so an unbound ``except Exception:``
     can stay unbound.
     """
-    logger.error("dashboard read swallowed a fault at %s", where,
-                 exc_info=exc if exc is not None else True)
+    logger.error("dashboard read swallowed a fault at %s", where, exc_info=exc if exc is not None else True)

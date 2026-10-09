@@ -59,7 +59,8 @@ if TYPE_CHECKING:
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.event_calendar import (
-        FOMCCalendarProvider, MacroEventCalendarProvider,
+        FOMCCalendarProvider,
+        MacroEventCalendarProvider,
     )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from src.data.tech_store import TechStore
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
+
 
 class RiskStage:
     """Hard filter → earnings cap → correlation → RM review → mods → re-filter.
@@ -113,11 +115,7 @@ class RiskStage:
         is shown the NOT FETCHED form. A missing section reads as a calm
         calendar, which is precisely the failure being fixed.
         """
-        symbols = [
-            d.symbol for d in (
-                ctx.portfolio_decision.decisions if ctx.portfolio_decision else []
-            )
-        ]
+        symbols = [d.symbol for d in (ctx.portfolio_decision.decisions if ctx.portfolio_decision else [])]
         # Every lookup below is a getattr with a default: this helper is called
         # on partially-constructed pipelines (the resume lane, and several test
         # doubles built with __new__), and an event-risk block is never worth
@@ -129,9 +127,12 @@ class RiskStage:
         try:
             if symbols and getattr(pipeline, "market", None) is not None:
                 earnings = fetch_earnings_proximity(
-                    pipeline.market, symbols,
+                    pipeline.market,
+                    symbols,
                     per_symbol_timeout_s=getattr(
-                        event_cfg, "earnings_symbol_timeout_s", 8.0,
+                        event_cfg,
+                        "earnings_symbol_timeout_s",
+                        8.0,
                     ),
                     total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
                 )
@@ -150,20 +151,23 @@ class RiskStage:
         fomc_coverage = getattr(ctx, "fomc_coverage", None)
         if not isinstance(fomc_coverage, FOMCCoverage):
             fomc_coverage = None
-        fomc_meetings = (
-            list(getattr(ctx, "fomc_meetings", None) or [])
-            if fomc_coverage is not None else None
-        )
+        fomc_meetings = list(getattr(ctx, "fomc_meetings", None) or []) if fomc_coverage is not None else None
         try:
             return format_event_risk_block(
-                earnings=earnings, events=events, coverage=coverage,
+                earnings=earnings,
+                events=events,
+                coverage=coverage,
                 horizon_days=horizon_days,
-                fomc_meetings=fomc_meetings, fomc_coverage=fomc_coverage,
+                fomc_meetings=fomc_meetings,
+                fomc_coverage=fomc_coverage,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Event-risk block render failed: %s", e)
             return format_event_risk_block(
-                earnings=None, events=None, coverage=None, horizon_days=0,
+                earnings=None,
+                events=None,
+                coverage=None,
+                horizon_days=0,
             )
 
     def run(self, ctx: RunContext) -> dict | None:
@@ -192,8 +196,7 @@ class RiskStage:
         isolated = _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision)
         if isolated and not getattr(portfolio_decision, "decisions", None):
             logger.warning(
-                "RiskStage: every BUY/SHORT was refused (%s); "
-                "skipping Risk rather than vetoing an empty plan",
+                "RiskStage: every BUY/SHORT was refused (%s); skipping Risk rather than vetoing an empty plan",
                 SOFT_EXIT_MISSING_AFTER_RETRY,
             )
             return None
@@ -208,6 +211,7 @@ class RiskStage:
         # cluster math (it no longer credits any cash from it — see the
         # 2026-08-19 SGOV/deployable-liquidity forensic note below).
         from src.execution.cash_sweep import CashSweeper
+
         sweeper = getattr(pipeline, "_sweeper", None)
         sweeper = sweeper() if callable(sweeper) else None
         rm_positions = positions
@@ -216,12 +220,12 @@ class RiskStage:
 
         # Symbol guard
         before_symbol_guard = list(portfolio_decision.decisions)
-        guard_kwargs = (
-            {"admitted_symbols": ctx.admitted_symbols}
-            if ctx.admitted_symbols else {}
-        )
+        guard_kwargs = {"admitted_symbols": ctx.admitted_symbols} if ctx.admitted_symbols else {}
         portfolio_decision.decisions, symbol_blocked_reasons = pipeline.admission._filter_supported_symbols(
-            portfolio_decision.decisions, analyses, positions, **guard_kwargs,
+            portfolio_decision.decisions,
+            analyses,
+            positions,
+            **guard_kwargs,
         )
         if symbol_blocked_reasons:
             reasons = "; ".join(dict.fromkeys(symbol_blocked_reasons))
@@ -230,8 +234,13 @@ class RiskStage:
             for decision in before_symbol_guard:
                 if id(decision) not in allowed_ids:
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "deterministic_gate",
-                        "blocked", "symbol_guard", detail=reasons,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "deterministic_gate",
+                        "blocked",
+                        "symbol_guard",
+                        detail=reasons,
                     )
             if not portfolio_decision.decisions:
                 return {"status": "symbol_block", "orders": [], "reason": reasons}
@@ -246,13 +255,17 @@ class RiskStage:
         # outright and there is nothing to size.
         before_earnings_cap = list(portfolio_decision.decisions)
         portfolio_decision.decisions = pipeline.risk_gate._refuse_queued_earnings_buys(
-            portfolio_decision.decisions, earnings_results,
+            portfolio_decision.decisions,
+            earnings_results,
         )
         # Board item 164: the gate used to reach the log only, while this
         # symbol's `proposed_order` row (written by DecisionStage, before
         # this gate) kept the pre-gate size. Recording only.
         _record_queued_earnings_refusals(
-            pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
+            pipeline,
+            ctx,
+            before_earnings_cap,
+            portfolio_decision.decisions,
         )
 
         daily_pnl = total_value - last_equity
@@ -260,6 +273,7 @@ class RiskStage:
         # Owner mandate 2026-09-17: fully invested, always. The advisory's
         # target is the fixed mandate; macro no longer sets or lowers it.
         from src.risk.rules import DESK_INVESTED_TARGET_PCT
+
         invested_target_pct = DESK_INVESTED_TARGET_PCT
         ctx.invested_target_pct = invested_target_pct
 
@@ -282,8 +296,8 @@ class RiskStage:
                 ctx.position_history = rm_position_history
             except Exception as e:  # noqa: BLE001
                 logger.warning(
-                    "RiskStage: position history rebuild failed — RM will see "
-                    "holding ages as unknown: %s", e,
+                    "RiskStage: position history rebuild failed — RM will see holding ages as unknown: %s",
+                    e,
                 )
                 rm_position_history = {}
         if not rm_recent_performance:
@@ -293,7 +307,8 @@ class RiskStage:
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "RiskStage: recent-performance rebuild failed — the "
-                    "seat sees no rolling-return context this run: %s", e,
+                    "seat sees no rolling-return context this run: %s",
+                    e,
                 )
                 rm_recent_performance = {}
 
@@ -316,14 +331,14 @@ class RiskStage:
         correlation_matrix = pipeline._ensure_correlation_matrix(ctx, rm_positions)
 
         before_hard_gate = list(portfolio_decision.decisions)
-        portfolio_decision.decisions, rule_violations, blocked_reasons = (
-            pipeline.risk_gate._filter_hard_risk_decisions(
-                portfolio_decision.decisions,
-                positions, total_value,
-                invested_target_pct=invested_target_pct,
-                correlation_matrix=correlation_matrix,
-                cash=ctx.deployable_cash,
-                gross_ceiling=session_gross_ceiling,)
+        portfolio_decision.decisions, rule_violations, blocked_reasons = pipeline.risk_gate._filter_hard_risk_decisions(
+            portfolio_decision.decisions,
+            positions,
+            total_value,
+            invested_target_pct=invested_target_pct,
+            correlation_matrix=correlation_matrix,
+            cash=ctx.deployable_cash,
+            gross_ceiling=session_gross_ceiling,
         )
         _apply_sector_unresolved_alert(data_status, rule_violations)
         if blocked_reasons:
@@ -333,8 +348,13 @@ class RiskStage:
             for decision in before_hard_gate:
                 if id(decision) not in allowed_ids:
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "deterministic_gate",
-                        "blocked", "hard_risk", detail=reasons,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "deterministic_gate",
+                        "blocked",
+                        "hard_risk",
+                        detail=reasons,
                     )
             if not portfolio_decision.decisions:
                 pipeline.risk_gate._persist_hard_risk_block(ctx, reasons, stage="pre_rm")
@@ -349,22 +369,22 @@ class RiskStage:
         # see evidence_gate.INTEGRITY_CLEAN_STATUSES. Interpolate ONLY the
         # degraded seats: dumping the full dict re-smuggled reuse words
         # into RM's prompt on a mixed tick (measured 2026-09-16).
-        degraded = {
-            k: v for k, v in data_status.items()
-            if evidence_gate.counts_as_degraded(v)
-        }
+        degraded = {k: v for k, v in data_status.items() if evidence_gate.counts_as_degraded(v)}
         if len(degraded) >= 2:
             from src.risk.rules import RiskViolation as _RV
-            rule_violations.append(_RV(
-                rule="data_degraded",
-                message=(
-                    f"Upstream data sources degraded: {', '.join(sorted(degraded))} "
-                    f"(status: {degraded}). Decisions may be built on incomplete input — "
-                    f"RM should consider scale_all_buys < 1.0."
-                ),
-                value=float(len(degraded)),
-                limit=1.0,
-            ))
+
+            rule_violations.append(
+                _RV(
+                    rule="data_degraded",
+                    message=(
+                        f"Upstream data sources degraded: {', '.join(sorted(degraded))} "
+                        f"(status: {degraded}). Decisions may be built on incomplete input — "
+                        f"RM should consider scale_all_buys < 1.0."
+                    ),
+                    value=float(len(degraded)),
+                    limit=1.0,
+                )
+            )
             logger.warning("Morning data degradation: %s", data_status)
 
         # Parse-level losses anywhere in this session (2026-09-02). Before
@@ -415,62 +435,64 @@ class RiskStage:
             # never reaches the seat, so counting it as present would be the
             # same false reassurance in the other direction — and deliberately
             # not `analyses`, which proves only that a row parsed.
-            book_symbols = {
-                str(p.symbol).upper() for p in (rm_positions or [])
-                if getattr(p, "symbol", None)
-            } | {
-                str(d.symbol).upper()
-                for d in (portfolio_decision.decisions or [])
-                if getattr(d, "symbol", None)
+            book_symbols = {str(p.symbol).upper() for p in (rm_positions or []) if getattr(p, "symbol", None)} | {
+                str(d.symbol).upper() for d in (portfolio_decision.decisions or []) if getattr(d, "symbol", None)
             }
             recovered_names, lost_names = _reconcile_parse_loss(
-                dropped, book_symbols,
+                dropped,
+                book_symbols,
             )
             # Board item 158: file each dropped stock's REASON to
             # `specialist_evidence`, tied to symbol + run, so a later reader
             # can tell why a name was absent without the rotated log. Purely
             # observational — a write failure never touches the risk decision.
             _persist_dropped_reasons(
-                getattr(pipeline, "db", None), run_id, dropped,
-                dropped_reasons, book_symbols, dropped_reason_codes,
+                getattr(pipeline, "db", None),
+                run_id,
+                dropped,
+                dropped_reasons,
+                book_symbols,
+                dropped_reason_codes,
             )
-            rule_violations.extend(
-                _parse_loss_advisories(dropped, book_symbols, dropped_reasons)
-            )
+            rule_violations.extend(_parse_loss_advisories(dropped, book_symbols, dropped_reasons))
             if lost_names:
                 logger.error(
-                    "Analysis parse loss reached the risk stage: %d item(s) "
-                    "— %s", sum(lost_names.values()), ", ".join(lost_names),
+                    "Analysis parse loss reached the risk stage: %d item(s) — %s",
+                    sum(lost_names.values()),
+                    ", ".join(lost_names),
                 )
             if recovered_names:
                 logger.warning(
                     "Analysis parse loss RECOVERED by retry before the risk "
                     "stage: %d item(s) — %s; present in the book, reported as "
                     "a cost note rather than as missing coverage",
-                    sum(recovered_names.values()), ", ".join(recovered_names),
+                    sum(recovered_names.values()),
+                    ", ".join(recovered_names),
                 )
 
         nulled = ctx.null_coerced_fields
         if nulled:
             from src.risk.rules import RiskViolation as _RV
+
             detail = ", ".join(
-                f"{model}.{field}x{n}"
-                for (model, field), n in sorted(nulled.items(), key=lambda kv: -kv[1])
+                f"{model}.{field}x{n}" for (model, field), n in sorted(nulled.items(), key=lambda kv: -kv[1])
             )
             n_nulled = sum(nulled.values())
-            rule_violations.append(_RV(
-                rule="analysis_field_nulled",
-                message=(
-                    f"{n_nulled} field(s) arrived as an explicit null and took "
-                    f"their schema default: {detail}. The analyses were KEPT "
-                    f"(the alternative — dropping them — is worse), but a "
-                    f"nulled `thesis_invalid_if` means that idea has no "
-                    f"soft-exit trigger and will be managed on the hard stop "
-                    f"alone."
-                ),
-                value=float(n_nulled),
-                limit=0.0,
-            ))
+            rule_violations.append(
+                _RV(
+                    rule="analysis_field_nulled",
+                    message=(
+                        f"{n_nulled} field(s) arrived as an explicit null and took "
+                        f"their schema default: {detail}. The analyses were KEPT "
+                        f"(the alternative — dropping them — is worse), but a "
+                        f"nulled `thesis_invalid_if` means that idea has no "
+                        f"soft-exit trigger and will be managed on the hard stop "
+                        f"alone."
+                    ),
+                    value=float(n_nulled),
+                    limit=0.0,
+                )
+            )
 
         ctx.hygiene_violations = parse_telemetry.hygiene_snapshot()
         hygiene = ctx.hygiene_violations
@@ -487,46 +509,51 @@ class RiskStage:
             # the risk seat may only resize), it only makes the finding
             # visible to whatever reads the RM's review.
             from src.risk.rules import RiskViolation as _RV
+
             n_hygiene = sum(hygiene.values())
             detail = ", ".join(
                 f"{model}.{kind}x{n}" if n > 1 else f"{model}.{kind}"
                 for (model, kind), n in sorted(hygiene.items(), key=lambda kv: -kv[1])
             )
-            rule_violations.append(_RV(
-                rule="tech_answer_hygiene",
-                message=(
-                    f"{n_hygiene} tech-seat answer(s) this session carried "
-                    f"fenced markdown or an undeclared key despite a strict "
-                    f"response schema: {detail}. Model name is tagged with "
-                    f"the actual provider that answered — only openrouter/"
-                    f"google were ever sent a schema, so a count against "
-                    f"any other provider reflects no schema being sent, not "
-                    f"one failing to suppress. Never blocks anything; the "
-                    f"row was still parsed and used. See docs/WORK.md item 157."
-                ),
-                value=float(n_hygiene),
-                limit=0.0,
-            ))
+            rule_violations.append(
+                _RV(
+                    rule="tech_answer_hygiene",
+                    message=(
+                        f"{n_hygiene} tech-seat answer(s) this session carried "
+                        f"fenced markdown or an undeclared key despite a strict "
+                        f"response schema: {detail}. Model name is tagged with "
+                        f"the actual provider that answered — only openrouter/"
+                        f"google were ever sent a schema, so a count against "
+                        f"any other provider reflects no schema being sent, not "
+                        f"one failing to suppress. Never blocks anything; the "
+                        f"row was still parsed and used. See docs/WORK.md item 157."
+                    ),
+                    value=float(n_hygiene),
+                    limit=0.0,
+                )
+            )
 
         has_book_to_check = len(rm_positions) >= 2 or any(
             d.action in ("BUY", "SHORT") for d in portfolio_decision.decisions
         )
         if (not correlation_matrix) and has_book_to_check:
             from src.risk.rules import RiskViolation as _RV
-            rule_violations.append(_RV(
-                rule="correlation_coverage_gap",
-                message=(
-                    "Correlation matrix is empty (insufficient bar data this run). "
-                    "The cluster-concentration advisory is DISABLED. Consider "
-                    "scale_all_buys < 1.0 until coverage returns, especially for "
-                    "thematic names (AI, semis, energy)."
-                ),
-                value=0.0,
-                limit=2.0,
-            ))
+
+            rule_violations.append(
+                _RV(
+                    rule="correlation_coverage_gap",
+                    message=(
+                        "Correlation matrix is empty (insufficient bar data this run). "
+                        "The cluster-concentration advisory is DISABLED. Consider "
+                        "scale_all_buys < 1.0 until coverage returns, especially for "
+                        "thematic names (AI, semis, energy)."
+                    ),
+                    value=0.0,
+                    limit=2.0,
+                )
+            )
             logger.warning(
-                "Correlation matrix empty — cluster risk check disabled for this run "
-                "(positions=%d, buy_candidates=%d)",
+                "Correlation matrix empty — cluster risk check disabled for this run (positions=%d, buy_candidates=%d)",
                 len(positions),
                 sum(1 for d in portfolio_decision.decisions if d.action == "BUY"),
             )
@@ -547,7 +574,8 @@ class RiskStage:
         rc_now = portfolio_decision.reasoning_chain
         if rc_now is not None:
             missing_audit_steps = [
-                name for name, value in (
+                name
+                for name, value in (
                     ("premortem_check", rc_now.premortem_check),
                     ("continuity_check", rc_now.continuity_check),
                 )
@@ -555,23 +583,27 @@ class RiskStage:
             ]
             if missing_audit_steps:
                 from src.risk.rules import RiskViolation as _RV
-                rule_violations.append(_RV(
-                    rule="pm_audit_step_missing",
-                    message=(
-                        f"PM returned no {' and no '.join(missing_audit_steps)} — "
-                        f"mandatory in its prompt, optional in the schema, so this "
-                        f"raised no parse error. The disconfirming/red-team step of "
-                        f"today's plan was NOT performed. Weigh the plan as unaudited "
-                        f"in that respect and address it in "
-                        f"`reasoning_chain.overall`."
-                    ),
-                    value=float(len(missing_audit_steps)),
-                    limit=0.0,
-                ))
+
+                rule_violations.append(
+                    _RV(
+                        rule="pm_audit_step_missing",
+                        message=(
+                            f"PM returned no {' and no '.join(missing_audit_steps)} — "
+                            f"mandatory in its prompt, optional in the schema, so this "
+                            f"raised no parse error. The disconfirming/red-team step of "
+                            f"today's plan was NOT performed. Weigh the plan as unaudited "
+                            f"in that respect and address it in "
+                            f"`reasoning_chain.overall`."
+                        ),
+                        value=float(len(missing_audit_steps)),
+                        limit=0.0,
+                    )
+                )
                 logger.warning(
                     "PM reasoning chain missing mandatory audit step(s): %s "
                     "(run_id=%s) — surfaced to RM as a pm_audit_step_missing advisory",
-                    ", ".join(missing_audit_steps), run_id,
+                    ", ".join(missing_audit_steps),
+                    run_id,
                 )
 
         # 2026-08-19 SGOV/deployable-liquidity forensic: RM used to be told
@@ -592,9 +624,7 @@ class RiskStage:
         # and pass the rest through; a name dropped by one of those was
         # missing from the order list AND from the drop list. See
         # `_dropped_since_proposal`.
-        portfolio_decision.constructor_dropped = _dropped_since_proposal(
-            portfolio_decision
-        )
+        portfolio_decision.constructor_dropped = _dropped_since_proposal(portfolio_decision)
 
         # Handshake overlaps the review so auth is not serial after Risk.
         _start_trade_updates_early(pipeline, ctx)
@@ -620,9 +650,7 @@ class RiskStage:
             # None, not a hand-typed 25.0: absent facts, the agent resolves
             # the ceiling from `risk.max_portfolio_risk_pct` in the live
             # settings rather than from a literal copied into this call site.
-            risk_ceiling_pct=(
-                getattr(ctx.facts, "risk_ceiling_pct", None) if ctx.facts else None
-            ),
+            risk_ceiling_pct=(getattr(ctx.facts, "risk_ceiling_pct", None) if ctx.facts else None),
             # The fetched answer to `reasoning_chain.event_risk` — see
             # RiskStage._build_event_risk_block.
             event_risk_block=rm_event_risk_block,
@@ -636,15 +664,13 @@ class RiskStage:
                 "risk_manager_unparseable_output" if verdict is None else None,
                 result=rm_result,
             ),
-            agent_name="risk_manager", run_id=run_id,
+            agent_name="risk_manager",
+            run_id=run_id,
             # "violations" was wrong AND owner-facing: this string is what
             # `CandidateDetailModal` shows on the dashboard, and by this point
             # `_filter_hard_risk_decisions` has already dropped every hard
             # breach, so the count can only ever be advisories (item 162).
-            input_summary=(
-                f"{len(portfolio_decision.decisions)} trades, "
-                f"{len(rule_violations)} engine advisories"
-            ),
+            input_summary=(f"{len(portfolio_decision.decisions)} trades, {len(rule_violations)} engine advisories"),
             input_message=rm_result.user_message,
             output_summary=f"Approved: {verdict.approved if verdict else 'error'}",
             full_response=rm_result.raw_text,
@@ -659,15 +685,24 @@ class RiskStage:
 
         if verdict:
             _persist_evidence(
-                pipeline.db, run_id=run_id, agent_name="risk_manager",
-                kind="verdict", scope="run", decision_id=ctx.decision_id,
+                pipeline.db,
+                run_id=run_id,
+                agent_name="risk_manager",
+                kind="verdict",
+                scope="run",
+                decision_id=ctx.decision_id,
                 evidence_json=verdict.model_dump_json(),
             )
             for mod in verdict.modifications:
                 _persist_evidence(
-                    pipeline.db, run_id=run_id, agent_name="risk_manager",
-                    kind="modification", scope="symbol", symbol=mod.symbol,
-                    decision_id=ctx.decision_id, evidence_json=mod.model_dump_json(),
+                    pipeline.db,
+                    run_id=run_id,
+                    agent_name="risk_manager",
+                    kind="modification",
+                    scope="symbol",
+                    symbol=mod.symbol,
+                    decision_id=ctx.decision_id,
+                    evidence_json=mod.model_dump_json(),
                 )
             # Phase 10.1 — the per-symbol audit trail. Written for EVERY
             # refusal the verdict carries, including one naming a symbol not
@@ -675,8 +710,12 @@ class RiskStage:
             # name and not only through the run-scoped verdict blob.
             for rejection in verdict.rejected_symbols:
                 _persist_evidence(
-                    pipeline.db, run_id=run_id, agent_name="risk_manager",
-                    kind="rejection", scope="symbol", symbol=rejection.symbol,
+                    pipeline.db,
+                    run_id=run_id,
+                    agent_name="risk_manager",
+                    kind="rejection",
+                    scope="symbol",
+                    symbol=rejection.symbol,
                     decision_id=ctx.decision_id,
                     evidence_json=rejection.model_dump_json(),
                 )
@@ -688,19 +727,25 @@ class RiskStage:
             )
             for decision in portfolio_decision.decisions:
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "failed",
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "risk",
+                    "failed",
                     "risk_manager_unparseable_output",
                 )
             _persist_evidence(
-                pipeline.db, run_id=run_id, agent_name="risk_manager",
-                kind="agent_failure", scope="run", decision_id=ctx.decision_id,
-                evidence_json=(
-                    '{"failure":"unparseable_output",'
-                    '"stage":"risk_manager","verdict":null}'
-                ),
+                pipeline.db,
+                run_id=run_id,
+                agent_name="risk_manager",
+                kind="agent_failure",
+                scope="run",
+                decision_id=ctx.decision_id,
+                evidence_json=('{"failure":"unparseable_output","stage":"risk_manager","verdict":null}'),
             )
             return {
-                "status": "agent_failure", "orders": [],
+                "status": "agent_failure",
+                "orders": [],
                 "reason": "risk_manager_unparseable_output",
             }
 
@@ -728,10 +773,15 @@ class RiskStage:
                 "Risk manager set approved=False; per owner ruling 2026-09-24 "
                 "this no longer rejects the batch — recording and proceeding to "
                 "apply rejected_symbols + modifications + scale_all_buys. "
-                "Reasoning: %s", verdict.reasoning,
+                "Reasoning: %s",
+                verdict.reasoning,
             )
             _record_pipeline_event(
-                pipeline, ctx, None, "risk", "batch_veto_ignored",
+                pipeline,
+                ctx,
+                None,
+                "risk",
+                "batch_veto_ignored",
                 verdict.reasoning,
                 gate="risk_manager_batch_veto_disabled",
                 reason_category=getattr(verdict, "reason_category", None),
@@ -766,32 +816,42 @@ class RiskStage:
                         "Risk manager named %s (%s) in rejected_symbols, but a "
                         "protective exit / holding is never droppable by the "
                         "seat — keeping it. Reason given: %s",
-                        decision.symbol, decision.action, reason,
+                        decision.symbol,
+                        decision.action,
+                        reason,
                     )
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "risk",
-                        "exit_refusal_ignored", reason,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "risk",
+                        "exit_refusal_ignored",
+                        reason,
                         gate="risk_manager_exit_protected",
                         action=decision.action,
                     )
                     continue
                 refused_decisions.append(decision)
                 logger.info(
-                    "Risk manager REFUSED %s (the rest of the plan is "
-                    "unaffected): %s", decision.symbol, reason,
+                    "Risk manager REFUSED %s (the rest of the plan is unaffected): %s",
+                    decision.symbol,
+                    reason,
                 )
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "risk", "rejected", reason,
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "risk",
+                    "rejected",
+                    reason,
                 )
-            matched = (
-                {d.symbol.strip().upper() for d in refused_decisions}
-                | {s.strip().upper() for s in protected_exit_symbols}
-            )
+            matched = {d.symbol.strip().upper() for d in refused_decisions} | {
+                s.strip().upper() for s in protected_exit_symbols
+            }
             unmatched = sorted(set(rejections) - matched)
             if unmatched:
                 logger.warning(
-                    "Risk manager refused %s, which is not in the proposed "
-                    "plan — no-op (evidence still recorded)",
+                    "Risk manager refused %s, which is not in the proposed plan — no-op (evidence still recorded)",
                     ", ".join(unmatched),
                 )
             portfolio_decision.decisions = surviving
@@ -808,10 +868,7 @@ class RiskStage:
                 # kill a SELL/COVER. There is simply nothing left to place, and
                 # each symbol carries its OWN reason.
                 reasons = "; ".join(
-                    f"{sym}: {rejections[sym]}"
-                    for sym in sorted(
-                        {d.symbol.strip().upper() for d in refused_decisions}
-                    )
+                    f"{sym}: {rejections[sym]}" for sym in sorted({d.symbol.strip().upper() for d in refused_decisions})
                 )
                 logger.info(
                     "Every proposed trade was refused on its own merits: %s",
@@ -854,6 +911,7 @@ class RiskStage:
         if portfolio_decision.decisions:
             from src.exits.pm_claim_check import holding_discipline_claim_check
             from src.risk.exit_guard import veto_contradicted_exit
+
             hd_surviving: list = []
             hd_blocked: list[tuple[str, str]] = []
             macro_regime_today = _macro_regime(macro_analysis)
@@ -887,16 +945,20 @@ class RiskStage:
             metric_deltas: dict = {}
             try:
                 position_facts = pipeline._build_position_facts(
-                    rm_positions, [], total_value,
+                    rm_positions,
+                    [],
+                    total_value,
                 )
                 metric_deltas = pipeline._build_review_metric_deltas(
-                    position_facts, run_id=run_id,
+                    position_facts,
+                    run_id=run_id,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "RiskStage: metric-delta build for the exit-contradiction "
                     "gate failed (%s) — morning exits pass this gate unchecked "
-                    "this run (fail open, never block a real exit)", e,
+                    "this run (fail open, never block a real exit)",
+                    e,
                 )
                 metric_deltas = {}
             for decision in portfolio_decision.decisions:
@@ -906,7 +968,8 @@ class RiskStage:
                 symbol_u = decision.symbol.strip().upper()
                 hist = rm_position_history.get(decision.symbol) or {}
                 pos = next(
-                    (p for p in rm_positions if p.symbol.upper() == symbol_u), None,
+                    (p for p in rm_positions if p.symbol.upper() == symbol_u),
+                    None,
                 )
                 protection = pipeline._structural_protection_for_holding(
                     symbol=symbol_u,
@@ -917,9 +980,10 @@ class RiskStage:
                     run_id=run_id,
                 )
                 logger.info(
-                    "Holding-discipline structural protection for %s: "
-                    "protected=%s basis=%s — %s",
-                    symbol_u, protection.protected, protection.basis,
+                    "Holding-discipline structural protection for %s: protected=%s basis=%s — %s",
+                    symbol_u,
+                    protection.protected,
+                    protection.basis,
                     protection.detail,
                 )
                 check = holding_discipline_claim_check(
@@ -948,8 +1012,12 @@ class RiskStage:
                     # drop, no alert — absence of proof is not proof.
                     logger.warning("Holding discipline: %s", check.finding)
                     _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "risk",
-                        "holding_discipline_claim_unverified", check.finding,
+                        pipeline,
+                        ctx,
+                        decision.symbol,
+                        "risk",
+                        "holding_discipline_claim_unverified",
+                        check.finding,
                     )
                 # Item 96 — deterioration-claim-vs-own-numbers veto, morning
                 # path. `veto_contradicted_exit` returns None unless the reason
@@ -966,26 +1034,40 @@ class RiskStage:
                 deltas = metric_deltas.get(symbol_u)
                 if deltas is not None:
                     veto = veto_contradicted_exit(
-                        decision.action, decision.reasoning, deltas,
+                        decision.action,
+                        decision.reasoning,
+                        deltas,
                     )
                     if veto:
                         logger.warning("Exit guard (morning): %s", veto)
                         _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "risk",
-                            "rejected", veto,
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "risk",
+                            "rejected",
+                            veto,
                         )
                         _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "risk",
-                            "exit_vetoed_contradicts_own_metrics", veto,
+                            pipeline,
+                            ctx,
+                            decision.symbol,
+                            "risk",
+                            "exit_vetoed_contradicts_own_metrics",
+                            veto,
                         )
                         from src.risk.exit_refusal import (
                             CODE_CONTRADICTS_METRICS,
                         )
+
                         pipeline._record_exit_refusal(
-                            symbol=symbol_u, run_id=run_id,
+                            symbol=symbol_u,
+                            run_id=run_id,
                             action=decision.action,
-                            code=CODE_CONTRADICTS_METRICS, dropped=True,
-                            detail=veto[:400], layer="metric_contradiction",
+                            code=CODE_CONTRADICTS_METRICS,
+                            dropped=True,
+                            detail=veto[:400],
+                            layer="metric_contradiction",
                         )
                         hd_blocked.append((symbol_u, veto))
                         continue
@@ -998,15 +1080,15 @@ class RiskStage:
                     # justification. Same terminal status as the per-symbol
                     # refusal path above, and for the same reason: no orders,
                     # with each symbol carrying its OWN reason.
-                    reasons = "; ".join(
-                        finding for _sym, finding in hd_blocked
-                    )
+                    reasons = "; ".join(finding for _sym, finding in hd_blocked)
                     logger.info(
-                        "Every remaining trade was blocked on a provably "
-                        "false holding-discipline claim: %s", reasons,
+                        "Every remaining trade was blocked on a provably false holding-discipline claim: %s",
+                        reasons,
                     )
                     return {
-                        "status": "rejected", "orders": [], "reason": reasons,
+                        "status": "rejected",
+                        "orders": [],
+                        "reason": reasons,
                     }
 
         # Board item 164: what each surviving leg looked like BEFORE the
@@ -1028,7 +1110,8 @@ class RiskStage:
             # fails the build if a duplicate reappears in this file.
             unapplied_mods: list[dict] = []
             portfolio_decision.decisions, rejected_mods = pipeline.risk_gate._apply_risk_modifications(
-                portfolio_decision.decisions, verdict.modifications,
+                portfolio_decision.decisions,
+                verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
                 unapplied=unapplied_mods,
             )
@@ -1049,22 +1132,24 @@ class RiskStage:
             # the real refusal of a name the seat already refused above.
             in_plan = {sym for sym, _action in pre_rm_fields}
             for rejected in list(rejected_mods) + unapplied_mods:
-                _details = {
-                    k: v for k, v in rejected.items()
-                    if k not in ("symbol", "reason", "outcome")
-                }
+                _details = {k: v for k, v in rejected.items() if k not in ("symbol", "reason", "outcome")}
                 _sym = rejected["symbol"]
                 if str(_sym or "").strip().upper() not in in_plan:
                     _details["symbol_named"] = _sym
                     _sym = None
                 _record_pipeline_event(
-                    pipeline, ctx, _sym, "risk",
+                    pipeline,
+                    ctx,
+                    _sym,
+                    "risk",
                     rejected.get("outcome", "modification_rejected"),
-                    rejected["reason"], **_details,
+                    rejected["reason"],
+                    **_details,
                 )
 
         portfolio_decision.decisions, scale, scale_advised = _record_scale_advisory(
-            portfolio_decision.decisions, verdict,
+            portfolio_decision.decisions,
+            verdict,
         )
         # Board items 134 + 162 (owner ruling 2026-09-25, reaffirming
         # 2026-09-19). `scale_all_buys` is ADVISORY on entries: a model-picked,
@@ -1077,7 +1162,11 @@ class RiskStage:
         _scale_reason = (getattr(verdict, "reasoning", None) or "").strip()
         for _sym, _alloc in scale_advised:
             _record_pipeline_event(
-                pipeline, ctx, _sym, "risk", "scale_advisory",
+                pipeline,
+                ctx,
+                _sym,
+                "risk",
+                "scale_advisory",
                 f"risk seat set scale_all_buys={scale:.2f}, a portfolio-wide "
                 f"exposure concern — ADVISORY ONLY on entries (owner ruling "
                 f"2026-09-25): {_sym}'s entry allocation_pct {_alloc:.2f}% is "
@@ -1094,11 +1183,13 @@ class RiskStage:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
                 pipeline.risk_gate._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
-                    positions, total_value,
+                    positions,
+                    total_value,
                     invested_target_pct=invested_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
-                    gross_ceiling=session_gross_ceiling,)
+                    gross_ceiling=session_gross_ceiling,
+                )
             )
             _apply_sector_unresolved_alert(data_status, post_mod_violations)
             if blocked_reasons:
@@ -1110,15 +1201,27 @@ class RiskStage:
 
         for decision in portfolio_decision.decisions:
             outcome, reason, details = _risk_event_for(
-                decision, pre_rm_fields, verdict, scale,
+                decision,
+                pre_rm_fields,
+                verdict,
+                scale,
                 field_aliases=getattr(pipeline, "_FIELD_ALIASES", None),
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "risk", outcome, reason,
+                pipeline,
+                ctx,
+                decision.symbol,
+                "risk",
+                outcome,
+                reason,
                 **details,
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "deterministic_gate", "allowed",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "deterministic_gate",
+                "allowed",
                 "post_risk_checks_passed",
             )
         return None

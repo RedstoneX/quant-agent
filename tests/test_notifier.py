@@ -8,6 +8,7 @@ These tests cover:
   - per-mode noise policy: which result statuses are silent
   - error path (exception surfaces with type + message)
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from src.notifier import TelegramNotifier, format_session_result, was_suppressed
 
 
 # === TelegramNotifier ===
+
 
 def test_notifier_disabled_when_no_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
@@ -109,9 +111,7 @@ def test_notifier_failure_log_redacts_the_bot_token(monkeypatch, caplog):
 
     with caplog.at_level("WARNING"), patch("src.notifier.requests.post") as mock_post:
         bad = MagicMock()
-        bad.raise_for_status.side_effect = requests.HTTPError(
-            f"401 Client Error: Unauthorized for url: {url}"
-        )
+        bad.raise_for_status.side_effect = requests.HTTPError(f"401 Client Error: Unauthorized for url: {url}")
         mock_post.return_value = bad
         assert n.send("hello") is False
 
@@ -120,7 +120,8 @@ def test_notifier_failure_log_redacts_the_bot_token(monkeypatch, caplog):
 
 
 def test_notifier_send_document_failure_log_redacts_the_bot_token(
-    monkeypatch, caplog,
+    monkeypatch,
+    caplog,
 ):
     """Same leak, same fix, on the daily P&L CSV path."""
     token = "9999999:SENTINELTOKEN"
@@ -193,6 +194,7 @@ def test_notifier_send_empty_text_returns_false(monkeypatch):
 # rationale read "...strong heavy accumulation volume" just stopped there,
 # mid-sentence, with no way to read more or jump into the dashboard) ===
 
+
 def test_notifier_send_sets_html_parse_mode(monkeypatch):
     """parse_mode must be set so the tap-through link (<a href>) renders
     as a real link rather than literal angle-bracket text."""
@@ -217,9 +219,7 @@ def test_notifier_send_escapes_html_special_characters(monkeypatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
     monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
     n = TelegramNotifier()
-    rationale = (
-        "BUY CRM_STOCK — strong <accumulation> & R&D volume > 70% * high conviction"
-    )
+    rationale = "BUY CRM_STOCK — strong <accumulation> & R&D volume > 70% * high conviction"
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = MagicMock(raise_for_status=MagicMock())
         ok = n.send(rationale)
@@ -341,19 +341,16 @@ def test_notifier_failure_still_swallowed_with_link_and_escaping_active(monkeypa
     monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
     n = TelegramNotifier(mission_control_url="https://ovh-vps.wallaby-bowfin.ts.net/cockpit/")
     with patch("src.notifier.requests.post") as mock_post:
-        mock_post.side_effect = requests.HTTPError(
-            "400 Bad Request: can't parse entities"
-        )
+        mock_post.side_effect = requests.HTTPError("400 Bad Request: can't parse entities")
         try:
             result = n.send("BUY CRM_STOCK <thesis> & 50% conviction * top pick")
         except Exception as exc:  # noqa: BLE001
-            raise AssertionError(
-                f"send() must never raise into a trading path; raised {exc!r}"
-            )
+            raise AssertionError(f"send() must never raise into a trading path; raised {exc!r}")
         assert result is False
 
 
 # === Per-symbol tap-through links (`symbols=` on send()) ===
+
 
 def test_notifier_send_linkifies_known_symbols(monkeypatch):
     """Every symbol named in `symbols` that also appears in the text gets
@@ -385,7 +382,8 @@ def test_notifier_send_symbol_links_only_wrap_known_symbols(monkeypatch):
     sent = mock_post.call_args.kwargs["json"]["text"]
     assert '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>' in sent
     assert "<a href" not in sent.replace(
-        '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>', "",
+        '<a href="https://finance.yahoo.com/quote/CCJ">CCJ</a>',
+        "",
     )
     assert "PASS on ALL names" in sent
 
@@ -403,8 +401,8 @@ def test_notifier_send_symbol_links_respect_word_boundaries(monkeypatch):
         n.send("new CATEGORY leader, no CAT trade today", symbols=["CAT"])
     sent = mock_post.call_args.kwargs["json"]["text"]
     assert "CATEGORY" in sent
-    assert "<a href=\"https://finance.yahoo.com/quote/CAT\">CAT</a> trade" in sent
-    assert 'CATEGORY</a>' not in sent
+    assert '<a href="https://finance.yahoo.com/quote/CAT">CAT</a> trade' in sent
+    assert "CATEGORY</a>" not in sent
     assert '<a href="https://finance.yahoo.com/quote/CAT">CAT</a>EGORY' not in sent
 
 
@@ -468,8 +466,10 @@ def test_notifier_send_symbol_links_degrade_to_plain_text_over_budget(monkeypatc
 
 # === _clip_text (shared boundary-aware truncation) ===
 
+
 def test_clip_text_returns_text_unchanged_when_it_fits():
     from src.notifier import _clip_text
+
     assert _clip_text("short text", 100) == "short text"
 
 
@@ -478,6 +478,7 @@ def test_clip_text_never_cuts_mid_word():
     volume' should never become 'strong heavy accumulat' with nothing to
     show it was cut. Every clip must land on a real word boundary."""
     from src.notifier import _clip_text
+
     text = (
         "CRM is showing strong heavy accumulation volume over the past "
         "three sessions, with institutional buyers stepping in on every "
@@ -493,12 +494,13 @@ def test_clip_text_never_cuts_mid_word():
         # end of the string or whitespace — proof the cut landed between
         # words, not inside one.
         assert text.startswith(core)
-        tail = text[len(core):len(core) + 1]
+        tail = text[len(core) : len(core) + 1]
         assert tail in ("", " ")
 
 
 def test_clip_text_says_so_with_an_ellipsis_when_it_clips():
     from src.notifier import _clip_text
+
     text = "word " * 100
     clipped = _clip_text(text, 50)
     assert len(clipped) < len(text)
@@ -511,6 +513,7 @@ def test_clip_text_falls_back_to_hard_cut_only_when_no_boundary_exists():
     function must still degrade gracefully (bounded length, marker
     present) rather than raise or return something unbounded."""
     from src.notifier import _clip_text
+
     huge_token = "x" * 500
     clipped = _clip_text(huge_token, 50)
     assert len(clipped) <= 50
@@ -518,6 +521,7 @@ def test_clip_text_falls_back_to_hard_cut_only_when_no_boundary_exists():
 
 
 # === format_session_result — raised per-field clips ===
+
 
 def test_format_evening_suggested_action_survives_past_old_200_char_clip():
     """This IS the reported defect: a per-symbol suggested action used to
@@ -565,6 +569,7 @@ def test_format_evening_outlook_survives_past_old_280_char_clip():
 
 # === format_session_result === (existing suite continues below)
 
+
 def test_format_morning_executed_shows_orders_and_status():
     result = {
         "status": "executed",
@@ -598,12 +603,18 @@ def test_format_morning_shows_per_order_detail_with_price_and_stop():
         "orders": [
             # Rich shape from the post-fix broker.submit_order
             {
-                "symbol": "BA", "side": "buy", "qty": 27,
-                "limit_price": 238.63, "stop_loss_price": 230.00,
+                "symbol": "BA",
+                "side": "buy",
+                "qty": 27,
+                "limit_price": 238.63,
+                "stop_loss_price": 230.00,
             },
             {
-                "symbol": "MP", "side": "sell", "qty": 63,
-                "limit_price": 66.62, "stop_loss_price": None,
+                "symbol": "MP",
+                "side": "sell",
+                "qty": 63,
+                "limit_price": 66.62,
+                "stop_loss_price": None,
             },
         ],
         "data_status": {"macro": "ok", "news": "ok", "tech": "ok", "earnings": "ok"},
@@ -628,10 +639,10 @@ def test_format_morning_renders_all_orders_not_just_count():
     """All orders shown (10/side cap). Previous version capped at 5/side
     which dropped detail on heavy-volume days."""
     result = {
-        "status": "executed", "run_id": "run-many",
+        "status": "executed",
+        "run_id": "run-many",
         "orders": [
-            {"symbol": f"SYM{i:02d}", "side": "buy", "qty": i,
-             "limit_price": 100.0 + i, "stop_loss_price": 95.0 + i}
+            {"symbol": f"SYM{i:02d}", "side": "buy", "qty": i, "limit_price": 100.0 + i, "stop_loss_price": 95.0 + i}
             for i in range(1, 8)
         ],
         "data_status": {"macro": "ok"},
@@ -647,10 +658,10 @@ def test_format_morning_renders_all_orders_not_just_count():
 def test_format_morning_caps_at_ten_per_side_with_omission_marker():
     """Edge case for unusual heavy session: 15 BUYs → 10 shown + omission."""
     result = {
-        "status": "executed", "run_id": "run-mass",
+        "status": "executed",
+        "run_id": "run-mass",
         "orders": [
-            {"symbol": f"S{i:02d}", "side": "buy", "qty": 1,
-             "limit_price": 100, "stop_loss_price": 95}
+            {"symbol": f"S{i:02d}", "side": "buy", "qty": 1, "limit_price": 100, "stop_loss_price": 95}
             for i in range(15)
         ],
     }
@@ -670,7 +681,9 @@ def test_format_morning_no_trades_shows_zero_orders():
 
 def test_format_morning_degraded_data_flagged():
     result = {
-        "status": "executed", "run_id": "run-x", "orders": [],
+        "status": "executed",
+        "run_id": "run-x",
+        "orders": [],
         "data_status": {"macro": "failed", "news": "ok", "tech": "ok", "earnings": "failed"},
     }
     msg = format_session_result("morning", result, 5.0)
@@ -686,9 +699,14 @@ def test_format_morning_truncated_smart_money_flagged_as_degraded():
     silently swallowed the way a genuinely quiet day (empty) or a clean run
     (ok) would be."""
     result = {
-        "status": "executed", "run_id": "run-trunc", "orders": [],
+        "status": "executed",
+        "run_id": "run-trunc",
+        "orders": [],
         "data_status": {
-            "macro": "ok", "news": "ok", "tech": "ok", "earnings": "ok",
+            "macro": "ok",
+            "news": "ok",
+            "tech": "ok",
+            "earnings": "ok",
             "smart_money": "truncated",
         },
     }
@@ -703,9 +721,14 @@ def test_format_morning_empty_smart_money_not_flagged_as_degraded():
     signal today" (empty) must NOT be flagged degraded — only truncation
     (or another failure) should be."""
     result = {
-        "status": "executed", "run_id": "run-empty", "orders": [],
+        "status": "executed",
+        "run_id": "run-empty",
+        "orders": [],
         "data_status": {
-            "macro": "ok", "news": "ok", "tech": "ok", "earnings": "ok",
+            "macro": "ok",
+            "news": "ok",
+            "tech": "ok",
+            "earnings": "ok",
             "smart_money": "empty",
         },
     }
@@ -721,7 +744,8 @@ def test_format_morning_force_delever_triggers_autonomous_intervention_banner():
     Telegram — the operator misses the most important "system intervened"
     signal. The banner must appear before the order list."""
     result = {
-        "status": "executed", "run_id": "run-x",
+        "status": "executed",
+        "run_id": "run-x",
         "orders": [
             {"symbol": "TSLA", "action": "FORCE_DELEVER", "qty": 5, "limit_price": 200.0, "side": "sell"},
             {"symbol": "NVDA", "action": "BUY", "qty": 10, "limit_price": 250.0, "side": "buy"},
@@ -740,7 +764,8 @@ def test_format_morning_emergency_sell_triggers_autonomous_intervention_banner()
     """EMERGENCY_SELL fires from intra_check's flash-crash protection.
     Same intervention signal class as FORCE_DELEVER; same banner."""
     result = {
-        "status": "executed", "run_id": "run-x",
+        "status": "executed",
+        "run_id": "run-x",
         "orders": [
             {"symbol": "AMZN", "action": "EMERGENCY_SELL", "qty": 3, "limit_price": 145.0, "side": "sell"},
         ],
@@ -756,7 +781,8 @@ def test_format_morning_routine_sells_no_intervention_banner():
     """Routine SELL/REDUCE actions must NOT trigger the intervention
     banner — habituation kills the signal."""
     result = {
-        "status": "executed", "run_id": "run-x",
+        "status": "executed",
+        "run_id": "run-x",
         "orders": [
             {"symbol": "AAPL", "action": "SELL", "qty": 5, "limit_price": 180.0, "side": "sell"},
             {"symbol": "META", "action": "REDUCE", "qty": 2, "limit_price": 500.0, "side": "sell"},
@@ -837,8 +863,10 @@ def test_format_evening_return_pct_na_when_prior_equity_nonpositive():
 
 def test_format_evening_shows_negative_daily_pnl():
     result = {
-        "status": "analyzed", "run_id": "run-e",
-        "daily_pnl": -373.46, "total_value": 107278.55,
+        "status": "analyzed",
+        "run_id": "run-e",
+        "daily_pnl": -373.46,
+        "total_value": 107278.55,
         "analysis": {"risk_rating": "elevated"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -854,8 +882,10 @@ def test_format_evening_prepends_operator_attention_banner_on_elevated():
     notifier MUST prepend a visible banner so the operator notices in
     the Telegram push without reading prose."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
-        "daily_pnl": -200.0, "total_value": 100_000.0,
+        "status": "analyzed",
+        "run_id": "run-e",
+        "daily_pnl": -200.0,
+        "total_value": 100_000.0,
         "analysis": {"risk_rating": "elevated", "tomorrow_bias": "bearish"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -873,7 +903,8 @@ def test_format_evening_prepends_operator_attention_banner_on_high():
     (multiple broken theses or macro warning + daily loss). Banner
     must fire."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "high"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -887,7 +918,8 @@ def test_format_evening_no_operator_banner_on_moderate():
     MUST NOT fire, or the operator habituates to it and the signal
     becomes noise."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "moderate"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -903,7 +935,8 @@ def test_format_evening_expands_suggested_actions_on_elevated():
     list must be expanded inline so the operator can act without
     opening the DB."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {
             "risk_rating": "elevated",
             "suggested_actions": [
@@ -926,7 +959,8 @@ def test_format_evening_does_not_expand_suggested_actions_on_moderate():
     enough — keep suggested_actions out of the message body to control
     noise. Operators still see them via the DB / morning PM consumption."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {
             "risk_rating": "moderate",
             "suggested_actions": [
@@ -954,6 +988,7 @@ def test_format_includes_session_cost_when_db_has_rows(tmp_path, monkeypatch):
     monkeypatch.setattr("src.notifier._DB_PATH", db_path)
     # Build a minimal DB matching the schema notifier reads from.
     import sqlite3
+
     db_dir = tmp_path / "data"
     db_dir.mkdir()
     conn = sqlite3.connect(str(db_dir / "quant_agent.db"))
@@ -966,18 +1001,18 @@ def test_format_includes_session_cost_when_db_has_rows(tmp_path, monkeypatch):
     conn.executemany(
         "INSERT INTO agent_logs (agent_name, run_id, cost_usd) VALUES (?, ?, ?)",
         [
-            ("tech_analyst",     "run-cost-demo", 3.45),
-            ("portfolio_manager","run-cost-demo", 0.90),
-            ("risk_manager",     "run-cost-demo", 0.18),
+            ("tech_analyst", "run-cost-demo", 3.45),
+            ("portfolio_manager", "run-cost-demo", 0.90),
+            ("risk_manager", "run-cost-demo", 0.18),
         ],
     )
     conn.commit()
     conn.close()
 
     result = {
-        "status": "executed", "run_id": "run-cost-demo",
-        "orders": [{"symbol": "NVDA", "side": "buy", "qty": 5,
-                    "limit_price": 420, "stop_loss_price": 400}],
+        "status": "executed",
+        "run_id": "run-cost-demo",
+        "orders": [{"symbol": "NVDA", "side": "buy", "qty": 5, "limit_price": 420, "stop_loss_price": 400}],
     }
     msg = format_session_result("morning", result, 600.0)
     assert msg is not None
@@ -1007,6 +1042,7 @@ def test_format_flags_cost_unknown_when_any_row_has_null_cost(tmp_path, monkeypa
     db_path = tmp_path / "data" / "quant_agent.db"
     monkeypatch.setattr("src.notifier._DB_PATH", db_path)
     import sqlite3
+
     db_dir = tmp_path / "data"
     db_dir.mkdir()
     conn = sqlite3.connect(str(db_dir / "quant_agent.db"))
@@ -1036,7 +1072,8 @@ def test_format_flags_cost_unknown_when_any_row_has_null_cost(tmp_path, monkeypa
 
 
 def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Defensive: a NULL `unrealized_pnl` row (schema migration / future
     direct manipulation) must not crash the winners/losers list comps
@@ -1046,6 +1083,7 @@ def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
     NOT NULL so this can't fire in production today, but the filter
     costs nothing and locks the contract. Audit 2026-05-27."""
     import sqlite3
+
     db_path = tmp_path / "positions.db"
     conn = sqlite3.connect(str(db_path))
     # Bypass the production NOT NULL constraint to simulate data drift.
@@ -1056,19 +1094,17 @@ def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
         " unrealized_pnl REAL, sector TEXT)"
     )
     # One clean row, one NULL-pnl row.
-    conn.execute(
-        "INSERT INTO positions VALUES ('AAPL', 10, 100, 105, 1050, 50, 'Tech')"
-    )
-    conn.execute(
-        "INSERT INTO positions VALUES ('NVDA', 5, 200, 200, 1000, NULL, 'Tech')"
-    )
+    conn.execute("INSERT INTO positions VALUES ('AAPL', 10, 100, 105, 1050, 50, 'Tech')")
+    conn.execute("INSERT INTO positions VALUES ('NVDA', 5, 200, 200, 1000, NULL, 'Tech')")
     conn.commit()
     conn.close()
 
     monkeypatch.setattr("src.notifier._DB_PATH", db_path)
     result = {
-        "status": "analyzed", "run_id": "run-e",
-        "daily_pnl": 0.0, "total_value": 2050.0,
+        "status": "analyzed",
+        "run_id": "run-e",
+        "daily_pnl": 0.0,
+        "total_value": 2050.0,
         "analysis": {"risk_rating": "moderate"},
     }
     # Must not raise — the whole point of the defensive None filter.
@@ -1080,7 +1116,8 @@ def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
 
 
 def test_format_evening_position_snapshot_null_entry_or_price_says_not_available(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """`_row_line` used to compute `(curr / avg - 1) * 100` with `avg`
     falsy meaning "treat as 0%", which rendered a fabricated "(+0.0%)"
@@ -1091,6 +1128,7 @@ def test_format_evening_position_snapshot_null_entry_or_price_says_not_available
     the gapped one. Both must now render "not available" for that row's
     percentage and keep the rest of the block intact."""
     import sqlite3
+
     db_path = tmp_path / "positions.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -1100,24 +1138,20 @@ def test_format_evening_position_snapshot_null_entry_or_price_says_not_available
         " unrealized_pnl REAL, sector TEXT)"
     )
     # NULL avg_entry, both winning (positive pnl).
-    conn.execute(
-        "INSERT INTO positions VALUES ('AAPL', 10, NULL, 105, 1050, 50, 'Tech')"
-    )
+    conn.execute("INSERT INTO positions VALUES ('AAPL', 10, NULL, 105, 1050, 50, 'Tech')")
     # NULL current_price with a real avg_entry — the unguarded-division case.
-    conn.execute(
-        "INSERT INTO positions VALUES ('MSFT', 5, 300, NULL, 1500, 25, 'Tech')"
-    )
+    conn.execute("INSERT INTO positions VALUES ('MSFT', 5, 300, NULL, 1500, 25, 'Tech')")
     # One clean row so the block has something normal to compare against.
-    conn.execute(
-        "INSERT INTO positions VALUES ('NVDA', 5, 200, 220, 1100, 100, 'Tech')"
-    )
+    conn.execute("INSERT INTO positions VALUES ('NVDA', 5, 200, 220, 1100, 100, 'Tech')")
     conn.commit()
     conn.close()
 
     monkeypatch.setattr("src.notifier._DB_PATH", db_path)
     result = {
-        "status": "analyzed", "run_id": "run-null-entry",
-        "daily_pnl": 0.0, "total_value": 3650.0,
+        "status": "analyzed",
+        "run_id": "run-null-entry",
+        "daily_pnl": 0.0,
+        "total_value": 3650.0,
         "analysis": {"risk_rating": "moderate"},
     }
     # Must not raise, and must not drop the block.
@@ -1142,8 +1176,10 @@ def test_format_evening_daily_return_uses_prior_equity_denominator():
        -5000 / 100000 * 100 = -5.00%  ← the canonical figure
     """
     result = {
-        "status": "analyzed", "run_id": "run-down",
-        "daily_pnl": -5000.0, "total_value": 95000.0,
+        "status": "analyzed",
+        "run_id": "run-down",
+        "daily_pnl": -5000.0,
+        "total_value": 95000.0,
         "analysis": {"risk_rating": "elevated"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -1163,8 +1199,10 @@ def test_format_evening_position_snapshot_skips_gracefully_without_db(tmp_path, 
         tmp_path / "data" / "quant_agent.db",  # does not exist
     )
     result = {
-        "status": "analyzed", "run_id": "run-e",
-        "daily_pnl": 100.0, "total_value": 100000.0,
+        "status": "analyzed",
+        "run_id": "run-e",
+        "daily_pnl": 100.0,
+        "total_value": 100000.0,
         "analysis": {"risk_rating": "moderate", "tomorrow_bias": "neutral"},
     }
     msg = format_session_result("evening", result, 30.0)
@@ -1190,23 +1228,24 @@ def test_db_path_is_absolute_anchored_to_project_root():
     so the path is stable regardless of CWD.
     """
     from src import notifier
-    assert notifier._DB_PATH.is_absolute(), (
-        f"_DB_PATH must be absolute, got {notifier._DB_PATH}"
-    )
+
+    assert notifier._DB_PATH.is_absolute(), f"_DB_PATH must be absolute, got {notifier._DB_PATH}"
     # The path should resolve under the project root — i.e. live in
     # the same tree as notifier.py.
     notifier_root = notifier._DB_PATH.parent.parent
     src_dir = (notifier_root / "src").resolve()
     assert src_dir.exists(), (
-        f"_DB_PATH={notifier._DB_PATH} should resolve under a project "
-        f"tree with a src/ directory; checked {src_dir}"
+        f"_DB_PATH={notifier._DB_PATH} should resolve under a project tree with a src/ directory; checked {src_dir}"
     )
 
 
 def test_format_earnings_preprocess_with_analysis_notifies():
     result = {
-        "status": "preprocessed", "run_id": "run-ep",
-        "analyzed": 2, "confirmed": 2, "failed": 0,
+        "status": "preprocessed",
+        "run_id": "run-ep",
+        "analyzed": 2,
+        "confirmed": 2,
+        "failed": 0,
     }
     msg = format_session_result("earnings_preprocess", result, 18.5)
     assert msg is not None
@@ -1249,8 +1288,7 @@ def test_format_earnings_preprocess_suspended_shows_backlog_not_nothing():
         "error": "mandatory cost circuit is open",
         "orders": [],
         "filings_waiting": [
-            {"symbol": "NVDA", "form_type": "10-Q",
-             "filing_date": "2026-09-24", "outcome": "waiting"},
+            {"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-24", "outcome": "waiting"},
         ],
         "filings_waiting_count": 1,
     }
@@ -1288,7 +1326,8 @@ def test_format_intra_check_emergency_sold_notifies():
     """When the circuit breaker actually fires, we WANT loud
     notification — it means a -3% day or worse was breached."""
     result = {
-        "status": "emergency_sold", "run_id": "intra_check-y",
+        "status": "emergency_sold",
+        "run_id": "intra_check-y",
         "orders": [
             {"symbol": "NVDA", "side": "sell", "qty": 5},
             {"symbol": "AAPL", "side": "sell", "qty": 10},
@@ -1317,28 +1356,50 @@ def test_format_meta_reflected_notifies():
     # flat top-level ints. The old fixture pinned a shape the pipeline
     # never emits, so the test passed green against dead code.
     result = {
-        "status": "reflected", "run_id": "meta-q1",
+        "status": "reflected",
+        "run_id": "meta-q1",
         "period": "2026-Q1",
         "proposed_learnings_count": 4,
         "editor_report": {
             "period": "2026-Q1",
             "applied": [
-                {"agent_name": "tech_analyst", "operation": "append",
-                 "learning_text": "a", "content_hash": "h1",
-                 "period": "2026-Q1", "prompt_path": "x"},
-                {"agent_name": "news_analyst", "operation": "append",
-                 "learning_text": "b", "content_hash": "h2",
-                 "period": "2026-Q1", "prompt_path": "y"},
-                {"agent_name": "macro_analyst", "operation": "append",
-                 "learning_text": "c", "content_hash": "h3",
-                 "period": "2026-Q1", "prompt_path": "z"},
+                {
+                    "agent_name": "tech_analyst",
+                    "operation": "append",
+                    "learning_text": "a",
+                    "content_hash": "h1",
+                    "period": "2026-Q1",
+                    "prompt_path": "x",
+                },
+                {
+                    "agent_name": "news_analyst",
+                    "operation": "append",
+                    "learning_text": "b",
+                    "content_hash": "h2",
+                    "period": "2026-Q1",
+                    "prompt_path": "y",
+                },
+                {
+                    "agent_name": "macro_analyst",
+                    "operation": "append",
+                    "learning_text": "c",
+                    "content_hash": "h3",
+                    "period": "2026-Q1",
+                    "prompt_path": "z",
+                },
             ],
             "rejected": [
-                {"agent_name": "evening_analyst", "operation": "append",
-                 "learning_text": "d", "reason": "jaccard_similarity=0.80",
-                 "period": "2026-Q1"},
+                {
+                    "agent_name": "evening_analyst",
+                    "operation": "append",
+                    "learning_text": "d",
+                    "reason": "jaccard_similarity=0.80",
+                    "period": "2026-Q1",
+                },
             ],
-            "rolled_off": [], "agents_edited": 3, "git_commit": "abc",
+            "rolled_off": [],
+            "agents_edited": 3,
+            "git_commit": "abc",
         },
     }
     msg = format_session_result("meta", result, 90.0)
@@ -1356,7 +1417,8 @@ def test_format_meta_digest_only_uses_yellow_warning_emoji():
     past in the Telegram feed.
     """
     result = {
-        "status": "digest_only", "run_id": "meta-q1",
+        "status": "digest_only",
+        "run_id": "meta-q1",
         "period": "2026-Q1",
     }
     msg = format_session_result("meta", result, 30.0)
@@ -1426,6 +1488,7 @@ def test_format_elapsed_formatting():
 # meta-reflection ran and staged proposals for review.
 # ===========================================================================
 
+
 def test_format_evening_surfaces_meta_dry_run_hint():
     """When evening's auto_meta result indicates the dry-run staged N
     proposals (each surfaced as a 'rejected' editor_report entry whose
@@ -1437,7 +1500,8 @@ def test_format_evening_surfaces_meta_dry_run_hint():
     editor_report; there are no flat top-level applied/rejected ints.
     The old flat-int fixture made this test pass against dead code."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "moderate"},
         "auto_meta": {
             "status": "reflected",
@@ -1447,20 +1511,32 @@ def test_format_evening_surfaces_meta_dry_run_hint():
                 "period": "2026-Q1",
                 "applied": [],
                 "rejected": [
-                    {"agent_name": "tech_analyst", "operation": "append",
-                     "learning_text": "l1",
-                     "reason": ("dry_run=True; proposal staged to "
-                                "data/evolution/2026-Q1/proposed_edits.json "
-                                "for operator review"),
-                     "period": "2026-Q1"},
-                    {"agent_name": "news_analyst", "operation": "append",
-                     "learning_text": "l2",
-                     "reason": ("dry_run=True; proposal staged to "
-                                "data/evolution/2026-Q1/proposed_edits.json "
-                                "for operator review"),
-                     "period": "2026-Q1"},
+                    {
+                        "agent_name": "tech_analyst",
+                        "operation": "append",
+                        "learning_text": "l1",
+                        "reason": (
+                            "dry_run=True; proposal staged to "
+                            "data/evolution/2026-Q1/proposed_edits.json "
+                            "for operator review"
+                        ),
+                        "period": "2026-Q1",
+                    },
+                    {
+                        "agent_name": "news_analyst",
+                        "operation": "append",
+                        "learning_text": "l2",
+                        "reason": (
+                            "dry_run=True; proposal staged to "
+                            "data/evolution/2026-Q1/proposed_edits.json "
+                            "for operator review"
+                        ),
+                        "period": "2026-Q1",
+                    },
                 ],
-                "rolled_off": [], "agents_edited": 0, "git_commit": None,
+                "rolled_off": [],
+                "agents_edited": 0,
+                "git_commit": None,
             },
         },
     }
@@ -1476,7 +1552,8 @@ def test_format_evening_surfaces_meta_live_apply_when_dry_run_off():
     The hint changes shape: 'applied N' instead of the staged-dry-run
     line. audit round 2 (#15/#19): real nested editor_report shape."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "moderate"},
         "auto_meta": {
             "status": "reflected",
@@ -1485,12 +1562,19 @@ def test_format_evening_surfaces_meta_live_apply_when_dry_run_off():
             "editor_report": {
                 "period": "2026-Q1",
                 "applied": [
-                    {"agent_name": "tech_analyst", "operation": "append",
-                     "learning_text": "l1", "content_hash": "h1",
-                     "period": "2026-Q1", "prompt_path": "p"},
+                    {
+                        "agent_name": "tech_analyst",
+                        "operation": "append",
+                        "learning_text": "l1",
+                        "content_hash": "h1",
+                        "period": "2026-Q1",
+                        "prompt_path": "p",
+                    },
                 ],
                 "rejected": [],
-                "rolled_off": [], "agents_edited": 1, "git_commit": "sha",
+                "rolled_off": [],
+                "agents_edited": 1,
+                "git_commit": "sha",
             },
         },
     }
@@ -1504,7 +1588,8 @@ def test_format_evening_surfaces_meta_error():
     the error so the operator can fix it before the next quarter end
     (3 months away)."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "moderate"},
         "auto_meta": {
             "status": "auto_meta_error",
@@ -1521,7 +1606,8 @@ def test_format_evening_no_meta_line_on_normal_day():
     """Non-quarter-end days have auto_meta=None (or missing key).
     The evening push must NOT have the meta hint line."""
     result = {
-        "status": "analyzed", "run_id": "run-e",
+        "status": "analyzed",
+        "run_id": "run-e",
         "analysis": {"risk_rating": "moderate"},
         "auto_meta": None,  # not quarter end
     }
@@ -1540,8 +1626,10 @@ def test_format_evening_no_meta_line_on_normal_day():
 
 def test_format_evening_missing_morning_session_is_red():
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 0.0, "total_value": 100_000.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 0.0,
+        "total_value": 100_000.0,
         "missing_sessions": ["morning", "midday"],
         "analysis": {"risk_rating": "low"},
     }
@@ -1556,8 +1644,10 @@ def test_format_evening_suggested_actions_render_high_in_message():
     days. (The P&L history table they used to precede was replaced by the
     daily CSV export — PR #99.)"""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -100.0, "total_value": 100_000.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": -100.0,
+        "total_value": 100_000.0,
         "analysis": {
             "risk_rating": "high",
             "suggested_actions": ["Reduce NVDA exposure", "Raise cash to 30%"],
@@ -1575,7 +1665,9 @@ def test_format_morning_renders_stop_coverage_gap_banner():
     """Spec §11.1 guard 3: a stop that IS present but covers too few shares
     reads as MIS-SIZED, never as the harsher no-stop banner."""
     result = {
-        "status": "executed", "run_id": "r", "orders": [],
+        "status": "executed",
+        "run_id": "r",
+        "orders": [],
         "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
     }
     msg = format_session_result("morning", result, 5.0)
@@ -1589,7 +1681,10 @@ def test_format_evening_renders_stop_coverage_gap_banner():
     a single "STOP-COVERAGE GAP" line before §11.1, which hid the worse of
     them inside the milder one."""
     result = {
-        "status": "analyzed", "run_id": "r", "daily_pnl": 10.0, "total_value": 100_000.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 10.0,
+        "total_value": 100_000.0,
         "stop_coverage_gaps": [{"symbol": "AAPL", "held_qty": 5.0, "covered_qty": 0.0}],
     }
     msg = format_session_result("evening", result, 5.0)
@@ -1605,25 +1700,30 @@ def test_format_evening_uses_true_4pm_pnl_not_offset_day():
     here the real-time figures say +$1,200 (incl. after-hours) but today
     actually closed DOWN $500 — the headline must show -$500, not +$1,200."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 1200.0, "total_value": 101_200.0,   # real-time (incl AH) — ignored
-        "pnl_4pm": -500.0, "equity_close": 100_500.0,     # today's true close-to-close
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 1200.0,
+        "total_value": 101_200.0,  # real-time (incl AH) — ignored
+        "pnl_4pm": -500.0,
+        "equity_close": 100_500.0,  # today's true close-to-close
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
     assert "💰 Daily P&L: −$500.00" in msg
     assert "4pm close" in msg
     assert "$100,500.00" in msg
-    assert "+$1,200" not in msg                 # must not leak the real-time figure
-    assert "(-0.50%)" in msg                    # -500 / (100500+500) = -0.495% → -0.50%
+    assert "+$1,200" not in msg  # must not leak the real-time figure
+    assert "(-0.50%)" in msg  # -500 / (100500+500) = -0.495% → -0.50%
 
 
 def test_format_evening_falls_back_to_realtime_when_no_4pm():
     """No pnl_4pm/equity_close (API gap / legacy) → real-time fallback, no
     '4pm close' tag."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 1234.56, "total_value": 107_278.55,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 1234.56,
+        "total_value": 107_278.55,
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
@@ -1636,14 +1736,17 @@ def test_format_evening_4pm_path_when_equity_close_zero():
     value — the headline must still take the 4pm path, not fall back (the old
     truthy check treated 0.0 as 'unavailable')."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": -50.0, "total_value": 10.0,          # real-time fallback values
-        "pnl_4pm": -100.0, "equity_close": 0.0,            # liquidated at 4pm
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": -50.0,
+        "total_value": 10.0,  # real-time fallback values
+        "pnl_4pm": -100.0,
+        "equity_close": 0.0,  # liquidated at 4pm
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
     assert "💰 Daily P&L: −$100.00" in msg
-    assert "4pm close" in msg                              # took the 4pm path
+    assert "4pm close" in msg  # took the 4pm path
     assert "   Equity: $0.00" in msg
 
 
@@ -1653,14 +1756,16 @@ def test_format_evening_shows_pnl_vs_risk_capital():
     through from `TradingPipeline.run_evening`'s reuse of
     `src.risk.metrics.portfolio_heat`'s `budget_risk_dollars`."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "pnl_4pm": 500.0, "equity_close": 100_500.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "pnl_4pm": 500.0,
+        "equity_close": 100_500.0,
         "risk_capital_dollars": 2_000.0,
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
     assert "vs risk capital" in msg
-    assert "+25.00%" in msg               # 500 / 2000
+    assert "+25.00%" in msg  # 500 / 2000
     assert "$2,000.00 at risk" in msg
 
 
@@ -1669,8 +1774,10 @@ def test_format_evening_risk_capital_flat_book_shows_labelled_absence():
     reports risk_capital_dollars=0.0 — must render a labelled absence, never
     a ZeroDivisionError and never a fabricated 0%."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "pnl_4pm": 0.0, "equity_close": 100_000.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "pnl_4pm": 0.0,
+        "equity_close": 100_000.0,
         "risk_capital_dollars": 0.0,
         "analysis": {"risk_rating": "low"},
     }
@@ -1683,8 +1790,10 @@ def test_format_evening_risk_capital_absent_key_renders_nothing():
     """No risk_capital_dollars key at all (heat build failed, or a result
     dict from before this field existed) — say nothing rather than guess."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "pnl_4pm": 500.0, "equity_close": 100_500.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "pnl_4pm": 500.0,
+        "equity_close": 100_500.0,
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
@@ -1696,14 +1805,16 @@ def test_format_evening_risk_capital_line_uses_realtime_fallback_pnl():
     appears, keyed off the SAME real-time daily_pnl the headline fell back
     to (not silently dropped just because pnl_4pm is missing)."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 300.0, "total_value": 100_300.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 300.0,
+        "total_value": 100_300.0,
         "risk_capital_dollars": 1_500.0,
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
     assert "4pm close" not in msg
-    assert "vs risk capital: +20.00%" in msg   # 300 / 1500
+    assert "vs risk capital: +20.00%" in msg  # 300 / 1500
 
 
 def test_rehearsal_mode_suppresses_operator_alerts(monkeypatch):
@@ -1765,20 +1876,24 @@ def test_alerts_are_delivered_when_not_rehearsing(monkeypatch):
 # days — and nothing in the system surfaced that anywhere.
 # ===========================================================================
 
+
 def _credits(purchased, used):
     """Patch the urlopen used by _openrouter_balance_line."""
     import json, io
     from contextlib import contextmanager
+
     body = json.dumps({"data": {"total_credits": purchased, "total_usage": used}}).encode()
 
     @contextmanager
     def fake_urlopen(req, timeout=None):
         yield io.BytesIO(body)
+
     return fake_urlopen
 
 
 def test_balance_line_reports_remaining_and_trading_days(monkeypatch):
     import src.notifier as n
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
@@ -1792,6 +1907,7 @@ def test_balance_line_reports_remaining_and_trading_days(monkeypatch):
 def test_balance_line_warns_when_a_week_or_less_remains(monkeypatch):
     """The state the owner was actually in on 2026-08-31, and did not know."""
     import src.notifier as n
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr("urllib.request.urlopen", _credits(25.0, 17.90))
@@ -1803,17 +1919,20 @@ def test_balance_line_warns_when_a_week_or_less_remains(monkeypatch):
 def test_balance_line_never_breaks_the_alert(monkeypatch):
     """A balance lookup must not be able to stop a trading alert going out."""
     import src.notifier as n
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
 
     def boom(*a, **kw):
         raise OSError("network down")
+
     monkeypatch.setattr("urllib.request.urlopen", boom)
     assert n._openrouter_balance_line() is None
 
 
 def test_balance_line_silent_without_a_key(monkeypatch):
     import src.notifier as n
+
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     assert n._openrouter_balance_line() is None
@@ -1823,11 +1942,13 @@ def test_balance_line_suppressed_in_rehearsal(monkeypatch):
     """A rehearsal is offline by construction — it must not reach the network
     even for a nicety."""
     import src.notifier as n
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(n, "_REHEARSAL_MODE", True)
 
     def boom(*a, **kw):
         raise AssertionError("rehearsal made an outbound call")
+
     monkeypatch.setattr("urllib.request.urlopen", boom)
     assert n._openrouter_balance_line() is None
 
@@ -1836,6 +1957,7 @@ def test_balance_appears_on_morning_but_not_on_every_session(monkeypatch):
     """Morning only — repeating a slow-moving number on every session trains
     the operator to skim past it."""
     import src.notifier as n
+
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
@@ -1855,16 +1977,17 @@ def test_balance_appears_on_morning_but_not_on_every_session(monkeypatch):
 # showed how near it was.
 # ===========================================================================
 
+
 def test_day_cost_line_shows_spend_against_the_limit(monkeypatch, tmp_path):
     import sqlite3
     import src.notifier as n
+
     db = tmp_path / "quant_agent.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
-                 " incremental_cost_usd REAL)")
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL, incremental_cost_usd REAL)")
     from src.trading_calendar import et_now
-    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.1395)",
-                 (et_now().strftime("%Y-%m-%d"),))
+
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.1395)", (et_now().strftime("%Y-%m-%d"),))
     conn.commit()
     conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
@@ -1879,13 +2002,13 @@ def test_day_cost_line_shows_spend_against_the_limit(monkeypatch, tmp_path):
 def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
     import sqlite3
     import src.notifier as n
+
     db = tmp_path / "quant_agent.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
-                 " incremental_cost_usd REAL)")
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL, incremental_cost_usd REAL)")
     from src.trading_calendar import et_now
-    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,0.5)",
-                 (et_now().strftime("%Y-%m-%d"),))
+
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,0.5)", (et_now().strftime("%Y-%m-%d"),))
     conn.commit()
     conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
@@ -1896,6 +2019,7 @@ def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
 def test_day_cost_line_never_breaks_the_alert(monkeypatch):
     import src.notifier as n
     from pathlib import Path
+
     monkeypatch.setattr(n, "_DB_PATH", Path("/nonexistent/quant_agent.db"))
     assert n._day_cost_line() is None
 
@@ -1905,13 +2029,13 @@ def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, t
     tomorrow) with 'ran out of money' (needs a payment) would be expensive."""
     import sqlite3
     import src.notifier as n
+
     db = tmp_path / "quant_agent.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL,"
-                 " incremental_cost_usd REAL)")
+    conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL, incremental_cost_usd REAL)")
     from src.trading_calendar import et_now
-    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.0)",
-                 (et_now().strftime("%Y-%m-%d"),))
+
+    conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.0)", (et_now().strftime("%Y-%m-%d"),))
     conn.commit()
     conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
@@ -1929,6 +2053,7 @@ def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, t
 # message, never a line buried inside the routine session summary. Owner's
 # ratified rule, reiterated 2026-09-02: separate message, severity in text.
 # ===========================================================================
+
 
 def test_bad_data_status_fires_a_standalone_alert():
     from src.notifier import maybe_alert_data_quality
@@ -2021,8 +2146,7 @@ def test_clean_data_status_does_not_alert():
 
     result = {
         "run_id": "run-clean",
-        "data_status": {"tech": "ok", "news": "ok", "macro": "ok",
-                         "earnings": "ok", "smart_money": "empty"},
+        "data_status": {"tech": "ok", "news": "ok", "macro": "ok", "earnings": "ok", "smart_money": "empty"},
     }
     with patch("src.notifier.send_owner_alert") as alert:
         fired = maybe_alert_data_quality(result, mode="morning")
@@ -2120,8 +2244,13 @@ def test_low_confidence_macro_status_fires_the_same_standalone_alert():
 
     result = {
         "run_id": "run-lowconf",
-        "data_status": {"tech": "ok", "news": "ok", "macro": "low_confidence",
-                         "earnings": "ok", "smart_money": "empty"},
+        "data_status": {
+            "tech": "ok",
+            "news": "ok",
+            "macro": "low_confidence",
+            "earnings": "ok",
+            "smart_money": "empty",
+        },
     }
     with patch("src.notifier.send_owner_alert", return_value=True) as alert:
         fired = maybe_alert_data_quality(result, mode="morning")
@@ -2174,6 +2303,7 @@ def test_macro_release_overdue_status_fires_a_standalone_alert():
 # ONLY those four fixed strings survive; everything else, including a
 # stray '<'/'>'/'&' the caller never intended as a tag, is still escaped.
 
+
 def test_preserved_markup_survives_while_surrounding_text_is_escaped():
     notifier = TelegramNotifier(token="t", chat_id="c")
     text = (
@@ -2220,9 +2350,13 @@ def test_send_with_preserve_structural_markup_ships_the_tag_on_the_wire():
     notifier = TelegramNotifier(token="t", chat_id="c")
     with patch("src.notifier.requests.post") as mock_post:
         mock_post.return_value = MagicMock(status_code=200, raise_for_status=lambda: None)
-        assert notifier.send(
-            "<b>hi</b> & bye", preserve_structural_markup=True,
-        ) is True
+        assert (
+            notifier.send(
+                "<b>hi</b> & bye",
+                preserve_structural_markup=True,
+            )
+            is True
+        )
     body = mock_post.call_args.kwargs["json"]["text"]
     assert body == "<b>hi</b> &amp; bye"
 
@@ -2243,8 +2377,7 @@ def test_data_quality_alert_speaks_in_words_and_keeps_the_raw_pair_labelled():
     labelled as a machine record."""
     from src.notifier import maybe_alert_data_quality
 
-    result = {"run_id": "run-dq", "data_status": {"macro": "failed", "tech": "partial",
-                                                  "sector": "brand_new_state"}}
+    result = {"run_id": "run-dq", "data_status": {"macro": "failed", "tech": "partial", "sector": "brand_new_state"}}
     with patch("src.notifier.send_owner_alert") as alert:
         assert maybe_alert_data_quality(result, mode="morning")
     body = alert.call_args[0][0]
@@ -2258,9 +2391,10 @@ def test_data_quality_alert_speaks_in_words_and_keeps_the_raw_pair_labelled():
 
 
 def test_coverage_gap_banner_says_the_quantities_in_words():
-    """"NVDA(4/10)" was a bare fraction; it now reads as what it is."""
+    """ "NVDA(4/10)" was a bare fraction; it now reads as what it is."""
     result = {
-        "status": "ok", "run_id": "r",
+        "status": "ok",
+        "run_id": "r",
         "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
     }
     msg = format_session_result("intra_check", result, 1.0)
@@ -2278,8 +2412,10 @@ def test_coverage_gap_banner_says_the_quantities_in_words():
 # arrive" had no single answer. See `TelegramNotifier._record_send`.
 # ===========================================================================
 
+
 def _notifier_sends_rows(db_path, **where):
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
@@ -2288,9 +2424,13 @@ def _notifier_sends_rows(db_path, **where):
         if where:
             clause = "WHERE " + " AND ".join(f"{k} = ?" for k in where)
             args = list(where.values())
-        return [dict(r) for r in conn.execute(
-            f"SELECT * FROM notifier_sends {clause} ORDER BY id", args,
-        ).fetchall()]
+        return [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM notifier_sends {clause} ORDER BY id",
+                args,
+            ).fetchall()
+        ]
     finally:
         conn.close()
 
@@ -2383,18 +2523,20 @@ def test_recorded_output_never_contains_token_or_chat_id(tmp_path, monkeypatch):
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
         mock_post.return_value = mock_response
-        assert n.send(
-            f"debug: token={token} chat={chat_id}", kind="generic",
-        ) is True
+        assert (
+            n.send(
+                f"debug: token={token} chat={chat_id}",
+                kind="generic",
+            )
+            is True
+        )
 
     # Failed send: the exception text (as `requests` produces it) embeds
     # the token in the request URL — the exact leak `_redact` exists for.
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     with patch("src.notifier.requests.post") as mock_post:
         bad = MagicMock()
-        bad.raise_for_status.side_effect = requests.HTTPError(
-            f"401 Client Error: Unauthorized for url: {url}"
-        )
+        bad.raise_for_status.side_effect = requests.HTTPError(f"401 Client Error: Unauthorized for url: {url}")
         mock_post.return_value = bad
         assert n.send("second message", kind="generic") is False
 
@@ -2562,8 +2704,7 @@ def test_last_sends_of_each_kind_query_matches_notifier_last_sends_script(tmp_pa
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT * FROM notifier_sends WHERE id IN "
-            "(SELECT MAX(id) FROM notifier_sends GROUP BY kind) ORDER BY kind"
+            "SELECT * FROM notifier_sends WHERE id IN (SELECT MAX(id) FROM notifier_sends GROUP BY kind) ORDER BY kind"
         ).fetchall()
     finally:
         conn.close()
@@ -2577,6 +2718,7 @@ def test_last_sends_of_each_kind_query_matches_notifier_last_sends_script(tmp_pa
 # 2026-09-20 per owner ruling. Telegram text must never claim the desk
 # reads congressional trading disclosures while that switch is off, and
 # must name it once it is genuinely on.
+
 
 def test_smart_money_seat_label_off():
     from src.notifier import _smart_money_seat_label
@@ -2603,10 +2745,7 @@ def test_seat_words_smart_money_reflects_live_switch(monkeypatch):
     assert notifier.seat_words("smart_money") == "the insider-trading feed"
 
     monkeypatch.setattr(notifier, "_congress_enabled_now", lambda: True)
-    assert (
-        notifier.seat_words("smart_money")
-        == "the insider-and-congressional-trading feed"
-    )
+    assert notifier.seat_words("smart_money") == "the insider-and-congressional-trading feed"
 
 
 def test_seat_words_smart_money_matches_repo_default_config():
@@ -2650,6 +2789,7 @@ def test_congress_enabled_now_defaults_false_on_load_failure(monkeypatch):
 # (the real incident: "$10,21.36") went straight through. These tests prove
 # the guard catches that shape and its close siblings, and — just as
 # importantly — never touches a real desk figure.
+
 
 def test_finds_the_actual_reported_defect():
     from src.notifier import _find_malformed_numeric_tokens
@@ -2792,8 +2932,7 @@ def test_redact_raw_exception_text_replaces_only_the_exception_token():
     from src.notifier import _redact_raw_exception_text
 
     text = (
-        "  AAPL: holding 10.0000 — snapshot_protective_stops raised: "
-        "ConnectionError('Connection timed out after 5s')"
+        "  AAPL: holding 10.0000 — snapshot_protective_stops raised: ConnectionError('Connection timed out after 5s')"
     )
     redacted = _redact_raw_exception_text(text)
     assert "ConnectionError" not in redacted
@@ -2912,9 +3051,7 @@ def test_the_global_mute_records_every_message_it_drops(tmp_path, monkeypatch):
 
     conn = sqlite3.connect(str(db_path))
     try:
-        rows = list(conn.execute(
-            "SELECT kind, status, text, detail, timestamp FROM notifier_sends"
-        ))
+        rows = list(conn.execute("SELECT kind, status, text, detail, timestamp FROM notifier_sends"))
     finally:
         conn.close()
     assert len(rows) == 1, "the muted message left no trace"

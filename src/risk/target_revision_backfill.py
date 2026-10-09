@@ -104,11 +104,11 @@ def assess_bugfix_backfill(
     target = _finite(stored_target)
     if target is None or target <= 0:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_STORED_TARGET,
+            symbol=sym,
+            code=REVISION_NO_STORED_TARGET,
             refusal=REVISION_NO_STORED_TARGET,
             detail=(
-                "no usable take-profit is stored on this position's opening "
-                "row, so there is no derivation to correct"
+                "no usable take-profit is stored on this position's opening row, so there is no derivation to correct"
             ),
         )
 
@@ -118,8 +118,10 @@ def assess_bugfix_backfill(
         horizon = None
     if not horizon or horizon <= 0:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_PINNED_HORIZON,
-            refusal=REVISION_NO_PINNED_HORIZON, prior_price=target,
+            symbol=sym,
+            code=REVISION_NO_PINNED_HORIZON,
+            refusal=REVISION_NO_PINNED_HORIZON,
+            prior_price=target,
             detail=(
                 "no expected_horizon_sessions was pinned at entry for this "
                 "position, and the horizon is never recomputed — there is no "
@@ -131,8 +133,10 @@ def assess_bugfix_backfill(
     close = _finite(close_price)
     if entry is None or vol is None or vol <= 0 or close is None:
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_UNMEASURABLE_INPUTS,
-            fault=REVISION_UNMEASURABLE_INPUTS, prior_price=target,
+            symbol=sym,
+            code=REVISION_UNMEASURABLE_INPUTS,
+            fault=REVISION_UNMEASURABLE_INPUTS,
+            prior_price=target,
             detail=(
                 "DATA FAULT: no usable entry price, ATR reading or completed "
                 "daily close could be obtained, so the target cannot be "
@@ -141,32 +145,32 @@ def assess_bugfix_backfill(
         )
 
     return _rederive_on_todays_bars(
-        sym=sym, direction=direction, is_short=is_short, entry=entry,
-        target=target, target_level=None, horizon=horizon,
-        setup_type=setup_type, levels=levels, vol=vol, close=close,
+        sym=sym,
+        direction=direction,
+        is_short=is_short,
+        entry=entry,
+        target=target,
+        target_level=None,
+        horizon=horizon,
+        setup_type=setup_type,
+        levels=levels,
+        vol=vol,
+        close=close,
         levels_coverage=levels_coverage or COVERAGE_UNKNOWN,
-        trigger=TRIGGER_DERIVATION_CORRECTED, sessions_held=None,
+        trigger=TRIGGER_DERIVATION_CORRECTED,
+        sessions_held=None,
         allow_reanchor=False,
         min_target_atr_multiple=(
-            MIN_TARGET_ATR_MULTIPLE if min_target_atr_multiple is None
-            else min_target_atr_multiple
+            MIN_TARGET_ATR_MULTIPLE if min_target_atr_multiple is None else min_target_atr_multiple
         ),
         breakout_projection_atr_multiple=(
             BREAKOUT_PROJECTION_ATR_MULTIPLE
             if breakout_projection_atr_multiple is None
             else breakout_projection_atr_multiple
         ),
-        max_reach_atr_multiple=(
-            MAX_REACH_ATR_MULTIPLE if max_reach_atr_multiple is None
-            else max_reach_atr_multiple
-        ),
-        max_horizon_sessions=(
-            MAX_HORIZON_SESSIONS if max_horizon_sessions is None
-            else max_horizon_sessions
-        ),
+        max_reach_atr_multiple=(MAX_REACH_ATR_MULTIPLE if max_reach_atr_multiple is None else max_reach_atr_multiple),
+        max_horizon_sessions=(MAX_HORIZON_SESSIONS if max_horizon_sessions is None else max_horizon_sessions),
         break_margin_atr_multiple=(
-            BREAK_CONFIRMATION_ATR_MULTIPLE
-            if break_margin_atr_multiple is None
-            else break_margin_atr_multiple
+            BREAK_CONFIRMATION_ATR_MULTIPLE if break_margin_atr_multiple is None else break_margin_atr_multiple
         ),
     )

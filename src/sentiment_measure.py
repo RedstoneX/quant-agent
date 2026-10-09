@@ -182,14 +182,16 @@ def iter_stored_verdicts(data_dir: str = "data/earnings") -> list[dict]:
         filing_date = (data.get("filing_date") or "").strip()
         if not symbol or not filing_date:
             continue
-        out.append({
-            "symbol": symbol,
-            "form_type": (data.get("form_type") or "").strip(),
-            "filing_date": filing_date,
-            "sentiment": (impl.get("sentiment") or "").strip().lower(),
-            "conviction": (impl.get("conviction") or "").strip().lower(),
-            "analysis_path": str(path),
-        })
+        out.append(
+            {
+                "symbol": symbol,
+                "form_type": (data.get("form_type") or "").strip(),
+                "filing_date": filing_date,
+                "sentiment": (impl.get("sentiment") or "").strip().lower(),
+                "conviction": (impl.get("conviction") or "").strip().lower(),
+                "analysis_path": str(path),
+            }
+        )
     return out
 
 
@@ -233,17 +235,19 @@ def measure(
         }
         fr = forward_return(bars, v.get("filing_date", ""), horizon_sessions)
         if fr is not None:
-            rec.update({
-                "forward_return_pct": fr["forward_return_pct"],
-                "entry_date": fr["entry_date"],
-                "exit_date": fr["exit_date"],
-                "sessions_forward": fr["sessions_forward"],
-                "correct": score_direction(
-                    v.get("sentiment", ""),
-                    fr["entry_close"],
-                    fr["exit_close"],
-                ),
-            })
+            rec.update(
+                {
+                    "forward_return_pct": fr["forward_return_pct"],
+                    "entry_date": fr["entry_date"],
+                    "exit_date": fr["exit_date"],
+                    "sessions_forward": fr["sessions_forward"],
+                    "correct": score_direction(
+                        v.get("sentiment", ""),
+                        fr["entry_close"],
+                        fr["exit_close"],
+                    ),
+                }
+            )
         records.append(rec)
 
     def _bucket(key: str) -> dict:

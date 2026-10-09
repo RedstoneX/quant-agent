@@ -44,13 +44,9 @@ class ApiKeysConfig(BaseModel):
         for field_name in ("alpaca_key", "alpaca_secret", "fred"):
             if not getattr(self, field_name):
                 raise ValueError(f"Required API key '{field_name}' is empty — check your .env file")
-        if not (
-            self.anthropic or self.openai or self.deepseek
-            or self.openrouter or self.google
-        ):
+        if not (self.anthropic or self.openai or self.deepseek or self.openrouter or self.google):
             raise ValueError(
-                "At least one of 'anthropic', 'openai', 'deepseek', 'openrouter', "
-                "or 'google' API key must be set"
+                "At least one of 'anthropic', 'openai', 'deepseek', 'openrouter', or 'google' API key must be set"
             )
         return self
 
@@ -171,7 +167,9 @@ class RiskConfig(BaseModel):
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
     min_position_risk_pct: float = Field(
-        default=STARTER_POSITION_RISK_PCT, ge=0, le=100,
+        default=STARTER_POSITION_RISK_PCT,
+        ge=0,
+        le=100,
     )
     # Spec §2.2. The most of the total at-risk ceiling any ONE correlated
     # cluster may take. Without it "total risk is under 25%" says nothing
@@ -471,10 +469,7 @@ class RiskConfig(BaseModel):
         # back to gate behaviour silently. That is a config error worth
         # failing on rather than absorbing: the operator asked for something
         # incoherent and would otherwise never find out.
-        if (
-            self.max_sector_hard_pct is not None
-            and self.max_sector_hard_pct < self.max_sector_pct
-        ):
+        if self.max_sector_hard_pct is not None and self.max_sector_hard_pct < self.max_sector_pct:
             raise ValueError(
                 "risk.max_sector_hard_pct "
                 f"({self.max_sector_hard_pct}) must be >= risk.max_sector_pct "
@@ -497,12 +492,13 @@ class RiskConfig(BaseModel):
         # it creates is a belief about loss protection.
         if isinstance(data, dict):
             stale = [
-                k for k in (
-                    "max_daily_loss_pct",           # retired-ok
-                    "daily_loss_risk_multiple",      # retired-ok
-                    "drawdown_vol_sensitivity",      # retired-ok
-                    "drawdown_5d_risk_multiple",     # retired-ok
-                    "drawdown_20d_risk_multiple",    # retired-ok
+                k
+                for k in (
+                    "max_daily_loss_pct",  # retired-ok
+                    "daily_loss_risk_multiple",  # retired-ok
+                    "drawdown_vol_sensitivity",  # retired-ok
+                    "drawdown_5d_risk_multiple",  # retired-ok
+                    "drawdown_20d_risk_multiple",  # retired-ok
                 )
                 if k in data
             ]
@@ -553,7 +549,8 @@ class RiskConfig(BaseModel):
         # short exactly as it governs a long.
         if isinstance(data, dict):
             stale = [
-                k for k in (
+                k
+                for k in (
                     "max_single_short_pct",
                     "max_gross_bearish_pct",
                     "max_short_gross_pct",
@@ -787,7 +784,8 @@ class AppConfig(BaseModel):
                     self.llm.get_provider(agent_name),
                 ),
                 getattr(self.llm, f"{agent_name}_model"),
-            ) != fallback_pair
+            )
+            != fallback_pair
             for agent_name in AGENT_NAMES
         )
 
@@ -826,33 +824,23 @@ class AppConfig(BaseModel):
 
         if openai_models and not self.api_keys.openai:
             selected = ", ".join(openai_models)
-            raise ValueError(
-                f"OPENAI_API_KEY is required for selected OpenAI models: {selected}"
-            )
+            raise ValueError(f"OPENAI_API_KEY is required for selected OpenAI models: {selected}")
 
         if deepseek_models and not self.api_keys.deepseek:
             selected = ", ".join(deepseek_models)
-            raise ValueError(
-                f"DEEPSEEK_API_KEY is required for selected DeepSeek models: {selected}"
-            )
+            raise ValueError(f"DEEPSEEK_API_KEY is required for selected DeepSeek models: {selected}")
 
         if openrouter_models and not self.api_keys.openrouter:
             selected = ", ".join(openrouter_models)
-            raise ValueError(
-                f"OPENROUTER_API_KEY is required for selected OpenRouter models: {selected}"
-            )
+            raise ValueError(f"OPENROUTER_API_KEY is required for selected OpenRouter models: {selected}")
 
         if google_models and not self.api_keys.google:
             selected = ", ".join(google_models)
-            raise ValueError(
-                f"GOOGLE_API_KEY is required for selected Google models: {selected}"
-            )
+            raise ValueError(f"GOOGLE_API_KEY is required for selected Google models: {selected}")
 
         if anthropic_models and not self.api_keys.anthropic:
             selected = ", ".join(anthropic_models)
-            raise ValueError(
-                f"ANTHROPIC_API_KEY is required for selected Anthropic models: {selected}"
-            )
+            raise ValueError(f"ANTHROPIC_API_KEY is required for selected Anthropic models: {selected}")
 
         # The failover credential cannot be silently missing when failover is
         # actually reachable — otherwise it is discovered only when the
@@ -923,10 +911,7 @@ class AppConfig(BaseModel):
         that independent keying is exactly what let this check and the
         runtime gate disagree in the first place.
         """
-        failover_available = (
-            bool(self._fallback_key_for_provider())
-            and self._fallback_reachable_for_any_agent()
-        )
+        failover_available = bool(self._fallback_key_for_provider()) and self._fallback_reachable_for_any_agent()
         required = provider_attempt_budget(
             failover_available=failover_available,
             tertiary_available=self.tertiary_available(),
@@ -962,6 +947,7 @@ def _substitute_env_vars(value: str, overrides: dict[str, str] | None = None) ->
     With `overrides` omitted or empty this behaves exactly as it always has —
     every other interpolation in `settings.yaml` is untouched.
     """
+
     def replacer(match):
         var_name = match.group(1)
         if overrides:
@@ -972,6 +958,7 @@ def _substitute_env_vars(value: str, overrides: dict[str, str] | None = None) ->
         if env_value is None:
             return ""  # Optional env vars resolve to empty string
         return env_value
+
     return re.sub(r"\$\{(\w+)\}", replacer, value)
 
 

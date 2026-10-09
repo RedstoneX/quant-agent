@@ -21,13 +21,21 @@ from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
 def _analysis(
-    symbol: str, entry: float, stop: float, target: float,
-    horizon: int = 60, atr: float | None = None,
+    symbol: str,
+    entry: float,
+    stop: float,
+    target: float,
+    horizon: int = 60,
+    atr: float | None = None,
 ) -> TechAnalysisResult:
     """A realistic analyst result, including the fields production sets in
     Python rather than asking the model for.
@@ -40,14 +48,20 @@ def _analysis(
     own ATR explicitly.
     """
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test",
-        support_levels=[stop], resistance_levels=[target],
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target],
         computed_levels=[stop, target],
         computed_level_touches={stop: 5, target: 5},
         computed_level_bars={stop: [(stop, stop)], target: [(target, target)]},
         atr_14=(entry - stop) / 3.5 if atr is None else atr,
-        setup_type="range", expected_horizon_sessions=horizon,
+        setup_type="range",
+        expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -55,16 +69,23 @@ def _analysis(
 
 def _pos(symbol: str, qty: float, avg_entry: float, current_price: float) -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry, current_price=current_price,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
         market_value=qty * current_price,
-        unrealized_pnl=(current_price - avg_entry) * qty, sector="Technology",
+        unrealized_pnl=(current_price - avg_entry) * qty,
+        sector="Technology",
     )
 
 
 def _risk_target(symbol: str, risk_pct: float, **kw) -> TargetPosition:
     return TargetPosition(
-        symbol=symbol, risk_allocation_pct=risk_pct, conviction="high",
-        thesis=kw.pop("thesis", "thesis"), **kw,
+        symbol=symbol,
+        risk_allocation_pct=risk_pct,
+        conviction="high",
+        thesis=kw.pop("thesis", "thesis"),
+        **kw,
     )
 
 
@@ -75,6 +96,7 @@ EQUITY = 100_000.0
 # §2.1 — the stop sets the size
 # --------------------------------------------------------------------------
 
+
 def test_size_derives_from_risk_and_stop_distance():
     """shares = (equity x risk_pct) / |entry - stop|.
 
@@ -84,8 +106,10 @@ def test_size_derives_from_risk_and_stop_distance():
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 2.0)],
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=90, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=90, target=140)],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert abs(decisions[0].allocation_pct - 20.0) < 0.05
@@ -105,9 +129,11 @@ def test_a_wider_stop_yields_a_smaller_position_not_a_rejected_trade():
 
     def alloc(stop):
         d = constructor.construct_orders(
-            targets=[_risk_target("NVDA", 1.0)], positions=[],
+            targets=[_risk_target("NVDA", 1.0)],
+            positions=[],
             analyses=[_analysis("NVDA", entry=100, stop=stop, target=140)],
-            total_value=EQUITY, price_map={"NVDA": 100.0},
+            total_value=EQUITY,
+            price_map={"NVDA": 100.0},
         )
         return d[0].allocation_pct
 
@@ -115,8 +141,8 @@ def test_a_wider_stop_yields_a_smaller_position_not_a_rejected_trade():
     assert abs(tight - 10.0) < 0.05
     assert abs(wide - 5.0) < 0.05
     # Both put the same dollars at risk — that is the invariant §2.1 buys.
-    assert abs(tight / 100 * EQUITY * 0.10 - 1000) < 20   # 10/100 stop gap
-    assert abs(wide / 100 * EQUITY * 0.20 - 1000) < 20    # 20/100 stop gap
+    assert abs(tight / 100 * EQUITY * 0.10 - 1000) < 20  # 10/100 stop gap
+    assert abs(wide / 100 * EQUITY * 0.20 - 1000) < 20  # 20/100 stop gap
 
 
 def test_a_position_with_no_typed_stop_is_sized_against_the_instruments_own_stop():
@@ -131,8 +157,11 @@ def test_a_position_with_no_typed_stop_is_sized_against_the_instruments_own_stop
     analysis = _analysis("NVDA", entry=100, stop=90, target=140, atr=2.0)
     analysis = analysis.model_copy(update={"stop_loss": 0.0})
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 2.0)], positions=[], analyses=[analysis],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        targets=[_risk_target("NVDA", 2.0)],
+        positions=[],
+        analyses=[analysis],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert [d.action for d in decisions] == ["BUY"]
     band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
@@ -149,7 +178,8 @@ def test_single_name_risk_is_clamped_to_the_ratified_envelope():
     not. The schema caps at 5 too; this is the deterministic backstop."""
     constructor = PortfolioConstructor(ConstructorConfig(risk_budget_pct=3.0))
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         # Target $160, not $140: the 30-wide stop is deliberately far
         # outside the noise band, and since 2026-09-02 that path is gated
         # on reward:risk like every other. (140-100)/30 = 1.33 is under the
@@ -157,7 +187,8 @@ def test_single_name_risk_is_clamped_to_the_ratified_envelope():
         # this test is about. At $160 the ratio is 2.0 and the sizing clamp
         # is once again the only thing under test.
         analyses=[_analysis("NVDA", entry=100, stop=70, target=160)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     # Clamped to 3% risk → 3000/30 = 100 shares → $10k → 10%. The 30%-wide
     # stop keeps the 20% single-name notional ceiling out of the way so the
@@ -173,7 +204,9 @@ def test_zero_risk_closes_a_held_position():
     decisions = constructor.construct_orders(
         targets=[_risk_target("AAPL", 0.0, thesis="thesis broken")],
         positions=[_pos("AAPL", qty=50, avg_entry=180, current_price=200)],
-        analyses=[], total_value=EQUITY, price_map={"AAPL": 200.0},
+        analyses=[],
+        total_value=EQUITY,
+        price_map={"AAPL": 200.0},
     )
     assert len(decisions) == 1
     assert decisions[0].action == "SELL"
@@ -187,7 +220,9 @@ def test_a_close_does_not_need_a_price_or_a_stop():
     decisions = constructor.construct_orders(
         targets=[_risk_target("AAPL", 0.0)],
         positions=[_pos("AAPL", qty=50, avg_entry=180, current_price=200)],
-        analyses=[], total_value=EQUITY, price_map={},
+        analyses=[],
+        total_value=EQUITY,
+        price_map={},
     )
     assert len(decisions) == 1 and decisions[0].action == "SELL"
 
@@ -198,10 +233,11 @@ def test_legacy_notional_targets_still_size_the_old_way():
     carrying only `target_weight_pct` must still construct."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
-                                conviction="high", thesis="legacy")],
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0, conviction="high", thesis="legacy")],
+        positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert abs(decisions[0].allocation_pct - 8.0) < 0.05
@@ -227,9 +263,13 @@ def test_a_single_theme_cannot_take_the_whole_risk_budget():
     constructor = PortfolioConstructor()
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
-        targets=targets, positions=[], analyses=analyses,
-        total_value=EQUITY, price_map=prices,
-        existing_risk_pct={}, clusters=[NUCLEAR],
+        targets=targets,
+        positions=[],
+        analyses=analyses,
+        total_value=EQUITY,
+        price_map=prices,
+        existing_risk_pct={},
+        clusters=[NUCLEAR],
     )
     # Each granted 5% risk becomes a 50% notional weight at a 10% stop gap, so
     # count orders rather than weights: only two names survive the 10% cap.
@@ -248,13 +288,19 @@ def test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk():
     hit the (also real, unchanged) sector hard cap. That is correct
     behaviour, not this test's concern, so the sector dial is loosened here
     to isolate the risk-budget gate this test is actually about."""
-    constructor = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=400.0, max_sector_hard_pct=400.0,
-    ))
+    constructor = PortfolioConstructor(
+        ConstructorConfig(
+            max_sector_pct=400.0,
+            max_sector_hard_pct=400.0,
+        )
+    )
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
-        targets=targets, positions=[], analyses=analyses,
-        total_value=EQUITY, price_map=prices,
+        targets=targets,
+        positions=[],
+        analyses=analyses,
+        total_value=EQUITY,
+        price_map=prices,
     )
     assert len(decisions) == 4
 
@@ -262,10 +308,13 @@ def test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk():
 def test_held_risk_crowds_out_a_new_name_in_the_same_theme():
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("OKLO", 5.0)], positions=[],
+        targets=[_risk_target("OKLO", 5.0)],
+        positions=[],
         analyses=[_analysis("OKLO", entry=100, stop=90, target=140)],
-        total_value=EQUITY, price_map={"OKLO": 100.0},
-        existing_risk_pct={"CEG": 8.0}, clusters=[NUCLEAR],
+        total_value=EQUITY,
+        price_map={"OKLO": 100.0},
+        existing_risk_pct={"CEG": 8.0},
+        clusters=[NUCLEAR],
     )
     # 10% cluster cap less CEG's 8% = 2% risk → 2000/10 = 200 sh → $20k → 20%.
     assert abs(decisions[0].allocation_pct - 20.0) < 0.05
@@ -277,10 +326,13 @@ def test_a_budget_cut_is_explained_in_the_order_reasoning():
     inconsistency" and drew a full-plan veto."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("OKLO", 5.0)], positions=[],
+        targets=[_risk_target("OKLO", 5.0)],
+        positions=[],
         analyses=[_analysis("OKLO", entry=100, stop=90, target=140)],
-        total_value=EQUITY, price_map={"OKLO": 100.0},
-        existing_risk_pct={"CEG": 8.0}, clusters=[NUCLEAR],
+        total_value=EQUITY,
+        price_map={"OKLO": 100.0},
+        existing_risk_pct={"CEG": 8.0},
+        clusters=[NUCLEAR],
     )
     reasoning = decisions[0].reasoning
     assert "risk budget" in reasoning
@@ -291,10 +343,13 @@ def test_a_budget_cut_is_explained_in_the_order_reasoning():
 def test_a_full_budget_denies_a_new_name_outright():
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=90, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
-        existing_risk_pct={"HELD": 25.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0},
+        clusters=[],
     )
     assert decisions == []
 
@@ -323,10 +378,13 @@ def test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceil
     # notional — reachable now, unlike before this fix — but the book
     # already carries 24% of the ratified 25% ceiling, leaving only 1%.
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
-        existing_risk_pct={"HELD": 24.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 24.0},
+        clusters=[],
     )
     assert len(decisions) == 1
     # 1% of the risk budget left, at a 5% stop: $1,000 risk / $5 per share
@@ -342,10 +400,13 @@ def test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceil
     # test_a_full_budget_denies_a_new_name_outright above — unaffected by
     # the single-name notional cap now being 5x looser.
     denied = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
-        existing_risk_pct={"HELD": 25.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0},
+        clusters=[],
     )
     assert denied == []
 
@@ -357,13 +418,16 @@ def test_released_risk_frees_budget_for_a_new_position():
     (`src/risk/metrics.py`); the constructor simply spends what is left."""
     constructor = PortfolioConstructor()
     common = dict(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         # $160 for the same reason as
         # `test_single_name_risk_is_clamped_to_the_ratified_envelope`: the
         # 30-wide stop clears the noise band, and the reward:risk floor now
         # applies on that path too. This test is about the risk BUDGET.
         analyses=[_analysis("NVDA", entry=100, stop=70, target=160)],
-        total_value=EQUITY, price_map={"NVDA": 100.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        clusters=[],
     )
     blocked = constructor.construct_orders(existing_risk_pct={"WINNER": 25.0}, **common)
     freed = constructor.construct_orders(existing_risk_pct={"WINNER": 0.0}, **common)
@@ -378,19 +442,24 @@ def test_released_risk_frees_budget_for_a_new_position():
 # Wiring — the gate has to reach the constructor, and the cap the PM
 # --------------------------------------------------------------------------
 
+
 def test_book_risk_inputs_convert_heat_into_percent_of_equity():
     """The constructor rations in % of equity; heat is measured in dollars."""
     from types import SimpleNamespace
 
     from src.pipeline_stages import _book_risk_inputs
 
-    ctx = SimpleNamespace(facts=SimpleNamespace(
-        heat=SimpleNamespace(per_position=[
-            SimpleNamespace(symbol="OKLO", budget_risk_dollars=2_000.0),
-            SimpleNamespace(symbol="CEG", budget_risk_dollars=500.0),
-        ]),
-        correlation_clusters=[["OKLO", "CEG"]],
-    ))
+    ctx = SimpleNamespace(
+        facts=SimpleNamespace(
+            heat=SimpleNamespace(
+                per_position=[
+                    SimpleNamespace(symbol="OKLO", budget_risk_dollars=2_000.0),
+                    SimpleNamespace(symbol="CEG", budget_risk_dollars=500.0),
+                ]
+            ),
+            correlation_clusters=[["OKLO", "CEG"]],
+        )
+    )
     existing, clusters = _book_risk_inputs(ctx, total_value=100_000.0)
     assert existing == {"OKLO": 2.0, "CEG": 0.5}
     assert clusters == [["OKLO", "CEG"]]
@@ -421,9 +490,12 @@ def test_book_risk_inputs_return_clusters_alone_when_only_heat_fails():
 
     from src.pipeline_stages import _book_risk_inputs
 
-    ctx = SimpleNamespace(facts=SimpleNamespace(
-        heat=None, correlation_clusters=[["OKLO", "CEG"]],
-    ))
+    ctx = SimpleNamespace(
+        facts=SimpleNamespace(
+            heat=None,
+            correlation_clusters=[["OKLO", "CEG"]],
+        )
+    )
     existing, clusters = _book_risk_inputs(ctx, total_value=100_000.0)
     assert existing is None
     assert clusters == [["OKLO", "CEG"]]
@@ -441,14 +513,21 @@ def test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters():
 
     Sector dial loosened here for the same reason as that sibling test —
     it is a separate, unrelated ceiling this test is not about."""
-    constructor = PortfolioConstructor(ConstructorConfig(
-        max_sector_pct=400.0, max_sector_hard_pct=400.0,
-    ))
+    constructor = PortfolioConstructor(
+        ConstructorConfig(
+            max_sector_pct=400.0,
+            max_sector_hard_pct=400.0,
+        )
+    )
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
-        targets=targets, positions=[], analyses=analyses,
-        total_value=EQUITY, price_map=prices,
-        existing_risk_pct=None, clusters=[NUCLEAR],
+        targets=targets,
+        positions=[],
+        analyses=analyses,
+        total_value=EQUITY,
+        price_map=prices,
+        existing_risk_pct=None,
+        clusters=[NUCLEAR],
     )
     # All four survive: the cluster cap must NOT bind when the book's
     # existing risk is unknown. (Compare test_a_single_theme_cannot_take_
@@ -499,8 +578,10 @@ def test_risk_envelope_reaches_the_constructor_from_config():
     # And the defaults agree, so a config that omits them lands in the same
     # place rather than silently reverting to a looser envelope.
     defaults = RiskConfig(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40, require_stop_loss=True,
+        max_position_pct=20,
+        max_total_position_pct=90,
+        max_sector_pct=40,
+        require_stop_loss=True,
     )
     assert defaults.max_position_risk_pct == 5.0
     assert defaults.min_position_risk_pct == 0.5
@@ -522,20 +603,30 @@ def test_the_api_reports_risk_sized_targets_rather_than_dropping_them():
     from src.api.schemas import CandidateFunnelItem
 
     item = CandidateFunnelItem(
-        symbol="NVDA", direction="bullish", is_bearish_hedge=False,
+        symbol="NVDA",
+        direction="bullish",
+        is_bearish_hedge=False,
         reached_pm_target=True,
-        pm_target_weight_pct=None, pm_risk_allocation_pct=2.0,
-        reached_proposed_order=False, risk_modified=False, executed=False,
+        pm_target_weight_pct=None,
+        pm_risk_allocation_pct=2.0,
+        reached_proposed_order=False,
+        risk_modified=False,
+        executed=False,
     )
     assert item.pm_risk_allocation_pct == 2.0
     assert item.pm_target_weight_pct is None
 
     # A legacy notional target still reports the way it always did.
     legacy = CandidateFunnelItem(
-        symbol="NVDA", direction="bullish", is_bearish_hedge=False,
+        symbol="NVDA",
+        direction="bullish",
+        is_bearish_hedge=False,
         reached_pm_target=True,
-        pm_target_weight_pct=8.0, pm_risk_allocation_pct=None,
-        reached_proposed_order=False, risk_modified=False, executed=False,
+        pm_target_weight_pct=8.0,
+        pm_risk_allocation_pct=None,
+        reached_proposed_order=False,
+        risk_modified=False,
+        executed=False,
     )
     assert legacy.pm_target_weight_pct == 8.0
     assert legacy.pm_risk_allocation_pct is None
@@ -544,6 +635,7 @@ def test_the_api_reports_risk_sized_targets_rather_than_dropping_them():
 # --------------------------------------------------------------------------
 # The single-name notional ceiling — where §2.1 meets `max_position_pct`
 # --------------------------------------------------------------------------
+
 
 def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
     """`max_position_pct` is a HARD BLOCK, not a trim.
@@ -563,20 +655,31 @@ def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
 
     constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=20.0))
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 2.0)], positions=[],
+        targets=[_risk_target("NVDA", 2.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert decisions[0].allocation_pct <= 20.0
 
     # And the engine that would have blocked it now passes it.
-    engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=100,
-        max_sector_pct=40, require_stop_loss=True,
-    ))
+    engine = RiskRuleEngine(
+        RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=100,
+            max_sector_pct=40,
+            require_stop_loss=True,
+        )
+    )
     violations = engine.check(
-        decisions[0], [], EQUITY, 0.0, cash=EQUITY,)
+        decisions[0],
+        [],
+        EQUITY,
+        0.0,
+        cash=EQUITY,
+    )
     assert [v.rule for v in violations] == []
 
 
@@ -590,9 +693,11 @@ def test_a_clamped_size_says_so_in_the_reasoning():
     """
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 4.0)], positions=[],
+        targets=[_risk_target("NVDA", 4.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=97, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert "single-name ceiling" in decisions[0].reasoning
@@ -609,9 +714,11 @@ def test_a_tight_stop_never_produces_an_unrepresentable_allocation():
     """
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=98, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert 0 < decisions[0].allocation_pct <= 100.0
@@ -628,7 +735,8 @@ def test_the_ceiling_accounts_for_what_is_already_held():
         targets=[_risk_target("NVDA", 5.0)],
         positions=[_pos("NVDA", qty=150, avg_entry=100, current_price=100)],  # 15%
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     # 20% ceiling - 15% held = 5% of headroom, and not a basis point more.
@@ -641,7 +749,8 @@ def test_a_fully_sized_name_produces_no_order_rather_than_a_zero_one():
         targets=[_risk_target("NVDA", 5.0)],
         positions=[_pos("NVDA", qty=200, avg_entry=100, current_price=100)],  # 20%
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert decisions == []
 
@@ -664,9 +773,11 @@ def test_the_ceiling_no_longer_flattens_conviction_at_realistic_stop_distances()
 
     def alloc(risk_pct, stop):
         d = constructor.construct_orders(
-            targets=[_risk_target("NVDA", risk_pct)], positions=[],
+            targets=[_risk_target("NVDA", risk_pct)],
+            positions=[],
             analyses=[_analysis("NVDA", entry=100, stop=stop, target=140)],
-            total_value=EQUITY, price_map={"NVDA": 100.0},
+            total_value=EQUITY,
+            price_map={"NVDA": 100.0},
         )
         return d[0].allocation_pct
 
@@ -702,9 +813,11 @@ def test_the_survival_ceiling_caps_any_conviction_at_the_deployed_number():
 
     def alloc(risk_pct, stop):
         d = constructor.construct_orders(
-            targets=[_risk_target("NVDA", risk_pct)], positions=[],
+            targets=[_risk_target("NVDA", risk_pct)],
+            positions=[],
             analyses=[_analysis("NVDA", entry=100, stop=stop, target=140)],
-            total_value=EQUITY, price_map={"NVDA": 100.0},
+            total_value=EQUITY,
+            price_map={"NVDA": 100.0},
         )
         return d[0].allocation_pct
 
@@ -712,15 +825,18 @@ def test_the_survival_ceiling_caps_any_conviction_at_the_deployed_number():
     # asks for 200%. Both land on the same ceiling, and the ceiling is the
     # deployed number, not the sector cap standing in for it.
     from src.portfolio_constructor import ConstructorConfig as _CC
+
     ceiling = _CC().max_position_pct
     assert ceiling == 65.0
     assert alloc(5.0, 95.0) == ceiling
     assert alloc(5.0, 97.5) == ceiling
     # And the cap is what says so, in the audit trail — not the sector dial.
     d = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert "single-name ceiling" in d[0].reasoning
 
@@ -738,9 +854,7 @@ def test_the_deployed_ceiling_matches_settings_yaml():
     from pathlib import Path
     from src.portfolio_constructor import ConstructorConfig as _CC
 
-    settings = yaml.safe_load(
-        (Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
-    )
+    settings = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text())
     assert settings["risk"]["max_position_pct"] == 65
     assert _CC().max_position_pct == float(settings["risk"]["max_position_pct"])
 
@@ -759,9 +873,11 @@ def test_the_survival_ceiling_shrinks_trades_and_never_refuses_them():
     """
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=97.44, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     d = decisions[0]
@@ -792,19 +908,34 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
     from src.config import RiskConfig
     from src.models import TradeDecision
 
-    engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=65, max_total_position_pct=200,
-        max_sector_pct=75, require_stop_loss=True,
-    ))
+    engine = RiskRuleEngine(
+        RiskConfig(
+            max_position_pct=65,
+            max_total_position_pct=200,
+            max_sector_pct=75,
+            require_stop_loss=True,
+        )
+    )
 
     def check(pct):
-        return [v.rule for v in engine.check(
-            TradeDecision(
-                action="BUY", symbol="NVDA", allocation_pct=pct,
-                entry_price=100.0, stop_loss=95.0, take_profit=140.0,
-                reasoning="test",
-            ),
-            [], EQUITY, 0.0, cash=EQUITY * 3,)]
+        return [
+            v.rule
+            for v in engine.check(
+                TradeDecision(
+                    action="BUY",
+                    symbol="NVDA",
+                    allocation_pct=pct,
+                    entry_price=100.0,
+                    stop_loss=95.0,
+                    take_profit=140.0,
+                    reasoning="test",
+                ),
+                [],
+                EQUITY,
+                0.0,
+                cash=EQUITY * 3,
+            )
+        ]
 
     assert "max_position_pct" not in check(65.0)
     assert "max_position_pct" in check(66.0)
@@ -821,7 +952,8 @@ def test_the_survival_ceiling_accounts_for_what_is_already_held():
         targets=[_risk_target("NVDA", 5.0)],
         positions=[_pos("NVDA", qty=250, avg_entry=100, current_price=100)],  # 25%
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     # 65% ceiling - 25% held = 40% of headroom, and not a basis point more.
@@ -837,9 +969,11 @@ def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
     sector's unrelated 90% absolute cap standing in for it."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=97.5, target=140)],  # 2.5% stop
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     # 5% risk / 2.5% stop asks for 200% — clamped to 65, so delivered risk
@@ -852,8 +986,8 @@ def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
 # Stop width — the root cause behind both the sizing squeeze and noise exits
 # --------------------------------------------------------------------------
 
-def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
-                  computed=None, touches=None, bars=None):
+
+def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60, computed=None, touches=None, bars=None):
     """A widening fixture: the stop is NOT at a computed structural level.
 
     `computed_levels` defaults to the target alone, and that default is
@@ -878,6 +1012,7 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     the gate itself.
     """
     from src.models import TechReasoningChain
+
     levels = list([target] if computed is None else computed)
     # 2026-09-12, "no floor, no trade": the constructor now refuses a long
     # with NO computed level below its entry. These fixtures deliberately
@@ -898,16 +1033,21 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     if bars:
         default_bars.update(bars)
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test", support_levels=[stop],
-        resistance_levels=[target], setup_type=setup,
-        expected_horizon_sessions=horizon, atr_14=atr,
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target],
+        setup_type=setup,
+        expected_horizon_sessions=horizon,
+        atr_14=atr,
         computed_levels=levels,
         computed_level_touches=default_touches if touches is None else touches,
         computed_level_bars=default_bars,
-        reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
-            support_resistance="x"),
+        reasoning_chain=TechReasoningChain(trend="x", momentum="x", volatility="x", volume="x", support_resistance="x"),
         thesis_invalid_if="closes below support",
     )
 
@@ -919,9 +1059,11 @@ def test_a_stop_inside_the_noise_band_is_pushed_out():
     noise and forced huge positions to reach any real risk."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=2.35)],
-        total_value=EQUITY, price_map={"MSFT": 100.0},
+        total_value=EQUITY,
+        price_map={"MSFT": 100.0},
     )
     assert len(decisions) == 1
     # A range setup earns 0.90x the 2.5 base = 2.25 ATRs, so 2.25 x 2.35 =
@@ -936,9 +1078,11 @@ def test_a_stop_already_outside_the_noise_band_is_left_alone():
     wide structural stop tighter — structure still decides."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("OKLO", 1.0)], positions=[],
+        targets=[_risk_target("OKLO", 1.0)],
+        positions=[],
         analyses=[_vol_analysis("OKLO", 100.0, 60.0, 200.0, atr=8.22)],
-        total_value=EQUITY, price_map={"OKLO": 100.0},
+        total_value=EQUITY,
+        price_map={"OKLO": 100.0},
     )
     assert decisions[0].stop_loss == 60.0
 
@@ -975,9 +1119,12 @@ def test_the_atr_multiple_is_not_one_constant_for_every_trade():
 
     def stop(setup, regime):
         d = constructor.construct_orders(
-            targets=[_risk_target("MSFT", 1.0)], positions=[],
+            targets=[_risk_target("MSFT", 1.0)],
+            positions=[],
             analyses=[_vol_analysis("MSFT", 100.0, 97.6, 200.0, 2.35, setup)],
-            total_value=EQUITY, price_map={"MSFT": 100.0}, regime=regime,
+            total_value=EQUITY,
+            price_map={"MSFT": 100.0},
+            regime=regime,
         )
         return d[0].stop_loss
 
@@ -1001,7 +1148,8 @@ def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
     risk-side rule."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
         # Target only 4% up against the 2.25-ATR band ($5.2875 of risk):
         # 4.00 / 5.2875 = 0.7565, well under the 1.5 floor.
         # (Was 105.0 while the band was 3.45 ATR / $8.11 wide, then 104.0 at
@@ -1009,7 +1157,8 @@ def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
         # wider still, so 104.0 fails by an even larger margin and the
         # fixture does not need to move again.)
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 104.0, atr=2.35)],
-        total_value=EQUITY, price_map={"MSFT": 100.0},
+        total_value=EQUITY,
+        price_map={"MSFT": 100.0},
     )
     # AMENDED 2026-10-01 (owner ruling, board item 218). 4.00 of reward
     # against 5.2875 of risk is 0.76 — below parity — so the purchase is
@@ -1021,10 +1170,7 @@ def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
     # NOT change: no stop, target or trailing behaviour moved, and nothing
     # was resized within this name.
     assert decisions == []
-    assert (
-        constructor.last_refusals["MSFT"]["refusal"]
-        == STOP_REFUSAL_REWARD_BELOW_RISK
-    )
+    assert constructor.last_refusals["MSFT"]["refusal"] == STOP_REFUSAL_REWARD_BELOW_RISK
     assert "below parity" in constructor.last_refusals["MSFT"]["detail"]
 
 
@@ -1039,11 +1185,20 @@ def test_no_volatility_reading_derives_structural_stop_and_holds():
     # A close, verified structural level below entry (the fixture leaves the
     # typed stop unbacked; `computed` supplies the level the fallback reads).
     analysis = _vol_analysis(
-        "MSFT", 100.0, 97.6, 160.0, atr=None, computed=[97.0],
+        "MSFT",
+        100.0,
+        97.6,
+        160.0,
+        atr=None,
+        computed=[97.0],
     )
     buffer = constructor.cfg.structural_stop_buffer_pct
     stop = constructor._widen_stop_past_noise(
-        "MSFT", analysis, 100.0, 97.6, target_price=160.0,
+        "MSFT",
+        analysis,
+        100.0,
+        97.6,
+        target_price=160.0,
     )
     assert stop is not None, "a missing ATR must not skip protection"
     assert abs(stop - 97.0 * (1.0 - buffer)) < 1e-9
@@ -1058,9 +1213,11 @@ def test_no_volatility_reading_refuses_the_trade_outright():
     with a named reason, rather than trade on half a chart."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=None)],
-        total_value=EQUITY, price_map={"MSFT": 100.0},
+        total_value=EQUITY,
+        price_map={"MSFT": 100.0},
     )
     assert decisions == []
 
@@ -1072,9 +1229,11 @@ def test_wider_stops_give_conviction_room_to_change_the_size():
 
     def alloc(risk):
         d = constructor.construct_orders(
-            targets=[_risk_target("MSFT", risk)], positions=[],
+            targets=[_risk_target("MSFT", risk)],
+            positions=[],
             analyses=[_vol_analysis("MSFT", 100.0, 97.6, 160.0, atr=2.35)],
-            total_value=EQUITY, price_map={"MSFT": 100.0},
+            total_value=EQUITY,
+            price_map={"MSFT": 100.0},
         )
         return d[0].allocation_pct
 
@@ -1149,10 +1308,10 @@ def test_wider_stops_give_conviction_room_to_change_the_size():
 
 _ENTRY = 100.0
 _ATR = 2.35
-_BAND_EDGE = 94.71        # 2.25 x ATR below entry — the unconditional stop
-_HARD_FLOOR = 97.65       # 1.00 x ATR below entry — the deterministic floor
-_TIGHT_STOP = 95.00       # 2.13 x ATR out — inside the band, outside the floor
-_UPPER_LEVEL = 107.85     # computed resistance; becomes the derived target
+_BAND_EDGE = 94.71  # 2.25 x ATR below entry — the unconditional stop
+_HARD_FLOOR = 97.65  # 1.00 x ATR below entry — the deterministic floor
+_TIGHT_STOP = 95.00  # 2.13 x ATR out — inside the band, outside the floor
+_UPPER_LEVEL = 107.85  # computed resistance; becomes the derived target
 
 
 def test_a_level_backed_tight_stop_is_honoured_not_widened():
@@ -1164,12 +1323,20 @@ def test_a_level_backed_tight_stop_is_honoured_not_widened():
     fixture below is refused at 1.4846 on the same reward."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis(
-            "MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR,
-            computed=[_TIGHT_STOP, _UPPER_LEVEL],
-        )],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                _TIGHT_STOP,
+                _UPPER_LEVEL,
+                atr=_ATR,
+                computed=[_TIGHT_STOP, _UPPER_LEVEL],
+            )
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _TIGHT_STOP
@@ -1192,12 +1359,20 @@ def test_an_unbacked_tight_stop_is_still_widened_to_the_band():
     band."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis(
-            "MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR,
-            computed=[_UPPER_LEVEL],       # the stop is NOT a computed level
-        )],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                _TIGHT_STOP,
+                _UPPER_LEVEL,
+                atr=_ATR,
+                computed=[_UPPER_LEVEL],  # the stop is NOT a computed level
+            )
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _BAND_EDGE
@@ -1221,9 +1396,9 @@ def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
     def stop_for(computed):
         return constructor._widen_stop_past_noise(
             "MSFT",
-            _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR,
-                          computed=computed),
-            entry_price=_ENTRY, stop_loss=_TIGHT_STOP,
+            _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR, computed=computed),
+            entry_price=_ENTRY,
+            stop_loss=_TIGHT_STOP,
             target_price=_UPPER_LEVEL,
         )
 
@@ -1253,12 +1428,20 @@ def test_a_level_backed_stop_inside_one_atr_is_floored_at_one_atr_not_the_band()
     floor is the destination, never the band.)"""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis(
-            "MSFT", _ENTRY, 99.0, _UPPER_LEVEL, atr=_ATR,
-            computed=[99.0, _UPPER_LEVEL],
-        )],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                99.0,
+                _UPPER_LEVEL,
+                atr=_ATR,
+                computed=[99.0, _UPPER_LEVEL],
+            )
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _HARD_FLOOR
@@ -1271,15 +1454,21 @@ def test_the_absolute_floor_is_configurable_and_can_be_switched_off():
     """It is an owner-reversible addition, so it must be reachable from
     config rather than baked in. At 0 the ratified §12.1 wording applies
     literally: the level-backed stop is honoured however tight."""
-    constructor = PortfolioConstructor(ConstructorConfig(
-        absolute_min_stop_atr_multiple=0.0,
-    ))
-    assert constructor._widen_stop_past_noise(
-        "MSFT",
-        _vol_analysis("MSFT", _ENTRY, 99.0, _UPPER_LEVEL, atr=_ATR,
-                      computed=[99.0, _UPPER_LEVEL]),
-        entry_price=_ENTRY, stop_loss=99.0, target_price=_UPPER_LEVEL,
-    ) == 99.0
+    constructor = PortfolioConstructor(
+        ConstructorConfig(
+            absolute_min_stop_atr_multiple=0.0,
+        )
+    )
+    assert (
+        constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, 99.0, _UPPER_LEVEL, atr=_ATR, computed=[99.0, _UPPER_LEVEL]),
+            entry_price=_ENTRY,
+            stop_loss=99.0,
+            target_price=_UPPER_LEVEL,
+        )
+        == 99.0
+    )
 
 
 def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
@@ -1312,14 +1501,22 @@ def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
     def stop_for(stop):
         return constructor._widen_stop_past_noise(
             "MSFT",
-            _vol_analysis("MSFT", _ENTRY, stop, 130.0, atr=_ATR,
-                          computed=[_TIGHT_STOP, 130.0],
-                          bars={_TIGHT_STOP: [(_TIGHT_STOP, 96.00)]}),
-            entry_price=_ENTRY, stop_loss=stop, target_price=130.0,
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                stop,
+                130.0,
+                atr=_ATR,
+                computed=[_TIGHT_STOP, 130.0],
+                bars={_TIGHT_STOP: [(_TIGHT_STOP, 96.00)]},
+            ),
+            entry_price=_ENTRY,
+            stop_loss=stop,
+            target_price=130.0,
         )
 
-    assert stop_for(95.9) == 95.9                      # gap $0.90, inside
-    assert round(stop_for(96.1), 2) == _BAND_EDGE      # gap $1.10, outside
+    assert stop_for(95.9) == 95.9  # gap $0.90, inside
+    assert round(stop_for(96.1), 2) == _BAND_EDGE  # gap $1.10, outside
 
 
 def test_a_level_the_model_asserted_does_not_earn_the_exemption():
@@ -1330,14 +1527,22 @@ def test_a_level_the_model_asserted_does_not_earn_the_exemption():
     not. The band applies, because the analyst asserting a level is not the
     system having computed one."""
     constructor = PortfolioConstructor()
-    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR,
-                             computed=[130.0])
-    assert analysis.support_levels == [_TIGHT_STOP]    # the model said so
+    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR, computed=[130.0])
+    assert analysis.support_levels == [_TIGHT_STOP]  # the model said so
     assert _TIGHT_STOP not in analysis.computed_levels  # the chart did not
-    assert round(constructor._widen_stop_past_noise(
-        "MSFT", analysis, entry_price=_ENTRY, stop_loss=_TIGHT_STOP,
-        target_price=130.0,
-    ), 2) == _BAND_EDGE
+    assert (
+        round(
+            constructor._widen_stop_past_noise(
+                "MSFT",
+                analysis,
+                entry_price=_ENTRY,
+                stop_loss=_TIGHT_STOP,
+                target_price=130.0,
+            ),
+            2,
+        )
+        == _BAND_EDGE
+    )
 
 
 def test_a_level_below_the_touch_bar_does_not_earn_the_exemption():
@@ -1351,14 +1556,22 @@ def test_a_level_below_the_touch_bar_does_not_earn_the_exemption():
     as an unbacked stop would be."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis(
-            "MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR,
-            computed=[_TIGHT_STOP, _UPPER_LEVEL],
-            # stop's own level: 4 touches, one under the bar
-            touches={_TIGHT_STOP: 4, _UPPER_LEVEL: 5},
-        )],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                _TIGHT_STOP,
+                _UPPER_LEVEL,
+                atr=_ATR,
+                computed=[_TIGHT_STOP, _UPPER_LEVEL],
+                # stop's own level: 4 touches, one under the bar
+                touches={_TIGHT_STOP: 4, _UPPER_LEVEL: 5},
+            )
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     # The assertion is the STOP, not a refusal (changed 2026-09-11, item
     # 1(d) — the sub-floor ratio no longer refuses anything). A stop widened
@@ -1373,13 +1586,21 @@ def test_a_level_exactly_at_the_touch_bar_earns_the_exemption():
     more — is enough."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis(
-            "MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR,
-            computed=[_TIGHT_STOP, _UPPER_LEVEL],
-            touches={_TIGHT_STOP: 5, _UPPER_LEVEL: 5},
-        )],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis(
+                "MSFT",
+                _ENTRY,
+                _TIGHT_STOP,
+                _UPPER_LEVEL,
+                atr=_ATR,
+                computed=[_TIGHT_STOP, _UPPER_LEVEL],
+                touches={_TIGHT_STOP: 5, _UPPER_LEVEL: 5},
+            )
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _TIGHT_STOP
@@ -1392,11 +1613,15 @@ def test_a_level_with_no_touch_count_on_record_fails_closed():
     deterministic layer to fail closed, not to assume a level is good
     because its touch count is simply missing."""
     constructor = PortfolioConstructor()
-    assert constructor._level_backing_stop(
-        _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
-                      computed=[96.0, _UPPER_LEVEL], touches={}),
-        _ENTRY, 96.0, is_short=False,
-    ) is None
+    assert (
+        constructor._level_backing_stop(
+            _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR, computed=[96.0, _UPPER_LEVEL], touches={}),
+            _ENTRY,
+            96.0,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_a_level_on_the_wrong_side_of_entry_cannot_back_a_stop():
@@ -1406,22 +1631,33 @@ def test_a_level_on_the_wrong_side_of_entry_cannot_back_a_stop():
     against the last close — the same re-partition `derive_structural_target`
     performs, for the same reason."""
     constructor = PortfolioConstructor()
-    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL,
-                             atr=_ATR,
-                             computed=[_TIGHT_STOP, _UPPER_LEVEL])
-    assert constructor._level_backing_stop(
-        analysis, _ENTRY, _TIGHT_STOP, is_short=False,
-    ) == _TIGHT_STOP
+    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR, computed=[_TIGHT_STOP, _UPPER_LEVEL])
+    assert (
+        constructor._level_backing_stop(
+            analysis,
+            _ENTRY,
+            _TIGHT_STOP,
+            is_short=False,
+        )
+        == _TIGHT_STOP
+    )
     # The identical level read as a SHORT's backing: it is below entry, so it
     # cannot be what a short's stop above entry is resting on.
-    assert constructor._level_backing_stop(
-        analysis, _ENTRY, _TIGHT_STOP, is_short=True,
-    ) is None
+    assert (
+        constructor._level_backing_stop(
+            analysis,
+            _ENTRY,
+            _TIGHT_STOP,
+            is_short=True,
+        )
+        is None
+    )
 
 
 # --------------------------------------------------------------------------
 # §12.1 — SLB, the 2026-09-01 refusal, reproduced
 # --------------------------------------------------------------------------
+
 
 class TestSLBStopIsHonoured:
     """SLB, 2026-09-01 morning run: `strong_buy` / `high` conviction, entry
@@ -1443,17 +1679,22 @@ class TestSLBStopIsHonoured:
     """
 
     ENTRY = 60.10
-    ATR = 4.60 / 3.45                  # ~$1.3333, back-solved from the 7.7% stop
-    BAND_STOP = 55.50                  # 3.45 x ATR — what the old rule shipped
-    LEVEL_STOP = 57.83                 # 1.70 x ATR — at a computed support shelf
-    SHELF = 65.99                      # computed resistance; the derived target
-    HORIZON = 15                       # the ~15-session hold §12.1 reasons about
+    ATR = 4.60 / 3.45  # ~$1.3333, back-solved from the 7.7% stop
+    BAND_STOP = 55.50  # 3.45 x ATR — what the old rule shipped
+    LEVEL_STOP = 57.83  # 1.70 x ATR — at a computed support shelf
+    SHELF = 65.99  # computed resistance; the derived target
+    HORIZON = 15  # the ~15-session hold §12.1 reasons about
     FLOOR = 1.5
 
     def _analysis(self, computed):
         return _vol_analysis(
-            "SLB", self.ENTRY, self.LEVEL_STOP, self.SHELF, atr=self.ATR,
-            horizon=self.HORIZON, computed=computed,
+            "SLB",
+            self.ENTRY,
+            self.LEVEL_STOP,
+            self.SHELF,
+            atr=self.ATR,
+            horizon=self.HORIZON,
+            computed=computed,
         )
 
     def test_the_band_stop_reproduces_the_1_28_that_was_refused(self):
@@ -1507,11 +1748,13 @@ class TestSLBStopIsHonoured:
         """
         constructor = PortfolioConstructor()
         assert round(self.ENTRY - 2.25 * self.ATR, 2) == self.NEW_BAND_STOP
-        assert self.LEVEL_STOP > self.NEW_BAND_STOP   # inside the band
+        assert self.LEVEL_STOP > self.NEW_BAND_STOP  # inside the band
         decisions = constructor.construct_orders(
-            targets=[_risk_target("SLB", 1.0)], positions=[],
+            targets=[_risk_target("SLB", 1.0)],
+            positions=[],
             analyses=[self._analysis([self.SHELF])],
-            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+            total_value=EQUITY,
+            price_map={"SLB": self.ENTRY},
         )
         assert len(decisions) == 1
         assert decisions[0].stop_loss == self.NEW_BAND_STOP
@@ -1524,9 +1767,11 @@ class TestSLBStopIsHonoured:
         SLB becomes tradeable — the outcome §12.1 exists to produce."""
         constructor = PortfolioConstructor()
         decisions = constructor.construct_orders(
-            targets=[_risk_target("SLB", 1.0)], positions=[],
+            targets=[_risk_target("SLB", 1.0)],
+            positions=[],
             analyses=[self._analysis([self.LEVEL_STOP, self.SHELF])],
-            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+            total_value=EQUITY,
+            price_map={"SLB": self.ENTRY},
         )
         assert len(decisions) == 1
         assert decisions[0].stop_loss == self.LEVEL_STOP
@@ -1546,15 +1791,23 @@ class TestSLBStopIsHonoured:
         honoured at the computed level, and the division is performed on the
         stop that ships."""
         constructor = PortfolioConstructor()
-        near_shelf = 62.50            # reward $2.40 against risk $2.27 = 1.06
+        near_shelf = 62.50  # reward $2.40 against risk $2.27 = 1.06
         decisions = constructor.construct_orders(
-            targets=[_risk_target("SLB", 1.0)], positions=[],
-            analyses=[_vol_analysis(
-                "SLB", self.ENTRY, self.LEVEL_STOP, near_shelf, atr=self.ATR,
-                horizon=self.HORIZON,
-                computed=[self.LEVEL_STOP, near_shelf],
-            )],
-            total_value=EQUITY, price_map={"SLB": self.ENTRY},
+            targets=[_risk_target("SLB", 1.0)],
+            positions=[],
+            analyses=[
+                _vol_analysis(
+                    "SLB",
+                    self.ENTRY,
+                    self.LEVEL_STOP,
+                    near_shelf,
+                    atr=self.ATR,
+                    horizon=self.HORIZON,
+                    computed=[self.LEVEL_STOP, near_shelf],
+                )
+            ],
+            total_value=EQUITY,
+            price_map={"SLB": self.ENTRY},
         )
         assert len(decisions) == 1
         assert decisions[0].stop_loss == self.LEVEL_STOP
@@ -1578,9 +1831,9 @@ class TestSLBStopIsHonoured:
 # --------------------------------------------------------------------------
 
 # XLE, 2026-09-01, run-64290730 — the real numbers off the evidence rows.
-_XLE_TA_ENTRY = 63.96     # tech_analyst snapshot price
-_XLE_LIVE_ENTRY = 64.51   # what the constructor actually priced
-_XLE_STOP = 61.54         # IDENTICAL in both — no stop ever moved
+_XLE_TA_ENTRY = 63.96  # tech_analyst snapshot price
+_XLE_LIVE_ENTRY = 64.51  # what the constructor actually priced
+_XLE_STOP = 61.54  # IDENTICAL in both — no stop ever moved
 _XLE_TARGET = 68.00
 _XLE_ATR = 1.21
 
@@ -1628,13 +1881,18 @@ def test_xle_a_breakout_is_no_longer_measured_against_any_reward_risk_floor():
     $2.87375 and the band edge is 64.51 - 2.87375 = $61.6363. The stop is
     $2.97 out (2.4545 ATRs), outside the band — by only $0.10."""
     constructor = PortfolioConstructor()
-    assert constructor._widen_stop_past_noise(
-        "XLE",
-        _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET,
-                      atr=_XLE_ATR, setup="breakout"),
-        entry_price=_XLE_LIVE_ENTRY, stop_loss=_XLE_STOP,
-        regime="risk-on", direction="long", target_price=_XLE_TARGET,
-    ) == _XLE_STOP
+    assert (
+        constructor._widen_stop_past_noise(
+            "XLE",
+            _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET, atr=_XLE_ATR, setup="breakout"),
+            entry_price=_XLE_LIVE_ENTRY,
+            stop_loss=_XLE_STOP,
+            regime="risk-on",
+            direction="long",
+            target_price=_XLE_TARGET,
+        )
+        == _XLE_STOP
+    )
 
 
 def test_a_wide_stop_that_clears_the_floor_still_ships_untouched():
@@ -1645,13 +1903,18 @@ def test_a_wide_stop_that_clears_the_floor_still_ships_untouched():
     # Stop $61.54 (2.97 / 1.21 = 2.4545 ATR out, outside the 2.375x breakout
     # band — 2.5 x 1.00 x 0.95, edge $61.6363), target $73.00 → reward
     # 8.49 / risk 2.97 = 2.86.
-    assert constructor._widen_stop_past_noise(
-        "XLE",
-        _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, 73.0,
-                      atr=_XLE_ATR, setup="breakout"),
-        entry_price=_XLE_LIVE_ENTRY, stop_loss=_XLE_STOP,
-        regime="risk-on", direction="long", target_price=73.0,
-    ) == _XLE_STOP
+    assert (
+        constructor._widen_stop_past_noise(
+            "XLE",
+            _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, 73.0, atr=_XLE_ATR, setup="breakout"),
+            entry_price=_XLE_LIVE_ENTRY,
+            stop_loss=_XLE_STOP,
+            regime="risk-on",
+            direction="long",
+            target_price=73.0,
+        )
+        == _XLE_STOP
+    )
 
 
 def test_a_level_backed_tight_stop_is_honoured_and_a_bare_one_is_not():
@@ -1667,13 +1930,14 @@ def test_a_level_backed_tight_stop_is_honoured_and_a_bare_one_is_not():
     def stop_for(computed):
         return constructor._widen_stop_past_noise(
             "MSFT",
-            _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR,
-                          computed=computed),
-            entry_price=_ENTRY, stop_loss=_TIGHT_STOP, target_price=130.0,
+            _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR, computed=computed),
+            entry_price=_ENTRY,
+            stop_loss=_TIGHT_STOP,
+            target_price=130.0,
         )
 
     assert stop_for([_TIGHT_STOP, 130.0]) == _TIGHT_STOP  # level backs it
-    assert round(stop_for([130.0]), 2) == _BAND_EDGE      # nothing does
+    assert round(stop_for([130.0]), 2) == _BAND_EDGE  # nothing does
 
 
 def test_both_reward_risk_computations_agree_on_one_trade():
@@ -1684,21 +1948,24 @@ def test_both_reward_risk_computations_agree_on_one_trade():
     from src.models import reward_to_risk
 
     constructor = PortfolioConstructor()
-    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL,
-                             atr=_ATR,
-                             computed=[_TIGHT_STOP, _UPPER_LEVEL])
+    analysis = _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR, computed=[_TIGHT_STOP, _UPPER_LEVEL])
     decisions = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[], analyses=[analysis],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[analysis],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert len(decisions) == 1
     d = decisions[0]
     gate = constructor._reward_risk_at(
-        d.entry_price, d.stop_loss, d.take_profit, False,
+        d.entry_price,
+        d.stop_loss,
+        d.take_profit,
+        False,
     )
     assert d.reward_risk == round(gate, 2)
-    assert d.reward_risk == round(reward_to_risk(
-        d.entry_price, d.stop_loss, d.take_profit, is_short=False), 2)
+    assert d.reward_risk == round(reward_to_risk(d.entry_price, d.stop_loss, d.take_profit, is_short=False), 2)
 
 
 def test_the_shipped_order_records_the_rule_that_placed_its_stop():
@@ -1706,16 +1973,19 @@ def test_the_shipped_order_records_the_rule_that_placed_its_stop():
     any other, without recomputing levels from different bars. It reads
     `TradeDecision.stop_rule`, which the constructor sets here."""
     from src.portfolio_constructor import (
-        LEVEL_BACKED_STOP_RULES, STOP_RULE_LEVEL_HONOURED,
+        LEVEL_BACKED_STOP_RULES,
+        STOP_RULE_LEVEL_HONOURED,
     )
 
     constructor = PortfolioConstructor()
     backed = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL,
-                                atr=_ATR,
-                                computed=[_TIGHT_STOP, _UPPER_LEVEL])],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[
+            _vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, _UPPER_LEVEL, atr=_ATR, computed=[_TIGHT_STOP, _UPPER_LEVEL])
+        ],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert backed[0].stop_rule == STOP_RULE_LEVEL_HONOURED
     assert backed[0].stop_rule in LEVEL_BACKED_STOP_RULES
@@ -1724,10 +1994,11 @@ def test_the_shipped_order_records_the_rule_that_placed_its_stop():
     # is not a level, so no exemption is recorded and the execution-time ATR
     # floor still applies to it.
     bare = constructor.construct_orders(
-        targets=[_risk_target("MSFT", 1.0)], positions=[],
-        analyses=[_vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR,
-                                computed=[130.0])],
-        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+        targets=[_risk_target("MSFT", 1.0)],
+        positions=[],
+        analyses=[_vol_analysis("MSFT", _ENTRY, _TIGHT_STOP, 130.0, atr=_ATR, computed=[130.0])],
+        total_value=EQUITY,
+        price_map={"MSFT": _ENTRY},
     )
     assert bare[0].stop_rule not in LEVEL_BACKED_STOP_RULES
 
@@ -1740,6 +2011,7 @@ def test_the_shipped_order_records_the_rule_that_placed_its_stop():
 # ordering check silently and comes out the far side looking valid.
 # --------------------------------------------------------------------------
 
+
 def test_a_non_finite_stop_is_refused_not_passed_through():
     """Before this, a NaN stop went through `_widen_stop_past_noise`
     untouched AND through the caller's `stop_loss >= entry_price` validity
@@ -1747,20 +2019,30 @@ def test_a_non_finite_stop_is_refused_not_passed_through():
     constructor = PortfolioConstructor()
     nan = float("nan")
     for bad in (nan, float("inf"), float("-inf")):
-        assert constructor._widen_stop_past_noise(
-            "MSFT",
-            _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
-            entry_price=_ENTRY, stop_loss=bad, target_price=_UPPER_LEVEL,
-        ) is None
+        assert (
+            constructor._widen_stop_past_noise(
+                "MSFT",
+                _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
+                entry_price=_ENTRY,
+                stop_loss=bad,
+                target_price=_UPPER_LEVEL,
+            )
+            is None
+        )
 
 
 def test_a_non_finite_entry_price_is_refused():
     constructor = PortfolioConstructor()
-    assert constructor._widen_stop_past_noise(
-        "MSFT",
-        _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
-        entry_price=float("nan"), stop_loss=96.0, target_price=_UPPER_LEVEL,
-    ) is None
+    assert (
+        constructor._widen_stop_past_noise(
+            "MSFT",
+            _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
+            entry_price=float("nan"),
+            stop_loss=96.0,
+            target_price=_UPPER_LEVEL,
+        )
+        is None
+    )
 
 
 def test_a_non_finite_target_does_not_refuse_the_stop():
@@ -1771,7 +2053,9 @@ def test_a_non_finite_target_does_not_refuse_the_stop():
     stop = constructor._widen_stop_past_noise(
         "MSFT",
         _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
-        entry_price=_ENTRY, stop_loss=96.0, target_price=float("nan"),
+        entry_price=_ENTRY,
+        stop_loss=96.0,
+        target_price=float("nan"),
     )
     assert stop is not None
     assert stop < _ENTRY
@@ -1793,7 +2077,7 @@ def test_reward_to_risk_returns_none_for_every_malformed_geometry():
     assert reward_to_risk(None, 90.0, 130.0, is_short=False) is None
     assert reward_to_risk(100.0, 0.0, 130.0, is_short=False) is None
     assert reward_to_risk(100.0, 110.0, 130.0, is_short=False) is None  # stop above a long
-    assert reward_to_risk(100.0, 90.0, 90.0, is_short=False) is None    # target below entry
+    assert reward_to_risk(100.0, 90.0, 90.0, is_short=False) is None  # target below entry
     assert reward_to_risk(100.0, 100.0, 130.0, is_short=False) is None  # zero risk
 
 
@@ -1802,10 +2086,12 @@ def test_reward_to_risk_returns_none_for_every_malformed_geometry():
 # budget-rationed name now leaves behind. Owner decision 2026-09-12.
 # --------------------------------------------------------------------------
 
+
 def test_constructor_spends_the_budget_in_the_ranked_order_it_is_given():
     """Two identical ideas, one budget that fits only one of them. The
     `ranking` argument — the PM's own `rank_verdicts` order — decides which,
     and reversing it reverses the outcome. Nothing else differs."""
+
     def _run(ranking):
         return PortfolioConstructor().construct_orders(
             targets=[_risk_target("NVDA", 5.0), _risk_target("AMD", 5.0)],
@@ -1814,9 +2100,12 @@ def test_constructor_spends_the_budget_in_the_ranked_order_it_is_given():
                 _analysis("NVDA", entry=100, stop=95, target=140),
                 _analysis("AMD", entry=100, stop=95, target=140),
             ],
-            total_value=EQUITY, price_map={"NVDA": 100.0, "AMD": 100.0},
+            total_value=EQUITY,
+            price_map={"NVDA": 100.0, "AMD": 100.0},
             # 20 of the 25% ceiling already spent: room for one 5% idea.
-            existing_risk_pct={"HELD": 20.0}, clusters=[], ranking=ranking,
+            existing_risk_pct={"HELD": 20.0},
+            clusters=[],
+            ranking=ranking,
         )
 
     nvda_first = {d.symbol: d.allocated_risk_pct for d in _run(["NVDA", "AMD"])}
@@ -1838,10 +2127,13 @@ def test_a_budget_rationed_name_leaves_a_durable_machine_readable_reason():
 
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
-        existing_risk_pct={"HELD": 25.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0},
+        clusters=[],
     )
     assert decisions == []
     refusals = constructor.drain_refusals()
@@ -1858,10 +2150,13 @@ def test_a_budget_refusal_drops_the_target_and_never_zeroes_it():
     dropped, and a held position is left exactly where it is."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
-        existing_risk_pct={"HELD": 25.0}, clusters=[],
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0},
+        clusters=[],
     )
     assert [d for d in decisions if d.symbol == "NVDA"] == []
 
@@ -1873,6 +2168,7 @@ def test_a_budget_refusal_drops_the_target_and_never_zeroes_it():
 # None` / `continue` that produces no order. No live data was needed; the
 # regex and the message templates are both compile-time.
 # --------------------------------------------------------------------------
+
 
 def test_single_name_ceiling_rounding_to_zero_leaves_a_durable_reason():
     """`_build_buy` already LOGS when the single-name ceiling caps a
@@ -1887,13 +2183,17 @@ def test_single_name_ceiling_rounding_to_zero_leaves_a_durable_reason():
     constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=5.0))
     held = _pos("NVDA", qty=50, avg_entry=100.0, current_price=100.0)  # $5,000 = 5% of $100k
     target = TargetPosition(
-        symbol="NVDA", target_weight_pct=6.0, conviction="high",
+        symbol="NVDA",
+        target_weight_pct=6.0,
+        conviction="high",
         thesis="Add to an already-full single-name slot.",
     )
     decisions = constructor.construct_orders(
-        targets=[target], positions=[held],
+        targets=[target],
+        positions=[held],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert [d for d in decisions if d.symbol == "NVDA" and d.action == "BUY"] == []
     refusals = constructor.drain_refusals()
@@ -1911,23 +2211,36 @@ def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
     constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=5.0))
     held = _pos("NVDA", qty=-50, avg_entry=100.0, current_price=100.0)  # -5% (5% short)
     target = TargetPosition(
-        symbol="NVDA", direction="short", target_weight_pct=6.0,
-        conviction="high", thesis="Add to an already-full short slot.",
+        symbol="NVDA",
+        direction="short",
+        target_weight_pct=6.0,
+        conviction="high",
+        thesis="Add to an already-full short slot.",
     )
     short_analysis = TechAnalysisResult(
-        symbol="NVDA", rating="sell", entry_price=100.0, stop_loss=110.0,
-        reference_target=60.0, reasoning="test",
-        support_levels=[60.0], resistance_levels=[110.0],
-        computed_levels=[60.0, 110.0], computed_level_touches={60.0: 5, 110.0: 5},
+        symbol="NVDA",
+        rating="sell",
+        entry_price=100.0,
+        stop_loss=110.0,
+        reference_target=60.0,
+        reasoning="test",
+        support_levels=[60.0],
+        resistance_levels=[110.0],
+        computed_levels=[60.0, 110.0],
+        computed_level_touches={60.0: 5, 110.0: 5},
         computed_level_bars={60.0: [(60.0, 60.0)], 110.0: [(110.0, 110.0)]},
-        atr_14=(110.0 - 100.0) / 3.5, setup_type="range",
-        expected_horizon_sessions=60, reasoning_chain=_tech_rc(),
+        atr_14=(110.0 - 100.0) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
     decisions = constructor.construct_orders(
-        targets=[target], positions=[held],
+        targets=[target],
+        positions=[held],
         analyses=[short_analysis],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert [d for d in decisions if d.symbol == "NVDA" and d.action == "SHORT"] == []
     refusals = constructor.drain_refusals()
@@ -1956,13 +2269,19 @@ def test_gross_exposure_ceiling_block_leaves_a_durable_reason():
     # sub-cent headroom, to still exercise the real "no headroom at all"
     # refusal this test is actually about.
     tiny_ceiling = GrossCeiling(
-        ceiling_x=0.0000001, base_x=0.0000001, drawdown_pct=None,
-        alert_owner=False, rung="test", reason="test-fixture ceiling",
+        ceiling_x=0.0000001,
+        base_x=0.0000001,
+        drawdown_pct=None,
+        alert_owner=False,
+        rung="test",
+        reason="test-fixture ceiling",
     )  # $100k equity -> $0.01 ceiling, rounds down to a genuine zero
     decisions = constructor.construct_orders(
-        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        targets=[_risk_target("NVDA", 5.0)],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
         gross_ceiling=tiny_ceiling,
     )
     assert [d for d in decisions if d.symbol == "NVDA" and d.allocation_pct > 0] == []
@@ -1981,13 +2300,17 @@ def test_a_small_new_position_is_no_longer_refused_on_size_alone():
     asked for."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
-        symbol="NVDA", target_weight_pct=0.1, conviction="low",
+        symbol="NVDA",
+        target_weight_pct=0.1,
+        conviction="low",
         thesis="A small idea, once dropped as below the deleted min trade delta.",
     )
     decisions = constructor.construct_orders(
-        targets=[target], positions=[],
+        targets=[target],
+        positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
-        total_value=EQUITY, price_map={"NVDA": 100.0},
+        total_value=EQUITY,
+        price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
     assert decisions[0].symbol == "NVDA"
@@ -2005,6 +2328,7 @@ def test_a_small_new_position_is_no_longer_refused_on_size_alone():
 # wider regex (doctrine: the reason must not go on living in log text).
 # --------------------------------------------------------------------------
 
+
 def test_drop_capture_regex_does_not_match_the_defect_class_this_pr_fixes():
     """Run the REAL regex object (not a retyped copy) against the exact
     phrasing each fixed call site used to emit. This is the static
@@ -2014,11 +2338,9 @@ def test_drop_capture_regex_does_not_match_the_defect_class_this_pr_fixes():
     rx = _DropReasonCapture._SYMBOL
     previously_silent = [
         # _plan_risk_targets — the agreement-ceiling refusal (§9.4).
-        "Constructor: NVDA produces no order — 1 aligned / 2 opposed = "
-        "net -1 independent source(s) for this long.",
+        "Constructor: NVDA produces no order — 1 aligned / 2 opposed = net -1 independent source(s) for this long.",
         # _build_buy / _build_short — alloc capped to zero.
-        "Constructor: NVDA alloc capped by risk budget (delta 5.00% -> 0.00% "
-        "at 5.0% risk budget)",
+        "Constructor: NVDA alloc capped by risk budget (delta 5.00% -> 0.00% at 5.0% risk budget)",
         "Constructor: NVDA alloc capped by the single-name ceiling "
         "(delta 5.00% -> 0.00%; 5.0% max position, 5.00% already held)",
         # apply_gross_ceiling, relayed through the constructor's own logger.
@@ -2055,7 +2377,8 @@ def _real_plan(live_stops):
         analyses=[_analysis("NET", entry=100, stop=90, target=140)],
         total_value=_REAL_EQUITY,
         price_map={"AAPL": _AAPL_PX, "NET": 100.0},
-        existing_risk_pct={"AAPL": 1.91}, clusters=[],
+        existing_risk_pct={"AAPL": 1.91},
+        clusters=[],
         live_stops=live_stops,
     )
     return constructor, decisions
@@ -2070,7 +2393,7 @@ def test_real_intra_check_plan_sells_aapl_sized_from_its_live_stop_and_buys_net(
     # shares to keep = equity x 1.0% / (price - live stop)
     keep = _REAL_EQUITY * 0.01 / (_AAPL_PX - _AAPL_STOP)
     shares_sold = sell.allocation_pct / 100 * _AAPL_QTY
-    assert abs(shares_sold - (_AAPL_QTY - keep)) < 0.01   # ~4.10 of 9.763
+    assert abs(shares_sold - (_AAPL_QTY - keep)) < 0.01  # ~4.10 of 9.763
     assert "AAPL" not in constructor.last_data_faults
 
 
@@ -2086,9 +2409,7 @@ def test_trim_without_live_stop_is_refused_by_name_not_as_a_data_fault(caplog):
 
 def test_trim_with_live_stop_on_wrong_side_is_refused_by_name():
     constructor, _ = _real_plan({"AAPL": _AAPL_PX + 1})
-    assert constructor.last_refusals["AAPL"]["refusal"] == (
-        "trim_without_analysis_has_no_usable_live_stop"
-    )
+    assert constructor.last_refusals["AAPL"]["refusal"] == ("trim_without_analysis_has_no_usable_live_stop")
 
 
 def test_trim_sized_from_live_stop_never_grows_the_position():
@@ -2097,8 +2418,11 @@ def test_trim_sized_from_live_stop_never_grows_the_position():
     decisions = constructor.construct_orders(
         targets=[_risk_target("AAPL", 3.0)],
         positions=[_pos("AAPL", _AAPL_QTY, _AAPL_ENTRY, _AAPL_PX)],
-        analyses=[], total_value=_REAL_EQUITY,
-        price_map={"AAPL": _AAPL_PX}, existing_risk_pct={"AAPL": 1.91},
-        clusters=[], live_stops={"AAPL": _AAPL_STOP},
+        analyses=[],
+        total_value=_REAL_EQUITY,
+        price_map={"AAPL": _AAPL_PX},
+        existing_risk_pct={"AAPL": 1.91},
+        clusters=[],
+        live_stops={"AAPL": _AAPL_STOP},
     )
     assert [d.action for d in decisions if d.symbol == "AAPL"] == ["HOLD"]

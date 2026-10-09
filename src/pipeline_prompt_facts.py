@@ -53,7 +53,8 @@ class PromptExposure:
     """The correlation matrix and the live stop map; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         config=None,
         market=None,
         db=None,
@@ -81,6 +82,7 @@ class PromptExposure:
             return cached
         try:
             from src.data.correlation import build_correlation_matrix
+
             # THE CORRELATION WINDOW (board item 148), recorded honestly.
             # The bars that feed this matrix span `trading.lookback_days`
             # (deployed 1800 ≈ 5 trading years, config/settings.yaml) — the
@@ -105,9 +107,13 @@ class PromptExposure:
             pool_bars = dict(ctx.symbols_bars)
             for p in positions:
                 if p.symbol not in pool_bars:
-                    pool_bars[p.symbol] = self.market.get_ohlcv(
-                        p.symbol, self.config.trading.lookback_days,
-                    ) or []
+                    pool_bars[p.symbol] = (
+                        self.market.get_ohlcv(
+                            p.symbol,
+                            self.config.trading.lookback_days,
+                        )
+                        or []
+                    )
             matrix = build_correlation_matrix(pool_bars) or {}
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to build correlation matrix: %s (continuing without)", e)
@@ -136,6 +142,7 @@ class PromptExposure:
             if _live_read.found:
                 live_stops[sym] = _live_read.price
             from src.execution.stop_records import recorded_initial_stop
+
             try:
                 qty = float(getattr(p, "qty", 0) or 0)
             except (TypeError, ValueError):
@@ -156,7 +163,8 @@ class PromptHistory:
     """Position history, weekly narrative, macro trajectory and active state changes; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         tech_store=None,
         macro_store=None,
@@ -175,6 +183,7 @@ class PromptHistory:
         """
         from datetime import date as _date
         from src.execution.stop_records import recorded_initial_stop
+
         out: dict[str, dict] = {}
         today = et_today()
         for p in positions:
@@ -230,9 +239,7 @@ class PromptHistory:
                 # trail may have since written back, and not the live
                 # broker stop: same "the bet that was actually made"
                 # reasoning `_build_position_facts.initial_stop` documents.
-                "stop_loss": (
-                    recorded_initial_stop(entry) or None
-                ) if entry else None,
+                "stop_loss": (recorded_initial_stop(entry) or None) if entry else None,
             }
         return out
 
@@ -314,8 +321,7 @@ class PromptHistory:
             directions = ch.get("symbol_direction") or {}
             if symbols:
                 syms = ", ".join(
-                    f"{s.strip().upper()}({directions.get(s.strip().upper(), 'unknown')})"
-                    for s in symbols[:6]
+                    f"{s.strip().upper()}({directions.get(s.strip().upper(), 'unknown')})" for s in symbols[:6]
                 )
             else:
                 syms = "—"
@@ -327,7 +333,8 @@ class PromptPositionFacts:
     """The per-position facts block; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         broker=None,
         atr_for_symbol=None,
@@ -416,14 +423,13 @@ class PromptPositionFacts:
             # existed (see the `initial_take_profit` migration in
             # `src/storage/db.py`), and a row with no revision has nothing
             # to diverge from.
-            progress_target = float(
-                (buy or {}).get("initial_take_profit") or take_profit or 0
-            )
+            progress_target = float((buy or {}).get("initial_take_profit") or take_profit or 0)
             # The ENTRY stop, frozen as `initial_stop_loss` on first
             # write-back. R-multiple's denominator is the bet that was
             # actually made, not the level a trail later ratcheted it to
             # (audit §1.4).
             from src.execution.stop_records import recorded_initial_stop
+
             initial_stop = recorded_initial_stop(buy)
 
             # RC1: after any TRAIL_STOP the BUY row's stop is stale-WIDE —
@@ -449,8 +455,12 @@ class PromptPositionFacts:
                 try:
                     from src.trading_calendar import to_et
                     from datetime import datetime as _dt
-                    dt = _dt.fromisoformat(buy_ts.replace("Z", "+00:00")) if "T" in buy_ts \
+
+                    dt = (
+                        _dt.fromisoformat(buy_ts.replace("Z", "+00:00"))
+                        if "T" in buy_ts
                         else _dt.strptime(buy_ts, "%Y-%m-%d %H:%M:%S")
+                    )
                     entry_date = to_et(dt).date()
                     days_held = (et_today() - entry_date).days
                     days_held = max(0, days_held)
@@ -520,12 +530,14 @@ class PromptPositionFacts:
             # already carrying a pre-fix target.
             from src.risk.constants import is_trend_trade
             from src.data.levels import MIN_TARGET_ATR_MULTIPLE
+
             live_atr = self._atr_for_symbol(sym)
             target_room_is_noise = bool(
-                progress_target and entry
-                and live_atr and live_atr > 0
-                and abs(progress_target - entry)
-                < live_atr * MIN_TARGET_ATR_MULTIPLE
+                progress_target
+                and entry
+                and live_atr
+                and live_atr > 0
+                and abs(progress_target - entry) < live_atr * MIN_TARGET_ATR_MULTIPLE
             )
             progress_pct = None
             pace = None
@@ -593,9 +605,7 @@ class PromptPositionFacts:
             dist_stop_pct = None
             dist_target_pct = None
             if stop_loss and cur > 0:
-                dist_stop_pct = (
-                    (stop_loss - cur) if p.qty < 0 else (cur - stop_loss)
-                ) / cur * 100
+                dist_stop_pct = ((stop_loss - cur) if p.qty < 0 else (cur - stop_loss)) / cur * 100
             if take_profit and cur > 0:
                 dist_target_pct = (take_profit - cur) / cur * 100
 
@@ -610,10 +620,7 @@ class PromptPositionFacts:
             # parabolic/drift flags the wrong side. None = unknowable, which
             # is not a flag either way.
             pnl_pct = unrealized_pnl_pct(p)
-            parabolic_flag = (
-                pnl_pct is not None and pnl_pct >= 15
-                and days_held is not None and days_held < 3
-            )
+            parabolic_flag = pnl_pct is not None and pnl_pct >= 15 and days_held is not None and days_held < 3
             drift_flag = _drift_flag_check(weight_pct, pnl_pct)
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
@@ -633,9 +640,14 @@ class PromptPositionFacts:
             # 20% of the way to a distant target may be +2R or +0.3R, and only
             # the second is a reason to leave it alone.
             from src.risk.metrics import position_risk as _position_risk
+
             risk = _position_risk(
-                symbol=sym, qty=p.qty, entry=entry, current_price=cur,
-                stop=stop_loss or None, initial_stop=initial_stop or None,
+                symbol=sym,
+                qty=p.qty,
+                entry=entry,
+                current_price=cur,
+                stop=stop_loss or None,
+                initial_stop=initial_stop or None,
             )
 
             facts[sym] = {
@@ -683,8 +695,7 @@ class PromptPositionFacts:
                 "take_profit": take_profit or None,
                 "entry_take_profit": progress_target or None,
                 "target_revised": bool(
-                    take_profit and progress_target
-                    and round(take_profit, 2) != round(progress_target, 2)
+                    take_profit and progress_target and round(take_profit, 2) != round(progress_target, 2)
                 ),
             }
         return facts
@@ -704,10 +715,18 @@ class PromptFactsMixin:
     _build_macro_tech_alignment = staticmethod(_build_macro_tech_alignment)
 
     def _prompt_history(self) -> PromptHistory:
-        return PromptHistory(db=getattr(self, "db", None), tech_store=getattr(self, "tech_store", None), macro_store=getattr(self, "macro_store", None), news_store=getattr(self, "news_store", None))
+        return PromptHistory(
+            db=getattr(self, "db", None),
+            tech_store=getattr(self, "tech_store", None),
+            macro_store=getattr(self, "macro_store", None),
+            news_store=getattr(self, "news_store", None),
+        )
 
     def _prompt_decisions(self) -> PromptDecisions:
-        return PromptDecisions(db=getattr(self, "db", None), parse_logged_agent_response=getattr(self, "_parse_logged_agent_response", None))
+        return PromptDecisions(
+            db=getattr(self, "db", None),
+            parse_logged_agent_response=getattr(self, "_parse_logged_agent_response", None),
+        )
 
     def _prompt_projected(self) -> PromptProjected:
         return PromptProjected(
@@ -719,16 +738,33 @@ class PromptFactsMixin:
         return PromptWatchlist(db=getattr(self, "db", None))
 
     def _prompt_exposure(self) -> PromptExposure:
-        return PromptExposure(config=getattr(self, "config", None), market=getattr(self, "market", None), db=getattr(self, "db", None), broker=getattr(self, "broker", None))
+        return PromptExposure(
+            config=getattr(self, "config", None),
+            market=getattr(self, "market", None),
+            db=getattr(self, "db", None),
+            broker=getattr(self, "broker", None),
+        )
 
     def _prompt_heat(self) -> PromptHeat:
-        return PromptHeat(sweeper=getattr(self, "_sweeper", None), build_stop_map=getattr(self, "_build_stop_map", None))
+        return PromptHeat(
+            sweeper=getattr(self, "_sweeper", None), build_stop_map=getattr(self, "_build_stop_map", None)
+        )
 
     def _prompt_pm_facts(self) -> PromptPMFacts:
-        return PromptPMFacts(db=getattr(self, "db", None), config=getattr(self, "config", None), parse_logged_agent_response=getattr(self, "_parse_logged_agent_response", None), build_portfolio_heat=getattr(self, "_build_portfolio_heat", None), build_position_history=getattr(self, "_build_position_history", None))
+        return PromptPMFacts(
+            db=getattr(self, "db", None),
+            config=getattr(self, "config", None),
+            parse_logged_agent_response=getattr(self, "_parse_logged_agent_response", None),
+            build_portfolio_heat=getattr(self, "_build_portfolio_heat", None),
+            build_position_history=getattr(self, "_build_position_history", None),
+        )
 
     def _prompt_position_facts(self) -> PromptPositionFacts:
-        return PromptPositionFacts(db=getattr(self, "db", None), broker=getattr(self, "broker", None), atr_for_symbol=getattr(self, "_atr_for_symbol", None))
+        return PromptPositionFacts(
+            db=getattr(self, "db", None),
+            broker=getattr(self, "broker", None),
+            atr_for_symbol=getattr(self, "_atr_for_symbol", None),
+        )
 
     def _build_thesis_health_context(self, *args, **kwargs):
         """Thin shim: body moved to src/prompt_facts/missed_ops_signals.py."""

@@ -14,7 +14,8 @@ import logging
 
 from src.execution.broker import AlpacaBroker
 from src.sentinel.guarded import (
-    attach_reconciliation_db, record_guarded_pass,
+    attach_reconciliation_db,
+    record_guarded_pass,
 )
 from src.sentinel.reconciliation import AGREED, DISAGREED, NOT_RUN, ReconciliationLog
 from src.storage.db import Database
@@ -43,7 +44,7 @@ def test_a_swallowed_programming_error_in_the_broker_is_loud(tmp_path, caplog):
     assert _status(db, "broker_parts.cancel_stray_protective_stops.list") == NOT_RUN
 
     def _duplicate_argument(symbol, side=None):
-        return dict(a=1, **{"a": 2})       # a real duplicate-argument TypeError
+        return dict(a=1, **{"a": 2})  # a real duplicate-argument TypeError
 
     broker.snapshot_protective_stops = _duplicate_argument
     with caplog.at_level(logging.ERROR):
@@ -87,4 +88,4 @@ def test_the_observer_never_breaks_the_money_path(tmp_path, caplog):
 
     attach_reconciliation_db(broker, _explode)
     with caplog.at_level(logging.ERROR):
-        record_guarded_pass(broker, "unit.demo")        # must not raise
+        record_guarded_pass(broker, "unit.demo")  # must not raise

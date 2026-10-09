@@ -120,7 +120,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/settings.yaml")
     parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="Log warnings and above only. The unit passes this.",
     )
     args = parser.parse_args()

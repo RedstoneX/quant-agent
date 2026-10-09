@@ -23,6 +23,7 @@ only covers the paths its recorded inputs happen to reach; the AST scan covers
 the ones nobody has hit yet, which is exactly the class every previous pass
 missed.
 """
+
 import ast
 import json
 from pathlib import Path
@@ -39,6 +40,7 @@ _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "constructor_drop_path
 # ---------------------------------------------------------------------------
 # The empirical half — real production inputs, real code, no stubs
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def archive():
@@ -57,7 +59,10 @@ def _replay(decision, positions):
     price_map = {a.symbol: a.entry_price for a in analyses if a.entry_price}
     constructor = PortfolioConstructor()
     orders = constructor.construct_orders(
-        targets, positions, analyses, decision["equity"],
+        targets,
+        positions,
+        analyses,
+        decision["equity"],
         price_map=price_map,
         existing_risk_pct={},
         clusters=None,
@@ -94,9 +99,7 @@ def test_the_archive_replays_with_a_reason_on_every_dropped_candidate(archive):
             code = record.get("refusal") or record.get("fault") or ""
             if not code.strip() or not (record.get("detail") or "").strip():
                 unexplained.append((decision["run_id"], symbol, f"empty code/detail: {record}"))
-    assert unexplained == [], (
-        "candidates dropped with no machine-readable reason: " + repr(unexplained)
-    )
+    assert unexplained == [], "candidates dropped with no machine-readable reason: " + repr(unexplained)
     # A guard on the guard: if the fixture ever stops producing drops, the
     # assertion above passes vacuously and proves nothing.
     assert dropped_total >= 40, dropped_total
@@ -170,14 +173,22 @@ def test_the_sixteen_historical_no_order_built_rows_would_now_be_named(archive):
     and not one of them comes out anonymous.
     """
     rows = {
-        ("intra_check-41e42bca", "CRM"), ("intra_check-d6b06e63", "NVDA"),
-        ("intra_check-483360ea", "ONDS"), ("intra_check-9429cd1f", "MP"),
-        ("intra_check-6d86968d", "CRM"), ("run-5834d319", "NVDA"),
-        ("run-c2f42b39", "VLO"), ("run-c2f42b39", "PATH"),
-        ("run-13c21846", "DE"), ("run-64290730", "NVDA"),
-        ("intra_check-d0909ddc", "ZS"), ("run-bba4d4f3", "MU"),
-        ("run-bba4d4f3", "CMCSA"), ("run-bba4d4f3", "DIS"),
-        ("run-bba4d4f3", "V"), ("run-bba4d4f3", "AUGO"),
+        ("intra_check-41e42bca", "CRM"),
+        ("intra_check-d6b06e63", "NVDA"),
+        ("intra_check-483360ea", "ONDS"),
+        ("intra_check-9429cd1f", "MP"),
+        ("intra_check-6d86968d", "CRM"),
+        ("run-5834d319", "NVDA"),
+        ("run-c2f42b39", "VLO"),
+        ("run-c2f42b39", "PATH"),
+        ("run-13c21846", "DE"),
+        ("run-64290730", "NVDA"),
+        ("intra_check-d0909ddc", "ZS"),
+        ("run-bba4d4f3", "MU"),
+        ("run-bba4d4f3", "CMCSA"),
+        ("run-bba4d4f3", "DIS"),
+        ("run-bba4d4f3", "V"),
+        ("run-bba4d4f3", "AUGO"),
     }
     # ONE of the sixteen does not come out dropped, and the reason is worth
     # naming rather than hiding in a filter. V on 2026-09-02 was refused for
@@ -210,16 +221,18 @@ def test_the_sixteen_historical_no_order_built_rows_would_now_be_named(archive):
 
 #: Every method that can END a candidate: return no order, or skip it inside
 #: the target loop. A drop site in one of these must file a reason.
-_CANDIDATE_ENDING_METHODS = frozenset({
-    "_construct_orders_impl",
-    "_plan_risk_targets",
-    "_resolve_entry_and_stop",
-    "_held_trim_entry_and_stop",
-    "_widen_stop_past_noise",
-    "_build_buy",
-    "_build_short",
-    "_apply_sector_dial",
-})
+_CANDIDATE_ENDING_METHODS = frozenset(
+    {
+        "_construct_orders_impl",
+        "_plan_risk_targets",
+        "_resolve_entry_and_stop",
+        "_held_trim_entry_and_stop",
+        "_widen_stop_past_noise",
+        "_build_buy",
+        "_build_short",
+        "_apply_sector_dial",
+    }
+)
 
 #: Everything else `_construct_orders_impl` reaches, with the reason it
 #: cannot end a candidate on its own. Checked against the real call graph
@@ -249,8 +262,7 @@ _CANNOT_END_A_CANDIDATE = {
     ),
     "_note_parity_standdown": "the recorder itself — files why the gate stood down",
     "_record_parity_refusal": (
-        "durable row in trade_refusals for an already-decided refusal; "
-        "writes a record, never a verdict"
+        "durable row in trade_refusals for an already-decided refusal; writes a record, never a verdict"
     ),
     "_record_subfloor_risk_target": (
         "board item 223 recording only — a durable row for a positive "
@@ -275,12 +287,32 @@ _DELEGATION_MARKER = "# drop-reason:"
 
 
 def _class_nodes():  # the resolver is LAST so its lifted bodies win by name over the host shims
-    def _c(paths, names): return [(n, t.splitlines()) for p in paths for t in [p.read_text()] for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in names]
-    out = _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "StopRules", "OrderBuilders"}) + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"}) + _c(sorted((_SOURCE / "order_build").glob("*.py")), {"ExitOrderBuilders", "LongEntryBuilder", "ShortEntryBuilder"})
+    def _c(paths, names):
+        return [
+            (n, t.splitlines())
+            for p in paths
+            for t in [p.read_text()]
+            for n in ast.parse(t).body
+            if isinstance(n, ast.ClassDef) and n.name in names
+        ]
+
+    out = (
+        _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "StopRules", "OrderBuilders"})
+        + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"})
+        + _c(
+            sorted((_SOURCE / "order_build").glob("*.py")),
+            {"ExitOrderBuilders", "LongEntryBuilder", "ShortEntryBuilder"},
+        )
+    )
     assert len(out) == 7, [n.name for n, _ in out]
     return out
 
-_LIFTED_MODULES = ("sector_dial.py", "target_derivation.py", "refusal_log.py")  # moved bodies: module functions, scanned exactly like the methods they were
+
+_LIFTED_MODULES = (
+    "sector_dial.py",
+    "target_derivation.py",
+    "refusal_log.py",
+)  # moved bodies: module functions, scanned exactly like the methods they were
 
 
 def _lifted_functions(sources=None):
@@ -289,8 +321,15 @@ def _lifted_functions(sources=None):
     return [(n, t.splitlines()) for t in texts.values() for n in ast.parse(t).body if isinstance(n, ast.FunctionDef)]
 
 
-def _methods(lines=False, lifted_sources=None):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
-    found = {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
+def _methods(
+    lines=False, lifted_sources=None
+):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
+    found = {
+        n.name: (ls if lines else n)
+        for c, ls in _class_nodes()
+        for n in c.body
+        if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")
+    }
     found.update({n.name: (ls if lines else n) for n, ls in _lifted_functions(lifted_sources)})
     return found
 
@@ -318,17 +357,18 @@ def _drop_sites(fn):
                 is_none = (
                     v is None
                     or (isinstance(v, ast.Constant) and v.value is None)
-                    or (isinstance(v, ast.Tuple)
+                    or (
+                        isinstance(v, ast.Tuple)
                         and bool(v.elts)
-                        and all(isinstance(e, ast.Constant) and e.value is None
-                                for e in v.elts))
+                        and all(isinstance(e, ast.Constant) and e.value is None for e in v.elts)
+                    )
                 )
                 is_negative = (
-                    isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.USub)
-                    and isinstance(v.operand, ast.Constant)
+                    isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.USub) and isinstance(v.operand, ast.Constant)
                 )
                 is_negative_tuple = (
-                    isinstance(v, ast.Tuple) and bool(v.elts)
+                    isinstance(v, ast.Tuple)
+                    and bool(v.elts)
                     and isinstance(v.elts[0], ast.UnaryOp)
                     and isinstance(v.elts[0].op, ast.USub)
                 )
@@ -355,7 +395,7 @@ def _files_a_reason(fn, site, source_lines):
         if _has_note_call(chain):
             return True
     line = site.lineno
-    window = source_lines[max(0, line - 12):line]
+    window = source_lines[max(0, line - 12) : line]
     return any(_DELEGATION_MARKER in text for text in window)
 
 
@@ -390,14 +430,18 @@ def _enclosing_blocks(fn, site):
 def _has_note_call(block):
     for stmt in block:
         for node in ast.walk(stmt):
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("_note_refusal", "_note_data_fault")):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("_note_refusal", "_note_data_fault")
+            ):
                 return True
             # A lifted body gets the recorder as an argument: the same call, by its parameter name.
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Name)
-                    and node.func.id in ("note_refusal", "note_data_fault", "_note_refusal", "_note_data_fault")):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in ("note_refusal", "note_data_fault", "_note_refusal", "_note_data_fault")
+            ):
                 return True
     return False
 
@@ -445,18 +489,17 @@ def test_the_guard_covers_every_method_the_constructor_can_end_a_candidate_in():
             continue
         reached.add(name)
         for node in ast.walk(methods[name]):
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "self"):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+            ):
                 queue.append(node.func.attr)
-    unclassified = sorted(
-        reached - _CANDIDATE_ENDING_METHODS - set(_CANNOT_END_A_CANDIDATE)
-    )
+    unclassified = sorted(reached - _CANDIDATE_ENDING_METHODS - set(_CANNOT_END_A_CANDIDATE))
     assert unclassified == [], (
         "methods reachable from construct_orders that are neither scanned "
-        "for drop sites nor documented as unable to drop a candidate: "
-        + repr(unclassified)
+        "for drop sites nor documented as unable to drop a candidate: " + repr(unclassified)
     )
 
 
@@ -471,6 +514,7 @@ def test_the_capture_regex_is_not_relied_on_by_any_of_these_paths():
     test fails if someone "simplifies" that back to a log scrape.
     """
     from src.portfolio_constructor import _DropReasonCapture
+
     misses = [
         "Constructor: BUY NVDA has no stop from the PM or the analyst and no "
         "ATR reading to derive one from — rejecting.",
@@ -491,8 +535,8 @@ def test_the_capture_regex_is_not_relied_on_by_any_of_these_paths():
 # driven here from the SAME real analysis row, with exactly one field changed
 # and the change named — not from an object invented to make a branch fire.
 
-_REAL_ROW = "run-bba4d4f3"   # 2026-09-02, the one archive session whose
-_REAL_SYMBOL = "MU"          # analyses carry computed levels
+_REAL_ROW = "run-bba4d4f3"  # 2026-09-02, the one archive session whose
+_REAL_SYMBOL = "MU"  # analyses carry computed levels
 
 
 def _one_real_analysis(archive, **overrides):
@@ -519,7 +563,10 @@ def _refusal_for(target, analysis, *, price=None, suggested_stop=None):
     constructor = PortfolioConstructor()
     entry = price if price is not None else analysis.entry_price
     orders = constructor.construct_orders(
-        [target], [], [analysis], 9822.37,
+        [target],
+        [],
+        [analysis],
+        9822.37,
         price_map={analysis.symbol: entry} if entry else {},
         existing_risk_pct={},
     )
@@ -550,6 +597,7 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
     from src.portfolio_constructor import (
         STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
     )
+
     _, analysis = _one_real_analysis(archive)
     constructor = PortfolioConstructor()
     # Reworked for board item 80 (owner 2026-09-25): with no ATR the branch
@@ -557,14 +605,25 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
     # no-structure state refuses. Strip the computed levels and the signal bar
     # so this exercises that refusal -- which must still file a code, not the
     # regex-missed bare "has no stop" log line the first pass reported gone.
-    stripped = analysis.model_copy(update={
-        "atr_14": None, "computed_levels": [], "computed_level_touches": {},
-        "signal_bar_low": None, "signal_bar_high": None,
-    })
-    assert constructor._widen_stop_past_noise(
-        analysis.symbol, stripped,
-        float(analysis.entry_price), None, direction="long",
-    ) is None
+    stripped = analysis.model_copy(
+        update={
+            "atr_14": None,
+            "computed_levels": [],
+            "computed_level_touches": {},
+            "signal_bar_low": None,
+            "signal_bar_high": None,
+        }
+    )
+    assert (
+        constructor._widen_stop_past_noise(
+            analysis.symbol,
+            stripped,
+            float(analysis.entry_price),
+            None,
+            direction="long",
+        )
+        is None
+    )
     record = constructor.last_refusals[analysis.symbol.upper()]
     assert record["refusal"] == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
     assert record["detail"].strip()
@@ -579,13 +638,14 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
         target, mutated = _one_real_analysis(archive, **override)
         live = PortfolioConstructor()
         orders = live.construct_orders(
-            [target], [], [mutated], 9822.37,
-            price_map={mutated.symbol: mutated.entry_price}, existing_risk_pct={},
+            [target],
+            [],
+            [mutated],
+            9822.37,
+            price_map={mutated.symbol: mutated.entry_price},
+            existing_risk_pct={},
         )
-        outcomes[label] = (
-            sorted(live.last_refusals) or sorted(live.last_data_faults)
-            or [o.symbol for o in orders]
-        )
+        outcomes[label] = sorted(live.last_refusals) or sorted(live.last_data_faults) or [o.symbol for o in orders]
     assert outcomes == {
         # a data fault, filed one step before the stop is ever resolved
         "no stop, no ATR": ["MU"],
@@ -598,9 +658,12 @@ def test_the_three_defensive_stop_guards_file_a_reason_and_none_is_reachable_tod
 def test_a_stop_on_the_wrong_side_of_entry_is_named(archive):
     """Refused since 2026-09-01, but only ever in prose."""
     from src.portfolio_constructor import STOP_REFUSAL_WRONG_SIDE
+
     target, analysis = _one_real_analysis(archive)
     record = _refusal_for(
-        target, analysis, suggested_stop=float(analysis.entry_price) + 1.0,
+        target,
+        analysis,
+        suggested_stop=float(analysis.entry_price) + 1.0,
     )
     assert record and record["refusal"] == STOP_REFUSAL_WRONG_SIDE
 
@@ -624,6 +687,7 @@ def test_the_sector_dial_refusals_are_named(archive, monkeypatch):
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
         STOP_REFUSAL_SIZED_TO_ZERO,
     )
+
     # This test IS about sector crowding: NVDA and the crowding MSFT holding
     # have to share a sector for the dial to fire at all. That shared sector
     # used to arrive from a LIVE yfinance lookup, so the test passed or failed
@@ -635,24 +699,27 @@ def test_the_sector_dial_refusals_are_named(archive, monkeypatch):
         lambda symbol: "Technology",
     )
     decision = next(d for d in archive["decisions"] if d["run_id"] == _REAL_ROW)
-    target = TargetPosition.model_validate(
-        next(t for t in decision["targets"] if t["symbol"] == "NVDA")
-    )
-    analysis = TechAnalysisResult.model_validate(
-        next(a for a in decision["analyses"] if a["symbol"] == "NVDA")
-    )
+    target = TargetPosition.model_validate(next(t for t in decision["targets"] if t["symbol"] == "NVDA"))
+    analysis = TechAnalysisResult.model_validate(next(a for a in decision["analyses"] if a["symbol"] == "NVDA"))
     constructor = PortfolioConstructor()
     equity = decision["equity"]
     # A book already past the sector hard ceiling in NVDA's own sector, built
     # from a position the archive really holds (MSFT, Technology) scaled to
     # the ceiling rather than from an invented holding.
     crowded = Position.model_validate(
-        dict(next(p for p in archive["positions"] if p["symbol"] == "MSFT"),
-             qty=1.0, market_value=equity * constructor.cfg.max_sector_hard_pct / 100)
+        dict(
+            next(p for p in archive["positions"] if p["symbol"] == "MSFT"),
+            qty=1.0,
+            market_value=equity * constructor.cfg.max_sector_hard_pct / 100,
+        )
     )
     orders = constructor.construct_orders(
-        [target], [crowded], [analysis], equity,
-        price_map={"NVDA": analysis.entry_price}, existing_risk_pct={},
+        [target],
+        [crowded],
+        [analysis],
+        equity,
+        price_map={"NVDA": analysis.entry_price},
+        existing_risk_pct={},
     )
     assert [o.symbol for o in orders] == []
     assert constructor.last_refusals["NVDA"]["refusal"] in (

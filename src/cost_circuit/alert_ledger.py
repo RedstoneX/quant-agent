@@ -1,4 +1,5 @@
 """src.cost_circuit.alert_ledger -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 import logging
 import json
@@ -42,6 +43,7 @@ def _file_lock(lock_path: Path | None):
         finally:
             os.close(fd)
 
+
 def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int, bool]:
     """Best-effort read of (alert_delivered, alert_attempts, alert_suppressed).
 
@@ -64,6 +66,7 @@ def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int, bool]:
     except (TypeError, ValueError):
         attempts = 0
     return delivered, max(0, attempts), suppressed
+
 
 def _record_alert_attempt(
     latch_path: Path | None,
@@ -117,17 +120,11 @@ def _record_alert_attempt(
             # Once delivered, stays delivered -- a later failed retry of a
             # SECOND, unrelated alert attempt (there should not be one, but
             # never regress a true fact back to false).
-            payload["alert_delivered"] = bool(payload.get("alert_delivered")) or bool(
-                delivered
-            )
+            payload["alert_delivered"] = bool(payload.get("alert_delivered")) or bool(delivered)
             # Third state, never folded into delivered: a dropped message was not told.
             payload["alert_suppressed"] = bool(payload.get("alert_suppressed")) or bool(suppressed)
-            payload["last_alert_attempt_at"] = (
-                now or _now_utc()
-            ).isoformat()
-            tmp = latch_path.with_name(
-                f".{latch_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-            )
+            payload["last_alert_attempt_at"] = (now or _now_utc()).isoformat()
+            tmp = latch_path.with_name(f".{latch_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -143,10 +140,11 @@ def _record_alert_attempt(
             return attempts
         except Exception:
             logger.exception(
-                "Could not durably record cost-circuit alert-delivery outcome "
-                "at %s", latch_path,
+                "Could not durably record cost-circuit alert-delivery outcome at %s",
+                latch_path,
             )
             return -1
+
 
 def _durable_alert_surface_ok(latch_path: Path | None) -> bool:
     """True when a mandatory alert can be DURABLY RECORDED and SURFACED.
@@ -172,6 +170,7 @@ def _durable_alert_surface_ok(latch_path: Path | None) -> bool:
         return parent.is_dir() and os.access(parent, os.W_OK)
     except OSError:
         return False
+
 
 class UnavailableLLMCostCircuit:
     """Fail-closed sentinel when persistent breaker infrastructure is broken.
@@ -199,6 +198,7 @@ class UnavailableLLMCostCircuit:
         self.error = error
         if notifier is None:
             from src.notifier.owner_alert_funnel import build_default_notifier
+
             notifier = build_default_notifier()
         self.notifier = notifier
         self.agent_name = agent_name
@@ -223,19 +223,14 @@ class UnavailableLLMCostCircuit:
             default=(run_id, mode),
         )
         self._alert_lock = threading.Lock()
-        durably_delivered, durable_attempts, durably_suppressed = _read_alert_outcome(
-            self._emergency_latch_path
-        )
+        durably_delivered, durable_attempts, durably_suppressed = _read_alert_outcome(self._emergency_latch_path)
         self._alert_suppressed = durably_suppressed
         self._alert_delivered = durably_delivered
         self._alert_attempts = durable_attempts
         self._last_alert_attempt = 0.0
 
     def _trigger(self) -> str:
-        return (
-            "mandatory paid-analysis circuit is unavailable: "
-            f"{type(self.error).__name__}: {str(self.error)[:300]}"
-        )
+        return f"mandatory paid-analysis circuit is unavailable: {type(self.error).__name__}: {str(self.error)[:300]}"
 
     def _state(self) -> dict[str, Any]:
         current_run_id, current_mode = self._context_value.get()
@@ -253,9 +248,7 @@ class UnavailableLLMCostCircuit:
             "session_attempts": self.attempts,
             "attempts_exact": self.attempts_exact,
             "costs_exact": self.costs_exact,
-            "costs_available": (
-                self.session_cost_usd is not None or self.daily_cost_usd is not None
-            ),
+            "costs_available": (self.session_cost_usd is not None or self.daily_cost_usd is not None),
             "session_cost_usd": self.session_cost_usd or 0.0,
             "daily_cost_usd": self.daily_cost_usd or 0.0,
             # item 17(b): visible, durable proof of whether the operator has
@@ -282,27 +275,19 @@ class UnavailableLLMCostCircuit:
         if self.attempts is None:
             attempts_line = "attempts: unavailable because a mandatory circuit prerequisite failed"
         elif self.attempts_exact:
-            attempts_line = (
-                f"attempts: {self.attempts} provider "
-                f"attempt{'s' if self.attempts != 1 else ''}"
-            )
+            attempts_line = f"attempts: {self.attempts} provider attempt{'s' if self.attempts != 1 else ''}"
         else:
             attempts_line = (
                 f"attempts: at least {self.attempts} locally observed provider "
                 f"attempt{'s' if self.attempts != 1 else ''}"
             )
         if self.session_cost_usd is None and self.daily_cost_usd is None:
-            cost_line = (
-                "cost: unavailable; the failed mandatory circuit prerequisite "
-                "prevented a trustworthy snapshot"
-            )
+            cost_line = "cost: unavailable; the failed mandatory circuit prerequisite prevented a trustworthy snapshot"
         else:
             session_text = _fmt_settled(self.session_cost_usd)
             daily_text = _fmt_settled(self.daily_cost_usd)
             qualifier = "" if self.costs_exact else " (known/conservative snapshot)"
-            cost_line = (
-                f"cost: {session_text} this run · {daily_text} today{qualifier}"
-            )
+            cost_line = f"cost: {session_text} this run · {daily_text} today{qualifier}"
         message = (
             "🔴 QAMC PAID ANALYSIS SUSPENDED\n"
             f"trigger: {state['trigger_detail']}\n"
@@ -317,15 +302,19 @@ class UnavailableLLMCostCircuit:
         )
         logger.critical("\n%s", message)
         delivered, suppressed = _send_alert_outcome(
-            self.notifier, message, "cost-circuit unavailable Telegram alert failed",
+            self.notifier,
+            message,
+            "cost-circuit unavailable Telegram alert failed",
         )
         sent = delivered or suppressed  # a drop is settled, but tracked apart
         # item 17(b): fold this outcome into the SAME durable marker the
         # latch itself lives in, so it survives this process exiting before
         # a retry succeeds -- see `_record_alert_attempt`'s docstring.
         durable_attempts = _record_alert_attempt(
-            self._emergency_latch_path, self._emergency_lock_path,
-            delivered=delivered, suppressed=suppressed,
+            self._emergency_latch_path,
+            self._emergency_lock_path,
+            delivered=delivered,
+            suppressed=suppressed,
         )
         with self._alert_lock:
             if delivered:
@@ -353,7 +342,8 @@ class UnavailableLLMCostCircuit:
                 "~120s in this process, and again from scratch on any future "
                 "process/session that touches this circuit, until it succeeds "
                 "or an operator intervenes",
-                durable_attempts, self._emergency_latch_path,
+                durable_attempts,
+                self._emergency_latch_path,
             )
 
     def activate_session(self, run_id: str, mode: str) -> dict[str, Any]:

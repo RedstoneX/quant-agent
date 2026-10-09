@@ -25,24 +25,27 @@ _BUDGET = 5.0
 
 def test_short_and_long_get_identical_risk_budget_and_stop_distance():
     """Same geometry, opposite direction, SAME size and SAME stop distance."""
-    long_stop = _ENTRY - _DISTANCE   # a long's stop sits BELOW entry
+    long_stop = _ENTRY - _DISTANCE  # a long's stop sits BELOW entry
     short_stop = _ENTRY + _DISTANCE  # a short's stop sits ABOVE entry
 
     # Stop distance parity: the unsigned magnitude the sizer uses.
     assert abs(_ENTRY - long_stop) == abs(_ENTRY - short_stop)
 
     long_alloc = risk_budget_allocation_pct(
-        entry_price=_ENTRY, stop_price=long_stop,
-        total_value=_EQUITY, risk_budget_pct=_BUDGET,
+        entry_price=_ENTRY,
+        stop_price=long_stop,
+        total_value=_EQUITY,
+        risk_budget_pct=_BUDGET,
     )
     short_alloc = risk_budget_allocation_pct(
-        entry_price=_ENTRY, stop_price=short_stop,
-        total_value=_EQUITY, risk_budget_pct=_BUDGET,
+        entry_price=_ENTRY,
+        stop_price=short_stop,
+        total_value=_EQUITY,
+        risk_budget_pct=_BUDGET,
     )
     assert long_alloc is not None and long_alloc > 0
     assert short_alloc == pytest.approx(long_alloc), (
-        "a short must get the same risk budget as an identical long "
-        f"(long {long_alloc}, short {short_alloc})"
+        f"a short must get the same risk budget as an identical long (long {long_alloc}, short {short_alloc})"
     )
 
 

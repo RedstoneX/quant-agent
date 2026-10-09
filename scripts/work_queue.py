@@ -135,6 +135,7 @@ Switches
     WORK_QUEUE_PROMISE_CHECK=0     silence the unkept-promise check
     WORK_QUEUE_ADVERSARY_CHECK=0   silence the adversarial-review check
 """
+
 from __future__ import annotations
 
 import argparse
@@ -166,8 +167,12 @@ from scripts import merge_queue_state  # noqa: E402
 from scripts.merge_queue_state import finish_first  # noqa: E402
 from scripts.turn_promises import unkept_promise  # noqa: E402
 from scripts.work_queue_adversary import (  # noqa: E402,F401 - re-exported
-    ADVERSARY_LINE, MIN_ADVERSARY_WORDS, adversary_gaps, closes_a_board_item,
-    has_adversary_evidence, unreviewed_closures,
+    ADVERSARY_LINE,
+    MIN_ADVERSARY_WORDS,
+    adversary_gaps,
+    closes_a_board_item,
+    has_adversary_evidence,
+    unreviewed_closures,
 )
 
 #: How long after its last write a subagent transcript still counts as a
@@ -236,14 +241,11 @@ class Queue:
     def as_dict(self) -> dict[str, Any]:
         return {
             "actionable": [{"ref": i.ref, "title": i.title} for i in self.actionable],
-            "waiting_external": [{"ref": i.ref, "title": i.title}
-                                 for i in self.waiting_external],
-            "blocked_on_owner": [{"ref": i.ref, "title": i.title}
-                                 for i in self.blocked_on_owner],
+            "waiting_external": [{"ref": i.ref, "title": i.title} for i in self.waiting_external],
+            "blocked_on_owner": [{"ref": i.ref, "title": i.title} for i in self.blocked_on_owner],
             "source": self.source,
             "unreadable": list(self.unreadable),
-            "decisions": [{"ref": d.ref, "question": d.question,
-                           "days_left": d.days_left} for d in self.decisions],
+            "decisions": [{"ref": d.ref, "question": d.question, "days_left": d.days_left} for d in self.decisions],
         }
 
 
@@ -255,7 +257,9 @@ def classify(items: list[QueueItem]) -> dict[str, list[QueueItem]]:
     silently dropped into "nothing to do".
     """
     out: dict[str, list[QueueItem]] = {
-        "ACTIONABLE": [], "WAITING_EXTERNAL": [], "BLOCKED_ON_OWNER": [],
+        "ACTIONABLE": [],
+        "WAITING_EXTERNAL": [],
+        "BLOCKED_ON_OWNER": [],
     }
     for item in items:
         owner = BUCKET_OWNERSHIP.get(item.bucket, "ACTIONABLE")
@@ -289,9 +293,13 @@ def _git_board(ref: str, dest: Path) -> tuple[Path, Path]:
     """
 
     def git(*args: str) -> bytes:
-        return subprocess.run(("git", "-C", str(REPO_ROOT), *args),
-                              check=True, stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, timeout=20).stdout
+        return subprocess.run(
+            ("git", "-C", str(REPO_ROOT), *args),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        ).stdout
 
     work_md = dest / "WORK.md"
     work_md.write_bytes(git("show", f"{ref}:docs/WORK.md"))
@@ -305,13 +313,11 @@ def _git_board(ref: str, dest: Path) -> tuple[Path, Path]:
     for name in listing.decode().split("\0"):
         if not name.endswith(".md"):
             continue
-        (notes_dir / name).write_bytes(
-            git("show", f"{ref}:docs/board_notes/{name}"))
+        (notes_dir / name).write_bytes(git("show", f"{ref}:docs/board_notes/{name}"))
     return work_md, notes_dir
 
 
-def build_queue(work_md: Path | None = None,
-                board_notes: Path | None = None) -> Queue:
+def build_queue(work_md: Path | None = None, board_notes: Path | None = None) -> Queue:
     """Read the backlog and sort it. Never raises on a malformed backlog.
 
     Every read is defensive for the reason the board's own loader gives:
@@ -324,20 +330,19 @@ def build_queue(work_md: Path | None = None,
             try:
                 ref_work_md, ref_notes = _git_board(BOARD_REF, Path(tmp))
             except Exception as exc:  # noqa: BLE001 - never block a session
-                fallback = _build_queue_from(
-                    REPO_ROOT / "docs" / "WORK.md",
-                    REPO_ROOT / "docs" / "board_notes")
+                fallback = _build_queue_from(REPO_ROOT / "docs" / "WORK.md", REPO_ROOT / "docs" / "board_notes")
                 fallback.source = (
                     f"this checkout's working tree — {BOARD_REF} could not be "
-                    f"read ({type(exc).__name__}), so this board may be behind")
+                    f"read ({type(exc).__name__}), so this board may be behind"
+                )
                 return fallback
             queue = _build_queue_from(ref_work_md, ref_notes)
             queue.source = f"{BOARD_REF} (shared board)"
             return queue
 
     queue = _build_queue_from(
-        work_md or (REPO_ROOT / "docs" / "WORK.md"),
-        board_notes or (REPO_ROOT / "docs" / "board_notes"))
+        work_md or (REPO_ROOT / "docs" / "WORK.md"), board_notes or (REPO_ROOT / "docs" / "board_notes")
+    )
     queue.source = "the paths this run was given"
     return queue
 
@@ -351,8 +356,7 @@ def _build_queue_from(work_md: Path, board_notes: Path) -> Queue:
     except Exception:  # noqa: BLE001 - prose is decoration here, never a blocker
         notes = {}
 
-    for loader, label in ((load_funnel_queue, "the running order"),
-                          (load_pm_gate, "the model-test gate")):
+    for loader, label in ((load_funnel_queue, "the running order"), (load_pm_gate, "the model-test gate")):
         try:
             items, problem = loader(work_md, notes=notes)
         except Exception as exc:  # noqa: BLE001
@@ -379,10 +383,13 @@ def _build_queue_from(work_md: Path, board_notes: Path) -> Queue:
 # Is anything still running?
 # ---------------------------------------------------------------------------
 
-def running_agents(session_id: str | None,
-                   idle_seconds: int = AGENT_IDLE_SECONDS,
-                   now: float | None = None,
-                   projects_root: Path | None = None) -> list[str]:
+
+def running_agents(
+    session_id: str | None,
+    idle_seconds: int = AGENT_IDLE_SECONDS,
+    now: float | None = None,
+    projects_root: Path | None = None,
+) -> list[str]:
     """Subagent transcripts written to recently enough to look alive.
 
     There is no terminal record at the end of a subagent's transcript to
@@ -418,6 +425,7 @@ def running_agents(session_id: str | None,
 # ---------------------------------------------------------------------------
 # Hand-back accounting — the loop brake
 # ---------------------------------------------------------------------------
+
 
 def _state_path() -> Path:
     scratch = os.environ.get(STATE_DIR_ENV)
@@ -458,6 +466,7 @@ def record_handback(session_id: str, ref: str, path: Path | None = None) -> int:
 # Hook mode
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HookDecision:
     """May the session stop, and the one sentence explaining why."""
@@ -470,15 +479,19 @@ class HookDecision:
     kind: str = "queue"
 
 
-def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
-           max_handbacks: int = MAX_HANDBACKS,
-           idle_seconds: int = AGENT_IDLE_SECONDS,
-           now: float | None = None,
-           projects_root: Path | None = None,
-           state_path: Path | None = None,
-           promise: str | None = None,
-           gaps: list[str] | None = None,
-           open_changes: Any = ((), 0)) -> HookDecision:
+def decide(
+    queue: Queue,
+    session_id: str | None,
+    stop_hook_active: bool,
+    max_handbacks: int = MAX_HANDBACKS,
+    idle_seconds: int = AGENT_IDLE_SECONDS,
+    now: float | None = None,
+    projects_root: Path | None = None,
+    state_path: Path | None = None,
+    promise: str | None = None,
+    gaps: list[str] | None = None,
+    open_changes: Any = ((), 0),
+) -> HookDecision:
     """The whole policy, in one readable function, in the order it is
     checked. Every branch that is not certain resolves to "stop".
 
@@ -503,32 +516,34 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
         if queue.unreadable:
             # Loud in the report, permissive here. A parser that cannot read
             # the backlog has no grounds to insist there is work in it.
-            return HookDecision(False, "the backlog could not be read; "
-                                       "not holding the session open on a guess")
+            return HookDecision(False, "the backlog could not be read; not holding the session open on a guess")
         return HookDecision(False, "nothing in the backlog is mine to act on")
 
-    alive = running_agents(session_id, idle_seconds=idle_seconds, now=now,
-                           projects_root=projects_root)
+    alive = running_agents(session_id, idle_seconds=idle_seconds, now=now, projects_root=projects_root)
     if alive:
-        return HookDecision(False, f"{len(alive)} background agent(s) still "
-                                   "writing; blocking now re-sends the whole "
-                                   "transcript on every firing")
+        return HookDecision(
+            False,
+            f"{len(alive)} background agent(s) still "
+            "writing; blocking now re-sends the whole "
+            "transcript on every firing",
+        )
 
     if promise:
         return HookDecision(
             True,
             f"“{promise}” — and the turn made no tool call at all. "
             "Do it now, or say plainly that it is not being done.",
-            kind="promise")
+            kind="promise",
+        )
 
     if gaps:
         first = gaps[0]
-        more = (f" ({len(gaps) - 1} more like it.)" if len(gaps) > 1 else "")
+        more = f" ({len(gaps) - 1} more like it.)" if len(gaps) > 1 else ""
         return HookDecision(
             True,
-            f"{first} Run the adversary against it and put its argument in "
-            f"the description before this closes.{more}",
-            kind="adversary")
+            f"{first} Run the adversary against it and put its argument in the description before this closes.{more}",
+            kind="adversary",
+        )
 
     held = finish_first(open_changes() if callable(open_changes) else open_changes)
     if held is not None:
@@ -539,13 +554,15 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
     if session_id:
         already = handback_count(session_id, item.ref, state_path)
         if already >= max_handbacks:
-            return HookDecision(False, f"{item.ref} has already been handed "
-                                       f"back {already} times this session; "
-                                       "a third pass is a loop, not diligence")
+            return HookDecision(
+                False,
+                f"{item.ref} has already been handed "
+                f"back {already} times this session; "
+                "a third pass is a loop, not diligence",
+            )
         record_handback(session_id, item.ref, state_path)
 
-    return HookDecision(True, f"{item.ref} is actionable and nothing is "
-                              f"waiting on anyone else: {item.title}")
+    return HookDecision(True, f"{item.ref} is actionable and nothing is waiting on anyone else: {item.title}")
 
 
 #: The ONLY exit code that stops a Stop hook from stopping. Verified against
@@ -568,8 +585,7 @@ ADVERSARY_CHECK_ENV = "WORK_QUEUE_ADVERSARY_CHECK"
 
 
 def _enabled(env_name: str) -> bool:
-    return os.environ.get(env_name, "1").strip().lower() not in (
-        "0", "off", "false", "no")
+    return os.environ.get(env_name, "1").strip().lower() not in ("0", "off", "false", "no")
 
 
 def run_hook(raw: str, **kw: Any) -> int:
@@ -582,12 +598,10 @@ def run_hook(raw: str, **kw: Any) -> int:
     try:
         payload = json.loads(raw) if raw.strip() else {}
     except ValueError:
-        print("work_queue: could not read the hook payload; allowing stop",
-              file=sys.stderr)
+        print("work_queue: could not read the hook payload; allowing stop", file=sys.stderr)
         return 0
     if not isinstance(payload, dict):
-        print("work_queue: the hook payload was not an object; allowing stop",
-              file=sys.stderr)
+        print("work_queue: the hook payload was not an object; allowing stop", file=sys.stderr)
         return 0
 
     queue = build_queue()
@@ -604,9 +618,9 @@ def run_hook(raw: str, **kw: Any) -> int:
         gaps = adversary_gaps()
 
     kw.setdefault("open_changes", merge_queue_state.open_changes)  # lazy
-    decision = decide(queue, payload.get("session_id"),
-                      bool(payload.get("stop_hook_active")),
-                      promise=promise, gaps=gaps, **kw)
+    decision = decide(
+        queue, payload.get("session_id"), bool(payload.get("stop_hook_active")), promise=promise, gaps=gaps, **kw
+    )
     if not decision.block:
         return 0
     lead = {
@@ -614,14 +628,14 @@ def run_hook(raw: str, **kw: Any) -> int:
         "adversary": "A closure has not been argued against",
         "finish": "Finish before you start",
     }.get(decision.kind, "Next in the backlog, oldest first")
-    print(f"{lead}: {decision.reason} [board read from: "
-          f"{queue.source}]", file=sys.stderr)
+    print(f"{lead}: {decision.reason} [board read from: {queue.source}]", file=sys.stderr)
     return BLOCK_EXIT
 
 
 # ---------------------------------------------------------------------------
 # Human report
 # ---------------------------------------------------------------------------
+
 
 def render(queue: Queue) -> str:
     lines: list[str] = []
@@ -648,18 +662,15 @@ def render(queue: Queue) -> str:
         lines.append("")
         lines.append(f"NEEDS THE OWNER ({len(queue.decisions)})")
         for dec in queue.decisions:
-            when = ("OVERDUE" if dec.overdue
-                    else f"{dec.days_left} day(s) left")
+            when = "OVERDUE" if dec.overdue else f"{dec.days_left} day(s) left"
             lines.append(f"  {dec.ref} [{when}]: {dec.question}")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--stop-hook", action="store_true",
-                    help="hook mode: read the harness JSON on stdin")
-    ap.add_argument("--next", action="store_true",
-                    help="print only the next actionable item")
+    ap.add_argument("--stop-hook", action="store_true", help="hook mode: read the harness JSON on stdin")
+    ap.add_argument("--next", action="store_true", help="print only the next actionable item")
     ap.add_argument("--json", action="store_true", help="machine-readable")
     ap.add_argument("--work-md", default=None)
     ap.add_argument("--max-handbacks", type=int, default=MAX_HANDBACKS)
@@ -667,9 +678,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.stop_hook:
-        return run_hook(sys.stdin.read(),
-                        max_handbacks=args.max_handbacks,
-                        idle_seconds=args.agent_idle_seconds)
+        return run_hook(sys.stdin.read(), max_handbacks=args.max_handbacks, idle_seconds=args.agent_idle_seconds)
 
     queue = build_queue(Path(args.work_md) if args.work_md else None)
     if args.json:

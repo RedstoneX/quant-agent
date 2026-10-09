@@ -194,10 +194,7 @@ def _trend_clause(is_short: bool, trend_context: str) -> str:
     """The plain-language trend-context phrase for the owner message, correct
     for the position's side. Empty in the default regime."""
     if trend_context == REGIME_STRONG_WITH_TREND:
-        return (
-            "while it's still in a strong downtrend" if is_short
-            else "while it's still in a strong uptrend"
-        )
+        return "while it's still in a strong downtrend" if is_short else "while it's still in a strong uptrend"
     return ""  # default regime — omit the trend clause
 
 
@@ -228,10 +225,7 @@ def _compose_owner_break_reason(
                 f"broken too, so even the strong trend's structure has failed — "
                 f"a real breakdown, confirmed over two closes."
             )
-        return (
-            f"{trigger_desc}{trend_suffix}, confirmed over two closes — a real "
-            f"breakdown, not noise."
-        )
+        return f"{trigger_desc}{trend_suffix}, confirmed over two closes — a real breakdown, not noise."
     # Pending confirmation — the desk is HOLDING through the break and waiting.
     if trend_context == REGIME_STRONG_WITH_TREND and awaiting_prior_low:
         return (
@@ -250,7 +244,8 @@ def _compose_owner_break_reason(
 
 
 def render_owner_break_message(
-    symbol: str, check: "StructuralProtectionCheck",
+    symbol: str,
+    check: "StructuralProtectionCheck",
 ) -> str | None:
     """The full owner-facing sentence for a decisive structural-protection
     outcome, or None when there is nothing decisive to voice.

@@ -406,9 +406,7 @@ def rank_verdicts(
     for verdict in verdicts:
         # Same last-wins-per-(symbol, seat) rule on both sides, so a seat
         # that reported twice cannot appear as both a scorer and a no-lean.
-        target = (
-            neutral_by_symbol if verdict.direction == "neutral" else by_symbol
-        )
+        target = neutral_by_symbol if verdict.direction == "neutral" else by_symbol
         target.setdefault(verdict.symbol.upper(), {})[verdict.seat] = verdict
 
     ranked: list[RankedCandidate] = []
@@ -429,13 +427,9 @@ def rank_verdicts(
         # `components["magnitude"]` no longer claims coverage it never had,
         # and a placeholder can no longer be mistaken for a measurement by
         # whatever reads this next.
-        stated = [
-            (v, w) for v, w in zip(group, weights) if v.magnitude is not None
-        ]
+        stated = [(v, w) for v, w in zip(group, weights) if v.magnitude is not None]
         magnitude = sum(v.magnitude * w for v, w in stated)
-        conviction = sum(
-            conviction_score(v.conviction) * w for v, w in zip(group, weights)
-        )
+        conviction = sum(conviction_score(v.conviction) * w for v, w in zip(group, weights))
         components = {"conviction_score": round(conviction, 4)}
         # ABSENT, not zero, when no seat on this name has a strength scale —
         # the same distinction `risk_reward_tiebreak` already makes below.
@@ -455,21 +449,16 @@ def rank_verdicts(
         # seat attached to its verdict. None — a breakout, or a candidate
         # with no measurable geometry — means the key is ABSENT, which is
         # different from zero. See `_reward_risk_sort_values`.
-        if setup_types is not None and not reward_risk_floor_applies(
-            setup_types.get(symbol)
-        ):
+        if setup_types is not None and not reward_risk_floor_applies(setup_types.get(symbol)):
             risk_reward: float | None = None
         elif real_reward_risk is not None and symbol in real_reward_risk:
             raw = real_reward_risk.get(symbol)
             risk_reward = None if raw is None else float(raw)
         else:
             rr_values = [risk_reward_of(v) for v in group]
-            rr_total_weight = sum(
-                w for w, rr in zip(weights, rr_values) if rr is not None
-            )
+            rr_total_weight = sum(w for w, rr in zip(weights, rr_values) if rr is not None)
             risk_reward = (
-                sum(rr * w for w, rr in zip(weights, rr_values) if rr is not None)
-                / rr_total_weight
+                sum(rr * w for w, rr in zip(weights, rr_values) if rr is not None) / rr_total_weight
                 if rr_total_weight > 0
                 else None
             )
@@ -489,30 +478,25 @@ def rank_verdicts(
         # way. This is what still separates an all-breakout tied tier,
         # which `_reward_risk_sort_values` places at a shared 0.0 for
         # every member (see its docstring), before falling to `symbol`.
-        level_touches_total = sum(lt or 0.0 for lt in (
-            level_touches_of(v) for v in group
-        ))
+        level_touches_total = sum(lt or 0.0 for lt in (level_touches_of(v) for v in group))
         components["level_touches_tiebreak"] = round(level_touches_total, 4)
-        ranked.append(RankedCandidate(
-            symbol=symbol,
-            direction=directions.pop(),
-            score=round(
-                sum(
-                    v for k, v in components.items()
-                    if k not in ("risk_reward_tiebreak", "level_touches_tiebreak")
+        ranked.append(
+            RankedCandidate(
+                symbol=symbol,
+                direction=directions.pop(),
+                score=round(
+                    sum(
+                        v for k, v in components.items() if k not in ("risk_reward_tiebreak", "level_touches_tiebreak")
+                    ),
+                    4,
                 ),
-                4,
-            ),
-            verdicts=sorted(group, key=lambda v: v.seat),
-            components=components,
-            neutral_seats=sorted(neutral_by_symbol.get(symbol, {})),
-            strength_seats=sorted(
-                v.seat for v in group if v.magnitude is not None
-            ),
-            no_strength_seats=sorted(
-                v.seat for v in group if v.magnitude is None
-            ),
-        ))
+                verdicts=sorted(group, key=lambda v: v.seat),
+                components=components,
+                neutral_seats=sorted(neutral_by_symbol.get(symbol, {})),
+                strength_seats=sorted(v.seat for v in group if v.magnitude is not None),
+                no_strength_seats=sorted(v.seat for v in group if v.magnitude is None),
+            )
+        )
     # Highest composite first; on a tie, highest reward:risk next (real
     # information about the candidate, see module docstring fix #2 and the
     # 2026-09-11 note above); on a further tie (both equal, including the
@@ -523,12 +507,14 @@ def rank_verdicts(
     # deterministic-but-arbitrary stabiliser only reached once every real
     # signal is equal.
     rr_sort = _reward_risk_sort_values(ranked)
-    ranked.sort(key=lambda c: (
-        -c.score,
-        -rr_sort[c.symbol],
-        -c.components.get("level_touches_tiebreak", 0.0),
-        c.symbol,
-    ))
+    ranked.sort(
+        key=lambda c: (
+            -c.score,
+            -rr_sort[c.symbol],
+            -c.components.get("level_touches_tiebreak", 0.0),
+            c.symbol,
+        )
+    )
     return ranked
 
 
@@ -558,13 +544,11 @@ def _reward_risk_sort_values(
     for candidate in ranked:
         tiers.setdefault(candidate.score, []).append(candidate)
     for tier in tiers.values():
-        present = [
-            c.components["risk_reward_tiebreak"] for c in tier
-            if "risk_reward_tiebreak" in c.components
-        ]
+        present = [c.components["risk_reward_tiebreak"] for c in tier if "risk_reward_tiebreak" in c.components]
         neutral = sum(present) / len(present) if present else 0.0
         for candidate in tier:
             values[candidate.symbol] = candidate.components.get(
-                "risk_reward_tiebreak", neutral,
+                "risk_reward_tiebreak",
+                neutral,
             )
     return values

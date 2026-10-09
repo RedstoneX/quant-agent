@@ -5,6 +5,7 @@ weekly incremental runner, the per-run cap, the side-door routing (Form 4
 and nominations run the same screen when it is on, and their old gates when
 it is off), the restored Form 4 age gate, and the morning message.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,20 +37,30 @@ def _bars(n=300, *, price=50.0, rng=0.01, end=TODAY, close_drift=0.0):
     bars = []
     for i, d in enumerate(out):
         close = price * (1 + close_drift * i)
-        bars.append(OHLCV(date=d, open=close, high=close * (1 + rng),
-                          low=close * (1 - rng), close=close, volume=1_000_000))
+        bars.append(
+            OHLCV(date=d, open=close, high=close * (1 + rng), low=close * (1 - rng), close=close, volume=1_000_000)
+        )
     return bars
 
 
 TH = us.ScreenThresholds(
-    min_price_usd=5.0, min_market_cap_usd=30_000_000,
-    max_half_spread_bps=40.0, max_atr_fraction=1.0 / 3.0, min_history_bars=210,
+    min_price_usd=5.0,
+    min_market_cap_usd=30_000_000,
+    max_half_spread_bps=40.0,
+    max_atr_fraction=1.0 / 3.0,
+    min_history_bars=210,
 )
 
 GOOD_ASSET = {
-    "symbol": "ACME", "name": "Acme Corp. Common Stock", "status": "active",
-    "tradable": True, "class": "us_equity", "exchange": "NYSE",
-    "shortable": True, "borrow_status": "easy_to_borrow", "easy_to_borrow": True,
+    "symbol": "ACME",
+    "name": "Acme Corp. Common Stock",
+    "status": "active",
+    "tradable": True,
+    "class": "us_equity",
+    "exchange": "NYSE",
+    "shortable": True,
+    "borrow_status": "easy_to_borrow",
+    "easy_to_borrow": True,
 }
 
 
@@ -62,8 +73,7 @@ def _sources(asset=GOOD_ASSET, bars=None, profile=None, filings=()):
     return us.ScreenSources(
         get_asset=lambda s: asset,
         get_bars=lambda s: _good_bars() if bars is None else bars,
-        get_profile=lambda s: profile if profile is not None else {
-            "market_cap_usd": 5e9, "sector": "Industrials"},
+        get_profile=lambda s: profile if profile is not None else {"market_cap_usd": 5e9, "sector": "Industrials"},
         get_filings=lambda s: list(filings) if filings is not None else None,
     )
 
@@ -76,11 +86,15 @@ def test_a_clean_stock_passes_every_check():
 
 # ---------------------------------------------------------------- asset ----
 
-@pytest.mark.parametrize("asset,code", [
-    (None, "asset_not_found"),
-    ({**GOOD_ASSET, "status": "inactive"}, "asset_inactive"),
-    ({**GOOD_ASSET, "tradable": False}, "asset_not_tradable"),
-])
+
+@pytest.mark.parametrize(
+    "asset,code",
+    [
+        (None, "asset_not_found"),
+        ({**GOOD_ASSET, "status": "inactive"}, "asset_inactive"),
+        ({**GOOD_ASSET, "tradable": False}, "asset_not_tradable"),
+    ],
+)
 def test_delisted_or_halted_is_a_permanent_failure(asset, code):
     result = us.screen_symbol("ACME", _sources(asset=asset), TH)
     assert result.failures == [code]
@@ -92,14 +106,17 @@ def test_otc_is_refused():
     assert "unsupported_exchange" in result.failures
 
 
-@pytest.mark.parametrize("symbol,name", [
-    ("ACMEW", "Acme Acquisition Corp. Warrant"),
-    ("ACMEU", "Acme Acquisition Corp. Units"),
-    ("ACMER", "Acme Acquisition Corp. Rights"),
-    ("ACME.WS", "Acme Corp"),
-    ("ACME.U", "Acme Corp"),
-    ("ACME.RT", "Acme Corp"),
-])
+@pytest.mark.parametrize(
+    "symbol,name",
+    [
+        ("ACMEW", "Acme Acquisition Corp. Warrant"),
+        ("ACMEU", "Acme Acquisition Corp. Units"),
+        ("ACMER", "Acme Acquisition Corp. Rights"),
+        ("ACME.WS", "Acme Corp"),
+        ("ACME.U", "Acme Corp"),
+        ("ACME.RT", "Acme Corp"),
+    ],
+)
 def test_warrants_units_and_rights_are_refused(symbol, name):
     asset = {**GOOD_ASSET, "symbol": symbol, "name": name}
     assert us.check_asset(symbol, asset) == ["not_common_stock"]
@@ -111,6 +128,7 @@ def test_a_company_called_united_is_not_mistaken_for_a_unit():
 
 
 # --------------------------------------------------------------- borrow ----
+
 
 def test_not_shortable_is_refused():
     result = us.screen_symbol("ACME", _sources(asset={**GOOD_ASSET, "shortable": False}), TH)
@@ -130,6 +148,7 @@ def test_deprecated_easy_to_borrow_flag_is_the_fallback():
 
 # -------------------------------------------------------------- history ----
 
+
 def test_less_than_a_calendar_year_of_bars_is_refused():
     # 240 weekday bars span under a calendar year.
     failures, _ = us.check_bars(_bars(240, rng=0.0005), TH)
@@ -148,6 +167,7 @@ def test_no_bars_at_all():
 
 # ---------------------------------------------------------------- price ----
 
+
 def test_penny_stock_is_refused():
     failures, _ = us.check_bars(_bars(300, price=4.99, rng=0.0005), TH)
     assert failures == ["price_below_minimum"]
@@ -160,14 +180,21 @@ def test_no_maximum_price():
 
 # --------------------------------------------------------------- spread ----
 
+
 def test_corwin_schultz_recovers_a_known_constant_spread():
     """No price movement at all: every day trades only at bid and ask, so
     each day's high/low ratio IS the spread. The estimator must return it."""
     spread = 0.02
     mid = 100.0
     bars = [
-        OHLCV(date=TODAY - timedelta(days=10 - i), open=mid, high=mid * (1 + spread / 2),
-              low=mid * (1 - spread / 2), close=mid, volume=1)
+        OHLCV(
+            date=TODAY - timedelta(days=10 - i),
+            open=mid,
+            high=mid * (1 + spread / 2),
+            low=mid * (1 - spread / 2),
+            close=mid,
+            volume=1,
+        )
         for i in range(10)
     ]
     estimate = us.corwin_schultz_spread(bars)
@@ -183,6 +210,7 @@ def test_negative_daily_estimates_offset_positive_ones_before_the_floor():
     # bars directly; check the property on the live formula instead: a
     # zero-spread random walk must read near zero, not at a positive floor.
     import random
+
     rng = random.Random(7)
     price, bars = 100.0, []
     for i in range(260):
@@ -191,8 +219,9 @@ def test_negative_daily_estimates_offset_positive_ones_before_the_floor():
         for _ in range(40):
             path.append(path[-1] * math.exp(rng.gauss(0, 0.004)))
         price = path[-1]
-        bars.append(OHLCV(date=TODAY - timedelta(days=400 - i), open=o, high=max(path),
-                          low=min(path), close=price, volume=1))
+        bars.append(
+            OHLCV(date=TODAY - timedelta(days=400 - i), open=o, high=max(path), low=min(path), close=price, volume=1)
+        )
     assert const > 0
     assert us.corwin_schultz_spread(bars) * 10_000 / 2 < 5
 
@@ -200,8 +229,7 @@ def test_negative_daily_estimates_offset_positive_ones_before_the_floor():
 def test_negative_estimates_are_floored_at_zero():
     # A pure trend with no bounce produces negative alphas.
     bars = _bars(50, price=50, rng=0.0, close_drift=0.01)
-    bars = [OHLCV(date=b.date, open=b.open, high=b.close * 1.02, low=b.close,
-                  close=b.close, volume=1) for b in bars]
+    bars = [OHLCV(date=b.date, open=b.open, high=b.close * 1.02, low=b.close, close=b.close, volume=1) for b in bars]
     assert us.corwin_schultz_spread(bars) >= 0.0
 
 
@@ -216,6 +244,7 @@ def test_wide_spread_is_refused_and_the_line_is_the_slippage_belt():
 
 
 # ----------------------------------------------------------- volatility ----
+
 
 def test_volatility_ceiling_refuses_a_name_whose_widest_stop_cannot_be_placed():
     # 25% daily range -> ATR/price ~0.5, past the 1/3.00 ceiling: the
@@ -234,6 +263,7 @@ def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
     ceiling is now 1 / that widest multiple, so the screen and the stop
     rules cannot disagree by construction."""
     from src.portfolio_constructor import widest_reachable_stop_atr_multiple
+
     config = SimpleNamespace(
         universe_screen=UniverseScreenConfig(),
         execution=SimpleNamespace(max_entry_slippage_bps=40.0),
@@ -246,7 +276,6 @@ def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
     # At the ceiling the widest stop sits at exactly zero, so the ceiling
     # itself must FAIL, not pass.
     assert 1.0 - widest * th.max_atr_fraction == pytest.approx(0.0)
-
 
 
 def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
@@ -262,8 +291,10 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
     pass silently.
     """
     from src.portfolio_constructor import (
-        ConstructorConfig, widest_reachable_stop_atr_multiple,
+        ConstructorConfig,
+        widest_reachable_stop_atr_multiple,
     )
+
     cfg = ConstructorConfig()
     # What the midday clamp computes, from the live constructor config.
     clamp_multiple = widest_reachable_stop_atr_multiple(
@@ -283,6 +314,7 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
     # own config object, so this cannot be satisfied by coincidence.
     import re
     from pathlib import Path
+
     # Moved to `src/pipeline_admission.py` by step 6 of
     # docs/PIPELINE_SPLIT_PLAN.md (board item 210).
     src = Path(us.__file__).resolve().parent / "pipeline_admission.py"
@@ -325,7 +357,9 @@ def test_the_volatility_ceiling_is_not_an_appetite_number():
     max_observed_atr_fraction = 0.0811
     assert max_observed_atr_fraction < TH.max_atr_fraction
 
+
 # ---------------------------------------------------------- size/sector ----
+
 
 def test_small_company_is_refused():
     result = us.screen_symbol("ACME", _sources(profile={"market_cap_usd": 29e6, "sector": "Industrials"}), TH)
@@ -350,6 +384,7 @@ def test_unreadable_profile_is_inconclusive_not_a_failure():
 
 
 # ------------------------------------------------------------- takeover ----
+
 
 def test_pending_takeover_is_refused():
     filings = [("DEFM14A", "2026-08-01", ""), ("8-K", "2026-07-01", "1.01,9.01")]
@@ -376,6 +411,7 @@ def test_no_earnings_date_requirement_exists():
 
 # ----------------------------------------------------------- thresholds ----
 
+
 def test_thresholds_are_read_from_existing_desk_numbers():
     config = SimpleNamespace(
         universe_screen=UniverseScreenConfig(),
@@ -394,13 +430,13 @@ def test_screen_ships_off():
     assert UniverseScreenConfig().enabled is False
     import yaml
     from pathlib import Path
-    settings = yaml.safe_load(
-        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
-    )
+
+    settings = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text())
     assert settings["universe_screen"]["enabled"] is False
 
 
 # -------------------------------------------------------- state machine ----
+
 
 def _fail(symbol="ACME", code="spread_too_wide"):
     return us.ScreenResult(symbol=symbol, failures=[code])
@@ -487,14 +523,20 @@ def test_store_round_trips(tmp_path):
 
 # ------------------------------------------------------------ run_screen ----
 
-def _run(state, assets, *, sources=None, configured=(), held=(), confirm=None,
-         deadline=None, today=TODAY, bars=None):
+
+def _run(state, assets, *, sources=None, configured=(), held=(), confirm=None, deadline=None, today=TODAY, bars=None):
     return us.run_screen(
-        state, assets=assets, sources=sources or _sources(),
+        state,
+        assets=assets,
+        sources=sources or _sources(),
         get_bars_batch=lambda chunk: {s: (bars or _good_bars()) for s in chunk},
-        th=TH, today=today, held=held, configured=configured,
+        th=TH,
+        today=today,
+        held=held,
+        configured=configured,
         deadline=deadline if deadline is not None else time.monotonic() + 60,
-        batch_size=2, confirm_missing_asset=confirm,
+        batch_size=2,
+        confirm_missing_asset=confirm,
     )
 
 
@@ -504,8 +546,7 @@ def _asset(symbol, **kw):
 
 def test_run_admits_passing_candidates_and_never_screens_configured_ones():
     state = us.empty_state()
-    run = _run(state, [_asset("AAA"), _asset("SPY"), _asset("BBB", shortable=False)],
-               configured=["SPY"])
+    run = _run(state, [_asset("AAA"), _asset("SPY"), _asset("BBB", shortable=False)], configured=["SPY"])
     assert set(state["admitted"]) == {"AAA"}
     assert "SPY" not in state["screened"] and "SPY" not in state["admitted"]
     assert state["screened"]["BBB"]["failures"] == ["not_shortable"]
@@ -553,9 +594,15 @@ def test_the_deadline_stops_the_pass_and_the_rest_resume_later():
 def test_a_failed_bar_batch_is_inconclusive():
     state = us.empty_state()
     run = us.run_screen(
-        state, assets=[_asset("AAA")], sources=_sources(),
+        state,
+        assets=[_asset("AAA")],
+        sources=_sources(),
         get_bars_batch=lambda chunk: (_ for _ in ()).throw(RuntimeError("down")),
-        th=TH, today=TODAY, held=(), configured=(), deadline=time.monotonic() + 60,
+        th=TH,
+        today=TODAY,
+        held=(),
+        configured=(),
+        deadline=time.monotonic() + 60,
         batch_size=5,
     )
     assert run.inconclusive == 1
@@ -563,6 +610,7 @@ def test_a_failed_bar_batch_is_inconclusive():
 
 
 # ----------------------------------------------------------------- cap ----
+
 
 def test_select_for_run_caps_non_held_and_always_includes_held():
     state = us.empty_state()
@@ -585,13 +633,16 @@ def test_select_for_run_rotates_least_recently_offered_first():
 
 # ------------------------------------------------------- pipeline wiring ----
 
+
 def _pipeline(tmp_path, *, enabled=True):
     pipeline = build_pipeline(broker=MagicMock(), market=MagicMock(), sec_form4_provider=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
-            max_external_candidates=3, min_external_history_days=20,
-            min_external_price_usd=5.0, min_external_avg_dollar_volume_usd=10_000_000,
+            max_external_candidates=3,
+            min_external_history_days=20,
+            min_external_price_usd=5.0,
+            min_external_avg_dollar_volume_usd=10_000_000,
             request_timeout_s=15,
         ),
         universe_screen=UniverseScreenConfig(enabled=enabled, data_dir=str(tmp_path)),
@@ -608,10 +659,17 @@ def _pipeline(tmp_path, *, enabled=True):
     pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     pipeline.broker.get_asset_record.return_value = GOOD_ASSET
     pipeline.broker.get_transient_equity_eligibility.return_value = {
-        "eligible": True, "reason": "eligible", "name": "Acme", "exchange": "nyse"}
+        "eligible": True,
+        "reason": "eligible",
+        "name": "Acme",
+        "exchange": "nyse",
+    }
     pipeline.market.get_ohlcv.return_value = _good_bars()
     pipeline.market.get_company_profile.return_value = {
-        "market_cap_usd": 5e9, "sector_raw": "Industrials", "quote_type": "EQUITY"}
+        "market_cap_usd": 5e9,
+        "sector_raw": "Industrials",
+        "quote_type": "EQUITY",
+    }
     pipeline.sec_form4_provider.recent_filings.return_value = []
     return pipeline
 
@@ -649,10 +707,15 @@ def test_nomination_door_uses_the_screen(tmp_path, monkeypatch):
 
 def _purchase(days_ago):
     from src.util.time import et_today
+
     return SimpleNamespace(
-        symbol="ACME", transaction_code="P", admission_eligible=True,
-        transaction_value_usd=500_000, accession_number="0001-26-000001",
-        actor="Director", known_at="2026-09-01T12:00:00Z",
+        symbol="ACME",
+        transaction_code="P",
+        admission_eligible=True,
+        transaction_value_usd=500_000,
+        accession_number="0001-26-000001",
+        actor="Director",
+        known_at="2026-09-01T12:00:00Z",
         disclosure_date=et_today() - timedelta(days=days_ago),
     )
 
@@ -702,8 +765,7 @@ def test_evening_pass_records_changes_and_morning_shows_them_once(tmp_path, monk
     pipeline.db = MagicMock()
     pipeline.broker.list_assets.return_value = [GOOD_ASSET]
     pipeline.broker.get_positions.return_value = []
-    pipeline.market.get_ohlcv_batch.side_effect = lambda chunk, days: {
-        s: _good_bars() for s in chunk}
+    pipeline.market.get_ohlcv_batch.side_effect = lambda chunk, days: {s: _good_bars() for s in chunk}
     pipeline.sec_form4_provider.listed_map.return_value = {}
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     summary = pipeline.admission._run_universe_screen("evening-x")
@@ -723,13 +785,15 @@ def test_morning_message_lists_changes_below_the_pnl_block():
     from src.notifier import format_session_result
 
     result = {
-        "status": "ok", "run_id": "morning-x",
+        "status": "ok",
+        "run_id": "morning-x",
         "universe_changes": {
             "events": [
                 {"symbol": "AAA", "action": "added", "reasons": ["passed"]},
                 {"symbol": "BBB", "action": "removed", "reasons": ["pending_takeover"]},
             ],
-            "admitted_count": 1, "flagged_count": 0,
+            "admitted_count": 1,
+            "flagged_count": 0,
         },
     }
     text = format_session_result("morning", result, 12.0)

@@ -34,7 +34,8 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _macro_regime,
     _min_order_usd,
     _persist_evidence,
-    _record_constructor_drops, _record_constructor_side_flips,
+    _record_constructor_drops,
+    _record_constructor_side_flips,
     _record_pipeline_event,
     _record_rotation_precheck,
     _record_seat_stances,
@@ -64,7 +65,8 @@ if TYPE_CHECKING:
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.event_calendar import (
-        FOMCCalendarProvider, MacroEventCalendarProvider,
+        FOMCCalendarProvider,
+        MacroEventCalendarProvider,
     )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
@@ -74,6 +76,7 @@ if TYPE_CHECKING:
     from src.data.tech_store import TechStore
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
+
 
 class DecisionStage:
     """Build PM memory layers → call PM → run Constructor.
@@ -119,6 +122,7 @@ class DecisionStage:
         # isinstance guard: stage tests stub `pipeline` with MagicMock, whose
         # auto-attrs would otherwise duck-type as an enabled sweeper.
         from src.execution.cash_sweep import CashSweeper
+
         sweeper = getattr(pipeline, "_sweeper", None)
         sweeper = sweeper() if callable(sweeper) else None
         reserve_balance = 0.0
@@ -148,7 +152,10 @@ class DecisionStage:
         rm_recent_verdicts = pipeline._build_rm_recent_verdicts()
         pm_recent_decisions = pipeline._build_pm_recent_decisions()
         projected_portfolio = pipeline._build_projected_portfolio(
-            positions, analyses, total_value, run=ctx,
+            positions,
+            analyses,
+            total_value,
+            run=ctx,
         )
         calibration_note = pipeline._build_calibration_note()
         macro_tech_alignment = pipeline._build_macro_tech_alignment(macro_analysis, analyses)
@@ -167,8 +174,10 @@ class DecisionStage:
         # against exactly the numbers PM was shown.
         correlation_matrix = pipeline._ensure_correlation_matrix(ctx, positions)
         pm_facts = pipeline._build_pm_facts(
-            positions=positions, analyses=analyses,
-            total_value=total_value, cash=cash,
+            positions=positions,
+            analyses=analyses,
+            total_value=total_value,
+            cash=cash,
             recent_performance=recent_performance,
             macro_analysis=macro_analysis,
             correlation_matrix=correlation_matrix,
@@ -205,13 +214,11 @@ class DecisionStage:
         _regime_for_preview = _macro_regime(macro_analysis)
         real_reward_risk_by_symbol: dict[str, float | None] = {}
         for _a in analyses:
-            _direction = (
-                "short" if _a.rating in ("sell", "strong_sell") else "long"
-            )
-            real_reward_risk_by_symbol[_a.symbol.upper()] = (
-                pipeline.portfolio_constructor.real_reward_risk_preview(
-                    _a, _direction, regime=_regime_for_preview,
-                )
+            _direction = "short" if _a.rating in ("sell", "strong_sell") else "long"
+            real_reward_risk_by_symbol[_a.symbol.upper()] = pipeline.portfolio_constructor.real_reward_risk_preview(
+                _a,
+                _direction,
+                regime=_regime_for_preview,
             )
         # Item 54 (2026-09-12): the preview above also RECORDS, by code, the
         # names the one shared funnel refused (`last_refusals` — stop wider
@@ -220,10 +227,14 @@ class DecisionStage:
         # after construction, so the same refusal is filed exactly once.
         constructor_refusals_by_symbol = {
             str(sym).upper(): dict(refusal)
-            for sym, refusal in dict(getattr(
-                getattr(pipeline, "portfolio_constructor", None),
-                "last_refusals", {},
-            ) or {}).items()
+            for sym, refusal in dict(
+                getattr(
+                    getattr(pipeline, "portfolio_constructor", None),
+                    "last_refusals",
+                    {},
+                )
+                or {}
+            ).items()
         }
 
         # Margin capacity for the PM prompt — WORDING ONLY. Reuses the
@@ -234,16 +245,12 @@ class DecisionStage:
         # (positions/equity/held-gross) has not changed since ctx was built
         # above, so this is the same headroom execution will see for this
         # session's opening entries — never a new formula.
-        margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
-            _entry_deployment_budget(pipeline, ctx, positions, total_value, cash)
+        margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = _entry_deployment_budget(
+            pipeline, ctx, positions, total_value, cash
         )
         _margin_ceiling = _session_gross_ceiling(pipeline, ctx)
-        margin_ladder_multiple = (
-            _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
-        )
-        margin_ladder_rung = (
-            _margin_ceiling.rung if _margin_ceiling is not None else None
-        )
+        margin_ladder_multiple = _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+        margin_ladder_rung = _margin_ceiling.rung if _margin_ceiling is not None else None
 
         # Kept as a dict so the ONE accounting re-ask below (board item
         # 110) can re-ask the identical question — same inputs, same
@@ -283,7 +290,9 @@ class DecisionStage:
             # the prompt renderer never re-loads `AppConfig` (which validates
             # API keys and would fail silently, dropping the price).
             margin_interest_rate_pct=getattr(
-                pipeline.config.risk, "margin_interest_rate_pct", None,
+                pipeline.config.risk,
+                "margin_interest_rate_pct",
+                None,
             ),
             # 2026-09-23: the §10.3 notional floor, read by exactly the
             # helper the execution-time re-size and the rotation buy-leg
@@ -295,11 +304,8 @@ class DecisionStage:
             margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=dict(ctx.symbol_sectors or {}),
             session_type=ctx.session,
-            allowed_buy_symbols={
-                str(symbol).strip().upper()
-                for symbol in configured_universe
-                if str(symbol).strip()
-            } | set(ctx.admitted_symbols),
+            allowed_buy_symbols={str(symbol).strip().upper() for symbol in configured_universe if str(symbol).strip()}
+            | set(ctx.admitted_symbols),
             transient_admitted_symbols=set(ctx.admitted_symbols),
             # The unmeasurable-payoff gate reads the SAME starter size the
             # risk budget will actually grant. `rr_floor` is retired as a
@@ -308,17 +314,24 @@ class DecisionStage:
             # that must not decide size. No settings key backs it any more
             # (board item 81) — it is always the historical constant.
             rr_floor=float(REWARD_RISK_FLOOR),
-            starter_risk_pct=float(getattr(
-                pipeline.config.risk, "min_position_risk_pct",
-                STARTER_POSITION_RISK_PCT,
-            )),
+            starter_risk_pct=float(
+                getattr(
+                    pipeline.config.risk,
+                    "min_position_risk_pct",
+                    STARTER_POSITION_RISK_PCT,
+                )
+            ),
             # Phase 14 (opportunity-cost rotation) — same book-risk snapshot
             # and ceiling the constructor rations against below, computed
             # once above so both stages judge the identical numbers.
             existing_risk_pct=existing_risk_pct,
-            max_portfolio_risk_pct=float(getattr(
-                pipeline.config.risk, "max_portfolio_risk_pct", 25.0,
-            )),
+            max_portfolio_risk_pct=float(
+                getattr(
+                    pipeline.config.risk,
+                    "max_portfolio_risk_pct",
+                    25.0,
+                )
+            ),
             # Phase 14b: wording only — see `_apply_rotation_execution`.
             rotation_execute_enabled=_rotation_execution_enabled(pipeline),
             # Board item 39: the ranked-margin tier is executable behind its
@@ -342,11 +355,12 @@ class DecisionStage:
         # heal worked or not.
         _record_soft_exit_heals(pipeline, ctx)
         from src.agents.portfolio_manager import PortfolioManagerAgent
-        macro_failures = list(
-            getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
-        )
+
+        macro_failures = list(getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or [])
         instance_failures = getattr(
-            pipeline.portfolio_manager, "_macro_parse_failures", None,
+            pipeline.portfolio_manager,
+            "_macro_parse_failures",
+            None,
         )
         if instance_failures and instance_failures is not macro_failures:
             for reason in list(instance_failures):
@@ -354,7 +368,12 @@ class DecisionStage:
                     macro_failures.append(reason)
         for reason in macro_failures:
             _record_pipeline_event(
-                pipeline, ctx, None, "macro_parse", "failed", reason=reason,
+                pipeline,
+                ctx,
+                None,
+                "macro_parse",
+                "failed",
+                reason=reason,
             )
         PortfolioManagerAgent._macro_parse_failures = []
         try:
@@ -376,9 +395,13 @@ class DecisionStage:
                 "PM Reasoning Chain:\n  Macro: %s\n  News: %s\n  Earnings: %s\n  "
                 "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s\n  "
                 "Continuity: %s\n  Pre-mortem: %s\n  Macro audit: %s",
-                rc.macro_filter[:120], rc.news_check[:120], rc.earnings_check[:120],
-                rc.signal_conflicts[:120], rc.sizing_logic[:120],
-                rc.portfolio_balance[:120], rc.cash_target[:120],
+                rc.macro_filter[:120],
+                rc.news_check[:120],
+                rc.earnings_check[:120],
+                rc.signal_conflicts[:120],
+                rc.sizing_logic[:120],
+                rc.portfolio_balance[:120],
+                rc.cash_target[:120],
                 rc.continuity_check[:120] or "[MISSING]",
                 rc.premortem_check[:120] or "[MISSING]",
                 rc.macro_audit[:120] or "[MISSING]",
@@ -409,34 +432,34 @@ class DecisionStage:
         # gate and the reason, not only logged. Written whether or not the
         # PM call as a whole produced a usable decision.
         for dropped in pm_dropped_targets:
-            _details = {
-                k: v for k, v in dropped.items() if k not in ("symbol", "reason")
-            }
+            _details = {k: v for k, v in dropped.items() if k not in ("symbol", "reason")}
             _record_pipeline_event(
-                pipeline, ctx, dropped.get("symbol"), "portfolio_manager",
-                "target_dropped", dropped.get("reason", ""), **_details,
+                pipeline,
+                ctx,
+                dropped.get("symbol"),
+                "portfolio_manager",
+                "target_dropped",
+                dropped.get("reason", ""),
+                **_details,
             )
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
-            ctx.analysis_failure_status = (
-                pm_result.semantic_status or "pm_agent_failure"
-            )
-            ctx.analysis_failure_error = (
-                pm_result.semantic_error or "no valid PM decision"
-            )
+            ctx.analysis_failure_status = pm_result.semantic_status or "pm_agent_failure"
+            ctx.analysis_failure_error = pm_result.semantic_error or "no valid PM decision"
         pipeline.db.insert_agent_log(
             **seat_acceptance_kwargs(
                 "no_valid_grounded_decision" if not portfolio_decision else None,
                 result=pm_result,
             ),
-            agent_name="portfolio_manager", run_id=run_id,
+            agent_name="portfolio_manager",
+            run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
             output_summary=(
                 portfolio_decision.portfolio_view
-                if portfolio_decision else
-                f"{ctx.analysis_failure_status}: {ctx.analysis_failure_error}"
+                if portfolio_decision
+                else f"{ctx.analysis_failure_status}: {ctx.analysis_failure_error}"
             ),
             full_response=pm_result.raw_text,
             model=pm_result.model,
@@ -450,34 +473,51 @@ class DecisionStage:
 
         if not portfolio_decision:
             _record_pipeline_event(
-                pipeline, ctx, None, "portfolio_manager", "failed",
+                pipeline,
+                ctx,
+                None,
+                "portfolio_manager",
+                "failed",
                 "no_valid_grounded_decision",
             )
             _persist_evidence(
-                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
-                kind="agent_failure", scope="run", decision_id=decision_id,
-                evidence_json=(
-                    '{"failure":"no_valid_grounded_decision",'
-                    '"stage":"portfolio_manager","decision":null}'
-                ),
+                pipeline.db,
+                run_id=run_id,
+                agent_name="portfolio_manager",
+                kind="agent_failure",
+                scope="run",
+                decision_id=decision_id,
+                evidence_json=('{"failure":"no_valid_grounded_decision","stage":"portfolio_manager","decision":null}'),
             )
             ctx.portfolio_decision = None
             return ctx
 
         import json as _json
+
         _persist_evidence(
-            pipeline.db, run_id=run_id, agent_name="portfolio_manager",
-            kind="reasoning", scope="run", decision_id=decision_id,
-            evidence_json=_json.dumps({
-                "portfolio_view": portfolio_decision.portfolio_view,
-                "reasoning_chain": portfolio_decision.reasoning_chain.model_dump(),
-            }),
+            pipeline.db,
+            run_id=run_id,
+            agent_name="portfolio_manager",
+            kind="reasoning",
+            scope="run",
+            decision_id=decision_id,
+            evidence_json=_json.dumps(
+                {
+                    "portfolio_view": portfolio_decision.portfolio_view,
+                    "reasoning_chain": portfolio_decision.reasoning_chain.model_dump(),
+                }
+            ),
         )
         for target in portfolio_decision.targets:
             _persist_evidence(
-                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
-                kind="target", scope="symbol", symbol=target.symbol,
-                decision_id=decision_id, evidence_json=target.model_dump_json(),
+                pipeline.db,
+                run_id=run_id,
+                agent_name="portfolio_manager",
+                kind="target",
+                scope="symbol",
+                symbol=target.symbol,
+                decision_id=decision_id,
+                evidence_json=target.model_dump_json(),
             )
         # Board item 163: cross-check the PM's whole-book sizing NARRATIVE
         # (`reasoning_chain.sizing_logic`) against each symbol's own emitted
@@ -495,8 +535,12 @@ class DecisionStage:
         except Exception:
             logger.exception("sizing_narrative_check audit failed")
         _account_for_pm_candidates(
-            pipeline, ctx, run_id=run_id, analyses=analyses,
-            positions=positions, decision=portfolio_decision,
+            pipeline,
+            ctx,
+            run_id=run_id,
+            analyses=analyses,
+            positions=positions,
+            decision=portfolio_decision,
             pm_decide_kwargs=pm_decide_kwargs,
         )
 
@@ -528,11 +572,13 @@ class DecisionStage:
         # for a very thin name a fresh today price can simply be absent. That
         # name is then correctly refused — the safe, intended outcome, not a
         # regression.
-        new_syms = list(dict.fromkeys(
-            t.symbol.strip().upper()
-            for t in portfolio_decision.targets
-            if t.symbol.strip().upper() not in price_map
-        ))
+        new_syms = list(
+            dict.fromkeys(
+                t.symbol.strip().upper()
+                for t in portfolio_decision.targets
+                if t.symbol.strip().upper() not in price_map
+            )
+        )
         unpriceable_new_syms: dict[str, str] = {}
         if new_syms:
             try:
@@ -552,13 +598,14 @@ class DecisionStage:
                     # "no usable price at all" so the census counts them
                     # apart — the same split the resolver already draws.
                     unpriceable_new_syms[sym] = (
-                        FAULT_STALE_PRICE if resolved.unavailable == ONLY_STALE
-                        else FAULT_NO_PRICE
+                        FAULT_STALE_PRICE if resolved.unavailable == ONLY_STALE else FAULT_NO_PRICE
                     )
                     logger.warning(
                         "Constructor: no fresh today price for new name %s "
                         "(%s) — refusing as unmeasurable, not sizing the buy "
-                        "on a stale or mid price", sym, resolved.describe(),
+                        "on a stale or mid price",
+                        sym,
+                        resolved.describe(),
                     )
         # Spec §2.2 — the book's risk as the constructor must ration it, both
         # already computed above (before `decide()`) so the Phase 14
@@ -574,7 +621,9 @@ class DecisionStage:
         # agreement refusal — never invented from PM's own provenance,
         # which the PM could under-cite.
         evidence_registry = PortfolioManagerAgent.build_evidence_registry(
-            analyses=analyses, positions=positions, news_intel=news_intel,
+            analyses=analyses,
+            positions=positions,
+            news_intel=news_intel,
             earnings_analyses=earnings_results,
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
             smart_money_findings=ctx.smart_money_findings,
@@ -665,10 +714,16 @@ class DecisionStage:
         _record_rotation_precheck(pipeline, ctx)
         record_rotation_margins(pipeline, ctx)
         apply_rotation_recording_dispositions(
-            pipeline, ctx, portfolio_decision, positions, position_history,
+            pipeline,
+            ctx,
+            portfolio_decision,
+            positions,
+            position_history,
         )
         _record_seat_stances(
-            pipeline, ctx, evidence_registry,
+            pipeline,
+            ctx,
+            evidence_registry,
             [t.symbol for t in portfolio_decision.targets],
             non_corroborating_sources=non_corroborating_sources,
         )
@@ -684,7 +739,8 @@ class DecisionStage:
         if refused_soft_exit:
             logger.warning(
                 "Refusing %d open target(s) %s before the ticket book: %s",
-                len(refused_soft_exit), SOFT_EXIT_MISSING_AFTER_RETRY,
+                len(refused_soft_exit),
+                SOFT_EXIT_MISSING_AFTER_RETRY,
                 refused_soft_exit,
             )
             add_constructor_dropped(portfolio_decision, refused_soft_exit)
@@ -730,9 +786,7 @@ class DecisionStage:
         # deterministic constructor remove? Derived here (targets minus
         # decisions) rather than by changing construct_orders' signature.
         # HOLD decisions still count as "kept" — the symbol survived review.
-        portfolio_decision.constructor_dropped = _dropped_since_proposal(
-            portfolio_decision
-        )
+        portfolio_decision.constructor_dropped = _dropped_since_proposal(portfolio_decision)
         if portfolio_decision.constructor_dropped:
             logger.info(
                 "Constructor dropped %s — recorded for the Risk Manager so "
@@ -748,11 +802,13 @@ class DecisionStage:
             _alert_unmeasurable_symbols(data_faults)
         _record_constructor_side_flips(pipeline, ctx)
         _record_realised_concentration(
-            pipeline, ctx, portfolio_decision, total_value,
+            pipeline,
+            ctx,
+            portfolio_decision,
+            total_value,
         )
         logger.info(
-            "Constructor: %d targets → %d decisions "
-            "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
+            "Constructor: %d targets → %d decisions (%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
             len(portfolio_decision.targets),
             len(portfolio_decision.decisions),
             sum(1 for d in portfolio_decision.decisions if d.action == "BUY"),
@@ -768,13 +824,23 @@ class DecisionStage:
         # re-deriving it from raw agent_logs text.
         for decision in portfolio_decision.decisions:
             _persist_evidence(
-                pipeline.db, run_id=run_id, agent_name="portfolio_manager",
-                kind="proposed_order", scope="symbol", symbol=decision.symbol,
-                decision_id=decision_id, evidence_json=decision.model_dump_json(),
+                pipeline.db,
+                run_id=run_id,
+                agent_name="portfolio_manager",
+                kind="proposed_order",
+                scope="symbol",
+                symbol=decision.symbol,
+                decision_id=decision_id,
+                evidence_json=decision.model_dump_json(),
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "portfolio_manager", "proposed",
-                "constructor_created_order", action=decision.action,
+                pipeline,
+                ctx,
+                decision.symbol,
+                "portfolio_manager",
+                "proposed",
+                "constructor_created_order",
+                action=decision.action,
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx

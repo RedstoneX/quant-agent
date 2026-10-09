@@ -5,6 +5,7 @@ Offline: no network, no LLM calls. Every `invoke` in this file is bypassed —
 these tests exercise the data-rebuild functions the invokes call, and the
 `grade` functions directly, never `agent.analyze` / `agent.analyze_batch`.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,6 +20,7 @@ QUARANTINED = ["pm_selection"]
 
 
 # --- quarantine list, from the scenario registry's own point of view -------
+
 
 @pytest.mark.parametrize("key", RUNNABLE)
 def test_runnable_scenario_is_not_refused(key):
@@ -45,18 +47,16 @@ def test_scenario_with_no_fixture_and_no_blocked_reason_would_be_a_policy_hole()
         if scen.key in unions:
             continue
         assert scen.fixture or scen.blocked_reason, (
-            f"{scen.key} has neither `fixture` nor `blocked_reason` — "
-            f"refusal_reason() would silently admit it"
+            f"{scen.key} has neither `fixture` nor `blocked_reason` — refusal_reason() would silently admit it"
         )
 
 
 # --- re-derivation: raw fixture facts -> today's live code -----------------
 
+
 def test_tech_fixture_bars_are_recomputed_by_todays_indicators():
     data = sc.tech_exam_symbols_data()
-    expected = set(json.loads(
-        (fp.FIXTURES_DIR / sc._TECH_FIXTURE).read_text()
-    )["symbols"])
+    expected = set(json.loads((fp.FIXTURES_DIR / sc._TECH_FIXTURE).read_text())["symbols"])
     assert {d["symbol"] for d in data} == expected
     for row in data:
         assert row["indicators"] is not None
@@ -71,9 +71,18 @@ def test_macro_fixture_series_are_recomputed_by_todays_provider():
     # Every top-level key get_macro_summary() promises, all computed just
     # now from the pinned raw FRED observations (fixture_policy would
     # refuse a stored `macro_summary` key outright).
-    for key in ("vix", "treasury", "fed_funds_rate", "inflation", "unemployment",
-                "credit_spread", "real_rates", "dollar_index", "ig_credit_spread",
-                "jobless_claims"):
+    for key in (
+        "vix",
+        "treasury",
+        "fed_funds_rate",
+        "inflation",
+        "unemployment",
+        "credit_spread",
+        "real_rates",
+        "dollar_index",
+        "ig_credit_spread",
+        "jobless_claims",
+    ):
         assert key in summary
     assert summary["vix"]["current"] is not None
     assert summary["vix"]["freshness"] in ("current", "overdue", "unknown", "empty")
@@ -104,6 +113,7 @@ def test_smart_money_fixture_is_reclassified_by_todays_provider():
 
 
 # --- grader discrimination: None fails, a minimally-valid object passes ----
+
 
 def test_tech_grader_fails_closed_on_empty_dict():
     checks = sc._tech_grade({})
@@ -140,14 +150,23 @@ def test_news_grader_discriminates_none_vs_valid_and_catches_invented_tickers():
 
     valid = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-14", era_themes=["theme"],
+            last_updated="2026-09-14",
+            era_themes=["theme"],
             current_regime="risk-on, broad based",
         ),
-        stock_news={"AAPL": [StockNewsItem(
-            headline="h", sentiment="bullish", conviction="medium",
-            impact_summary="s",
-        )]},
-        pm_briefing="briefing", market_sentiment="bullish", confidence="medium",
+        stock_news={
+            "AAPL": [
+                StockNewsItem(
+                    headline="h",
+                    sentiment="bullish",
+                    conviction="medium",
+                    impact_summary="s",
+                )
+            ]
+        },
+        pm_briefing="briefing",
+        market_sentiment="bullish",
+        confidence="medium",
     )
     checks = sc._public_news_grade(valid)
     by_name = {c.name: c for c in checks}

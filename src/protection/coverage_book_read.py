@@ -37,6 +37,7 @@ existing repair path, which places only against the level recorded on the
 position's own opening row and refuses outright when there is none. An
 unknown is never repaired against a guessed level.
 """
+
 from __future__ import annotations
 
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
@@ -68,17 +69,17 @@ def read_positions_with_retry(
             if isinstance(positions, list):
                 if attempt > 1:
                     logger.warning(
-                        "coverage reconcile: positions read succeeded on "
-                        "attempt %d of %d.", attempt, attempts,
+                        "coverage reconcile: positions read succeeded on attempt %d of %d.",
+                        attempt,
+                        attempts,
                     )
                 return positions, None
-            last = (
-                "get_positions returned "
-                f"{type(positions).__name__}, not a list of positions"
-            )
+            last = f"get_positions returned {type(positions).__name__}, not a list of positions"
         logger.warning(
             "coverage reconcile: positions read attempt %d of %d failed: %s",
-            attempt, attempts, last,
+            attempt,
+            attempts,
+            last,
         )
         if attempt < attempts:
             backoff = (0.5, 1.5)
@@ -108,18 +109,24 @@ def unverified_book_rows(
     cash-sweep vehicle, are skipped exactly as the measured path skips
     them.
     """
-    rows: list[dict] = [{
-        "symbol": "(whole book)", "held_qty": None, "covered_qty": None,
-        "coverage": "unreadable", "repaired": False, "is_short": False,
-        "book_unreadable": True,
-        "read_error": (
-            "the broker could not list open positions after "
-            f"{attempts} attempts ({error}), so whether any "
-            "position is protected could not be established; the desk's own "
-            "ledger was used as a second source and every name it knows "
-            "about is listed below as unverified"
-        ),
-    }]
+    rows: list[dict] = [
+        {
+            "symbol": "(whole book)",
+            "held_qty": None,
+            "covered_qty": None,
+            "coverage": "unreadable",
+            "repaired": False,
+            "is_short": False,
+            "book_unreadable": True,
+            "read_error": (
+                "the broker could not list open positions after "
+                f"{attempts} attempts ({error}), so whether any "
+                "position is protected could not be established; the desk's own "
+                "ledger was used as a second source and every name it knows "
+                "about is listed below as unverified"
+            ),
+        }
+    ]
     try:
         ledger = db.get_symbols_with_open_ledger_qty() or {}
         if not isinstance(ledger, dict):
@@ -129,8 +136,7 @@ def unverified_book_rows(
     except Exception as exc:  # noqa: BLE001
         record_guarded_pass(db, "coverage_book_read.ledger_read", exc)
         rows[0]["read_error"] += (
-            f" — except the ledger could not be read either ({exc}), so not "
-            "even the list of held names is known"
+            f" — except the ledger could not be read either ({exc}), so not even the list of held names is known"
         )
         return rows
     skip = {str(s).strip().upper() for s in (skip_symbols or set()) if s}
@@ -143,21 +149,29 @@ def unverified_book_rows(
             signed = 0.0
         if not symbol or signed == 0 or str(symbol).strip().upper() in skip:
             continue
-        rows.append({
-            "symbol": symbol, "held_qty": signed, "covered_qty": None,
-            "coverage": "unreadable", "repaired": False,
-            "is_short": signed < 0, "book_unreadable": True,
-            "read_error": (
-                "the broker would not list open positions, so this holding "
-                "— known only from the desk's own ledger — could not be "
-                "checked for a protective stop and is treated as unverified"
-            ),
-        })
+        rows.append(
+            {
+                "symbol": symbol,
+                "held_qty": signed,
+                "covered_qty": None,
+                "coverage": "unreadable",
+                "repaired": False,
+                "is_short": signed < 0,
+                "book_unreadable": True,
+                "read_error": (
+                    "the broker would not list open positions, so this holding "
+                    "— known only from the desk's own ledger — could not be "
+                    "checked for a protective stop and is treated as unverified"
+                ),
+            }
+        )
     return rows
 
 
 def unverified_book_sweep(
-pipeline: Any, read_error: str, pending_syms: set,
+    pipeline: Any,
+    read_error: str,
+    pending_syms: set,
 ) -> list[dict]:
     """The broker would not list positions. Return an UNKNOWN that no
     caller can mistake for all-clear, and make the safe state true for
@@ -172,10 +186,7 @@ pipeline: Any, read_error: str, pending_syms: set,
     """
     try:
         sweeper = pipeline._sweeper()
-        sweep_symbol = (
-            sweeper.symbol if sweeper is not None
-            else pipeline._retired_cash_park_symbol()
-        )
+        sweep_symbol = sweeper.symbol if sweeper is not None else pipeline._retired_cash_park_symbol()
         record_guarded_pass(pipeline, "coverage_book_read.sweep_symbol")
     except Exception as exc:  # noqa: BLE001
         record_guarded_pass(pipeline, "coverage_book_read.sweep_symbol", exc)
@@ -183,7 +194,8 @@ pipeline: Any, read_error: str, pending_syms: set,
     rows = unverified_book_rows(
         # `getattr`: a half-built pipeline with no `db` must still get
         # the UNKNOWN row, never an exception out of the sweep.
-        getattr(pipeline, "db", None), error=read_error,
+        getattr(pipeline, "db", None),
+        error=read_error,
         skip_symbols=pending_syms,
         sweep_symbol=sweep_symbol,
     )
@@ -191,15 +203,18 @@ pipeline: Any, read_error: str, pending_syms: set,
         "STOP-COVERAGE SWEEP COULD NOT READ THE BOOK: %s. Reporting "
         "UNKNOWN, not clean, and re-placing protection on the %d "
         "holding(s) the desk's own ledger knows about.",
-        read_error, max(0, len(rows) - 1),
+        read_error,
+        max(0, len(rows) - 1),
     )
     for row in rows:
         if row.get("held_qty") in (None, 0):
             continue
         try:
             row["repaired"] = pipeline._repair_stop_coverage(
-                str(row["symbol"]), abs(float(row["held_qty"])),
-                is_short=bool(row.get("is_short")), outcome=row,
+                str(row["symbol"]),
+                abs(float(row["held_qty"])),
+                is_short=bool(row.get("is_short")),
+                outcome=row,
             )
             record_guarded_pass(pipeline, "coverage_book_read.repair", context={"symbol": str(row.get("symbol"))})
         except Exception as exc:  # noqa: BLE001

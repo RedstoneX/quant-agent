@@ -4,6 +4,7 @@ Moved verbatim out of `StopAmender` so that class stays under the file-size
 ratchet; `self` is the amender (it supplies `client`,
 `_list_open_stop_orders_by_side` and `_snapshot_stop_order`).
 """
+
 from __future__ import annotations
 
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
@@ -13,7 +14,12 @@ logger = logging.getLogger("src.execution.broker")
 
 
 def classify_after_dead_replacement(
-    self, *, symbol: str, spec: dict, new_price: float, leg: dict,
+    self,
+    *,
+    symbol: str,
+    spec: dict,
+    new_price: float,
+    leg: dict,
 ) -> str:
     """Read the book after a replacement came back dead. Never guess.
 
@@ -42,8 +48,7 @@ def classify_after_dead_replacement(
     if errors:
         leg["detail"] += "; the book could not be re-read"
         return "unknown"
-    live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders)
-            if spec_ is not None]
+    live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders) if spec_ is not None]
     if not live:
         # A replacement is also rejected when the ORIGINAL already
         # triggered: the book is then empty because the position is gone,
@@ -58,8 +63,7 @@ def classify_after_dead_replacement(
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(self, "stop_dead_replacement.positions", exc, context={"symbol": symbol})
             leg["detail"] += (
-                f"; the book is empty and the position could not be "
-                f"re-read ({exc}) — treating it as UNPROTECTED"
+                f"; the book is empty and the position could not be re-read ({exc}) — treating it as UNPROTECTED"
             )
             return "naked"
         if not held or sum(held) <= 0:
@@ -87,12 +91,7 @@ def classify_after_dead_replacement(
     at_new = [s for s in live if abs(s["stop_price"] - new_price) <= 1e-9]
     if at_new:
         leg["new_id"] = at_new[0]["id"]
-        leg["detail"] += (
-            "; a stop was read back at the NEW level despite the dead "
-            "replacement"
-        )
+        leg["detail"] += "; a stop was read back at the NEW level despite the dead replacement"
         return "amended"
-    leg["detail"] += (
-        "; a stop is resting but at neither the old nor the new level"
-    )
+    leg["detail"] += "; a stop is resting but at neither the old nor the new level"
     return "unknown"

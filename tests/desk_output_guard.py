@@ -103,46 +103,50 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # therefore fails too, which a stored count could never see.
 ALLOWED: dict[str, str] = {
     # --- tests/fixtures: desk output copied into the test suite ---
-    "tests/fixtures/constructor_drop_paths_archive.json":
-        "frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)",
-    "tests/fixtures/holding_why_rsg_20260917.json":
-        "a real RSG holding with its real stop and the real broker order id of its fill",
-    "tests/fixtures/log_health_production_excerpt.txt":
-        "production log lines copied verbatim off the desk host, as its own header states",
-    "tests/fixtures/pm_response_11_targets_20260817.txt":
-        "a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning",
-    "tests/fixtures/pm_response_17_targets_20260820.txt":
-        "a second verbatim portfolio-manager answer from a different session",
-    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt":
-        "a verbatim tech-analyst answer with real entries, stops and support/resistance levels",
-    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt":
-        "the retry of that same real intraday check",
-
+    "tests/fixtures/constructor_drop_paths_archive.json": (
+        "frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)"
+    ),
+    "tests/fixtures/holding_why_rsg_20260917.json": (
+        "a real RSG holding with its real stop and the real broker order id of its fill"
+    ),
+    "tests/fixtures/log_health_production_excerpt.txt": (
+        "production log lines copied verbatim off the desk host, as its own header states"
+    ),
+    "tests/fixtures/pm_response_11_targets_20260817.txt": (
+        "a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning"
+    ),
+    "tests/fixtures/pm_response_17_targets_20260820.txt": (
+        "a second verbatim portfolio-manager answer from a different session"
+    ),
+    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt": (
+        "a verbatim tech-analyst answer with real entries, stops and support/resistance levels"
+    ),
+    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt": "the retry of that same real intraday check",
     # --- tests and scripts built around the real 2026-08-28 ONDS/CCJ stop-out ---
-    "tests/test_stop_out_reconciliation.py":
-        "reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills",
-    "tests/test_broker.py":
-        "reuses the same real broker order ids as list_filled_sell_orders test input",
-    "scripts/backfill_stop_out_fills.py":
-        "one-off backfill whose docstring names the two real broker order ids it repaired",
-
+    "tests/test_stop_out_reconciliation.py": (
+        "reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills"
+    ),
+    "tests/test_broker.py": "reuses the same real broker order ids as list_filled_sell_orders test input",
+    "scripts/backfill_stop_out_fills.py": (
+        "one-off backfill whose docstring names the two real broker order ids it repaired"
+    ),
     # --- ops/model_policy fixtures: benchmark inputs taken off a real day ---
-    "ops/model_policy/fixtures/run_64290730_pm_input.json":
-        "a real portfolio-manager input snapshot; already quarantined by fixture_policy",
-    "ops/model_policy/fixtures/run_bba4d4f3_pm_input.json":
-        "a second real portfolio-manager input snapshot; already quarantined by fixture_policy",
-    "ops/model_policy/fixtures/pm_public_day_pm_input.json":
-        "a PM input rebuilt for a public day, but it still carries the real candidate book",
-
+    "ops/model_policy/fixtures/run_64290730_pm_input.json": (
+        "a real portfolio-manager input snapshot; already quarantined by fixture_policy"
+    ),
+    "ops/model_policy/fixtures/run_bba4d4f3_pm_input.json": (
+        "a second real portfolio-manager input snapshot; already quarantined by fixture_policy"
+    ),
+    "ops/model_policy/fixtures/pm_public_day_pm_input.json": (
+        "a PM input rebuilt for a public day, but it still carries the real candidate book"
+    ),
     # --- docs that record what the desk actually did ---
-    "docs/INCIDENT_HISTORY.md":
-        "the incident record; naming the real trade is the point of an incident record",
-    "docs/AGENT_ROLE_AUDIT.md":
-        "audit findings quoted from real runs, kept as the evidence trail for those findings",
-
+    "docs/INCIDENT_HISTORY.md": "the incident record; naming the real trade is the point of an incident record",
+    "docs/AGENT_ROLE_AUDIT.md": "audit findings quoted from real runs, kept as the evidence trail for those findings",
     # --- prompt templates whose worked examples came from real sessions ---
-    "config/prompts/news_analyst.md":
-        "its worked example is a real news-analyst briefing, cited to the model as doctrine",
+    "config/prompts/news_analyst.md": (
+        "its worked example is a real news-analyst briefing, cited to the model as doctrine"
+    ),
 }
 
 # The model-benchmark results. Every one of these replays a real desk input
@@ -201,16 +205,21 @@ def allow_list() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Signal 1 — broker order identifier
 # ---------------------------------------------------------------------------
-_UUID = re.compile(
-    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-)
+_UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 
 # A UUID nobody could mistake for a real one. Keep this generous: the remedy we
 # print tells authors to use exactly PLACEHOLDER_UUID, and a fixture author who
 # reaches for 1111... or deadbeef... meant the same thing.
 PLACEHOLDER_UUID = "00000000-0000-4000-8000-000000000000"
-_OBVIOUS_PLACEHOLDER_PREFIX = ("00000000-", "11111111-", "12345678-", "deadbeef-",
-                               "aaaaaaaa-", "ffffffff-", "abcdabcd-")
+_OBVIOUS_PLACEHOLDER_PREFIX = (
+    "00000000-",
+    "11111111-",
+    "12345678-",
+    "deadbeef-",
+    "aaaaaaaa-",
+    "ffffffff-",
+    "abcdabcd-",
+)
 
 
 def _is_placeholder_uuid(value: str) -> bool:
@@ -235,6 +244,7 @@ _ORDER_CONTEXT = re.compile(
 )
 _UUID_CONTEXT_LINES = 4
 
+
 def _uuid_is_markup_id(line: str, start: int, end: int) -> bool:
     """True when this UUID is a document id belonging to somebody else's format.
 
@@ -245,8 +255,8 @@ def _uuid_is_markup_id(line: str, start: int, end: int) -> bool:
     the test is local — checking the whole line would exempt a single-line JSON
     document that happens to contain a URL somewhere else in it.
     """
-    left = line[max(0, start - 60):start]
-    right = line[end:end + 20]
+    left = line[max(0, start - 60) : start]
+    right = line[end : end + 20]
     if "://" in left or "<!--" in left:
         return True
     return left.rstrip().endswith(">") and right.lstrip().startswith("<")
@@ -261,9 +271,7 @@ def _uuid_is_markup_id(line: str, start: int, end: int) -> bool:
 # always mixes in at least one digit; a word never does. Both lookaheads below
 # are required so the suffix must carry a digit AND a letter, not just digits
 # alone (which would also catch things like part numbers).
-_ACCOUNT_ID = re.compile(
-    r"\bPA(?=[0-9A-Z]{8,11}\b)(?=[0-9A-Z]*[0-9])(?=[0-9A-Z]*[A-Z])[0-9A-Z]{8,11}\b"
-)
+_ACCOUNT_ID = re.compile(r"\bPA(?=[0-9A-Z]{8,11}\b)(?=[0-9A-Z]*[0-9])(?=[0-9A-Z]*[A-Z])[0-9A-Z]{8,11}\b")
 
 # An account id nobody could mistake for a real one: same shape, degenerate
 # content. The remedy tells authors to use exactly PLACEHOLDER_ACCOUNT_ID.
@@ -293,14 +301,23 @@ _SYMBOL_FIELD = re.compile(r"""['"]symbol['"]\s*[:=]\s*['"]([A-Z][A-Z0-9.\-]{0,5
 # Fields the desk's own agents emit. A record carrying four of them is a
 # serialised TechAnalysisResult / decision row, not a hand-built stub.
 _DECISION_FIELDS = (
-    "entry_price", "stop_loss", "reference_target", "thesis_invalid_if",
-    "reasoning_chain", "support_levels", "resistance_levels", "setup_type",
-    "expected_horizon_sessions", "conviction", "signal_weight",
-    "broker_order_id", "fill_price", "avg_entry_price", "rating",
+    "entry_price",
+    "stop_loss",
+    "reference_target",
+    "thesis_invalid_if",
+    "reasoning_chain",
+    "support_levels",
+    "resistance_levels",
+    "setup_type",
+    "expected_horizon_sessions",
+    "conviction",
+    "signal_weight",
+    "broker_order_id",
+    "fill_price",
+    "avg_entry_price",
+    "rating",
 )
-_DECISION_FIELD_RE = {
-    f: re.compile(r"(?<![A-Za-z0-9_])" + f + r"(?![A-Za-z0-9_])") for f in _DECISION_FIELDS
-}
+_DECISION_FIELD_RE = {f: re.compile(r"(?<![A-Za-z0-9_])" + f + r"(?![A-Za-z0-9_])") for f in _DECISION_FIELDS}
 DECISION_FIELDS_REQUIRED = 4
 DECISION_PRICES_REQUIRED = 2
 _RECORD_WINDOW_LINES = 16
@@ -312,10 +329,7 @@ _INVENTED_ENDINGS = (".00", ".25", ".50", ".75")
 
 def _measured_prices(window: str) -> set[str]:
     """Cent-precision values that do not look hand-chosen."""
-    return {
-        m.group(1) for m in _CENT_PRECISION.finditer(window)
-        if not m.group(1).endswith(_INVENTED_ENDINGS)
-    }
+    return {m.group(1) for m in _CENT_PRECISION.finditer(window) if not m.group(1).endswith(_INVENTED_ENDINGS)}
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +339,8 @@ def _measured_prices(window: str) -> set[str]:
 # it exists so that an all-caps English word in a design document is not read
 # as a stock. A ticker missing from this list simply is not counted by the
 # prose signal — the other three signals do not use it at all.
-REAL_TICKERS: frozenset[str] = frozenset("""
+REAL_TICKERS: frozenset[str] = frozenset(
+    """
 AAPL ABBV ABT ACN ADBE AMAT AMD AMGN AMT AMZN AVGO AXP BA BAC BK BKNG BLK BMY
 BRK C CAT CB CCJ CEG CHTR CL CMCSA COF COP COST CRM CSCO CVS CVX DE DHR DIS DLR
 DOW DUK ELV EMR ENPH EOG EPD EQIX EQNR ETN EXC F FCX FDX GD GE GEV GILD GM GOOG
@@ -336,7 +351,8 @@ SBUX SCHW SLB SNDK SO SPG T TGT TJX TMO TMUS TSLA TSM TXN UNH UNP UPS USB V VLO
 VST VZ WDC WFC WMB WMT XOM ZS
 ARKK DIA EEM EFA GLD HYG IEF IWM IYR KRE LQD QQQ RSP SGOV SLV SMH SPY SQQQ TLT
 USO VEA VNQ VOO VTI VWO XBI XLB XLC XLE XLF XLI XLK XLP XLRE XLU XLV XLY XOP
-""".split())
+""".split()
+)
 
 _UPPER_TOKEN = re.compile(r"(?<![A-Za-z0-9_$./\\-])([A-Z]{1,5})(?![A-Za-z0-9_])")
 PROSE_MIN_WORDS = 40
@@ -362,11 +378,7 @@ class Finding:
         return REMEDIES[self.signal]
 
     def render(self) -> str:
-        return (
-            f"{self.path}:{self.line}: [{self.signal}] {self.detail}\n"
-            f"    | {self.excerpt}\n"
-            f"    FIX: {self.remedy()}"
-        )
+        return f"{self.path}:{self.line}: [{self.signal}] {self.detail}\n    | {self.excerpt}\n    FIX: {self.remedy()}"
 
 
 REMEDIES: dict[str, str] = {
@@ -409,6 +421,7 @@ REMEDIES: dict[str, str] = {
 # Scanning
 # ---------------------------------------------------------------------------
 
+
 def _log_line_carries_payload(line: str) -> bool:
     """True when a production-format log line carries live detail.
 
@@ -449,63 +462,79 @@ def _scan_pass(text: str, path: str, *, pass_name: str) -> list[Finding]:
             # single-line JSON document it sits a few characters away and the
             # surrounding lines are the whole file, which would prove nothing.
             if len(line) > 2000:
-                near = line[max(0, m.start() - 200): m.end() + 200]
+                near = line[max(0, m.start() - 200) : m.end() + 200]
             else:
-                near = "\n".join(
-                    lines[max(0, i - 1 - _UUID_CONTEXT_LINES): i + _UUID_CONTEXT_LINES]
-                )
+                near = "\n".join(lines[max(0, i - 1 - _UUID_CONTEXT_LINES) : i + _UUID_CONTEXT_LINES])
             if not _ORDER_CONTEXT.search(near):
                 continue
-            findings.append(Finding(
-                path, i, "broker-order-id",
-                f"a real-looking broker/order identifier ({m.group(0)}){pass_name}",
-                excerpt(line),
-            ))
+            findings.append(
+                Finding(
+                    path,
+                    i,
+                    "broker-order-id",
+                    f"a real-looking broker/order identifier ({m.group(0)}){pass_name}",
+                    excerpt(line),
+                )
+            )
             break
 
         for m in _ACCOUNT_ID.finditer(line):
             if _is_placeholder_account_id(m.group(0)):
                 continue
-            findings.append(Finding(
-                path, i, "broker-account-id",
-                f"a real-looking broker account number ({m.group(0)}){pass_name}",
-                excerpt(line),
-            ))
+            findings.append(
+                Finding(
+                    path,
+                    i,
+                    "broker-account-id",
+                    f"a real-looking broker account number ({m.group(0)}){pass_name}",
+                    excerpt(line),
+                )
+            )
             break
 
-        if _PRODUCTION_LOG.search(line) and (
-            len(production_log_lines) > 1 or _log_line_carries_payload(line)
-        ):
-            findings.append(Finding(
-                path, i, "production-log",
-                f"a line in the desk's production logger format{pass_name}",
-                excerpt(line),
-            ))
+        if _PRODUCTION_LOG.search(line) and (len(production_log_lines) > 1 or _log_line_carries_payload(line)):
+            findings.append(
+                Finding(
+                    path,
+                    i,
+                    "production-log",
+                    f"a line in the desk's production logger format{pass_name}",
+                    excerpt(line),
+                )
+            )
 
         sym = None if long_line else _SYMBOL_FIELD.search(line)
         if sym:
-            window = "\n".join(lines[i - 1: i - 1 + _RECORD_WINDOW_LINES])
+            window = "\n".join(lines[i - 1 : i - 1 + _RECORD_WINDOW_LINES])
             present = [f for f, r in _DECISION_FIELD_RE.items() if r.search(window)]
             prices = _measured_prices(window)
             if len(present) >= DECISION_FIELDS_REQUIRED and len(prices) >= DECISION_PRICES_REQUIRED:
-                findings.append(Finding(
-                    path, i, "desk-decision",
-                    f"{sym.group(1)} carries {len(present)} desk decision fields "
-                    f"and prices that look measured, not invented "
-                    f"({', '.join(sorted(prices)[:3])}){pass_name}",
-                    excerpt(line),
-                ))
+                findings.append(
+                    Finding(
+                        path,
+                        i,
+                        "desk-decision",
+                        f"{sym.group(1)} carries {len(present)} desk decision fields "
+                        f"and prices that look measured, not invented "
+                        f"({', '.join(sorted(prices)[:3])}){pass_name}",
+                        excerpt(line),
+                    )
+                )
 
         words = [] if long_line else line.split()
         if len(words) >= PROSE_MIN_WORDS and (line.count(".") + line.count("!")) >= PROSE_MIN_SENTENCES:
             tickers = {t for t in _UPPER_TOKEN.findall(line) if t in REAL_TICKERS}
             if len(tickers) >= PROSE_MIN_TICKERS:
-                findings.append(Finding(
-                    path, i, "desk-prose",
-                    f"a {len(words)}-word passage naming {len(tickers)} real tickers "
-                    f"({', '.join(sorted(tickers)[:6])}){pass_name}",
-                    excerpt(line),
-                ))
+                findings.append(
+                    Finding(
+                        path,
+                        i,
+                        "desk-prose",
+                        f"a {len(words)}-word passage naming {len(tickers)} real tickers "
+                        f"({', '.join(sorted(tickers)[:6])}){pass_name}",
+                        excerpt(line),
+                    )
+                )
 
     return findings
 
@@ -527,10 +556,13 @@ def scan_text(text: str, path: str = "<memory>") -> list[Finding]:
                 findings.append(f)
 
     if '\\"' in text or "\\n" in text:
-        add(_scan_pass(
-            text.replace("\\n", "\n").replace('\\"', '"'),
-            path, pass_name=" (inside an escaped JSON string)",
-        ))
+        add(
+            _scan_pass(
+                text.replace("\\n", "\n").replace('\\"', '"'),
+                path,
+                pass_name=" (inside an escaped JSON string)",
+            )
+        )
 
     # Whether a JSON fixture is pretty-printed is a formatting choice, and the
     # line-shaped signals must not depend on it: `holding_why_rsg_...json` is
@@ -541,10 +573,13 @@ def scan_text(text: str, path: str = "<memory>") -> list[Finding]:
     # pretty-printed document re-dumps to itself and the pass costs real time.
     if stripped[:1] in "{[" and any(len(l) > 2000 for l in text.splitlines()):
         try:
-            add(_scan_pass(
-                json.dumps(json.loads(text), indent=1),
-                path, pass_name=" (JSON re-indented for scanning)",
-            ))
+            add(
+                _scan_pass(
+                    json.dumps(json.loads(text), indent=1),
+                    path,
+                    pass_name=" (JSON re-indented for scanning)",
+                )
+            )
         except (ValueError, RecursionError):
             pass
     return findings

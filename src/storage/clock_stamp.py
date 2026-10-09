@@ -5,6 +5,7 @@ SQL ``datetime('now')`` is a second clock and the single-clock guard refuses
 it. These helpers are the one place a row stamp is formatted so every
 module writes the exact string SQLite itself would have stored.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta

@@ -15,6 +15,7 @@ NEVER `entry_price` / `stop_loss` / `allocation_pct` — those are
 PortfolioConstructor's job. If a future edit re-introduces price-level
 output to PM, this test catches it.
 """
+
 from pathlib import Path
 
 import pytest
@@ -197,10 +198,11 @@ def test_meta_reflector_contract_names_protected_agents() -> None:
 # knows: a reworded false claim, or a new one, passes these untouched.
 # ---------------------------------------------------------------------------
 
+
 def _pm_prompt_flat() -> str:
     from pathlib import Path as _P
-    src = (_P(__file__).resolve().parents[1]
-           / "config/prompts/portfolio_manager.md").read_text()
+
+    src = (_P(__file__).resolve().parents[1] / "config/prompts/portfolio_manager.md").read_text()
     return " ".join(src.split())
 
 
@@ -221,7 +223,7 @@ def test_pm_still_told_a_wrong_side_short_stop_is_rejected_outright():
     """TRUE as written, confirmed 2026-10-01 against
     `src/portfolio_constructor.py`: a short stop at or below entry is
     refused rather than widened, and a None stop drops the target."""
-    assert ("the constructor REJECTS the trade outright" in _pm_prompt_flat())
+    assert "the constructor REJECTS the trade outright" in _pm_prompt_flat()
 
 
 def test_pm_still_told_a_side_flip_is_not_done_in_one_session():

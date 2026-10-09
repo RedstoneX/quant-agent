@@ -16,13 +16,15 @@ class PromptWatchlist:
     """The watchlist candidates; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
     ) -> None:
         self.db = db
 
     def _build_watchlist_candidates(
-        self, lookback_days: int = 30,
+        self,
+        lookback_days: int = 30,
     ) -> list[dict]:
         """Symbols the evening analyst has repeatedly flagged as "add" or
         "watch" to the trading universe — the surface the user reviews
@@ -68,10 +70,12 @@ class PromptWatchlist:
             rows = self.db.get_recent_insights(limit=lookback_days + 5)
         except Exception as exc:
             logger.warning(
-                "watchlist_candidates: insights fetch failed: %s", exc,
+                "watchlist_candidates: insights fetch failed: %s",
+                exc,
             )
             return []
         if not rows:
             return []
         from src.watchlist_candidates import build_watchlist_candidates
+
         return build_watchlist_candidates(rows, lookback_days)

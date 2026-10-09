@@ -42,6 +42,7 @@ uncertainty (broker query failed, non-finite numbers, open-order notional
 unknowable) resolves to "do nothing this session" — an unswept dollar
 costs basis points; an over-swept dollar can reject a real trade.
 """
+
 import logging
 import math
 import time
@@ -155,12 +156,15 @@ class CashSweeper:
             # otherwise indistinguishable from "nothing held". The
             # vehicle stays held and stopless until the next session.
             DatabaseEventJournal(pipeline.db).record_pipeline_event(
-                run_id=str(run_id or ""), decision_id=None, symbol=sym,
-                stage="cash_sweep_release", outcome="skipped",
-                reason="position read failed", error=str(e),
+                run_id=str(run_id or ""),
+                decision_id=None,
+                symbol=sym,
+                stage="cash_sweep_release",
+                outcome="skipped",
+                reason="position read failed",
+                error=str(e),
             )
-            logger.warning("cash sweep retired: position read failed — "
-                           "not releasing %s this session: %s", sym, e)
+            logger.warning("cash sweep retired: position read failed — not releasing %s this session: %s", sym, e)
             return None
         held = next(
             (p for p in (positions or []) if getattr(p, "symbol", None) == sym),
@@ -176,15 +180,17 @@ class CashSweeper:
             return None
         price = getattr(held, "current_price", None)
         if not (isinstance(price, (int, float)) and math.isfinite(price) and price > 0):
-            logger.warning("cash sweep retired: no usable price for %s — "
-                           "not releasing this session", sym)
+            logger.warning("cash sweep retired: no usable price for %s — not releasing this session", sym)
             return None
         sell_qty = pipeline._full_sell_qty(qty)
         if sell_qty is None:
             return None
         sale = pipeline._submit_protected_sell(
-            symbol=sym, qty=sell_qty, limit_price=round(price * _SELL_LIMIT_PAD, 2),
-            reference_price=price, position_qty_before_sell=qty,
+            symbol=sym,
+            qty=sell_qty,
+            limit_price=round(price * _SELL_LIMIT_PAD, 2),
+            reference_price=price,
+            position_qty_before_sell=qty,
             label="SWEEP_SELL",
         )
         if sale is None:
@@ -192,22 +198,29 @@ class CashSweeper:
         order, prot = sale
         try:
             pipeline.db.insert_trade(
-                symbol=sym, action="SWEEP_SELL", qty=sell_qty, price=price,
+                symbol=sym,
+                action="SWEEP_SELL",
+                qty=sell_qty,
+                price=price,
                 reasoning=(
                     "cash sweep retired (owner mandate 2026-09-17: fully "
                     f"invested, no T-bills): releasing all held {sym} into cash"
                 ),
-                run_id=run_id, broker_order_id=order.get("id"),
+                run_id=run_id,
+                broker_order_id=order.get("id"),
                 fill_status="submitted",
             )
             record_guarded_pass((pipeline, pipeline.broker), "cash_sweep.sweep_sell_insert", context={"symbol": sym})
         except Exception as e:  # noqa: BLE001 — ledger failure must not strand finalize
-            record_guarded_pass((pipeline, pipeline.broker), "cash_sweep.sweep_sell_insert", e,
-                                context={"symbol": sym})
+            record_guarded_pass((pipeline, pipeline.broker), "cash_sweep.sweep_sell_insert", e, context={"symbol": sym})
             logger.warning("cash sweep retired: insert_trade failed for SWEEP_SELL: %s", e)
         pipeline._finalize_pending_protections([prot], context="CASH SWEEP RETIRED")
-        logger.info("cash sweep retired: submitted full release of %s (%s sh @ ~$%.2f)",
-                    sym, pipeline._format_qty(sell_qty), price)
+        logger.info(
+            "cash sweep retired: submitted full release of %s (%s sh @ ~$%.2f)",
+            sym,
+            pipeline._format_qty(sell_qty),
+            price,
+        )
         return order
 
 
@@ -228,8 +241,12 @@ def sweeper_or_none(cash_sweeper):
         # Recorded, not just logged: a config that cannot even be read is
         # otherwise indistinguishable from "sweep disabled".
         DatabaseEventJournal(getattr(sweeper._pipeline, "db", None)).record_pipeline_event(
-            run_id="", decision_id=None, symbol=None,
-            stage="cash_sweep_config", outcome="disabled",
-            reason="config read failed", error=str(e),
+            run_id="",
+            decision_id=None,
+            symbol=None,
+            stage="cash_sweep_config",
+            outcome="disabled",
+            reason="config read failed",
+            error=str(e),
         )
         return None

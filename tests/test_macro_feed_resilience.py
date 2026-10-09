@@ -48,13 +48,20 @@ def _minimal_macro_analysis():
 
     return MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="medium", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="medium",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
     )
@@ -63,6 +70,7 @@ def _minimal_macro_analysis():
 # ===========================================================================
 # Retry / backoff / deadline mechanism
 # ===========================================================================
+
 
 @patch("src.data.macro.time.sleep")
 @patch("src.data.macro.Fred")
@@ -205,6 +213,7 @@ def test_deadline_already_expired_skips_remaining_series_without_attempting(mock
 # The six new series — parsed correctly, reach the summary dict
 # ===========================================================================
 
+
 @patch("src.data.macro.Fred")
 def test_get_treasury_yields_includes_3m_10y_curve(mock_fred_cls):
     """DGS3MO added alongside the existing 2Y/10Y curve."""
@@ -308,9 +317,13 @@ def test_build_user_message_renders_new_series_and_coverage():
     macro_summary = {
         "vix": {"current": 18.0, "mean_5d": 18.5, "trend": "falling", "staleness_days": 0},
         "treasury": {
-            "us3mo": 3.84, "us2y": 4.2, "us10y": 4.67,
-            "spread_2_10": 0.47, "inverted": False,
-            "spread_3m_10y": 0.83, "inverted_3m_10y": False,
+            "us3mo": 3.84,
+            "us2y": 4.2,
+            "us10y": 4.67,
+            "spread_2_10": 0.47,
+            "inverted": False,
+            "spread_3m_10y": 0.83,
+            "inverted_3m_10y": False,
             "staleness_days": 0,
         },
         "real_rates": {"real_10y": 2.34, "breakeven_10y": 2.31, "staleness_days": 0},
@@ -319,7 +332,8 @@ def test_build_user_message_renders_new_series_and_coverage():
         "jobless_claims": {"current": 203000, "change_4w": -7000, "trend": "falling", "staleness_days": 6},
     }
     coverage = MacroCoverage(
-        configured=15, succeeded=14,
+        configured=15,
+        succeeded=14,
         failed=[SeriesFailure(series_id="ICSA", reason="timed out")],
     )
 
@@ -340,6 +354,7 @@ def test_build_user_message_renders_new_series_and_coverage():
 # ===========================================================================
 # No-op wall: existing fields unchanged from pre-Phase-4.2 behavior
 # ===========================================================================
+
 
 @patch("src.data.macro.Fred")
 def test_no_op_existing_fields_unchanged_when_everything_succeeds(mock_fred_cls):
@@ -428,6 +443,7 @@ def test_no_op_existing_fields_unchanged_when_everything_succeeds(mock_fred_cls)
 # (mirrors the equivalent NewsCoverage tests in test_pipeline_stages.py)
 # ===========================================================================
 
+
 def _macro_coverage_stage(macro_coverage, macro_analysis):
     """Minimal MorningResearchStage wiring shared by the tests below —
     mirrors test_pipeline_stages.py's _news_coverage_stage exactly, but
@@ -441,8 +457,10 @@ def _macro_coverage_stage(macro_coverage, macro_analysis):
 
     macro_provider = MagicMock()
     macro_provider.get_macro_summary.return_value = {
-        "vix": {"current": 18.0}, "credit_spread": {"current_bps": 300},
-        "inflation": {"core_cpi_yoy": 3.0}, "unemployment": {"current": 4.2},
+        "vix": {"current": 18.0},
+        "credit_spread": {"current_bps": 300},
+        "inflation": {"core_cpi_yoy": 3.0},
+        "unemployment": {"current": 4.2},
     }
     macro_provider.last_coverage = macro_coverage
 
@@ -451,10 +469,18 @@ def _macro_coverage_stage(macro_coverage, macro_analysis):
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (macro_analysis, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        macro_analysis,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
 
     return MorningResearchStage(
         config=mock_config,
@@ -482,7 +508,8 @@ def test_morning_research_stage_macro_partial_coverage_marks_status_partial():
     fix, data_status['macro'] was 'ok' purely because the LLM call parsed
     — this asserts it is now 'partial'."""
     coverage = MacroCoverage(
-        configured=15, succeeded=14,
+        configured=15,
+        succeeded=14,
         failed=[SeriesFailure(series_id="ICSA", reason="timed out")],
     )
     stage = _macro_coverage_stage(coverage, _minimal_macro_analysis())
@@ -504,7 +531,8 @@ def test_morning_research_stage_macro_total_failure_marks_status_failed_even_whe
     dominate — this must read as 'failed', never 'ok', regardless of
     whether the LLM call itself succeeded on empty input."""
     coverage = MacroCoverage(
-        configured=15, succeeded=0,
+        configured=15,
+        succeeded=0,
         failed=[SeriesFailure(series_id=f"S{i}", reason="timed out") for i in range(15)],
     )
     stage = _macro_coverage_stage(coverage, _minimal_macro_analysis())

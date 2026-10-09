@@ -1,6 +1,7 @@
 """Boundary witnesses: the two sell-side bodies lifted out of
 `ExitEngineMixin` (src/pipeline_exits.py) into src/exits_parts/ build and
 import alone, and the mixin keeps same-signature shims for both."""
+
 import pytest
 
 from tests.boundary_harness import check_boundary

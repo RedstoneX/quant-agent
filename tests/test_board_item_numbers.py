@@ -23,6 +23,7 @@ without turning an ordinary network hiccup into a blocked merge queue. See
 `scripts/board_numbers.py`'s module docstring and `scripts/
 check_board_number_claims.py` (advisory, non-required CI job) for that half.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,6 +37,7 @@ WORK_MD = REPO_ROOT / "docs" / "WORK.md"
 # ---------------------------------------------------------------------------
 # The real board, right now
 # ---------------------------------------------------------------------------
+
 
 def test_the_real_board_has_no_duplicate_item_numbers():
     text = WORK_MD.read_text()
@@ -51,10 +53,7 @@ def test_the_real_board_has_no_duplicate_item_numbers():
 def test_the_real_board_has_no_live_number_that_is_also_retired():
     text = WORK_MD.read_text()
     retired = bn.retired_item_numbers(text)
-    assert retired.error is None, (
-        f"the retired-numbers line in docs/WORK.md could not be parsed: "
-        f"{retired.error}"
-    )
+    assert retired.error is None, f"the retired-numbers line in docs/WORK.md could not be parsed: {retired.error}"
     reused = bn.live_numbers_that_are_retired(text)
     assert not reused, (
         f"item number(s) {reused} are both a live item on the board and "
@@ -154,6 +153,7 @@ def test_unparseable_retired_line_is_reported_as_an_error_not_a_false_clean_bill
 # ---------------------------------------------------------------------------
 # Open-PR claims (advisory data source) and the positive script's math
 # ---------------------------------------------------------------------------
+
 
 def test_claims_from_patch_reads_only_added_heading_lines():
     patch = (

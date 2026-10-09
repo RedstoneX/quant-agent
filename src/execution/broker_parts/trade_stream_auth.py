@@ -1,4 +1,5 @@
 """The `trade_updates` authentication handling, lifted verbatim from trade_stream.py."""
+
 from __future__ import annotations
 
 import asyncio
@@ -156,11 +157,15 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
         differs, because only the frame is what the broker deprecated.
         """
         ws_now = getattr(stream, "_ws", None)
-        await ws_now.send(json.dumps({
-            "action": "auth",
-            "key": getattr(stream, "_api_key", None),
-            "secret": getattr(stream, "_secret_key", None),
-        }))
+        await ws_now.send(
+            json.dumps(
+                {
+                    "action": "auth",
+                    "key": getattr(stream, "_api_key", None),
+                    "secret": getattr(stream, "_secret_key", None),
+                }
+            )
+        )
         raw = await ws_now.recv()
         msg = json.loads(raw)
         data = msg.get("data") or {}
@@ -181,10 +186,16 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             try:
                 ws.recv = original_recv  # type: ignore[union-attr]
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(None, "trade_stream.auth_capture.restore_recv", exc, log=logger,
-                                    context={"effect": "recv wrapper stays on the socket"})
+                record_guarded_pass(
+                    None,
+                    "trade_stream.auth_capture.restore_recv",
+                    exc,
+                    log=logger,
+                    context={"effect": "recv wrapper stays on the socket"},
+                )
 
         if callable(original_recv):
+
             async def _recv_once():
                 raw = await original_recv()
                 if "raw" not in captured:
@@ -195,8 +206,13 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             try:
                 ws.recv = _recv_once  # type: ignore[union-attr]
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(None, "trade_stream.auth_capture.wrap_recv", exc, log=logger,
-                                    context={"effect": "auth reply not captured"})
+                record_guarded_pass(
+                    None,
+                    "trade_stream.auth_capture.wrap_recv",
+                    exc,
+                    log=logger,
+                    context={"effect": "auth reply not captured"},
+                )
                 original_recv = None
 
         # WHICH FRAME THIS HANDSHAKE SENDS. New form unless a previous
@@ -226,15 +242,14 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             # timeout raises out of `_start_ws`, which is exactly the shape
             # the ceiling already counts and gives up on.
             await asyncio.wait_for(
-                attempt_auth(), timeout=_ALPACA_STREAM_AUTH_DEADLINE_S,
+                attempt_auth(),
+                timeout=_ALPACA_STREAM_AUTH_DEADLINE_S,
             )
         except asyncio.TimeoutError as exc:
             message, status = _parse_stream_auth_reply(captured.get("raw"))
             raise TradeStreamAuthRejected(
                 broker_message=(
-                    message
-                    or "no reply to the authentication frame within "
-                       f"{_ALPACA_STREAM_AUTH_DEADLINE_S:.0f}s"
+                    message or f"no reply to the authentication frame within {_ALPACA_STREAM_AUTH_DEADLINE_S:.0f}s"
                 ),
                 broker_status=status or "no reply",
                 credential=getattr(stream, "_api_key", None),
@@ -282,12 +297,13 @@ def _fell_back_to_deprecated_auth(stream: object, raw: object) -> None:
     try:
         setattr(stream, "_qamc_auth_fallback", True)
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(None, "trade_stream.auth_fallback.mark", exc, log=logger,
-                            context={"effect": "fallback flag not set"})
+        record_guarded_pass(
+            None, "trade_stream.auth_fallback.mark", exc, log=logger, context={"effect": "fallback flag not set"}
+        )
         return
     message, status = _parse_stream_auth_reply(raw)
     logger.warning(
-        "trade_updates auth: the CURRENT format {\"action\":\"auth\"} was "
+        'trade_updates auth: the CURRENT format {"action":"auth"} was '
         "refused (broker said: %s; broker status: %s) — the next handshake "
         "falls back to the deprecated format on a fresh socket. If the "
         "credential is good, this means the current format is not accepted "
@@ -310,7 +326,7 @@ def _note_current_auth_format_accepted() -> None:
     _stream_current_auth_format_logged = True
     logger.info(
         "trade_updates authenticated with the CURRENT auth format "
-        "({\"action\":\"auth\"}) — the deprecated format alpaca-py builds "
+        '({"action":"auth"}) — the deprecated format alpaca-py builds '
         "was not used",
     )
 
@@ -335,8 +351,13 @@ def _note_stream_auth_deprecation(raw: object) -> None:
     try:
         message, _status = _parse_stream_auth_reply(raw)
     except Exception as exc:  # noqa: BLE001 - a diagnostic must not break the handshake
-        record_guarded_pass(None, "trade_stream.auth_deprecation.parse", exc, log=logger,
-                            context={"effect": "deprecation notice not logged"})
+        record_guarded_pass(
+            None,
+            "trade_stream.auth_deprecation.parse",
+            exc,
+            log=logger,
+            context={"effect": "deprecation notice not logged"},
+        )
         return
     if not message or _STREAM_AUTH_DEPRECATION_MARKER not in message.lower():
         return

@@ -1,4 +1,5 @@
 """Evening stop-proximity step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -57,8 +58,7 @@ class EveningStopProximitySession:
                     continue
                 if qty == 0 or not (math.isfinite(price) and price > 0):
                     continue
-                _sr = self._stop_reader(self._broker, symbol, db=self._db,
-                                        context="evening stop proximity")
+                _sr = self._stop_reader(self._broker, symbol, db=self._db, context="evening stop proximity")
                 stop = _sr.price if _sr.found else None
                 atr = self._atr_for_symbol(symbol)
                 if stop is None or atr is None or not (stop > 0):
@@ -82,17 +82,28 @@ class EveningStopProximitySession:
                     # itself. The distance is reported as a positive number
                     # of dollars PAST the trigger, which is a different
                     # quantity from `gap` and carries a different name.
-                    rows.append({
-                        "symbol": symbol, "status": "through", "price": price,
-                        "stop": float(stop), "through": -gap,
-                        "atr": float(atr),
-                    })
+                    rows.append(
+                        {
+                            "symbol": symbol,
+                            "status": "through",
+                            "price": price,
+                            "stop": float(stop),
+                            "through": -gap,
+                            "atr": float(atr),
+                        }
+                    )
                     continue
                 if gap < atr:
-                    rows.append({
-                        "symbol": symbol, "status": "near", "price": price,
-                        "stop": float(stop), "gap": gap, "atr": float(atr),
-                    })
+                    rows.append(
+                        {
+                            "symbol": symbol,
+                            "status": "near",
+                            "price": price,
+                            "stop": float(stop),
+                            "gap": gap,
+                            "atr": float(atr),
+                        }
+                    )
         except Exception as exc:  # noqa: BLE001 — never break the evening push
             record_guarded_pass((self._db, self._broker), "sessions.evening_stop_proximity", exc, log=logger)
             return []

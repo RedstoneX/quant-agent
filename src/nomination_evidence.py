@@ -15,8 +15,14 @@ import json
 
 
 def persist_nomination_summary(
-    db, *, run_id: str, nominations_by_seat: dict, total_raw: int,
-    max_per_seat: int, max_total: int, **particular,
+    db,
+    *,
+    run_id: str,
+    nominations_by_seat: dict,
+    total_raw: int,
+    max_per_seat: int,
+    max_total: int,
+    **particular,
 ) -> None:
     """Write one `nomination_summary` row for this run.
 
@@ -32,7 +38,9 @@ def persist_nomination_summary(
     from src.pipeline_stages import _persist_evidence
 
     cap_demand = measure_cap_demand(
-        nominations_by_seat, max_per_seat=max_per_seat, max_total=max_total,
+        nominations_by_seat,
+        max_per_seat=max_per_seat,
+        max_total=max_total,
     )
     payload = {
         "raw_nominations": total_raw,
@@ -41,7 +49,10 @@ def persist_nomination_summary(
     }
     payload.update(particular)
     _persist_evidence(
-        db, run_id=run_id, agent_name="pipeline",
-        kind="nomination_summary", scope="run",
+        db,
+        run_id=run_id,
+        agent_name="pipeline",
+        kind="nomination_summary",
+        scope="run",
         evidence_json=json.dumps(payload, sort_keys=True),
     )

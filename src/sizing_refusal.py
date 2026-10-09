@@ -31,6 +31,7 @@ passed in rather than imported so this module never imports the pipeline (no
 import cycle) and a test can hand it any reader. Direction is not an argument:
 a short is sized and refused exactly like a long.
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,15 +69,14 @@ def reset_price_feed(pipeline, reference_symbol: str | None) -> None:
 def _record_fault(pipeline, where: str, exc: BaseException, **context) -> None:
     """Durable, counted ``disagreed`` row with the traceback; never raises."""
     try:
-        record_guarded_outcome(db=getattr(pipeline, "db", None),
-                               where=f"price_feed.{where}", exc=exc, log=logger,
-                               context=context or None)
+        record_guarded_outcome(
+            db=getattr(pipeline, "db", None), where=f"price_feed.{where}", exc=exc, log=logger, context=context or None
+        )
     except Exception:  # noqa: BLE001 - an observer must never break the refusal
         logger.error("price_feed fault could not be recorded at %s", where, exc_info=True)
 
 
-def declare_price_feed_fault(pipeline, where: str, exc: BaseException, *,
-                             symbol: str | None = None) -> str:
+def declare_price_feed_fault(pipeline, where: str, exc: BaseException, *, symbol: str | None = None) -> str:
     """The feed is down: record it durably and refuse every further new entry
     this session. Returns the detail every refusal from now on carries."""
     detail = (
@@ -113,7 +113,10 @@ def reference_read_ok(pipeline, exclude: tuple[str, ...] = ()) -> bool | None:
 
 
 def sizing_price_or_refusal(
-    reader: Callable[[object, str], float | None], pipeline, symbol: str, what: str,
+    reader: Callable[[object, str], float | None],
+    pipeline,
+    symbol: str,
+    what: str,
 ) -> tuple[float | None, str, str]:
     """``(price, "", "")`` when sizeable, else ``(None, reason, detail)``.
 
@@ -127,21 +130,27 @@ def sizing_price_or_refusal(
         price = reader(pipeline, symbol)
     except SizingPriceUnavailable as exc:
         logger.error(
-            "%s sizing price UNREADABLE -- %s refused: %s", symbol, what, exc,
+            "%s sizing price UNREADABLE -- %s refused: %s",
+            symbol,
+            what,
+            exc,
             exc_info=True,
         )
         return (None, *classify_price_read_failure(pipeline, exc, symbol=symbol, what=what))
     if isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
         return float(price), "", ""
-    return None, NO_SIZING_PRINT, (
-        f"no today trade print to size the {what} against (a quote mid or a "
-        "prior-session price is not a sizing reference) — refused rather than "
-        "sized on a bad price"
+    return (
+        None,
+        NO_SIZING_PRINT,
+        (
+            f"no today trade print to size the {what} against (a quote mid or a "
+            "prior-session price is not a sizing reference) — refused rather than "
+            "sized on a bad price"
+        ),
     )
 
 
-def classify_price_read_failure(pipeline, exc: BaseException, *, symbol: str,
-                                what: str) -> tuple[str, str]:
+def classify_price_read_failure(pipeline, exc: BaseException, *, symbol: str, what: str) -> tuple[str, str]:
     """One name's read failed after retry: is it the name or the desk?
 
     The reference symbol is read once. If that fails too the feed is down
@@ -155,7 +164,10 @@ def classify_price_read_failure(pipeline, exc: BaseException, *, symbol: str,
     verdict = reference_read_ok(pipeline, exclude=(symbol,))
     if verdict is False:
         return PRICE_FEED_UNREADABLE, declare_price_feed_fault(
-            pipeline, "sizing_read", exc, symbol=symbol,
+            pipeline,
+            "sizing_read",
+            exc,
+            symbol=symbol,
         )
     if verdict is None:
         _record_fault(pipeline, "desk_unclassified", exc, symbol=symbol, what=what)

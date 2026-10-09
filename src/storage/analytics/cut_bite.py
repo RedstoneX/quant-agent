@@ -75,8 +75,7 @@ def record_cut_bite(
     payload = {
         "site": site,
         "cuts": {
-            name: {"before": int(edge["before"]), "survived": int(edge["survived"])}
-            for name, edge in cuts.items()
+            name: {"before": int(edge["before"]), "survived": int(edge["survived"])} for name, edge in cuts.items()
         },
         "oldest_surviving_age_days": oldest_surviving_age_days,
     }
@@ -84,8 +83,10 @@ def record_cut_bite(
         ReconciliationLog(conn=conn).record(
             # `agreed` carries no agreement here -- there are no two sides to
             # agree. It is 1 to mean the cut site ran and recorded.
-            kind=f"{KIND_PREFIX}{site}", agreed=True,
-            detail=json.dumps(payload, default=str), run_id=run_id,
+            kind=f"{KIND_PREFIX}{site}",
+            agreed=True,
+            detail=json.dumps(payload, default=str),
+            run_id=run_id,
         )
     except Exception:  # noqa: BLE001
         logger.error("cut_bite %s could not be recorded", site, exc_info=True)
@@ -126,19 +127,19 @@ def read_cut_bite(*, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500) 
         verdict = None
         if verdict_row is not None:
             verdict = verdict_row[0] or verdict_row[1] or None
-        out.append({
-            "run_id": run_id,
-            "ran_at": ran_at,
-            "cuts": payload.get("cuts") or {},
-            "oldest_surviving_age_days": payload.get("oldest_surviving_age_days"),
-            "verdict": verdict,
-            "complete": verdict is not None,
-        })
+        out.append(
+            {
+                "run_id": run_id,
+                "ran_at": ran_at,
+                "cuts": payload.get("cuts") or {},
+                "oldest_surviving_age_days": payload.get("oldest_surviving_age_days"),
+                "verdict": verdict,
+                "complete": verdict is not None,
+            }
+        )
     return out
 
 
-def complete_cut_bite_observations(
-    *, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500
-) -> list[dict]:
+def complete_cut_bite_observations(*, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500) -> list[dict]:
     """Only the runs where all four fields exist -- the observation series itself."""
     return [o for o in read_cut_bite(db=db, site=site, seat=seat, limit=limit) if o["complete"]]

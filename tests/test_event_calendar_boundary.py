@@ -54,8 +54,16 @@ def test_part_passes_the_boundary_harness(name):
 
 def test_package_reexports_every_public_name_of_each_part():
     for part in (
-        macro, macro_cache, macro_types, macro_fetch, macro_provider,
-        fomc, fomc_parse, fomc_provider, earnings, rendering,
+        macro,
+        macro_cache,
+        macro_types,
+        macro_fetch,
+        macro_provider,
+        fomc,
+        fomc_parse,
+        fomc_provider,
+        earnings,
+        rendering,
     ):
         for attr, value in vars(part).items():
             if attr.startswith("__") or attr == "logger" or isinstance(value, types.ModuleType):

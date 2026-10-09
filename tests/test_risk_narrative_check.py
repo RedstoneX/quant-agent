@@ -11,15 +11,21 @@ from src.risk_narrative_check import check_sizing_narrative
 
 def _rc(sizing_logic: str) -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic=sizing_logic,
-        portfolio_balance="b", cash_target="c",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic=sizing_logic,
+        portfolio_balance="b",
+        cash_target="c",
     )
 
 
 def _decision(sizing_logic: str, targets: list[TargetPosition]) -> PortfolioDecision:
     return PortfolioDecision(
-        reasoning_chain=_rc(sizing_logic), portfolio_view="v", targets=targets,
+        reasoning_chain=_rc(sizing_logic),
+        portfolio_view="v",
+        targets=targets,
     )
 
 
@@ -94,11 +100,13 @@ def test_finer_emitted_precision_narrows_the_band():
     +/-0.005: 2.25% agrees, 2.3% does not. Nothing here is a chosen figure --
     both bands fall out of how the field itself was written."""
     agrees = _decision(
-        "NVDA is risking 2.25% here.", [_target("NVDA", 2.25)],
+        "NVDA is risking 2.25% here.",
+        [_target("NVDA", 2.25)],
     )
     assert check_sizing_narrative(agrees) == []
     differs = _decision(
-        "NVDA is risking 2.3% here.", [_target("NVDA", 2.25)],
+        "NVDA is risking 2.3% here.",
+        [_target("NVDA", 2.25)],
     )
     assert [f.symbol for f in check_sizing_narrative(differs)] == ["NVDA"]
 
@@ -175,10 +183,17 @@ def test_stored_run_601011e0_reproduces():
         "diversifies chip exposure; MRVL gets 2.0% on earnings plus technical "
         "support; ZS gets 1.75% as a smaller software add."
     )
-    decision = _decision(sizing_logic, [
-        _target("AAPL", 2.5), _target("RSG", 0.5), _target("NET", 2.25),
-        _target("MRVL", 2.0), _target("TSM", 2.2), _target("ZS", 0.5),
-    ])
+    decision = _decision(
+        sizing_logic,
+        [
+            _target("AAPL", 2.5),
+            _target("RSG", 0.5),
+            _target("NET", 2.25),
+            _target("MRVL", 2.0),
+            _target("TSM", 2.2),
+            _target("ZS", 0.5),
+        ],
+    )
     findings = check_sizing_narrative(decision)
     assert [f.symbol for f in findings] == ["RSG"]
     assert (findings[0].prose_pct, findings[0].field_pct) == (2.5, 0.5)

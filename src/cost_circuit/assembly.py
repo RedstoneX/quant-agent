@@ -10,6 +10,7 @@ infrastructure error through getter / setter pairs. A part is never handed the
 breaker's delegate for a body it already owns (that would recurse); cross-part
 calls go through the breaker's delegates so every part sees the held instance.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

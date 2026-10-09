@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_session.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import sqlite3
 from typing import Any, Callable, TypeVar
@@ -13,7 +14,8 @@ from src.cost_circuit.schema import ensure_cost_circuit_schema
 
 class SessionLifecycle:
     def __init__(
-        self, *,
+        self,
+        *,
         enabled,
         connect,
         session_context,
@@ -61,9 +63,7 @@ class SessionLifecycle:
     def _validate_accounting_invariants(self, conn: sqlite3.Connection, day: str) -> None:
         """Reject missing/cross-linked rows instead of interpreting them as $0."""
 
-        day_row = conn.execute(
-            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)
-        ).fetchone()
+        day_row = conn.execute("SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)).fetchone()
         if day_row is None:
             raise RuntimeError(f"cost-circuit day accounting row is missing for {day}")
 
@@ -72,13 +72,8 @@ class SessionLifecycle:
             "FROM llm_budget_sessions WHERE day=? AND status<>'legacy'",
             (day,),
         ).fetchone()
-        if abs(
-            float(day_row["incremental_cost_usd"] or 0.0)
-            - float(session_total["cost"] or 0.0)
-        ) > 1e-8:
-            raise RuntimeError(
-                "cost-circuit day/session settled-cost ledgers disagree for " + day
-            )
+        if abs(float(day_row["incremental_cost_usd"] or 0.0) - float(session_total["cost"] or 0.0)) > 1e-8:
+            raise RuntimeError("cost-circuit day/session settled-cost ledgers disagree for " + day)
 
         try:
             missing_log_session = conn.execute(
@@ -92,18 +87,13 @@ class SessionLifecycle:
                 raise
             missing_log_session = None
         if missing_log_session is not None:
-            raise RuntimeError(
-                "same-day paid agent log has no cost-circuit session: "
-                f"{missing_log_session['run_id']}"
-            )
+            raise RuntimeError(f"same-day paid agent log has no cost-circuit session: {missing_log_session['run_id']}")
 
     def _seed_today(self, conn: sqlite3.Connection) -> None:
         """Seed pre-deployment spend and attempts exactly once per ET day."""
 
         day, utc_start, utc_end = _et_day_and_utc_bounds()
-        exists = conn.execute(
-            "SELECT 1 FROM llm_budget_days WHERE day = ?", (day,)
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM llm_budget_days WHERE day = ?", (day,)).fetchone()
         if exists:
             self._validate_accounting_invariants(conn, day)
             return
@@ -153,8 +143,13 @@ class SessionLifecycle:
                 "provider_attempts, costs_exact, status) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, 'legacy')",
                 (
-                    run_id, day, _legacy_mode(run_id), float(row["cost"] or 0),
-                    calls, calls, int(int(row["unknown_cost_rows"] or 0) == 0),
+                    run_id,
+                    day,
+                    _legacy_mode(run_id),
+                    float(row["cost"] or 0),
+                    calls,
+                    calls,
+                    int(int(row["unknown_cost_rows"] or 0) == 0),
                 ),
             )
         self._validate_accounting_invariants(conn, day)
@@ -177,8 +172,7 @@ class SessionLifecycle:
                 conn.execute("BEGIN IMMEDIATE")
                 self._seed_today(conn)
                 conn.execute(
-                    "INSERT OR IGNORE INTO llm_budget_sessions(run_id, day, mode) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO llm_budget_sessions(run_id, day, mode) VALUES (?, ?, ?)",
                     (run_id, day, mode),
                 )
                 self._reconcile_quota_holds_locked(conn, current_day=day)
@@ -186,7 +180,10 @@ class SessionLifecycle:
 
         try:
             self._run_with_infra_retry(
-                _activate, agent_name="circuit_activation", run_id=run_id, mode=mode,
+                _activate,
+                agent_name="circuit_activation",
+                run_id=run_id,
+                mode=mode,
             )
         except Exception:
             # `_run_with_infra_retry` already latched durably after

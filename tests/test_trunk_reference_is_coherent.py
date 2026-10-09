@@ -12,6 +12,7 @@ things: the phantom is gone, a branch that genuinely grows a guarded file is
 still REFUSED, and anything short of a verified merge ref falls back to the
 current ``origin/main`` rather than to a reference of the branch's choosing.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,16 +43,12 @@ def size_growth() -> list[str]:
     now = {p: len(t.splitlines()) for p, t in texts.items() if p not in skip}
     was = {p: len(t.splitlines()) for p, t in guard_reference.trunk_blobs(sorted(now)).items()}
     return [
-        f"{p}: grew from {was[p]} to {n} lines"
-        for p, n in sorted(now.items())
-        if p in was and n > max(was[p], FLOOR)
+        f"{p}: grew from {was[p]} to {n} lines" for p, n in sorted(now.items()) if p in was and n > max(was[p], FLOOR)
     ]
 
 
 def _git(repo: Path, *args: str) -> str:
-    out = subprocess.run(
-        ["git", *AUTHOR, *args], cwd=repo, capture_output=True, text=True, check=True
-    )
+    out = subprocess.run(["git", *AUTHOR, *args], cwd=repo, capture_output=True, text=True, check=True)
     return out.stdout.strip()
 
 
@@ -106,9 +103,7 @@ def _arm_pr_event(monkeypatch, tmp_path: Path, head_sha: str) -> None:
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(payload))
 
 
-def test_mains_own_later_commits_are_not_charged_to_the_branch(
-    stale_merge_ref, tmp_path, monkeypatch
-):
+def test_mains_own_later_commits_are_not_charged_to_the_branch(stale_merge_ref, tmp_path, monkeypatch):
     repo, finish = stale_merge_ref
     head = finish()  # branch does not touch big.py at all
     _arm_pr_event(monkeypatch, tmp_path, head)
@@ -117,9 +112,7 @@ def test_mains_own_later_commits_are_not_charged_to_the_branch(
     assert size_growth() == []
 
 
-def test_the_guard_still_refuses_a_branch_that_really_grows_a_file(
-    stale_merge_ref, tmp_path, monkeypatch
-):
+def test_the_guard_still_refuses_a_branch_that_really_grows_a_file(stale_merge_ref, tmp_path, monkeypatch):
     """A guard with no failing case is not a guard."""
     repo, finish = stale_merge_ref
     head = finish(branch_file_lines=700)  # 500 -> 700 against the main it merged
@@ -129,9 +122,7 @@ def test_the_guard_still_refuses_a_branch_that_really_grows_a_file(
     assert any("big.py" in line and "grew from 500 to 700" in line for line in bad), bad
 
 
-def test_an_unverified_merge_ref_falls_back_to_the_current_trunk(
-    stale_merge_ref, tmp_path, monkeypatch
-):
+def test_an_unverified_merge_ref_falls_back_to_the_current_trunk(stale_merge_ref, tmp_path, monkeypatch):
     """The fallback is the strict direction, never a reference the branch picks.
 
     With the PR head sha not matching HEAD's second parent, the merge-ref
@@ -146,9 +137,7 @@ def test_an_unverified_merge_ref_falls_back_to_the_current_trunk(
     assert any("big.py" in line for line in size_growth())
 
 
-def test_a_push_build_is_judged_against_the_current_trunk(
-    stale_merge_ref, monkeypatch
-):
+def test_a_push_build_is_judged_against_the_current_trunk(stale_merge_ref, monkeypatch):
     repo, finish = stale_merge_ref
     finish()
     monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)

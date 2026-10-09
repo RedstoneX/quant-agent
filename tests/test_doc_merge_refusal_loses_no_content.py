@@ -24,6 +24,7 @@ The property under test throughout is the one in the module comment of
 merely unlikely. A refusal is a correct outcome; a refusal that leaves a
 plausible-looking wrong file is not.
 """
+
 from __future__ import annotations
 
 import re
@@ -77,8 +78,7 @@ def _entry(date: str, title: str, body: str = "body") -> str:
     return f"### {date} — {title}\n\n{body}\n\n---\n\n"
 
 
-def _run_driver(base: str, ours: str, theirs: str, tree_path: str,
-                tmp_path: Path):
+def _run_driver(base: str, ours: str, theirs: str, tree_path: str, tmp_path: Path):
     """Call the driver exactly as git does, from a directory that stands in
     for the worktree root (git runs a merge driver from there, which is where
     the refusal's reason file has to land)."""
@@ -90,7 +90,9 @@ def _run_driver(base: str, ours: str, theirs: str, tree_path: str,
     t.write_text(theirs)
     proc = subprocess.run(
         [str(DRIVER), str(b), str(a), str(t), tree_path],
-        capture_output=True, text=True, cwd=work,
+        capture_output=True,
+        text=True,
+        cwd=work,
     )
     return proc, a, work / (tree_path + ".merge-refusal")
 
@@ -101,9 +103,10 @@ def _resolve(kind: str, base: str, ours: str, theirs: str, tmp_path: Path):
     o.write_text(ours)
     t.write_text(theirs)
     proc = subprocess.run(
-        [sys.executable, str(RESOLVER), "--kind", kind, "--base", str(b),
-         "--ours", str(o), "--theirs", str(t)],
-        capture_output=True, text=True, cwd=REPO_ROOT,
+        [sys.executable, str(RESOLVER), "--kind", kind, "--base", str(b), "--ours", str(o), "--theirs", str(t)],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
     )
     return proc
 
@@ -140,8 +143,7 @@ def test_a_refused_merge_does_not_leave_the_ours_copy_in_the_worktree(tmp_path):
     copy. That is the failure, not a side effect of it: the file looked
     resolved, so `git add` on it committed a silent revert.
     """
-    proc, result, _sidecar = _run_driver(
-        WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
+    proc, result, _sidecar = _run_driver(WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0, "a refusal must never read to git as success"
     text = result.read_text()
     assert text != COLLIDING_OURS, (
@@ -152,12 +154,10 @@ def test_a_refused_merge_does_not_leave_the_ours_copy_in_the_worktree(tmp_path):
 
 def test_a_refused_merge_keeps_the_content_only_the_other_side_had(tmp_path):
     """Item 201 was never in dispute. It must survive a refusal about 200."""
-    proc, result, _ = _run_driver(
-        WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
+    proc, result, _ = _run_driver(WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0
     assert "**201. Theirs alone" in result.read_text(), (
-        "content that only the incoming side had was dropped by a refusal "
-        "about a different item"
+        "content that only the incoming side had was dropped by a refusal about a different item"
     )
 
 
@@ -165,8 +165,7 @@ def test_a_refused_merge_is_obviously_unresolved_in_the_file_itself(tmp_path):
     """`git status` saying `UU` is not enough — nothing reads git status on
     the way to `git add`. The FILE has to say so, in the one shape the repo
     already fails the build on."""
-    proc, result, _ = _run_driver(
-        WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
+    proc, result, _ = _run_driver(WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0
     assert MARKER_RE.search(result.read_text()), (
         "a refusal left a file with no conflict marker, so neither a human "
@@ -178,8 +177,7 @@ def test_a_refused_merge_is_obviously_unresolved_in_the_file_itself(tmp_path):
 def test_every_line_of_both_sides_survives_a_refusal(tmp_path):
     """The guarantee stated as a guarantee, not as three examples: not one
     non-blank line present on either side may be missing."""
-    proc, result, _ = _run_driver(
-        WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
+    proc, result, _ = _run_driver(WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0
     text = result.read_text()
     lost = (_nonblank(COLLIDING_OURS) | _nonblank(COLLIDING_THEIRS)) - _nonblank(text)
@@ -196,10 +194,8 @@ def test_a_refusal_whose_line_merge_is_clean_is_still_marked(tmp_path):
     that git nonetheless calls conflicted: the exact ambiguity being removed.
     So the banner is unconditional.
     """
-    head = ("# QAMC Current Work\n\n## THE FUNNEL QUEUE — why trades do not "
-            "happen, ranked by measured cost\n\n")
-    tail = ("**Retired item numbers — never reuse.** APPEND-ONLY.\n"
-            "- retired queue: 1, 2\n- retired gate: 3\n")
+    head = "# QAMC Current Work\n\n## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost\n\n"
+    tail = "**Retired item numbers — never reuse.** APPEND-ONLY.\n- retired queue: 1, 2\n- retired gate: 3\n"
     filler = "".join(f"**{n}. Item {n}.** {'x' * 900}\n\n" for n in range(10, 118))
     base = head + filler + tail
     ours = head + filler + f"**500. Ours adds.** {'o' * 1500}\n\n" + tail
@@ -208,19 +204,25 @@ def test_a_refusal_whose_line_merge_is_clean_is_still_marked(tmp_path):
     # Stated as a precondition, not assumed: if this ever stops being a
     # clean line merge the test is no longer covering the case it names.
     clean = subprocess.run(
-        ["git", "merge-file", "-p", "--diff3",
-         str(_w(tmp_path, "o", ours)), str(_w(tmp_path, "b", base)),
-         str(_w(tmp_path, "t", theirs))],
-        capture_output=True, text=True)
+        [
+            "git",
+            "merge-file",
+            "-p",
+            "--diff3",
+            str(_w(tmp_path, "o", ours)),
+            str(_w(tmp_path, "b", base)),
+            str(_w(tmp_path, "t", theirs)),
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert clean.returncode == 0, "precondition: git's own line merge is clean"
 
-    proc, result, sidecar = _run_driver(base, ours, theirs, "docs/WORK.md",
-                                        tmp_path)
+    proc, result, sidecar = _run_driver(base, ours, theirs, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0, "over the byte cap must refuse"
     text = result.read_text()
     assert MARKER_RE.search(text), (
-        "a byte-cap refusal left an unmarked file, which is indistinguishable "
-        "from a resolved one"
+        "a byte-cap refusal left an unmarked file, which is indistinguishable from a resolved one"
     )
     assert "Ours adds" in text and "Theirs adds" in text
     assert sidecar.exists()
@@ -238,8 +240,7 @@ def test_the_refusal_reason_is_beside_the_document_not_inside_it(tmp_path):
     EVERY line of the banner starts with a marker, and the reason lives in a
     sidecar file.
     """
-    proc, result, sidecar = _run_driver(
-        WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
+    proc, result, sidecar = _run_driver(WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, "docs/WORK.md", tmp_path)
     assert proc.returncode != 0
     assert sidecar.exists(), "the refusal reason was written nowhere findable"
     assert "NUMBER COLLISION" in sidecar.read_text()
@@ -247,9 +248,11 @@ def test_the_refusal_reason_is_beside_the_document_not_inside_it(tmp_path):
     # Nothing in the document that is not a marker and not one of the two
     # sides' own lines.
     sides = _nonblank(COLLIDING_OURS) | _nonblank(COLLIDING_THEIRS)
-    strays = [ln for ln in result.read_text().splitlines()
-              if ln.strip() and not MARKER_RE.match(ln)
-              and ln.rstrip() not in sides]
+    strays = [
+        ln
+        for ln in result.read_text().splitlines()
+        if ln.strip() and not MARKER_RE.match(ln) and ln.rstrip() not in sides
+    ]
     assert not strays, (
         f"the refusal put text into the document that neither side wrote and "
         f"that survives deleting the markers: {strays}"
@@ -262,22 +265,19 @@ def test_the_sidecar_cannot_be_committed_as_board_content():
     assert "*.merge-refusal" in (REPO_ROOT / ".gitignore").read_text()
 
 
-def test_a_refused_real_git_merge_leaves_a_file_that_fails_the_marker_test(
-        tmp_path):
+def test_a_refused_real_git_merge_leaves_a_file_that_fails_the_marker_test(tmp_path):
     """End to end through a real `git merge`, because the whole defect lived
     in git's contract rather than in either script's own logic — reasoning
     about %A from the documentation is what produced the wrong comment in the
     first place."""
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True)
-    run = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True,
-                                    capture_output=True, text=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True)
     run("init", "-q", "-b", "main")
     run("config", "user.email", "t@t")
     run("config", "user.name", "T")
     run("config", "merge.docsmerge.name", "item-aware doc conflict resolver")
-    run("config", "merge.docsmerge.driver",
-        f"{DRIVER} %O %A %B %P")
+    run("config", "merge.docsmerge.driver", f"{DRIVER} %O %A %B %P")
     (repo / ".gitattributes").write_text("docs/WORK.md merge=docsmerge\n")
     (repo / ".gitignore").write_text("*.merge-refusal\n")
     (repo / "docs" / "WORK.md").write_text(WORK_BASE)
@@ -291,8 +291,7 @@ def test_a_refused_real_git_merge_leaves_a_file_that_fails_the_marker_test(
     run("commit", "-qam", "main adds 200 and 201")
     run("checkout", "-q", "side")
 
-    merged = subprocess.run(["git", "merge", "main"], cwd=repo,
-                            capture_output=True, text=True)
+    merged = subprocess.run(["git", "merge", "main"], cwd=repo, capture_output=True, text=True)
     assert merged.returncode != 0, "the merge must not report success"
     text = (repo / "docs" / "WORK.md").read_text()
     assert MARKER_RE.search(text), (
@@ -317,19 +316,24 @@ def test_a_backfilled_entry_is_not_hoisted_above_newer_ones(tmp_path):
     its own title). A 2026-09-20 backfill landing above three 2026-09-23
     entries is an ordering violation caused by the merge, not by its author.
     """
-    base = HISTORY_PREAMBLE + _entry("2026-09-23", "already here") \
+    base = HISTORY_PREAMBLE + _entry("2026-09-23", "already here") + _entry("2026-09-22", "older")
+    ours = (
+        HISTORY_PREAMBLE
+        + _entry("2026-09-20", "ours backfills this")
+        + _entry("2026-09-23", "already here")
         + _entry("2026-09-22", "older")
-    ours = HISTORY_PREAMBLE + _entry("2026-09-20", "ours backfills this") \
-        + _entry("2026-09-23", "already here") + _entry("2026-09-22", "older")
-    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs adds this") \
-        + _entry("2026-09-23", "already here") + _entry("2026-09-22", "older")
+    )
+    theirs = (
+        HISTORY_PREAMBLE
+        + _entry("2026-09-23", "theirs adds this")
+        + _entry("2026-09-23", "already here")
+        + _entry("2026-09-22", "older")
+    )
 
     proc = _resolve("history", base, ours, theirs, tmp_path)
     assert proc.returncode == 0, proc.stderr
     dates = re.findall(r"^### (\d{4}-\d{2}-\d{2})", proc.stdout, re.M)
-    assert dates == sorted(dates, reverse=True), (
-        f"the merge produced an order that is not newest-first: {dates}"
-    )
+    assert dates == sorted(dates, reverse=True), f"the merge produced an order that is not newest-first: {dates}"
 
 
 def test_two_same_day_entries_still_go_on_top_with_ours_first(tmp_path):
@@ -337,10 +341,8 @@ def test_two_same_day_entries_still_go_on_top_with_ours_first(tmp_path):
     today's entries above yesterday's, and a same-date tie resolved the same
     way every time rather than arbitrarily."""
     base = HISTORY_PREAMBLE + _entry("2026-09-22", "older")
-    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") \
-        + _entry("2026-09-22", "older")
-    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") \
-        + _entry("2026-09-22", "older")
+    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") + _entry("2026-09-22", "older")
+    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") + _entry("2026-09-22", "older")
 
     proc = _resolve("history", base, ours, theirs, tmp_path)
     assert proc.returncode == 0, proc.stderr
@@ -352,10 +354,9 @@ def test_entries_that_were_already_in_the_log_are_never_reordered(tmp_path):
     """The committed log has 21 out-of-order adjacent pairs that predate this
     tool [measured 2026-09-23]. Placing new entries correctly must not become
     a global re-sort that rewrites years of history as a merge side effect."""
-    base = (HISTORY_PREAMBLE + _entry("2026-09-18", "out of order, first")
-            + _entry("2026-09-21", "out of order, second"))
-    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") + base[len(HISTORY_PREAMBLE):]
-    theirs = HISTORY_PREAMBLE + _entry("2026-09-22", "theirs new") + base[len(HISTORY_PREAMBLE):]
+    base = HISTORY_PREAMBLE + _entry("2026-09-18", "out of order, first") + _entry("2026-09-21", "out of order, second")
+    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") + base[len(HISTORY_PREAMBLE) :]
+    theirs = HISTORY_PREAMBLE + _entry("2026-09-22", "theirs new") + base[len(HISTORY_PREAMBLE) :]
 
     proc = _resolve("history", base, ours, theirs, tmp_path)
     assert proc.returncode == 0, proc.stderr
@@ -370,25 +371,19 @@ def test_entries_that_were_already_in_the_log_are_never_reordered(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_one_stray_blank_line_does_not_make_two_identical_edits_a_collision(
-        tmp_path):
+def test_one_stray_blank_line_does_not_make_two_identical_edits_a_collision(tmp_path):
     """Both sides made the SAME edit to item 100 and differ only by a blank
     line. Byte equality called that a NUMBER COLLISION, told the human to
     renumber an item that needed no renumbering, and forced a hand rebuild of
     the whole file."""
     edited = "**100. An item that was already here — OPEN.** Rewritten identically."
     ours = WORK_BASE.replace(
-        "**100. An item that was already here — OPEN.** Body of the existing item.",
-        edited + "\n")           # one extra blank line
-    theirs = WORK_BASE.replace(
-        "**100. An item that was already here — OPEN.** Body of the existing item.",
-        edited)
+        "**100. An item that was already here — OPEN.** Body of the existing item.", edited + "\n"
+    )  # one extra blank line
+    theirs = WORK_BASE.replace("**100. An item that was already here — OPEN.** Body of the existing item.", edited)
 
     proc = _resolve("work", WORK_BASE, ours, theirs, tmp_path)
-    assert proc.returncode == 0, (
-        "a whitespace-only difference was treated as an editorial conflict:\n"
-        + proc.stderr
-    )
+    assert proc.returncode == 0, "a whitespace-only difference was treated as an editorial conflict:\n" + proc.stderr
     assert "Rewritten identically" in proc.stdout
 
 
@@ -411,8 +406,7 @@ def test_whitespace_tolerance_never_reflows_what_it_writes(tmp_path):
     proc = _resolve("work", WORK_BASE, ours, theirs, tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert "Line one.\n\n\nLine two" in proc.stdout, (
-        "the resolver rewrote the blank lines instead of taking one side "
-        "verbatim"
+        "the resolver rewrote the blank lines instead of taking one side verbatim"
     )
 
 
@@ -442,8 +436,7 @@ def test_a_real_collision_still_refuses_and_never_renumbers(tmp_path):
     number is quoted from BOARD_NOTES, from INCIDENT_HISTORY, from the
     retired-numbers line and from PR titles, so renumbering one inside a merge
     would break every reference to it somewhere this tool cannot see."""
-    proc = _resolve("work", WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS,
-                    tmp_path)
+    proc = _resolve("work", WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, tmp_path)
     assert proc.returncode == 2
     assert "NUMBER COLLISION" in proc.stderr
     assert "will not renumber" in proc.stderr
@@ -455,21 +448,22 @@ def test_a_collision_refusal_says_exactly_what_differs(tmp_path):
     a real board item means spotting the difference between two paragraphs by
     eye — and that is the step at which a human decides whether they are
     looking at a real collision or a bad rebase."""
-    proc = _resolve("work", WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS,
-                    tmp_path)
+    proc = _resolve("work", WORK_BASE, COLLIDING_OURS, COLLIDING_THEIRS, tmp_path)
     assert proc.returncode == 2
     assert "what actually differs" in proc.stderr
     assert "-**200. Ours: the alpha finding" in proc.stderr
     assert "+**200. Theirs: the beta finding" in proc.stderr
 
 
-@pytest.mark.parametrize("kind,tree_path", [
-    ("work", "docs/WORK.md"),
-    ("notes", "docs/board_notes/item-001.md"),
-    ("history", "docs/INCIDENT_HISTORY.md"),
-])
-def test_a_clean_merge_of_every_document_still_exits_zero_unmarked(
-        kind, tree_path, tmp_path):
+@pytest.mark.parametrize(
+    "kind,tree_path",
+    [
+        ("work", "docs/WORK.md"),
+        ("notes", "docs/board_notes/item-001.md"),
+        ("history", "docs/INCIDENT_HISTORY.md"),
+    ],
+)
+def test_a_clean_merge_of_every_document_still_exits_zero_unmarked(kind, tree_path, tmp_path):
     """The fix must not turn the ordinary case into a conflict. A driver that
     marks everything is as useless as one that marks nothing."""
     text = {
@@ -497,10 +491,10 @@ def test_a_new_entry_with_the_wrong_heading_shape_stops_the_merge(tmp_path):
     already on main; those are pre-existing and deliberately not blocked.
     """
     base = HISTORY_PREAMBLE + _entry("2026-09-23", "A") + _entry("2026-09-22", "B")
-    ours = (base
-            + "## 2026-09-23 — ours, written with two hashes\n\nbody\n\n---\n\n")
-    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") \
-        + _entry("2026-09-23", "A") + _entry("2026-09-22", "B")
+    ours = base + "## 2026-09-23 — ours, written with two hashes\n\nbody\n\n---\n\n"
+    theirs = (
+        HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") + _entry("2026-09-23", "A") + _entry("2026-09-22", "B")
+    )
 
     proc = _resolve("history", base, ours, theirs, tmp_path)
     assert proc.returncode == 2, (
@@ -514,10 +508,12 @@ def test_the_wrong_heading_shapes_already_on_main_are_not_blocked(tmp_path):
     """Pre-existing rot is item 93's to fix, not this merge's to block on.
     Blocking on it would make every incident-log merge fail until someone
     else's backlog item is done."""
-    base = (HISTORY_PREAMBLE
-            + "## 2026-09-19 — a malformed heading that is already on main\n\nbody\n\n---\n\n"
-            + _entry("2026-09-22", "B"))
-    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") + base[len(HISTORY_PREAMBLE):]
-    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") + base[len(HISTORY_PREAMBLE):]
+    base = (
+        HISTORY_PREAMBLE
+        + "## 2026-09-19 — a malformed heading that is already on main\n\nbody\n\n---\n\n"
+        + _entry("2026-09-22", "B")
+    )
+    ours = HISTORY_PREAMBLE + _entry("2026-09-23", "ours new") + base[len(HISTORY_PREAMBLE) :]
+    theirs = HISTORY_PREAMBLE + _entry("2026-09-23", "theirs new") + base[len(HISTORY_PREAMBLE) :]
     proc = _resolve("history", base, ours, theirs, tmp_path)
     assert proc.returncode == 0, proc.stderr

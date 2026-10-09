@@ -14,6 +14,7 @@ line counts once per copy.
 
 Run it directly: ``PYTHONPATH=. .venv/bin/python -m scripts.pipeline_new_guard``.
 """
+
 from __future__ import annotations
 
 import re

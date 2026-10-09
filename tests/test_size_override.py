@@ -53,6 +53,7 @@ def _make(kind: str, value: float = 3.0) -> SizeOverride:
 # (a) every pairwise combination enforces the absorbing order
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("kind_a,kind_b", list(itertools.product(_KINDS, _KINDS)))
 def test_combine_always_yields_the_more_restrictive_kind(kind_a, kind_b):
     a, b = _make(kind_a), _make(kind_b)
@@ -84,6 +85,7 @@ def test_two_multipliers_combine_regardless_of_argument_order():
 # (b) no_trading always wins, whatever it is combined with
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("other_kind", _KINDS)
 def test_no_trading_absorbs_everything(other_kind):
     no_trading = SizeOverride.no_trading()
@@ -102,6 +104,7 @@ def test_no_trading_absorbs_an_arbitrarily_large_multiplier():
 # ---------------------------------------------------------------------------
 # (c) the original bug is now structurally impossible to express
 # ---------------------------------------------------------------------------
+
 
 def test_refusal_has_no_numeric_value_to_misread_as_a_close():
     """The old bug: a refusal, represented as a bare 0.0 float, was

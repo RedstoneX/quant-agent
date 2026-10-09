@@ -34,9 +34,18 @@ class FilingInfo:
 
 
 class SecClient:
-    def __init__(self, *, opener: Callable, request: Callable, http_error: type[Exception],
-                 url_error: type[Exception], sleep: Callable[[float], None],
-                 clock: Callable[[], float], now: Callable, lookback_days: int):
+    def __init__(
+        self,
+        *,
+        opener: Callable,
+        request: Callable,
+        http_error: type[Exception],
+        url_error: type[Exception],
+        sleep: Callable[[float], None],
+        clock: Callable[[], float],
+        now: Callable,
+        lookback_days: int,
+    ):
         self._opener = opener
         self._request = request
         self._http_error = http_error
@@ -83,15 +92,15 @@ class SecClient:
             elapsed = self._clock() - start
             if elapsed > total_timeout_s:
                 logger.warning(
-                    "SEC fetch exceeded total_timeout_s=%.0fs for %s "
-                    "after %d attempts (elapsed=%.1fs)",
-                    total_timeout_s, url, attempt, elapsed,
+                    "SEC fetch exceeded total_timeout_s=%.0fs for %s after %d attempts (elapsed=%.1fs)",
+                    total_timeout_s,
+                    url,
+                    attempt,
+                    elapsed,
                 )
                 if last_exc is not None:
                     raise last_exc
-                raise TimeoutError(
-                    f"SEC fetch exceeded {total_timeout_s}s for {url}"
-                )
+                raise TimeoutError(f"SEC fetch exceeded {total_timeout_s}s for {url}")
             self._sleep(REQUEST_DELAY)
             try:
                 with self._opener(req, timeout=15) as resp:
@@ -99,10 +108,14 @@ class SecClient:
             except self._http_error as e:
                 last_exc = e
                 if e.code in (429, 503):
-                    backoff = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
+                    backoff = 1.0 * (2**attempt)  # 1s → 2s → 4s
                     logger.warning(
                         "SEC %d on attempt %d/%d for %s — backing off %.1fs",
-                        e.code, attempt + 1, max_retries, url, backoff,
+                        e.code,
+                        attempt + 1,
+                        max_retries,
+                        url,
+                        backoff,
                     )
                     self._sleep(backoff)
                     continue
@@ -112,10 +125,14 @@ class SecClient:
                 # Network blip (DNS / connection reset / timeout). Retry
                 # since these are typically transient.
                 last_exc = e
-                backoff = 1.0 * (2 ** attempt)
+                backoff = 1.0 * (2**attempt)
                 logger.warning(
                     "SEC URLError on attempt %d/%d for %s: %s — backing off %.1fs",
-                    attempt + 1, max_retries, url, e, backoff,
+                    attempt + 1,
+                    max_retries,
+                    url,
+                    e,
+                    backoff,
                 )
                 self._sleep(backoff)
                 continue
@@ -124,7 +141,6 @@ class SecClient:
         if last_exc is not None:
             raise last_exc
         raise RuntimeError(f"SEC fetch failed for {url} without exception")
-
 
     def cik_for(self, ticker: str) -> str | None:
         """Look up CIK number for a ticker symbol."""
@@ -142,7 +158,6 @@ class SecClient:
                 logger.warning("Failed to fetch SEC ticker map: %s", e)
                 self._ticker_to_cik = {}
         return self._ticker_to_cik.get(ticker.upper())
-
 
     def recent_filings(self, cik: str, ticker: str) -> list[FilingInfo]:
         """Get recent 10-Q/10-K filings from SEC EDGAR.
@@ -181,35 +196,56 @@ class SecClient:
                 "SEC submissions arrays misaligned for %s (CIK %s): "
                 "forms=%d dates=%d accessions=%d primary_docs=%d — "
                 "iterating over the shortest",
-                ticker, cik, len(forms), len(dates),
-                len(accessions), len(primary_docs),
+                ticker,
+                cik,
+                len(forms),
+                len(dates),
+                len(accessions),
+                len(primary_docs),
             )
 
         cutoff = (self._now() - timedelta(days=self._lookback_days)).strftime("%Y-%m-%d")
         filings = []
         for form, filing_date, accession, primary_doc in zip(
-            forms, dates, accessions, primary_docs,
+            forms,
+            dates,
+            accessions,
+            primary_docs,
         ):
             if form not in ("10-Q", "10-K"):
                 continue
             if filing_date < cutoff:
                 continue
-            filings.append(FilingInfo(
-                symbol=ticker,
-                form_type=form,
-                filing_date=filing_date,
-                accession_number=accession,
-                primary_doc=primary_doc or "",
-            ))
+            filings.append(
+                FilingInfo(
+                    symbol=ticker,
+                    form_type=form,
+                    filing_date=filing_date,
+                    accession_number=accession,
+                    primary_doc=primary_doc or "",
+                )
+            )
         return filings
 
 
-
-def build_sec_client(*, opener: Callable, request: Callable, http_error: type[Exception],
-                     url_error: type[Exception],
-                     sleep: Callable[[float], None] = time.sleep,
-                     clock: Callable[[], float] = time.time,
-                     now: Callable = et_now, lookback_days: int = 45) -> SecClient:
-    return SecClient(opener=opener, request=request, http_error=http_error,
-                     url_error=url_error, sleep=sleep, clock=clock, now=now,
-                     lookback_days=lookback_days)
+def build_sec_client(
+    *,
+    opener: Callable,
+    request: Callable,
+    http_error: type[Exception],
+    url_error: type[Exception],
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    now: Callable = et_now,
+    lookback_days: int = 45,
+) -> SecClient:
+    return SecClient(
+        opener=opener,
+        request=request,
+        http_error=http_error,
+        url_error=url_error,
+        sleep=sleep,
+        clock=clock,
+        now=now,
+        lookback_days=lookback_days,
+    )

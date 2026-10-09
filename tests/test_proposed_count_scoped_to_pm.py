@@ -10,7 +10,7 @@ from src.storage.db import Database
 
 def test_proposed_count_from_specialist_evidence_not_trades(tmp_path):
     """proposed count comes from specialist_evidence proposed_order rows.
-    
+
     When PM produces valid proposed_order rows, count them.
     When PM runs but produces no valid decision, count is 0, even if trades exist.
     """
@@ -34,8 +34,7 @@ def test_proposed_count_from_specialist_evidence_not_trades(tmp_path):
 
     # A BUY trade exists (from emergency liquidation, not PM)
     db.conn.execute(
-        "INSERT INTO trades (run_id, symbol, action, qty, price, timestamp) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO trades (run_id, symbol, action, qty, price, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
         (test_run_id, "AAPL", "BUY", 10, 150.0, datetime.now().isoformat()),
     )
 

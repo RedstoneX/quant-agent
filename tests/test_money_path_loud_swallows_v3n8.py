@@ -1,4 +1,5 @@
 """owner_alerts catch-alls: traceback at ERROR AND a counted row, behaviour unchanged."""
+
 from __future__ import annotations
 
 import logging
@@ -13,7 +14,8 @@ def _ledger():
     conn.execute(
         "CREATE TABLE reconciliation_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,"
         " ran_at TEXT NOT NULL DEFAULT (datetime('now')), kind TEXT NOT NULL,"
-        " agreed INTEGER NOT NULL, detail TEXT, run_id TEXT)")
+        " agreed INTEGER NOT NULL, detail TEXT, run_id TEXT)"
+    )
     return conn
 
 

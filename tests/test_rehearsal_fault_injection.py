@@ -44,10 +44,19 @@ def test_wildcard_agent_matches_everything():
     assert spec.matches("tech_analyst") and spec.matches("portfolio_manager")
 
 
-@pytest.mark.parametrize("bad", [
-    "tech_analyst", "tech_analyst:", ":rate_limit", "a:not_a_kind",
-    "a:rate_limit:0", "a:rate_limit:-1", "a:rate_limit:x", "a:b:c:d",
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tech_analyst",
+        "tech_analyst:",
+        ":rate_limit",
+        "a:not_a_kind",
+        "a:rate_limit:0",
+        "a:rate_limit:-1",
+        "a:rate_limit:x",
+        "a:b:c:d",
+    ],
+)
 def test_bad_specs_are_rejected_with_an_explanation(bad):
     with pytest.raises(ValueError):
         parse_spec(bad)
@@ -60,14 +69,18 @@ def test_bad_specs_are_rejected_with_an_explanation(bad):
 # `_is_retryable` is ever tightened, THIS fails loudly rather than the faults
 # quietly ceasing to represent the failures they are named after.
 
-@pytest.mark.parametrize("kind,retryable", [
-    ("rate_limit", True),          # 429 — the 2026-08-31 failure
-    ("server_error", True),        # 503 — upstream outage
-    ("server_error_mid_stream", True),  # 503 from inside a started stream
-    ("timeout", True),             # no status — unclassified transient
-    ("auth", False),               # 401 — a dead key cannot be slept off
-    ("insufficient_balance", False),  # 402 — the DeepSeek out-of-money case
-])
+
+@pytest.mark.parametrize(
+    "kind,retryable",
+    [
+        ("rate_limit", True),  # 429 — the 2026-08-31 failure
+        ("server_error", True),  # 503 — upstream outage
+        ("server_error_mid_stream", True),  # 503 from inside a started stream
+        ("timeout", True),  # no status — unclassified transient
+        ("auth", False),  # 401 — a dead key cannot be slept off
+        ("insufficient_balance", False),  # 402 — the DeepSeek out-of-money case
+    ],
+)
 def test_fault_kinds_are_classified_as_intended(kind, retryable):
     assert _is_retryable(KINDS[kind]("injected")) is retryable
 
@@ -76,8 +89,12 @@ def test_every_kind_is_pinned_by_the_test_above():
     """A new fault kind must arrive with its classification asserted, not
     inherit whatever the catch-all happens to do that week."""
     pinned = {
-        "rate_limit", "server_error", "server_error_mid_stream", "timeout",
-        "auth", "insufficient_balance",
+        "rate_limit",
+        "server_error",
+        "server_error_mid_stream",
+        "timeout",
+        "auth",
+        "insufficient_balance",
     }
     assert set(KINDS) == pinned
 
@@ -90,7 +107,7 @@ def test_the_count_is_spent_then_calls_pass_through():
     for attempt in (1, 2):
         with pytest.raises(InjectedProviderFault):
             injector.check("tech_analyst", "google/gemini-3.5-flash-lite")
-    injector.check("tech_analyst", "claude-opus-4-7")   # the failover gets through
+    injector.check("tech_analyst", "claude-opus-4-7")  # the failover gets through
     assert len(injector.injected) == 2
 
 
@@ -169,6 +186,7 @@ def test_an_injected_fault_is_never_mistaken_for_a_real_one():
 
 
 # ------------------------------------------- the 503 that actually latches
+
 
 def test_mid_stream_503_is_booked_ambiguous_while_a_plain_503_is_free():
     """Item 174's self-clear only ever fires after an AMBIGUOUS failure, and

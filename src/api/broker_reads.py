@@ -209,33 +209,35 @@ def read_positions() -> dict:
         retrieved_at = _utc_now().isoformat()
         out = []
         for p in positions:
-            out.append({
-                "symbol": p.symbol,
-                "qty": p.qty,
-                "avg_entry": p.avg_entry,
-                "current_price": p.current_price,
-                # Alpaca's position response is a broker MARK, not a
-                # market-data quote, and supplies no mark timestamp — so
-                # market_as_of is always None and freshness is always
-                # "unknown" here by construction (docs/WORK.md item 15).
-                # retrieved_at is real: when THIS read happened, not when
-                # the market observed the price — never conflate the two.
-                "position_mark": {
-                    "value": p.current_price,
-                    "price_kind": "broker_position_mark",
-                    "provider": "alpaca",
-                    "feed": "broker_position",
-                    "market_as_of": None,
-                    "retrieved_at": retrieved_at,
-                    "freshness": "unknown",
-                },
-                "market_value": p.market_value,
-                "unrealized_pnl": p.unrealized_pnl,
-                "unrealized_intraday_pnl": getattr(p, "unrealized_intraday_pnl", None),
-                "sector": getattr(p, "sector", None),
-                "is_cash_equivalent": p.symbol == sweep_symbol,
-                "direction": _position_direction(p.symbol, sweep_symbol, p.qty),
-            })
+            out.append(
+                {
+                    "symbol": p.symbol,
+                    "qty": p.qty,
+                    "avg_entry": p.avg_entry,
+                    "current_price": p.current_price,
+                    # Alpaca's position response is a broker MARK, not a
+                    # market-data quote, and supplies no mark timestamp — so
+                    # market_as_of is always None and freshness is always
+                    # "unknown" here by construction (docs/WORK.md item 15).
+                    # retrieved_at is real: when THIS read happened, not when
+                    # the market observed the price — never conflate the two.
+                    "position_mark": {
+                        "value": p.current_price,
+                        "price_kind": "broker_position_mark",
+                        "provider": "alpaca",
+                        "feed": "broker_position",
+                        "market_as_of": None,
+                        "retrieved_at": retrieved_at,
+                        "freshness": "unknown",
+                    },
+                    "market_value": p.market_value,
+                    "unrealized_pnl": p.unrealized_pnl,
+                    "unrealized_intraday_pnl": getattr(p, "unrealized_intraday_pnl", None),
+                    "sector": getattr(p, "sector", None),
+                    "is_cash_equivalent": p.symbol == sweep_symbol,
+                    "direction": _position_direction(p.symbol, sweep_symbol, p.qty),
+                }
+            )
         return {"positions": out, "error": None}
     except Exception as exc:
         record_read_fault("read_positions", exc)
@@ -290,9 +292,15 @@ def read_margin_interest(cash: float | None) -> dict:
     unconditionally.
     """
     empty = {
-        "debit_balance": None, "rate_pct": None, "daily_usd": None,
-        "annual_usd": None, "label": None, "broker_check_note": None,
-        "days_charged": None, "period_usd": None, "error": None,
+        "debit_balance": None,
+        "rate_pct": None,
+        "daily_usd": None,
+        "annual_usd": None,
+        "label": None,
+        "broker_check_note": None,
+        "days_charged": None,
+        "period_usd": None,
+        "error": None,
         "cumulative": None,
     }
     try:
@@ -307,14 +315,17 @@ def read_margin_interest(cash: float | None) -> dict:
             days_charged_until_next_trading_day,
             overnight_debit_balance,
         )
+
         debit_balance = overnight_debit_balance(cash)
         # Same calendar lookahead the Telegram alert uses — a broker/calendar
         # hiccup degrades to 1 (the flat per-day figure shown before this
         # existed) and must never turn a readable cash balance into a fault.
         try:
             from src.util.time import et_today
+
             days_charged = days_charged_until_next_trading_day(
-                _get_broker().is_trading_day, et_today(),
+                _get_broker().is_trading_day,
+                et_today(),
             )
         except Exception as exc:
             record_read_fault("margin.calendar", exc)
@@ -361,6 +372,7 @@ def read_margin_interest(cash: float | None) -> dict:
     activities: list[dict] = []
     try:
         from src.margin_interest import compare_estimate_to_broker_activity
+
         broker = _get_broker()
         activities = broker.get_margin_interest_activities()
         comparison = compare_estimate_to_broker_activity(estimate, activities)
@@ -447,6 +459,7 @@ def _order_to_dict(o) -> dict:
     internals. Every field is extracted independently so one bad field
     degrades to `None` rather than raising out of the whole row.
     """
+
     def _str_or_none(val):
         if val is None:
             return None
@@ -486,24 +499,23 @@ def _order_to_dict(o) -> dict:
     # punctuated ticker — Berkshire's chart showed no stop line for exactly
     # this reason even though a live protective stop existed at the broker.
     symbol = _extract_order_field(
-        lambda: _internal_symbol(_str_or_none(getattr(o, "symbol", None)))
-        if getattr(o, "symbol", None) is not None else None
+        lambda: (
+            _internal_symbol(_str_or_none(getattr(o, "symbol", None)))
+            if getattr(o, "symbol", None) is not None
+            else None
+        )
     )
     return {
         "id": order_id,
         "symbol": symbol,
         "side": _extract_order_field(lambda: _enum_value("side")),
         "qty": _extract_order_field(lambda: _float_or_none(getattr(o, "qty", None))),
-        "order_type": _extract_order_field(
-            lambda: _enum_value("order_type") or _enum_value("type")
-        ),
+        "order_type": _extract_order_field(lambda: _enum_value("order_type") or _enum_value("type")),
         "status": _extract_order_field(lambda: _enum_value("status")),
         "limit_price": _extract_order_field(lambda: _float_or_none(getattr(o, "limit_price", None))),
         "stop_price": _extract_order_field(lambda: _float_or_none(getattr(o, "stop_price", None))),
         "filled_qty": _extract_order_field(lambda: _float_or_none(getattr(o, "filled_qty", None))),
-        "filled_avg_price": _extract_order_field(
-            lambda: _float_or_none(getattr(o, "filled_avg_price", None))
-        ),
+        "filled_avg_price": _extract_order_field(lambda: _float_or_none(getattr(o, "filled_avg_price", None))),
         "submitted_at": _extract_order_field(lambda: _dt_str("submitted_at")),
         "filled_at": _extract_order_field(lambda: _dt_str("filled_at")),
     }
@@ -528,9 +540,7 @@ def read_orders(status: str = "open", limit: int = 50) -> dict:
         query_status = getattr(QueryOrderStatus, status_name)
 
         broker = _get_broker()
-        raw_orders = broker.client.get_orders(
-            filter=GetOrdersRequest(status=query_status, limit=limit, nested=False)
-        )
+        raw_orders = broker.client.get_orders(filter=GetOrdersRequest(status=query_status, limit=limit, nested=False))
 
         out = []
         for o in raw_orders or []:
@@ -545,9 +555,7 @@ def read_orders(status: str = "open", limit: int = 50) -> dict:
         return {"orders": [], "error": str(exc)}
 
 
-def read_price_bars(
-    symbol: str, lookback_days: int = 120, timeframe: str = "1d"
-) -> dict:
+def read_price_bars(symbol: str, lookback_days: int = 120, timeframe: str = "1d") -> dict:
     """Best-effort read of chart OHLCV bars for one symbol/timeframe.
 
     Wraps `AlpacaBroker.get_bars` / `get_intraday_chart_bars` — market-data
@@ -572,35 +580,32 @@ def read_price_bars(
         if timeframe == "1d":
             bars = broker.get_bars(symbol, lookback_days=lookback_days)
         else:
-            bars = broker.get_intraday_chart_bars(
-                symbol, timeframe=timeframe, lookback_days=lookback_days
-            )
+            bars = broker.get_intraday_chart_bars(symbol, timeframe=timeframe, lookback_days=lookback_days)
         out = []
         for b in bars:
             date_str = b.date.isoformat() if timeframe == "1d" else b["date"]
             timestamp = None if timeframe == "1d" else b["timestamp"]
             close = b.close if timeframe == "1d" else b["close"]
-            out.append({
-                "date": date_str,
-                "timestamp": timestamp,
-                "open": b.open if timeframe == "1d" else b["open"],
-                "high": b.high if timeframe == "1d" else b["high"],
-                "low": b.low if timeframe == "1d" else b["low"],
-                "close": close,
-                "volume": b.volume if timeframe == "1d" else b["volume"],
-                "close_price": {
-                    "value": close,
-                    "price_kind": (
-                        "historical_daily_close" if timeframe == "1d"
-                        else "historical_intraday_close"
-                    ),
-                    "provider": "alpaca",
-                    "feed": None if timeframe == "1d" else "iex",
-                    "market_as_of": timestamp if timestamp is not None else date_str,
-                    "retrieved_at": retrieved_at,
-                    "freshness": "historical",
-                },
-            })
+            out.append(
+                {
+                    "date": date_str,
+                    "timestamp": timestamp,
+                    "open": b.open if timeframe == "1d" else b["open"],
+                    "high": b.high if timeframe == "1d" else b["high"],
+                    "low": b.low if timeframe == "1d" else b["low"],
+                    "close": close,
+                    "volume": b.volume if timeframe == "1d" else b["volume"],
+                    "close_price": {
+                        "value": close,
+                        "price_kind": ("historical_daily_close" if timeframe == "1d" else "historical_intraday_close"),
+                        "provider": "alpaca",
+                        "feed": None if timeframe == "1d" else "iex",
+                        "market_as_of": timestamp if timestamp is not None else date_str,
+                        "retrieved_at": retrieved_at,
+                        "freshness": "historical",
+                    },
+                }
+            )
         return {"bars": out, "error": None}
     except Exception as exc:
         record_read_fault("read_price_bars", exc, symbol=symbol, timeframe=timeframe)
@@ -685,7 +690,9 @@ def read_live_quotes(symbols: list[str]) -> dict:
                     "market_as_of": _iso_or_none(last_trade_at),
                     "retrieved_at": retrieved_at.isoformat(),
                     "freshness": _quote_freshness(last_trade_at, session_open),
-                } if last_price is not None else None,
+                }
+                if last_price is not None
+                else None,
                 "prev_close": snap.get("prev_close"),
                 "session_bar_is_today": session_is_today,
                 "session_open": snap.get("session_open") if session_is_today else None,

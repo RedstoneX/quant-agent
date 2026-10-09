@@ -19,5 +19,7 @@ class StateChangeParser(Protocol):
     `{iso_date: {SYMBOL: {direction, ...}}}`."""
 
     def __call__(
-        self, active_state_changes: str, asof: date | None = None,
+        self,
+        active_state_changes: str,
+        asof: date | None = None,
     ) -> dict[str, dict[str, set[str]]]: ...

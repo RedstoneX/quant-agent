@@ -1,4 +1,5 @@
 """Margin-interest response models, carved out of schemas.py (re-exported there)."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ class MarginInterestEstimate(BaseModel):
       * a fault — dollar fields `None` and `error` set.
     `error` is the ONLY safe way to tell a real zero from a failed read;
     a `None` figure must never be rendered as zero."""
+
     debit_balance: float | None = None
     rate_pct: float | None = None
     daily_usd: float | None = None
@@ -69,6 +71,7 @@ class MarginInterestCumulative(BaseModel):
     has anything yet. `is_estimate` is the single small "est." marker the
     cockpit/Telegram show in place of the old caveat paragraph.
     """
+
     this_week_usd: float
     current_month_usd: float
     current_month_label: str

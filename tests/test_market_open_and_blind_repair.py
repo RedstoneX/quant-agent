@@ -1,4 +1,5 @@
 """One market-open answer; a stop repair never refuses for want of a price."""
+
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -45,7 +46,9 @@ def _broker(**kw):
     b = MagicMock()
     b.STOP_LIMIT_BUFFER_PCT = 0.01
     b._submit_protective_stop_retrying.return_value = {
-        "id": "o1", "covered_qty": 5.0, "uncovered_qty": 0.0,
+        "id": "o1",
+        "covered_qty": 5.0,
+        "uncovered_qty": 0.0,
     }
     for k, v in kw.items():
         setattr(b, k, v)
@@ -55,8 +58,12 @@ def _broker(**kw):
 def _run(broker, outcome=None):
     db = MagicMock()
     return repair_stop_coverage(
-        broker=broker, last_buy=lambda s, action="BUY": {"stop_loss": 90.0},
-        symbol="TEST", uncovered_qty=5.0, is_short=False, db=db,
+        broker=broker,
+        last_buy=lambda s, action="BUY": {"stop_loss": 90.0},
+        symbol="TEST",
+        uncovered_qty=5.0,
+        is_short=False,
+        db=db,
         outcome=outcome,
     )
 
@@ -67,8 +74,10 @@ def test_price_read_fails_but_snapshot_succeeds_so_a_stop_is_placed():
     b.get_latest_price_stamped.side_effect = RuntimeError("feed down")
     b.get_intraday_snapshots.return_value = {"TEST": {"snap": 1}}
     from types import SimpleNamespace
-    with patch("src.data.live_price.resolve_live_price",
-               return_value=SimpleNamespace(price=100.0, source="minute_bar")):
+
+    with patch(
+        "src.data.live_price.resolve_live_price", return_value=SimpleNamespace(price=100.0, source="minute_bar")
+    ):
         assert _run(b) is True
     assert b._submit_protective_stop_retrying.called
 

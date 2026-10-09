@@ -1,4 +1,5 @@
 """Intraday catch-alls: swallowed fault, clean pass, unreached site, missing ledger handle."""
+
 import logging
 from types import SimpleNamespace
 
@@ -6,9 +7,16 @@ from src.sentinel.guarded_site import record_site
 from src.sentinel.reconciliation import ReconciliationLog
 from src.storage.db import Database
 
-_SITES = ("report_persist", "trigger_atr_context", "macro_state_load", "tech_store_load",
-          "cooldown_legacy_trades",
-          "scan_lock_release", "skip_reason_lock_contended", "skip_reason_open_overlap")
+_SITES = (
+    "report_persist",
+    "trigger_atr_context",
+    "macro_state_load",
+    "tech_store_load",
+    "cooldown_legacy_trades",
+    "scan_lock_release",
+    "skip_reason_lock_contended",
+    "skip_reason_open_overlap",
+)
 
 
 def _owner(tmp_path):

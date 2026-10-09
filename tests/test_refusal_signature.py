@@ -5,6 +5,7 @@ on "the reason did not vary while the input did", and it must stay silent
 for a quiet market, for a single session however emphatic, and for a desk
 whose trading timers are paused.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,8 +69,16 @@ def _event(con, run_id, day, symbol, payload, hour=10):
         "INSERT INTO specialist_evidence"
         " (run_id, decision_id, agent_name, kind, scope, symbol,"
         "  evidence_json, timestamp) VALUES (?,?,?,?,?,?,?,?)",
-        (run_id, run_id, "pipeline", "pipeline_event", "symbol", symbol,
-         json.dumps(payload, sort_keys=True), _et_stamp(day, hour)),
+        (
+            run_id,
+            run_id,
+            "pipeline",
+            "pipeline_event",
+            "symbol",
+            symbol,
+            json.dumps(payload, sort_keys=True),
+            _et_stamp(day, hour),
+        ),
     )
 
 
@@ -77,11 +86,14 @@ def _refusal(symbol, code="stop_wider_than_instrument_reach", detail=None):
     """The shape `pipeline_stages._record_constructor_drops` writes for a
     refusal the constructor recorded AS DATA."""
     return {
-        "stage": "deterministic_gate", "outcome": "blocked",
-        "reason": "constructor_refused", "refusal": code,
-        "detail": detail if detail is not None else (
-            f"Constructor: BUY {symbol} refused — the stop sits 3.42 ATR "
-            f"away, wider than the instrument's own reach"
+        "stage": "deterministic_gate",
+        "outcome": "blocked",
+        "reason": "constructor_refused",
+        "refusal": code,
+        "detail": detail
+        if detail is not None
+        else (
+            f"Constructor: BUY {symbol} refused — the stop sits 3.42 ATR away, wider than the instrument's own reach"
         ),
         "targeted": True,
     }
@@ -89,8 +101,7 @@ def _refusal(symbol, code="stop_wider_than_instrument_reach", detail=None):
 
 def _entry(con, run_id, symbol, day):
     con.execute(
-        "INSERT INTO trades (symbol, action, qty, price, run_id, timestamp)"
-        " VALUES (?,?,?,?,?,?)",
+        "INSERT INTO trades (symbol, action, qty, price, run_id, timestamp) VALUES (?,?,?,?,?,?)",
         (symbol, "BUY", 1.0, 10.0, run_id, _et_stamp(day)),
     )
 
@@ -106,6 +117,7 @@ def db(tmp_path):
 # ---------------------------------------------------------------------------
 # the normaliser: merges only, never splits
 # ---------------------------------------------------------------------------
+
 
 def test_numbers_and_the_symbol_are_normalised_away():
     a = normalise("Constructor: BUY AAPL refused — reward:risk 1.12 below 1.50", "AAPL")
@@ -131,10 +143,16 @@ def test_a_reason_naming_a_second_symbol_stays_distinct():
 # reading sessions out of the evidence stream
 # ---------------------------------------------------------------------------
 
+
 def test_last_event_for_a_symbol_wins(db):
     con, path = db
-    _event(con, "r1", WED, "AAPL", {"stage": "specialist", "outcome": "evaluated",
-                                    "reason": "technical_analysis_validated"})
+    _event(
+        con,
+        "r1",
+        WED,
+        "AAPL",
+        {"stage": "specialist", "outcome": "evaluated", "reason": "technical_analysis_validated"},
+    )
     _event(con, "r1", WED, "AAPL", _refusal("AAPL"))
     con.commit()
     sessions, err = load_sessions(path)
@@ -160,6 +178,7 @@ def test_runs_that_considered_nothing_are_absent(db):
 # the trigger
 # ---------------------------------------------------------------------------
 
+
 def _jammed(con):
     """Three sessions, changing candidates, one unvarying reason."""
     for run, day, syms in (
@@ -176,7 +195,9 @@ def test_unvarying_refusal_with_changing_candidates_alerts(db, tmp_path):
     con, path = db
     _jammed(con)
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is True
     assert len(status.streak) == 3
@@ -194,7 +215,9 @@ def test_one_varied_session_ends_the_streak_and_the_alarm(db, tmp_path):
     _event(con, "r4", FRI, "MSFT", _refusal("MSFT", code="insufficient_history"))
     con.commit()
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.streak == []
     assert status.should_alert is False
@@ -209,7 +232,9 @@ def test_identical_candidate_sets_do_not_alert(db, tmp_path):
             _event(con, run, day, sym, _refusal(sym))
     con.commit()
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert len(status.streak) == 3
     assert status.inputs_varied is False
@@ -222,7 +247,9 @@ def test_a_single_session_never_alerts(db, tmp_path):
         _event(con, "r1", FRI, sym, _refusal(sym))
     con.commit()
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is False
     assert status.inputs_varied is False
@@ -235,7 +262,9 @@ def test_a_paused_desk_never_alerts(db, tmp_path):
     _jammed(con)
     later = _now_after(FRI) + timedelta(days=7)
     status = check_refusal_signature(
-        now=later, db_path=path, state_path=tmp_path / "state.json",
+        now=later,
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert len(status.streak) == 3
     assert status.current is False
@@ -249,12 +278,22 @@ def test_it_arms_itself_when_sessions_return(db, tmp_path):
     con, path = db
     _jammed(con)
     state = tmp_path / "state.json"
-    assert check_refusal_signature(
-        now=_now_after(FRI) + timedelta(days=7), db_path=path, state_path=state,
-    ).should_alert is False
-    assert check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=state,
-    ).should_alert is True
+    assert (
+        check_refusal_signature(
+            now=_now_after(FRI) + timedelta(days=7),
+            db_path=path,
+            state_path=state,
+        ).should_alert
+        is False
+    )
+    assert (
+        check_refusal_signature(
+            now=_now_after(FRI),
+            db_path=path,
+            state_path=state,
+        ).should_alert
+        is True
+    )
 
 
 def test_at_most_one_alert_per_trading_day(db, tmp_path):
@@ -296,9 +335,13 @@ def test_the_alert_names_no_day_count(db, tmp_path):
     item is that no such number exists."""
     con, path = db
     _jammed(con)
-    text = alert_text(check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
-    ))
+    text = alert_text(
+        check_refusal_signature(
+            now=_now_after(FRI),
+            db_path=path,
+            state_path=tmp_path / "state.json",
+        )
+    )
     assert "not a count of empty days" in text
     assert "the reason never varied while the input did" in text
 
@@ -324,6 +367,7 @@ def test_the_alert_names_no_day_count(db, tmp_path):
 # that it turned it down. And the reason it claimed to have no wording for
 # was sitting in the key: `intraday_move_threshold`.
 
+
 def _report_tables(con) -> None:
     """The two run-scoped report tables the desk records its own verdict in.
 
@@ -344,17 +388,24 @@ def _report_tables(con) -> None:
 
 def _intra_report(con, run_id, day, scan_status, hour=10):
     con.execute(
-        "INSERT INTO intra_check_reports (run_id, date, payload_json,"
-        " positions_json, timestamp) VALUES (?,?,?,?,?)",
-        (run_id, day, json.dumps({
-            "status": "ok",
-            "run_id": run_id,
-            # The tick itself completed — the deterministic loss check is
-            # never the part that gets suspended. The scan's own nested
-            # status is the half that either reached a decision or did not,
-            # which is exactly why this module reads the nested one.
-            "intraday_scan": {"status": scan_status, "run_id": run_id},
-        }), None, _et_stamp(day, hour)),
+        "INSERT INTO intra_check_reports (run_id, date, payload_json, positions_json, timestamp) VALUES (?,?,?,?,?)",
+        (
+            run_id,
+            day,
+            json.dumps(
+                {
+                    "status": "ok",
+                    "run_id": run_id,
+                    # The tick itself completed — the deterministic loss check is
+                    # never the part that gets suspended. The scan's own nested
+                    # status is the half that either reached a decision or did not,
+                    # which is exactly why this module reads the nested one.
+                    "intraday_scan": {"status": scan_status, "run_id": run_id},
+                }
+            ),
+            None,
+            _et_stamp(day, hour),
+        ),
     )
 
 
@@ -362,25 +413,30 @@ def _discovery(move_pct):
     """`opportunity|discovered` — what `_run_intraday_opportunity_scan`
     writes the moment it notices a mover, before anything looks at it."""
     return {
-        "stage": "opportunity", "outcome": "discovered",
+        "stage": "opportunity",
+        "outcome": "discovered",
         "reason": "intraday_move_threshold",
-        "move_pct": move_pct, "threshold_pct": 3.0,
+        "move_pct": move_pct,
+        "threshold_pct": 3.0,
     }
 
 
 #: The six suspended 2026-09-22 intra_check ticks, verbatim in shape: the
 #: run's short id, and the movers it discovered before it stopped.
 SUSPENDED_20260922 = (
-    ("intra_check-d784af8d", 13, [("SNDK", 6.688374200124576),
-                                  ("GME", 5.533596837944671)]),
+    ("intra_check-d784af8d", 13, [("SNDK", 6.688374200124576), ("GME", 5.533596837944671)]),
     ("intra_check-cd97d679", 13, [("MU", 3.922339028854545)]),
     ("intra_check-fa514b8a", 14, [("JPM", 3.3014313302283314)]),
-    ("intra_check-dc092d5c", 14, [("ONDS", 3.2498307379823994),
-                                  ("RKLB", 3.12477654629961),
-                                  ("FLNC", 3.0446549391068967)]),
-    ("intra_check-3d70b931", 15, [("DRAM", 3.165584415584408),
-                                  ("VLO", 3.1553521484871663),
-                                  ("WDC", 3.052549369630706)]),
+    (
+        "intra_check-dc092d5c",
+        14,
+        [("ONDS", 3.2498307379823994), ("RKLB", 3.12477654629961), ("FLNC", 3.0446549391068967)],
+    ),
+    (
+        "intra_check-3d70b931",
+        15,
+        [("DRAM", 3.165584415584408), ("VLO", 3.1553521484871663), ("WDC", 3.052549369630706)],
+    ),
     ("intra_check-d8eb4cf4", 15, [("MRVL", 3.1790447320352913)]),
 )
 TUE_20260922 = "2026-09-22"
@@ -401,11 +457,11 @@ def test_the_2026_09_22_false_alert_is_never_sent_again(db, tmp_path):
     sessions, err = load_sessions(path)
     assert err is None
     assert sessions == [], (
-        "a run whose every candidate is still undecided considered nothing "
-        "this check has an opinion about"
+        "a run whose every candidate is still undecided considered nothing this check has an opinion about"
     )
     status = check_refusal_signature(
-        now=_now_after(TUE_20260922), db_path=path,
+        now=_now_after(TUE_20260922),
+        db_path=path,
         state_path=tmp_path / "state.json",
     )
     assert status.should_alert is False
@@ -438,10 +494,17 @@ def test_a_specialist_evaluation_is_a_beginning_too(db):
     """`opportunity` is not the only stage with that character, which is
     why the rule is keyed on the outcome word and not on one stage name."""
     con, path = db
-    _event(con, "r1", WED, "AAPL", {
-        "stage": "specialist", "outcome": "evaluated",
-        "reason": "technical_analysis_validated",
-    })
+    _event(
+        con,
+        "r1",
+        WED,
+        "AAPL",
+        {
+            "stage": "specialist",
+            "outcome": "evaluated",
+            "reason": "technical_analysis_validated",
+        },
+    )
     con.commit()
     assert load_sessions(path)[0] == []
 
@@ -449,6 +512,7 @@ def test_a_specialist_evaluation_is_a_beginning_too(db):
 # ---------------------------------------------------------------------------
 # a run that never reached a decision is not evidence about the gate
 # ---------------------------------------------------------------------------
+
 
 def _jam_session(con, run_id, day, symbols, hour=10, code="stop_wider_than_instrument_reach"):
     """A run that really did put candidates through the gate and had every
@@ -466,9 +530,18 @@ def test_a_cost_circuit_suspension_is_excluded_by_the_desks_own_record(db, tmp_p
     outcome words that are not otherwise classified as harmless."""
     con, path = db
     _report_tables(con)
-    _event(con, "r1", TUE_20260922, "AAPL", {
-        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
-    }, 11)
+    _event(
+        con,
+        "r1",
+        TUE_20260922,
+        "AAPL",
+        {
+            "stage": "risk",
+            "outcome": "rejected",
+            "reason": "tech_analyst_error",
+        },
+        11,
+    )
     _intra_report(con, "r1", TUE_20260922, "paid_analysis_suspended", 11)
     con.commit()
 
@@ -480,10 +553,14 @@ def test_a_cost_circuit_suspension_is_excluded_by_the_desks_own_record(db, tmp_p
     streak, skipped = streak_and_skipped(sessions)
     assert streak == []
     assert [s.run_id for s in skipped] == ["r1"]
-    assert check_refusal_signature(
-        now=_now_after(TUE_20260922), db_path=path,
-        state_path=tmp_path / "state.json",
-    ).should_alert is False
+    assert (
+        check_refusal_signature(
+            now=_now_after(TUE_20260922),
+            db_path=path,
+            state_path=tmp_path / "state.json",
+        ).should_alert
+        is False
+    )
 
 
 def test_a_suspended_tick_inside_a_real_jam_neither_joins_it_nor_breaks_it(db, tmp_path):
@@ -500,9 +577,17 @@ def test_a_suspended_tick_inside_a_real_jam_neither_joins_it_nor_breaks_it(db, t
     _jam_session(con, "r1", WED, ["AAPL", "MSFT"])
     _intra_report(con, "r1", WED, "intraday_no_trades")
     # The suspended tick sits BETWEEN two jammed sessions.
-    _event(con, "r2", THU, "NVDA", {
-        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
-    })
+    _event(
+        con,
+        "r2",
+        THU,
+        "NVDA",
+        {
+            "stage": "risk",
+            "outcome": "rejected",
+            "reason": "tech_analyst_error",
+        },
+    )
     _intra_report(con, "r2", THU, "paid_analysis_suspended")
     _jam_session(con, "r3", FRI, ["TSLA", "AMD", "INTC"])
     _intra_report(con, "r3", FRI, "intraday_no_trades")
@@ -512,7 +597,9 @@ def test_a_suspended_tick_inside_a_real_jam_neither_joins_it_nor_breaks_it(db, t
     assert [s.run_id for s in streak] == ["r1", "r3"]
     assert [s.run_id for s in skipped] == ["r2"]
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is True
 
@@ -535,20 +622,21 @@ def test_an_unrecognised_status_still_counts_as_evidence(db):
 # the detector must still do its real job
 # ---------------------------------------------------------------------------
 
+
 def test_a_genuine_jam_still_fires(db, tmp_path):
     """Real candidates, a real gate, one unvarying refusal reason, and
     every run's own record saying it reached a decision."""
     con, path = db
     _report_tables(con)
-    for run, day, syms in (("r1", WED, ["AAPL", "MSFT"]),
-                           ("r2", THU, ["NVDA"]),
-                           ("r3", FRI, ["TSLA", "AMD"])):
+    for run, day, syms in (("r1", WED, ["AAPL", "MSFT"]), ("r2", THU, ["NVDA"]), ("r3", FRI, ["TSLA", "AMD"])):
         _jam_session(con, run, day, syms)
         _intra_report(con, run, day, "intraday_no_trades")
     con.commit()
 
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is True
     assert len(status.streak) == 3
@@ -566,16 +654,28 @@ def test_the_alert_says_what_it_did_not_count(db, tmp_path):
     _intra_report(con, "r1", WED, "intraday_no_trades")
     # `risk|rejected`, not `specialist|failed` — see the note on the
     # suspended-tick test above for why.
-    _event(con, "r2", THU, "NVDA", {
-        "stage": "risk", "outcome": "rejected", "reason": "tech_analyst_error",
-    })
+    _event(
+        con,
+        "r2",
+        THU,
+        "NVDA",
+        {
+            "stage": "risk",
+            "outcome": "rejected",
+            "reason": "tech_analyst_error",
+        },
+    )
     _intra_report(con, "r2", THU, "paid_analysis_suspended")
     _jam_session(con, "r3", FRI, ["TSLA", "AMD"])
     _intra_report(con, "r3", FRI, "intraday_no_trades")
     con.commit()
-    text = alert_text(check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
-    ))
+    text = alert_text(
+        check_refusal_signature(
+            now=_now_after(FRI),
+            db_path=path,
+            state_path=tmp_path / "state.json",
+        )
+    )
     assert "1 other run(s) are NOT counted above" in text
     assert "paid_analysis_suspended" in text
     assert "reached a decision" in text
@@ -584,6 +684,7 @@ def test_the_alert_says_what_it_did_not_count(db, tmp_path):
 # ---------------------------------------------------------------------------
 # the plain wording must use the field that is actually there
 # ---------------------------------------------------------------------------
+
 
 def test_a_reason_in_an_earlier_field_is_read_not_thrown_away():
     """The exact key from the 2026-09-22 message. `_plain_key` read the
@@ -600,9 +701,7 @@ def test_the_detail_field_is_used_when_the_reason_is_empty():
 
 
 def test_the_admission_appears_only_when_nothing_is_describable():
-    assert _plain_key("some_gate|blocked|||") == (
-        "the desk recorded a reason it has no plain wording for"
-    )
+    assert _plain_key("some_gate|blocked|||") == ("the desk recorded a reason it has no plain wording for")
 
 
 def test_a_named_code_is_still_preferred_over_the_raw_reason():
@@ -632,21 +731,27 @@ def test_a_named_code_is_still_preferred_over_the_raw_reason():
 #: The exact row the portfolio manager writes for a held name, from
 #: `src/pm_accounting.py` and verbatim in shape from production.
 HELD_UNCHANGED = {
-    "stage": "portfolio_manager", "outcome": "held_unchanged",
-    "reason": "pm_left_holding_unchanged", "refusal": "held_unchanged",
-    "note": ("the seat left a held name out of its targets, which its own "
-             "instructions define as leaving the position alone"),
+    "stage": "portfolio_manager",
+    "outcome": "held_unchanged",
+    "reason": "pm_left_holding_unchanged",
+    "refusal": "held_unchanged",
+    "note": (
+        "the seat left a held name out of its targets, which its own instructions define as leaving the position alone"
+    ),
 }
 
 #: Two consecutive real intra_check runs on the full book, with the held
 #: names they each reported. The sets differ, which is the condition that
 #: would have satisfied the "the input varied" half of the trigger.
 FULL_BOOK_20260923 = (
-    ("intra_check-d62ee54c", ["BRK-B", "NET", "META", "ETN", "FLNC", "NOK",
-                              "MRVL", "AMD", "AAPL", "RKLB", "RSG", "UPS"]),
-    ("intra_check-55044038", ["ETN", "AMD", "NET", "FLNC", "MRVL", "BRK-B",
-                              "META", "AAPL", "NOK", "RKLB", "UPS", "RSG",
-                              "PLTR"]),
+    (
+        "intra_check-d62ee54c",
+        ["BRK-B", "NET", "META", "ETN", "FLNC", "NOK", "MRVL", "AMD", "AAPL", "RKLB", "RSG", "UPS"],
+    ),
+    (
+        "intra_check-55044038",
+        ["ETN", "AMD", "NET", "FLNC", "MRVL", "BRK-B", "META", "AAPL", "NOK", "RKLB", "UPS", "RSG", "PLTR"],
+    ),
 )
 
 
@@ -666,7 +771,9 @@ def test_a_full_book_of_held_names_is_not_a_jammed_gate(db, tmp_path):
         "is not a session this check has an opinion about"
     )
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is False
 
@@ -680,9 +787,7 @@ def test_a_jam_still_fires_underneath_a_full_book(db, tmp_path):
     con, path = db
     _report_tables(con)
     held = ["AAPL", "META", "NET", "RSG"]
-    for run, day, fresh in (("r1", WED, ["NVDA"]),
-                            ("r2", THU, ["AMD", "INTC"]),
-                            ("r3", FRI, ["TSLA"])):
+    for run, day, fresh in (("r1", WED, ["NVDA"]), ("r2", THU, ["AMD", "INTC"]), ("r3", FRI, ["TSLA"])):
         for symbol in held:
             _event(con, run, day, symbol, HELD_UNCHANGED)
         _jam_session(con, run, day, fresh)
@@ -690,7 +795,9 @@ def test_a_jam_still_fires_underneath_a_full_book(db, tmp_path):
     con.commit()
 
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is True
     assert status.symbols == ["AMD", "INTC", "NVDA", "TSLA"], (
@@ -714,50 +821,73 @@ def test_holding_the_book_does_not_end_a_streak_the_way_a_fill_does(db):
 # the rest of the outcome vocabulary, audited 2026-09-23
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("stage,outcome", [
-    ("opportunity", "nominated"),          # a seat put the name forward
-    ("opportunity", "admitted"),           # eligibility was widened for it
-    ("opportunity", "already_covered"),    # duplicates an analysis this run has
-    ("portfolio_manager", "held_unchanged"),
-    ("portfolio_manager", "proposed"),     # a target was put up
-    ("evidence_gate", "not_decided"),      # says so in the word itself
-    ("funding", "attempted"),              # a cash sweep in flight
-    ("funding", "not_required"),           # no sweep was needed
-    ("position_management", "exited"),     # a SELL is not a refused idea
-    ("scale_in", "protective_sell_cancelled"),
-    ("reconciliation", "stop_out_gap_unexplained"),
-])
+
+@pytest.mark.parametrize(
+    "stage,outcome",
+    [
+        ("opportunity", "nominated"),  # a seat put the name forward
+        ("opportunity", "admitted"),  # eligibility was widened for it
+        ("opportunity", "already_covered"),  # duplicates an analysis this run has
+        ("portfolio_manager", "held_unchanged"),
+        ("portfolio_manager", "proposed"),  # a target was put up
+        ("evidence_gate", "not_decided"),  # says so in the word itself
+        ("funding", "attempted"),  # a cash sweep in flight
+        ("funding", "not_required"),  # no sweep was needed
+        ("position_management", "exited"),  # a SELL is not a refused idea
+        ("scale_in", "protective_sell_cancelled"),
+        ("reconciliation", "stop_out_gap_unexplained"),
+    ],
+)
 def test_no_outcome_word_that_refuses_nothing_is_read_as_a_refusal(db, stage, outcome):
     con, path = db
-    _event(con, "r1", WED, "AAPL", {
-        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
-    })
+    _event(
+        con,
+        "r1",
+        WED,
+        "AAPL",
+        {
+            "stage": stage,
+            "outcome": outcome,
+            "reason": f"{stage}_{outcome}",
+        },
+    )
     con.commit()
     assert load_sessions(path)[0] == []
 
 
-@pytest.mark.parametrize("stage,outcome", [
-    ("deterministic_gate", "blocked"),
-    ("risk", "rejected"),
-    ("portfolio_manager", "not_selected"),
-    ("portfolio_manager", "omitted"),
-    ("funding", "no_additional_cash"),
-    ("protection", "not_placed"),
-    # NOTE: ("specialist", "failed") is deliberately NOT here any more
-    # (2026-09-24) — see NOT_A_REFUSAL_STAGE_OUTCOMES and the
-    # specialist-data-outage tests below. "failed" from every OTHER stage
-    # stays a refusal, which is exactly what this parametrize still proves.
-    ("order", "rejected"),
-    ("an_outcome_word_invented_next_year", "who_knows"),
-])
+@pytest.mark.parametrize(
+    "stage,outcome",
+    [
+        ("deterministic_gate", "blocked"),
+        ("risk", "rejected"),
+        ("portfolio_manager", "not_selected"),
+        ("portfolio_manager", "omitted"),
+        ("funding", "no_additional_cash"),
+        ("protection", "not_placed"),
+        # NOTE: ("specialist", "failed") is deliberately NOT here any more
+        # (2026-09-24) — see NOT_A_REFUSAL_STAGE_OUTCOMES and the
+        # specialist-data-outage tests below. "failed" from every OTHER stage
+        # stays a refusal, which is exactly what this parametrize still proves.
+        ("order", "rejected"),
+        ("an_outcome_word_invented_next_year", "who_knows"),
+    ],
+)
 def test_a_word_that_kills_a_candidate_still_reads_as_a_refusal(db, stage, outcome):
     """The default is unchanged and stays conservative: anything not
     classified as harmless kills its candidate, so the audit cannot have
     quietly disarmed the check."""
     con, path = db
-    _event(con, "r1", WED, "AAPL", {
-        "stage": stage, "outcome": outcome, "reason": f"{stage}_{outcome}",
-    })
+    _event(
+        con,
+        "r1",
+        WED,
+        "AAPL",
+        {
+            "stage": stage,
+            "outcome": outcome,
+            "reason": f"{stage}_{outcome}",
+        },
+    )
     con.commit()
     sessions, _ = load_sessions(path)
     assert sessions[0].candidates == frozenset({"AAPL"})
@@ -776,6 +906,7 @@ def test_a_word_that_kills_a_candidate_still_reads_as_a_refusal(db, stage, outco
 # `no_trades`/`no_orders` tick, must not read as "the desk refused every
 # idea for the same reason."
 
+
 def test_a_specialist_data_outage_does_not_alert(db, tmp_path):
     """Three sessions, changing candidates, every one dying only on
     `specialist|failed` — and every run's OWN status says it reached a
@@ -790,10 +921,18 @@ def test_a_specialist_data_outage_does_not_alert(db, tmp_path):
         ("r3", FRI, ["TSLA", "AMD", "INTC"], "no_trades"),
     ):
         for symbol in syms:
-            _event(con, run, day, symbol, {
-                "stage": "specialist", "outcome": "failed",
-                "reason": "market_data_exception", "detail": "feed outage",
-            })
+            _event(
+                con,
+                run,
+                day,
+                symbol,
+                {
+                    "stage": "specialist",
+                    "outcome": "failed",
+                    "reason": "market_data_exception",
+                    "detail": "feed outage",
+                },
+            )
         _intra_report(con, run, day, status)
     con.commit()
 
@@ -803,13 +942,16 @@ def test_a_specialist_data_outage_does_not_alert(db, tmp_path):
         "refused nothing and must not appear as evidence for this check"
     )
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is False
 
 
 def test_a_genuine_gate_refusal_streak_still_fires_beside_specialist_failures(
-    db, tmp_path,
+    db,
+    tmp_path,
 ):
     """The exclusion must not be able to mask a real jam. Each session has
     both a specialist data failure (dropped) and candidates genuinely
@@ -823,17 +965,26 @@ def test_a_genuine_gate_refusal_streak_still_fires_beside_specialist_failures(
         ("r3", FRI, ["TSLA", "AMD"], ["CSCO"]),
     ):
         for symbol in broken:
-            _event(con, run, day, symbol, {
-                "stage": "specialist", "outcome": "failed",
-                "reason": "market_data_exception",
-            })
+            _event(
+                con,
+                run,
+                day,
+                symbol,
+                {
+                    "stage": "specialist",
+                    "outcome": "failed",
+                    "reason": "market_data_exception",
+                },
+            )
         for symbol in gated:
             _event(con, run, day, symbol, _refusal(symbol))
         _intra_report(con, run, day, "intraday_no_trades")
     con.commit()
 
     status = check_refusal_signature(
-        now=_now_after(FRI), db_path=path, state_path=tmp_path / "state.json",
+        now=_now_after(FRI),
+        db_path=path,
+        state_path=tmp_path / "state.json",
     )
     assert status.should_alert is True
     assert status.symbols == ["AAPL", "AMD", "MSFT", "NVDA", "TSLA"], (

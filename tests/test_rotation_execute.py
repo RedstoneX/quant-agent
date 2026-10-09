@@ -27,6 +27,7 @@ What these pin, in the order the owner asked for them:
     rotation is paged;
   * the risk ceiling still binds the BUY: a close frees only its own risk.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -36,7 +37,11 @@ import pytest
 
 from src import notifier
 from src.models import (
-    PortfolioDecision, Position, ReasoningChain, TargetPosition, TradeDecision,
+    PortfolioDecision,
+    Position,
+    ReasoningChain,
+    TargetPosition,
+    TradeDecision,
 )
 from src.pipeline import TradingPipeline, _reason_cites_hard_trigger
 from src.pipeline_context import RunContext
@@ -68,30 +73,41 @@ from tests.pipeline_factory import build_pipeline
 
 def _opportunity(tier: str = "ineligible_hold") -> RotationOpportunity:
     return RotationOpportunity(
-        new_symbol="NEW", new_score=1.8, held_symbol="OLD",
+        new_symbol="NEW",
+        new_score=1.8,
+        held_symbol="OLD",
         held_score=None if tier == "ineligible_hold" else 0.9,
-        tier=tier, reasons=HELD_REASONS if tier == "ineligible_hold" else (),
+        tier=tier,
+        reasons=HELD_REASONS if tier == "ineligible_hold" else (),
     )
 
 
 def _precheck(opportunity=None) -> RotationPrecheck:
     return RotationPrecheck(
-        opportunity=opportunity, headroom_pct=0.2, ceiling_pct=25.0,
+        opportunity=opportunity,
+        headroom_pct=0.2,
+        ceiling_pct=25.0,
         floor_pct=0.5,
     )
 
 
 def _rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="p",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="p",
         cash_target="c",
     )
 
 
 def _decision(*targets: TargetPosition) -> PortfolioDecision:
     return PortfolioDecision(
-        reasoning_chain=_rc(), portfolio_view="v", targets=list(targets),
+        reasoning_chain=_rc(),
+        portfolio_view="v",
+        targets=list(targets),
     )
 
 
@@ -101,8 +117,12 @@ def _buy_new() -> TargetPosition:
 
 def _pos(symbol="OLD", qty=10.0, price=95.0) -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=100.0, current_price=price,
-        market_value=qty * price, unrealized_pnl=(price - 100.0) * qty,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=100.0,
+        current_price=price,
+        market_value=qty * price,
+        unrealized_pnl=(price - 100.0) * qty,
         sector="Technology",
     )
 
@@ -111,8 +131,7 @@ class _ProtectionProbe:
     """Stands in for `TradingPipeline._structural_protection_for_holding`
     and counts calls, so a test can prove the check was never made."""
 
-    def __init__(self, protected: bool, basis: str = "structural_level_broken",
-                 detail: str = BROKEN_DETAIL):
+    def __init__(self, protected: bool, basis: str = "structural_level_broken", detail: str = BROKEN_DETAIL):
         self.protected = protected
         self.basis = basis
         self.detail = detail
@@ -121,16 +140,21 @@ class _ProtectionProbe:
     def __call__(self, **kwargs) -> StructuralProtectionCheck:
         self.calls.append(kwargs)
         return StructuralProtectionCheck(
-            protected=self.protected, basis=self.basis, detail=self.detail,
+            protected=self.protected,
+            basis=self.basis,
+            detail=self.detail,
         )
 
 
 def _pipeline(tmp_path, *, enabled=True, precheck=None, protected=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = build_pipeline(db=db, portfolio_manager=SimpleNamespace(
-        last_rotation_precheck=precheck if precheck is not None else _precheck(_opportunity()),
-    ))
+    pipeline = build_pipeline(
+        db=db,
+        portfolio_manager=SimpleNamespace(
+            last_rotation_precheck=precheck if precheck is not None else _precheck(_opportunity()),
+        ),
+    )
     pipeline.config = SimpleNamespace(
         execution=SimpleNamespace(rotation_enabled=enabled),
     )
@@ -145,9 +169,11 @@ def _ctx(run_id="run-1") -> RunContext:
 
 def _events(db, run_id="run-1") -> list[tuple[str | None, dict]]:
     import json
+
     rows = db.conn.execute(
         "SELECT symbol, evidence_json FROM specialist_evidence "
-        "WHERE kind = 'pipeline_event' AND run_id = ? ORDER BY id", (run_id,),
+        "WHERE kind = 'pipeline_event' AND run_id = ? ORDER BY id",
+        (run_id,),
     ).fetchall()
     return [(r["symbol"], json.loads(r["evidence_json"])) for r in rows]
 
@@ -156,13 +182,13 @@ def _rotation_events(db, run_id="run-1") -> list[tuple[str | None, dict]]:
     return [(s, e) for s, e in _events(db, run_id) if e.get("stage") == "rotation"]
 
 
-HISTORY = {"OLD": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0,
-                   "stop_loss": 92.0}}
+HISTORY = {"OLD": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0, "stop_loss": 92.0}}
 
 
 # ---------------------------------------------------------------------------
 # Flag OFF — byte-for-byte the surfacing-only behaviour
 # ---------------------------------------------------------------------------
+
 
 def test_flag_off_is_a_no_op(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path, enabled=False)
@@ -177,19 +203,24 @@ def test_flag_off_is_a_no_op(tmp_path):
 
 def test_flag_default_is_off_and_a_mock_config_never_reads_as_on():
     from src.config import ExecutionConfig
+
     assert ExecutionConfig().rotation_enabled is False
     # `_repeg_settings` convention: a MagicMock's truthy auto-attribute must
     # never read as "yes, close a real position on your own".
     assert _rotation_execution_enabled(SimpleNamespace(config=MagicMock())) is False
     assert _rotation_execution_enabled(SimpleNamespace(config=None)) is False
-    assert _rotation_execution_enabled(
-        SimpleNamespace(config=SimpleNamespace(execution=SimpleNamespace(rotation_enabled=1)))
-    ) is False
+    assert (
+        _rotation_execution_enabled(
+            SimpleNamespace(config=SimpleNamespace(execution=SimpleNamespace(rotation_enabled=1)))
+        )
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------
 # The categorical tier IS acted on, when the desk's own data says it is safe
 # ---------------------------------------------------------------------------
+
 
 def test_categorically_ineligible_unprotected_holding_is_rotated_out(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path)
@@ -237,7 +268,8 @@ def test_ranked_margin_tier_is_surfaced_only_while_its_flag_is_off(tmp_path):
     no target appended, no rotation on the context, no protection check even
     attempted."""
     pipeline, db, probe = _pipeline(
-        tmp_path, precheck=_precheck(_opportunity("ranked_margin")),
+        tmp_path,
+        precheck=_precheck(_opportunity("ranked_margin")),
     )
     ctx = _ctx()
     decision = _decision(_buy_new())
@@ -245,7 +277,7 @@ def test_ranked_margin_tier_is_surfaced_only_while_its_flag_is_off(tmp_path):
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert ctx.rotation is None
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["outcome"] == "skipped"
     assert payload["reason"] == "ranked_margin_tier_not_enabled"
 
@@ -272,7 +304,7 @@ def test_structurally_protected_below_bar_holding_is_still_sold(tmp_path):
     assert [t.symbol for t in decision.targets] == ["NEW", "OLD"]
     assert ctx.rotation is not None
     assert ctx.rotation["protection_basis"] == "structural_level_intact"
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"].startswith("ROTATION (deterministic")
     assert payload["protection_basis"] == "structural_level_intact"
 
@@ -288,7 +320,7 @@ def test_protection_check_failure_fails_closed(tmp_path):
     decision = _decision(_buy_new())
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "protection_check_failed"
 
 
@@ -299,10 +331,8 @@ def test_protection_check_failure_fails_closed(tmp_path):
 WORST_REASONS = ("R2 rating below bar", "R5 net evidence -1 if long — no rung")
 NEXT_REASONS = ("R5 net evidence -1 if long — no rung",)
 MULTI_HISTORY = {
-    "WORST": {"thesis_invalid_if": "closes below 50", "entry_price": 50.0,
-              "stop_loss": 46.0},
-    "NEXT": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0,
-             "stop_loss": 92.0},
+    "WORST": {"thesis_invalid_if": "closes below 50", "entry_price": 50.0, "stop_loss": 46.0},
+    "NEXT": {"thesis_invalid_if": "closes below 100", "entry_price": 100.0, "stop_loss": 92.0},
 }
 
 
@@ -320,8 +350,7 @@ class _PerSymbolProbe:
         protected = self.protected_by_symbol[sym]
         return StructuralProtectionCheck(
             protected=protected,
-            basis="structural_level_intact" if protected
-            else "structural_level_broken",
+            basis="structural_level_intact" if protected else "structural_level_broken",
             detail=BROKEN_DETAIL,
         )
 
@@ -329,8 +358,12 @@ class _PerSymbolProbe:
 def _multi_opportunity() -> RotationOpportunity:
     """Two held names below the entry bar this session, worst-first."""
     return RotationOpportunity(
-        new_symbol="NEW", new_score=1.8, held_symbol="WORST", held_score=None,
-        tier="ineligible_hold", reasons=WORST_REASONS,
+        new_symbol="NEW",
+        new_score=1.8,
+        held_symbol="WORST",
+        held_score=None,
+        tier="ineligible_hold",
+        reasons=WORST_REASONS,
         ineligible_candidates=(("WORST", WORST_REASONS), ("NEXT", NEXT_REASONS)),
     )
 
@@ -360,9 +393,7 @@ def test_protected_worst_advances_to_the_next_worst_below_bar_holding(tmp_path):
     assert [c["symbol"] for c in probe.calls] == ["WORST"]
 
     events = _rotation_events(db)
-    assert not any(
-        e["reason"] == "held_symbol_structurally_protected" for _, e in events
-    )
+    assert not any(e["reason"] == "held_symbol_structurally_protected" for _, e in events)
     proposed = [(sym, e) for sym, e in events if e["outcome"] == "proposed"]
     assert len(proposed) == 1 and proposed[0][0] == "WORST"
 
@@ -383,15 +414,14 @@ def test_rotation_abandoned_only_when_every_below_bar_holding_is_protected(tmp_p
     assert [t.symbol for t in decision.targets] == ["NEW", "WORST"]
     assert ctx.rotation is not None
     events = _rotation_events(db)
-    assert not any(
-        e["reason"] == "held_symbol_structurally_protected" for _, e in events
-    )
+    assert not any(e["reason"] == "held_symbol_structurally_protected" for _, e in events)
     assert [sym for sym, e in events if e["outcome"] == "proposed"] == ["WORST"]
 
 
 # ---------------------------------------------------------------------------
 # The desk never invents the buy leg and never overrides the PM on the held name
 # ---------------------------------------------------------------------------
+
 
 def test_sold_even_when_the_pm_targeted_no_new_candidate(tmp_path):
     """MEASURED: this tier fired 8 times (24-25 Sep) and died 8 of 8 at this
@@ -405,7 +435,7 @@ def test_sold_even_when_the_pm_targeted_no_new_candidate(tmp_path):
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["OTHER", "OLD"]
     assert [c["symbol"] for c in probe.calls] == ["OLD"]
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"].startswith("ROTATION (deterministic")
 
 
@@ -414,7 +444,7 @@ def test_a_zero_size_pm_target_for_the_new_name_no_longer_blocks_the_cull(tmp_pa
     ctx = _ctx()
     decision = _decision(TargetPosition(symbol="NEW", risk_allocation_pct=0.0, thesis="x"))
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"].startswith("ROTATION (deterministic")
 
 
@@ -435,7 +465,7 @@ def test_not_rotated_when_pm_already_targets_the_held_symbol(tmp_path):
         assert decision.targets[1].thesis == "pm call"
         assert ctx.rotation is None
         assert probe.calls == []
-        (_, payload), = _rotation_events(db)
+        ((_, payload),) = _rotation_events(db)
         assert payload["reason"] == "pm_already_targets_held_symbol"
 
 
@@ -446,7 +476,7 @@ def test_a_short_is_never_rotated(tmp_path):
     _apply_rotation_execution(pipeline, ctx, decision, [_pos(qty=-10.0)], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "held_symbol_is_not_a_long_position"
 
 
@@ -454,11 +484,17 @@ def test_a_short_is_never_rotated(tmp_path):
 # In-flight orders, partial fills, same-day entries — never rotated
 # ---------------------------------------------------------------------------
 
+
 def test_in_flight_order_on_held_symbol_blocks_rotation(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path)
     db.insert_trade(
-        symbol="OLD", action="PARTIAL_SELL(50%)", qty=5.0, price=95.0,
-        reasoning="midday trim", run_id="run-0", broker_order_id="ord-1",
+        symbol="OLD",
+        action="PARTIAL_SELL(50%)",
+        qty=5.0,
+        price=95.0,
+        reasoning="midday trim",
+        run_id="run-0",
+        broker_order_id="ord-1",
         fill_status="submitted",
     )
     ctx = _ctx()
@@ -466,7 +502,7 @@ def test_in_flight_order_on_held_symbol_blocks_rotation(tmp_path):
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "order_in_flight_on_held_symbol"
     assert "ord-1" in payload["detail"]
 
@@ -477,15 +513,22 @@ def test_held_symbol_bought_today_is_never_rotated(tmp_path):
     normal range). A same-day BUY — filled or not — refuses the rotation."""
     pipeline, db, probe = _pipeline(tmp_path)
     db.insert_trade(
-        symbol="OLD", action="BUY", qty=10.0, price=100.0, reasoning="entry",
-        run_id="run-0", broker_order_id="ord-b", fill_status="filled", stop_loss=90.0,
+        symbol="OLD",
+        action="BUY",
+        qty=10.0,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-0",
+        broker_order_id="ord-b",
+        fill_status="filled",
+        stop_loss=90.0,
     )
     ctx = _ctx()
     decision = _decision(_buy_new())
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "held_symbol_bought_today"
 
 
@@ -502,7 +545,7 @@ def test_pending_protection_restore_wal_row_blocks_rotation(tmp_path):
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "sell_already_in_flight_wal_row"
     assert payload["detail"] == "wal-9"
 
@@ -514,7 +557,7 @@ def test_pending_repeg_row_blocks_rotation(tmp_path):
     decision = _decision(_buy_new())
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "entry_repeg_in_flight"
 
 
@@ -530,7 +573,7 @@ def test_unanswerable_in_flight_question_fails_closed(tmp_path):
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     assert [t.symbol for t in decision.targets] == ["NEW"]
     assert probe.calls == []
-    (_, payload), = _rotation_events(db)
+    ((_, payload),) = _rotation_events(db)
     assert payload["reason"] == "in_flight_check_failed"
 
 
@@ -538,10 +581,14 @@ def test_unanswerable_in_flight_question_fails_closed(tmp_path):
 # The reason is real and checkable, and the sale goes through the normal gates
 # ---------------------------------------------------------------------------
 
+
 def _reason() -> str:
     return rotation_sell_reason(
-        _opportunity(), protection_basis="structural_level_broken",
-        protection_detail=BROKEN_DETAIL, headroom_pct=0.2, ceiling_pct=25.0,
+        _opportunity(),
+        protection_basis="structural_level_broken",
+        protection_detail=BROKEN_DETAIL,
+        headroom_pct=0.2,
+        ceiling_pct=25.0,
         floor_pct=0.5,
     )
 
@@ -572,8 +619,13 @@ def test_reason_makes_no_claim_the_holding_discipline_checker_could_find_false()
     assert not claims_regime_flip(reason)
     assert not claims_bearish_state_change(reason)
     check = holding_discipline_claim_check(
-        action="SELL", reason=reason, symbol="OLD", protected=True,
-        macro_regime_today="risk-on", macro_status="ok", active_state_changes="",
+        action="SELL",
+        reason=reason,
+        symbol="OLD",
+        protected=True,
+        macro_regime_today="risk-on",
+        macro_status="ok",
+        active_state_changes="",
     )
     assert check.verdict == "ok" and not check.blocks
 
@@ -588,9 +640,12 @@ def test_reason_does_not_word_itself_past_the_midday_keyword_gate():
     trigger by the desk's own definition, confirmed on two closes."""
     assert not _reason_cites_hard_trigger(_reason())
     noise = rotation_sell_reason(
-        _opportunity(), protection_basis="noise_band_broken",
+        _opportunity(),
+        protection_basis="noise_band_broken",
         protection_detail="adverse move 3.1 ATR from entry, outside the band",
-        headroom_pct=0.2, ceiling_pct=25.0, floor_pct=0.5,
+        headroom_pct=0.2,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
     )
     assert not _reason_cites_hard_trigger(noise)
 
@@ -598,8 +653,12 @@ def test_reason_does_not_word_itself_past_the_midday_keyword_gate():
 def test_reason_builder_refuses_the_ranked_margin_tier():
     with pytest.raises(ValueError):
         rotation_sell_reason(
-            _opportunity("ranked_margin"), protection_basis="noise_band_broken",
-            protection_detail="x", headroom_pct=0.2, ceiling_pct=25.0, floor_pct=0.5,
+            _opportunity("ranked_margin"),
+            protection_basis="noise_band_broken",
+            protection_detail="x",
+            headroom_pct=0.2,
+            ceiling_pct=25.0,
+            floor_pct=0.5,
         )
 
 
@@ -618,14 +677,14 @@ def test_injected_close_becomes_an_ordinary_full_sell_through_the_real_builder(t
     assert isinstance(trade, TradeDecision)
     assert trade.action == "SELL" and trade.allocation_pct == 100.0
     assert trade.reasoning.startswith("ROTATION (deterministic")
-    assert "stopped earning its place" in trade.reasoning, \
-        "measured clauses survive truncation"
+    assert "stopped earning its place" in trade.reasoning, "measured clauses survive truncation"
     assert trade.thesis_invalid_if == "closes below 100"
 
 
 # ---------------------------------------------------------------------------
 # Owner alert, buy-leg discipline, durable outcome
 # ---------------------------------------------------------------------------
+
 
 def _capture_alerts(monkeypatch) -> list[tuple[str, list[str] | None]]:
     sent: list[tuple[str, list[str] | None]] = []
@@ -640,11 +699,15 @@ def _capture_alerts(monkeypatch) -> list[tuple[str, list[str] | None]]:
 
 def _rotation_dict(**extra) -> dict:
     base = {
-        "held_symbol": "OLD", "new_symbol": "NEW", "new_score": 1.8,
+        "held_symbol": "OLD",
+        "new_symbol": "NEW",
+        "new_score": 1.8,
         "held_reasons": list(HELD_REASONS),
         "protection_basis": "structural_level_broken",
-        "protection_detail": BROKEN_DETAIL, "headroom_pct": 0.2,
-        "ceiling_pct": 25.0, "reason": _reason(),
+        "protection_detail": BROKEN_DETAIL,
+        "headroom_pct": 0.2,
+        "ceiling_pct": 25.0,
+        "reason": _reason(),
     }
     base.update(extra)
     return base
@@ -653,9 +716,12 @@ def _rotation_dict(**extra) -> dict:
 def test_owner_alert_fires_with_the_sale_and_the_measured_reason(monkeypatch):
     sent = _capture_alerts(monkeypatch)
     _alert_rotation_executed(
-        rotation=_rotation_dict(), qty=10.0, limit_price=94.53, order_id="brk-42",
+        rotation=_rotation_dict(),
+        qty=10.0,
+        limit_price=94.53,
+        order_id="brk-42",
     )
-    (text, symbols), = sent
+    ((text, symbols),) = sent
     assert text.startswith("POSITION CLOSED AUTOMATICALLY")
     assert "OLD" in text and "NEW" in text
     assert "10 share(s)" in text and "$94.53" in text and "brk-42" in text
@@ -671,14 +737,22 @@ def test_owner_alert_never_raises(monkeypatch):
 
     monkeypatch.setattr(notifier, "send_owner_alert", _boom)
     _alert_rotation_executed(
-        rotation=_rotation_dict(), qty=1.0, limit_price=1.0, order_id=None,
+        rotation=_rotation_dict(),
+        qty=1.0,
+        limit_price=1.0,
+        order_id=None,
     )  # no exception
 
 
 def _buy(symbol: str) -> TradeDecision:
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=5.0, entry_price=10.0,
-        stop_loss=9.0, take_profit=12.0, reasoning="r",
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=5.0,
+        entry_price=10.0,
+        stop_loss=9.0,
+        take_profit=12.0,
+        reasoning="r",
     )
 
 
@@ -688,7 +762,10 @@ def test_buy_leg_dropped_when_the_rotation_close_did_not_fill(tmp_path):
     ctx.rotation = _rotation_dict(sell_order_id="s1")
     buys = [_buy("NEW"), _buy("OTHER")]
     kept = _drop_rotation_buy_if_room_not_freed(
-        pipeline, ctx, buys, {"s1": "canceled"},
+        pipeline,
+        ctx,
+        buys,
+        {"s1": "canceled"},
     )
     assert [d.symbol for d in kept] == ["OTHER"], "only the rotation's own BUY is dropped"
     (skip,) = ctx.execution_skips
@@ -732,14 +809,18 @@ def test_sold_but_not_bought_is_recorded_and_paged(tmp_path, monkeypatch):
     pipeline, db, _ = _pipeline(tmp_path)
     ctx = _ctx()
     ctx.rotation = _rotation_dict(sell_order_id="s1")
-    ctx.execution_skips.append({
-        "symbol": "NEW", "reason": "insufficient_cash", "detail": "needs $500, has $20",
-    })
+    ctx.execution_skips.append(
+        {
+            "symbol": "NEW",
+            "reason": "insufficient_cash",
+            "detail": "needs $500, has $20",
+        }
+    )
     _record_rotation_buy_leg_outcome(pipeline, ctx, orders=[])
-    (symbol, payload), = _rotation_events(db)
+    ((symbol, payload),) = _rotation_events(db)
     assert symbol == "NEW" and payload["outcome"] == "buy_not_submitted"
     assert payload["reason"] == "insufficient_cash: needs $500, has $20"
-    (text, symbols), = sent
+    ((text, symbols),) = sent
     assert text.startswith("ROTATION INCOMPLETE")
     assert "insufficient_cash" in text and symbols == ["OLD", "NEW"]
 
@@ -750,9 +831,11 @@ def test_sold_and_bought_is_recorded_and_not_paged(tmp_path, monkeypatch):
     ctx = _ctx()
     ctx.rotation = _rotation_dict(sell_order_id="s1")
     _record_rotation_buy_leg_outcome(
-        pipeline, ctx, orders=[{"id": "b1", "symbol": "NEW", "action": "BUY"}],
+        pipeline,
+        ctx,
+        orders=[{"id": "b1", "symbol": "NEW", "action": "BUY"}],
     )
-    (symbol, payload), = _rotation_events(db)
+    ((symbol, payload),) = _rotation_events(db)
     assert symbol == "NEW" and payload["outcome"] == "buy_submitted"
     assert sent == []
 
@@ -770,6 +853,7 @@ def test_outcome_is_not_recorded_when_no_rotation_sell_reached_the_broker(tmp_pa
 # Every existing risk ceiling still binds
 # ---------------------------------------------------------------------------
 
+
 def test_a_close_frees_only_its_own_risk_and_the_ceiling_still_binds():
     """Closing OLD (4% of a book at 24.8%) leaves the other 20.8% committed:
     NEW asking 6% is capped at the 4.2% the ceiling actually leaves. The
@@ -777,7 +861,8 @@ def test_a_close_frees_only_its_own_risk_and_the_ceiling_still_binds():
     allocation = allocate_risk_budget(
         [RiskRequest("OLD", 0.0), RiskRequest("NEW", 6.0)],
         existing_pct={"OLD": 4.0, "A": 10.4, "B": 10.4},
-        ceiling_pct=25.0, floor_pct=0.5,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
     )
     grant = allocation.grants["NEW"]
     assert grant.granted_pct == pytest.approx(4.2)
@@ -798,8 +883,11 @@ def test_same_session_close_now_reaches_the_allocator_as_a_zero_request():
     ]
     analysis = _analysis("NEW", entry=100.0, stop=95.0, target=115.0)
     plans = constructor._plan_risk_targets(
-        targets, analyses_by_sym={"NEW": analysis}, price_map={"NEW": 100.0},
-        current_weights={"OLD": 10.0}, existing_risk_pct={"OLD": 24.8},
+        targets,
+        analyses_by_sym={"NEW": analysis},
+        price_map={"NEW": 100.0},
+        current_weights={"OLD": 10.0},
+        existing_risk_pct={"OLD": 24.8},
         clusters=None,
     )
     assert plans["OLD"].risk_pct == 0.0
@@ -811,14 +899,17 @@ def test_same_session_close_now_reaches_the_allocator_as_a_zero_request():
 # PM prompt wording
 # ---------------------------------------------------------------------------
 
+
 def test_pm_section_says_so_only_when_execution_is_enabled():
     from src.agents.portfolio_manager import PortfolioManagerAgent
     from src.verdicts import RankedCandidate
 
     kwargs = dict(
         ranked=[RankedCandidate(symbol="NEW", direction="bullish", score=1.8)],
-        blocked={"OLD": list(HELD_REASONS)}, held_symbols={"OLD"},
-        existing_risk_pct={"OLD": 24.8}, ceiling_pct=25.0,
+        blocked={"OLD": list(HELD_REASONS)},
+        held_symbols={"OLD"},
+        existing_risk_pct={"OLD": 24.8},
+        ceiling_pct=25.0,
     )
     off = PortfolioManagerAgent._render_rotation_section(**kwargs)
     on = PortfolioManagerAgent._render_rotation_section(**kwargs, execute_enabled=True)
@@ -848,11 +939,9 @@ def test_pm_section_says_so_only_when_execution_is_enabled():
 # no durable row, nothing in the owner's report — a session that made the
 # comparison looked identical to one that never ran it.
 
+
 def _precheck_events(db, run_id="run-1"):
-    return [
-        e for _s, e in _rotation_events(db, run_id)
-        if e.get("outcome") == "precheck"
-    ]
+    return [e for _s, e in _rotation_events(db, run_id) if e.get("outcome") == "precheck"]
 
 
 def test_a_surfaced_nothing_still_leaves_a_durable_precheck_row(tmp_path):
@@ -874,7 +963,9 @@ def test_the_precheck_row_is_written_even_with_rotation_execution_off(tmp_path):
     from src.pipeline_stages import _record_rotation_precheck
 
     pipeline, db, _probe = _pipeline(
-        tmp_path, enabled=False, precheck=_precheck(None),
+        tmp_path,
+        enabled=False,
+        precheck=_precheck(None),
     )
     _record_rotation_precheck(pipeline, _ctx())
     rows = _precheck_events(db)
@@ -908,17 +999,26 @@ def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
     tmp_path,
 ):
     from src.rotation import (
-        ROTATION_FULL_NOTHING_BETTER, ROTATION_FULL_OPPORTUNITY,
-        ROTATION_ROOM_AVAILABLE, ROTATION_TELEMETRY_UNAVAILABLE,
-        RotationPrecheck, precheck_outcome,
+        ROTATION_FULL_NOTHING_BETTER,
+        ROTATION_FULL_OPPORTUNITY,
+        ROTATION_ROOM_AVAILABLE,
+        ROTATION_TELEMETRY_UNAVAILABLE,
+        RotationPrecheck,
+        precheck_outcome,
     )
 
     blind = RotationPrecheck(
-        opportunity=None, headroom_pct=0.0, ceiling_pct=25.0, floor_pct=0.5,
+        opportunity=None,
+        headroom_pct=0.0,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
         telemetry_available=False,
     )
     roomy = RotationPrecheck(
-        opportunity=None, headroom_pct=4.0, ceiling_pct=25.0, floor_pct=0.5,
+        opportunity=None,
+        headroom_pct=4.0,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
     )
     assert precheck_outcome(blind) == ROTATION_TELEMETRY_UNAVAILABLE
     assert precheck_outcome(roomy) == ROTATION_ROOM_AVAILABLE
@@ -926,13 +1026,14 @@ def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
     assert precheck_outcome(_precheck(_opportunity())) == ROTATION_FULL_OPPORTUNITY
     # All four say something to the owner — none renders empty.
     from src.rotation import owner_precheck_lines, precheck_record
+
     for pre in (blind, roomy, _precheck(None), _precheck(_opportunity())):
         record = precheck_record(
-            pre, execute_enabled=True, ranked_margin_enabled=False,
+            pre,
+            execute_enabled=True,
+            ranked_margin_enabled=False,
         )
         assert owner_precheck_lines(record), record["outcome"]
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -947,23 +1048,32 @@ def test_precheck_outcome_covers_the_same_four_cases_the_prompt_branches_on(
 # is one fact.
 # ---------------------------------------------------------------------------
 
+
 def _refusal_precheck(point="book_not_constrained", **over):
     from src.rotation import RotationPrecheck, RotationRefusal
 
     fields = dict(
         point=point,
         detail="real room exists on every constraint",
-        held_symbol="OLD", new_symbol="NEW",
-        held_score=0.9, new_score=1.8,
+        held_symbol="OLD",
+        new_symbol="NEW",
+        held_score=0.9,
+        new_score=1.8,
         shared_seats=("earnings", "technical"),
-        held_shared_score=0.9, new_shared_score=1.8,
-        ratio=2.0, binding=("funding",),
+        held_shared_score=0.9,
+        new_shared_score=1.8,
+        ratio=2.0,
+        binding=("funding",),
     )
     fields.update(over)
     return RotationPrecheck(
-        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        opportunity=None,
+        headroom_pct=14.5,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
         refusal=RotationRefusal(**fields),
-        entry_budget_usd=92.20, min_order_usd=500.0,
+        entry_budget_usd=92.20,
+        min_order_usd=500.0,
         binding=fields["binding"],
     )
 
@@ -1021,7 +1131,8 @@ def test_every_refusal_point_lands_under_its_own_code(tmp_path):
     for i, point in enumerate(ROTATION_REFUSAL_POINTS):
         (tmp_path / f"p{i}").mkdir(parents=True, exist_ok=True)
         pipeline, db = _refusal_pipeline(
-            tmp_path / f"p{i}", _refusal_precheck(point=point),
+            tmp_path / f"p{i}",
+            _refusal_precheck(point=point),
         )
         _record_rotation_precheck(pipeline, _ctx())
         rows = _rotation_events(db)
@@ -1058,7 +1169,9 @@ def test_the_owner_line_names_the_limit_that_is_actually_binding():
     from src.rotation import owner_precheck_lines, precheck_record
 
     record = precheck_record(
-        _refusal_precheck(), execute_enabled=False, ranked_margin_enabled=False,
+        _refusal_precheck(),
+        execute_enabled=False,
+        ranked_margin_enabled=False,
     )
     text = " ".join(owner_precheck_lines(record))
     assert "the book is FULL" in text
@@ -1086,12 +1199,23 @@ def test_an_unread_funding_view_is_not_reported_as_having_room():
     from src.rotation import RotationPrecheck, owner_precheck_lines, precheck_record
 
     unread = RotationPrecheck(
-        opportunity=None, headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
-        entry_budget_usd=None, min_order_usd=500.0, binding=(),
+        opportunity=None,
+        headroom_pct=14.5,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
+        entry_budget_usd=None,
+        min_order_usd=500.0,
+        binding=(),
     )
-    text = " ".join(owner_precheck_lines(precheck_record(
-        unread, execute_enabled=False, ranked_margin_enabled=False,
-    )))
+    text = " ".join(
+        owner_precheck_lines(
+            precheck_record(
+                unread,
+                execute_enabled=False,
+                ranked_margin_enabled=False,
+            )
+        )
+    )
     assert "could NOT read how much cash" in text
     assert "enough cash and borrowing room" not in text
 
@@ -1108,8 +1232,12 @@ def test_the_sale_reason_names_the_limit_that_actually_bound():
         _opportunity(),
         protection_basis="structural_level_broken",
         protection_detail=BROKEN_DETAIL,
-        headroom_pct=14.50, ceiling_pct=25.0, floor_pct=0.5,
-        binding=("funding",), entry_budget_usd=92.20, min_order_usd=500.0,
+        headroom_pct=14.50,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
+        binding=("funding",),
+        entry_budget_usd=92.20,
+        min_order_usd=500.0,
     )
     # Since the 2026-10-01 ruling the categorical sale does not rest on the
     # book being constrained at all, so it states no capital claim — which
@@ -1127,16 +1255,22 @@ def test_the_sale_reason_names_the_limit_that_actually_bound():
 # to crash with AttributeError before the sale was even proposed.
 # ---------------------------------------------------------------------------
 
+
 def _opportunity_no_replacement() -> RotationOpportunity:
     return RotationOpportunity(
-        new_symbol=None, new_score=None, held_symbol="OLD", held_score=None,
-        tier="ineligible_hold", reasons=HELD_REASONS,
+        new_symbol=None,
+        new_score=None,
+        held_symbol="OLD",
+        held_score=None,
+        tier="ineligible_hold",
+        reasons=HELD_REASONS,
     )
 
 
 def test_below_bar_holding_with_no_replacement_candidate_is_sold(tmp_path):
     pipeline, db, probe = _pipeline(
-        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+        tmp_path,
+        precheck=_precheck(_opportunity_no_replacement()),
     )
     ctx = _ctx()
     decision = _decision()
@@ -1149,14 +1283,15 @@ def test_below_bar_holding_with_no_replacement_candidate_is_sold(tmp_path):
     assert ctx.rotation["new_symbol"] is None
     assert ctx.rotation["new_score"] is None
 
-    (symbol, payload), = _rotation_events(db)
+    ((symbol, payload),) = _rotation_events(db)
     assert symbol == "OLD"
     assert payload["outcome"] == "proposed"
     assert payload["new_symbol"] is None
 
 
 def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The sale must reach the owner WITH its real reason, and must not
     claim it freed room for a replacement that does not exist."""
@@ -1164,7 +1299,8 @@ def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
     from src import pipeline_stages as _ps
 
     pipeline, db, probe = _pipeline(
-        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+        tmp_path,
+        precheck=_precheck(_opportunity_no_replacement()),
     )
     ctx = _ctx()
     decision = _decision()
@@ -1172,13 +1308,17 @@ def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
 
     sent: list = []
     monkeypatch.setattr(
-        _notifier, "send_owner_alert",
+        _notifier,
+        "send_owner_alert",
         lambda text, symbols=None: sent.append((text, symbols)) or True,
     )
     _ps._alert_rotation_executed(
-        rotation=ctx.rotation, qty=10.0, limit_price=95.0, order_id="o-1",
+        rotation=ctx.rotation,
+        qty=10.0,
+        limit_price=95.0,
+        order_id="o-1",
     )
-    (text, symbols), = sent
+    ((text, symbols),) = sent
     assert symbols == ["OLD"]
     assert "None" not in text
     assert "free room for" not in text
@@ -1187,12 +1327,14 @@ def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
 
 
 def test_no_replacement_leg_is_recorded_and_never_paged_as_a_missing_buy(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     from src import pipeline_stages as _ps
 
     pipeline, db, probe = _pipeline(
-        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+        tmp_path,
+        precheck=_precheck(_opportunity_no_replacement()),
     )
     ctx = _ctx()
     _apply_rotation_execution(pipeline, ctx, _decision(), [_pos()], HISTORY)
@@ -1200,7 +1342,8 @@ def test_no_replacement_leg_is_recorded_and_never_paged_as_a_missing_buy(
 
     paged: list = []
     monkeypatch.setattr(
-        _ps, "_alert_rotation_buy_leg_missing",
+        _ps,
+        "_alert_rotation_buy_leg_missing",
         lambda **kw: paged.append(kw),
     )
     _ps._record_rotation_buy_leg_outcome(pipeline, ctx, [])
@@ -1214,6 +1357,7 @@ def test_no_replacement_leg_is_recorded_and_never_paged_as_a_missing_buy(
 # BUY-side anti-churn: the mirror of `held_symbol_bought_today`.
 # ---------------------------------------------------------------------------
 
+
 def test_a_name_sold_today_below_the_bar_is_not_bought_back_the_same_day(
     tmp_path,
 ):
@@ -1222,7 +1366,12 @@ def test_a_name_sold_today_below_the_bar_is_not_bought_back_the_same_day(
     pipeline, db, probe = _pipeline(tmp_path)
     ctx = _ctx()
     _ps._record_pipeline_event(
-        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+        pipeline,
+        ctx,
+        "OLD",
+        "rotation",
+        "sell_submitted",
+        "because",
     )
     buys = [
         TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="back in"),
@@ -1257,16 +1406,19 @@ def test_a_rotation_sale_from_another_day_does_not_block_the_buy(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path)
     ctx = _ctx()
     _ps._record_pipeline_event(
-        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+        pipeline,
+        ctx,
+        "OLD",
+        "rotation",
+        "sell_submitted",
+        "because",
     )
     db.conn.execute(
         "UPDATE specialist_evidence SET timestamp = '2020-01-02T15:00:00+00:00'",
     )
     db.conn.commit()
     buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
-    assert [d.symbol
-            for d in _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
-            ] == ["OLD"]
+    assert [d.symbol for d in _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)] == ["OLD"]
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1427,7 @@ def test_a_rotation_sale_from_another_day_does_not_block_the_buy(tmp_path):
 # is why `_render_rotation_section` kept crashing on `new_score=None` inside
 # `build_user_message`, BEFORE the decision stage was ever reached.
 # ---------------------------------------------------------------------------
+
 
 def _render_replacementless(*, execute_enabled: bool) -> str:
     from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -1320,15 +1473,14 @@ def test_the_categorical_prompt_states_what_the_code_actually_does():
 # A fail-open anti-churn guard must leave a trace somebody can count.
 # ---------------------------------------------------------------------------
 
+
 def _failed_open(db) -> list:
-    return [
-        (sym, payload) for sym, payload in _rotation_events(db)
-        if payload["outcome"] == "rebuy_guard_failed_open"
-    ]
+    return [(sym, payload) for sym, payload in _rotation_events(db) if payload["outcome"] == "rebuy_guard_failed_open"]
 
 
 def test_an_unreadable_anti_churn_record_leaves_a_durable_reason(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     from src import pipeline_stages as _ps
 
@@ -1339,14 +1491,16 @@ def test_an_unreadable_anti_churn_record_leaves_a_durable_reason(
         raise RuntimeError("db gone")
 
     monkeypatch.setattr(
-        pipeline.db, "get_rotation_sell_symbols_today", _boom,
+        pipeline.db,
+        "get_rotation_sell_symbols_today",
+        _boom,
     )
     real_db = pipeline.db
     buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
     # Fail-open behaviour is UNCHANGED: the buy still proceeds.
     assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
 
-    (symbol, payload), = _failed_open(real_db)
+    ((symbol, payload),) = _failed_open(real_db)
     assert symbol == "OLD"
     assert payload["failure"] == "record_unreadable"
     assert "could not read" in payload["reason"]
@@ -1375,9 +1529,8 @@ def test_a_lost_anti_churn_write_leaves_a_durable_reason(tmp_path):
     # The same-day re-buy is STOPPED; every other buy is untouched.
     assert [d.symbol for d in kept] == ["FRESH"]
 
-    (symbol, payload), = [
-        (sym, p) for sym, p in _rotation_events(db)
-        if p["outcome"] == "rebuy_guard_closed_from_session_fact"
+    ((symbol, payload),) = [
+        (sym, p) for sym, p in _rotation_events(db) if p["outcome"] == "rebuy_guard_closed_from_session_fact"
     ]
     assert symbol == "OLD"
     assert payload["failure"] == "record_unwritten"

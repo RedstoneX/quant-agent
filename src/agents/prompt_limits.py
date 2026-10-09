@@ -31,6 +31,7 @@ a short allowlist of its COMPUTED properties, which are derivations of those
 fields rather than independent numbers). No other namespace resolves. This
 module holds no copy of any limit's value — only the rules for reading one.
 """
+
 from __future__ import annotations
 
 import re
@@ -121,9 +122,11 @@ RESOLVED_HERE = frozenset({RISK_NAMESPACE, FLAGS_NAMESPACE})
 #: `src/config.py`), not an independently chosen number, so rendering one is
 #: still rendering the single source of truth. Anything not a declared field
 #: and not on this list is refused, so a typo cannot silently reach a method.
-RISK_COMPUTED_PROPERTIES = frozenset({
-    "sector_hard_ceiling_pct",
-})
+RISK_COMPUTED_PROPERTIES = frozenset(
+    {
+        "sector_hard_ceiling_pct",
+    }
+)
 
 
 class PromptPlaceholderError(RuntimeError):
@@ -175,8 +178,7 @@ def resolve_placeholder(key: str, risk_config: Any) -> str:
         return _format_number(values[field])
     if namespace != RISK_NAMESPACE:
         raise PromptPlaceholderError(
-            f"unknown placeholder namespace {namespace!r} in {{{{{key}}}}} — "
-            f"only {sorted(RESOLVED_HERE)} resolve here",
+            f"unknown placeholder namespace {namespace!r} in {{{{{key}}}}} — only {sorted(RESOLVED_HERE)} resolve here",
         )
     declared = set(getattr(type(risk_config), "model_fields", {}) or {})
     if field not in declared and field not in RISK_COMPUTED_PROPERTIES:
@@ -192,8 +194,7 @@ def resolve_placeholder(key: str, risk_config: Any) -> str:
         value = getattr(risk_config, field)
     except Exception as exc:  # noqa: BLE001 — surfaced, never swallowed
         raise PromptPlaceholderError(
-            f"placeholder {{{{{key}}}}} could not be read from the live "
-            f"config: {exc}",
+            f"placeholder {{{{{key}}}}} could not be read from the live config: {exc}",
         ) from exc
     if value is None:
         raise PromptPlaceholderError(
@@ -216,6 +217,7 @@ def render_prompt_limits(text: str, risk_config: Any) -> str:
     no partial render, because a sheet that is half live and half stale is
     the condition this replaces.
     """
+
     def _sub(match: re.Match[str]) -> str:
         return resolve_placeholder(match.group(1), risk_config)
 
@@ -296,7 +298,8 @@ class LiveLimitPrompt:
     def system_prompt(self) -> str:
         if self._prompt_path.exists():
             return render_prompt_limits(
-                self._prompt_path.read_text(), self.risk_config,
+                self._prompt_path.read_text(),
+                self.risk_config,
             )
         return self._fallback_prompt
 

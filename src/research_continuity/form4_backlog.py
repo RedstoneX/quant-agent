@@ -10,6 +10,7 @@ here imports src.pipeline. Storage and the evidence journal (anything with
 `EventJournal.persist_evidence`, src/ports/event_journal.py) are handed in,
 never reached for through a host.
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,19 +32,32 @@ class Form4BacklogRecorder:
         if not isinstance(refresh, dict):
             return
         import json as _json
+
         keys = (
-            "status", "pending_filings", "watched_pending_filings",
-            "discovery_cap_reached", "watched_read_through",
-            "watched_names", "watched_names_read_through",
-            "watched_names_unread", "watched_unchecked_names",
-            "watched_drain_ran", "watched_drain_read",
-            "watched_drain_deadline_hit", "edgar_coverage", "error",
+            "status",
+            "pending_filings",
+            "watched_pending_filings",
+            "discovery_cap_reached",
+            "watched_read_through",
+            "watched_names",
+            "watched_names_read_through",
+            "watched_names_unread",
+            "watched_unchecked_names",
+            "watched_drain_ran",
+            "watched_drain_read",
+            "watched_drain_deadline_hit",
+            "edgar_coverage",
+            "error",
         )
         self.journal.persist_evidence(
             run_id=run_id,
-            agent_name="smart_money_refresh", kind="form4_backlog", scope="run",
+            agent_name="smart_money_refresh",
+            kind="form4_backlog",
+            scope="run",
             evidence_json=_json.dumps(
-                {k: refresh.get(k) for k in keys}, sort_keys=True, default=str,
+                {k: refresh.get(k) for k in keys},
+                sort_keys=True,
+                default=str,
             ),
         )
 
@@ -59,9 +73,11 @@ class Form4BacklogRecorder:
         if not isinstance(summary, dict):
             return
         import json as _json
+
         self.journal.persist_evidence(
             run_id=run_id,
-            agent_name="smart_money_refresh", kind="congressional_refresh",
+            agent_name="smart_money_refresh",
+            kind="congressional_refresh",
             scope="run",
             evidence_json=_json.dumps(summary, sort_keys=True, default=str),
         )
@@ -84,6 +100,7 @@ class Form4BacklogRecorder:
         if not isinstance(refresh, dict):
             return
         from src.util.time import et_today
+
         read_through = str(refresh.get("watched_read_through") or "").strip()[:10]
         today = et_today().isoformat()
         watched_pending = int(refresh.get("watched_pending_filings") or 0)
@@ -110,10 +127,7 @@ class Form4BacklogRecorder:
         # did-not-finish clause below.
         edgar = refresh.get("edgar_coverage")
         form4_answered = "watched_drain_ran" in refresh or bool(refresh.get("error"))
-        edgar_unverified = (
-            form4_answered
-            and not (isinstance(edgar, dict) and edgar.get("verified"))
-        )
+        edgar_unverified = form4_answered and not (isinstance(edgar, dict) and edgar.get("verified"))
         record = edgar if isinstance(edgar, dict) else {}
         # Reported whether or not anything is wrong. The market-wide scan is
         # bounded by its own deadline and in production reaches a minority
@@ -145,15 +159,11 @@ class Form4BacklogRecorder:
             coverage_line = ""
         if coverage_line:
             logger.info("PRE-OPEN: %s", coverage_line)
-        if (
-            read_through == today and not watched_pending and not unchecked
-            and not edgar_unverified
-        ):
+        if read_through == today and not watched_pending and not unchecked and not edgar_unverified:
             return
         why: list[str] = []
         if edgar_unverified:
-            reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) \
-                or "no coverage was recorded at all"
+            reasons = ", ".join(str(r) for r in (record.get("reasons") or [])) or "no coverage was recorded at all"
             why.append(
                 "the filing service did not account for how many filings "
                 f"existed, so a quiet day and a failed read cannot be told "
@@ -161,23 +171,19 @@ class Form4BacklogRecorder:
             )
         if names:
             why.append(
-                f"{names_read} of our {names} companies have every insider "
-                "filing read",
+                f"{names_read} of our {names} companies have every insider filing read",
             )
         if watched_pending:
             why.append(
-                f"{watched_pending} company filing(s) on names we hold are "
-                "still unread",
+                f"{watched_pending} company filing(s) on names we hold are still unread",
             )
         if unchecked:
             why.append(
-                f"{len(unchecked)} of our own companies could not be checked "
-                "at all",
+                f"{len(unchecked)} of our own companies could not be checked at all",
             )
         if bool(refresh.get("watched_drain_deadline_hit")):
             why.append(
-                "the morning read of our own companies ran out of time; it "
-                "resumes where it stopped tomorrow morning",
+                "the morning read of our own companies ran out of time; it resumes where it stopped tomorrow morning",
             )
         if cap_reached:
             why.append(
@@ -197,11 +203,12 @@ class Form4BacklogRecorder:
             # Carried whatever the reason for the alert, not only when
             # coverage itself is the complaint — the counts are the context
             # for every other line above them.
-            + (f" {coverage_line}" if coverage_line else "")
+             + (f" {coverage_line}" if coverage_line else "")
         )
         logger.error("PRE-OPEN: %s", text)
         try:
             from src.notifier import CATEGORY_OPERATIONAL, send_owner_alert
+
             send_owner_alert(text, category=CATEGORY_OPERATIONAL)
         except Exception as exc:  # noqa: BLE001
             logger.error("Form 4 backlog pre-open alert failed to send: %s", exc)

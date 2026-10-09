@@ -7,6 +7,7 @@ protectiveness and then sent through the one replacement funnel in
 `stop_records`. This module sits above that funnel; the memory module sits
 below it, so the three never form a cycle.
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,15 +69,20 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
         is_short = bool(row.get("is_short"))
         resting = _resting_stop_level(broker, symbol, db)
         if resting.unreadable:
-            logger.error("pending stop drain: %s's resting stop is unreadable; owed level $%.4f KEPT, not applied",
-                         symbol, intended)
+            logger.error(
+                "pending stop drain: %s's resting stop is unreadable; owed level $%.4f KEPT, not applied",
+                symbol,
+                intended,
+            )
             continue
         current = resting.price if resting.found else None
         if not intent_is_protective(intended, current, is_short=is_short):
             logger.info(
                 "pending stop drain: %s's owed level $%.4f is no longer more "
                 "protective than the resting $%s, so it is VOIDED, not applied.",
-                symbol, intended, current,
+                symbol,
+                intended,
+                current,
             )
             try:
                 _store.delete(db._trades(), row.get("id"))
@@ -89,15 +95,23 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
             order = replace_stop_and_record(broker, db, symbol, intended, caller="pending_stop_drain")
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(
-                (db, broker), "pending_stop_drain.apply", exc, log=logger,
-                context={"symbol": symbol, "intended": intended,
-                         "note": "old stop remains in force; row kept for next pass"})
+                (db, broker),
+                "pending_stop_drain.apply",
+                exc,
+                log=logger,
+                context={
+                    "symbol": symbol,
+                    "intended": intended,
+                    "note": "old stop remains in force; row kept for next pass",
+                },
+            )
             continue
         record_guarded_pass((db, broker), "pending_stop_drain.apply", context={"symbol": symbol, "intended": intended})
         if accepted_stop_order(order):
             logger.info(
-                "pending stop drain: %s's owed stop from the closed market is "
-                "now live at $%.4f", symbol, intended,
+                "pending stop drain: %s's owed stop from the closed market is now live at $%.4f",
+                symbol,
+                intended,
             )
             try:
                 _store.delete(db._trades(), row.get("id"))
@@ -108,7 +122,8 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
             logger.error(
                 "pending stop drain: %s's owed stop $%.4f was NOT applied at "
                 "the open — the row is KEPT and retried next pass",
-                symbol, intended,
+                symbol,
+                intended,
             )
     return discharged
 
@@ -119,7 +134,11 @@ def drain_safely(broker: Any, db: Any) -> None:
         drain_pending_stop_amends(broker, db)
     except Exception as exc:  # noqa: BLE001
         record_guarded_pass(
-            (db, broker), "pending_stop_drain.drain_safely", exc, log=logger,
-            context={"note": "owed levels are STILL owed"})
+            (db, broker),
+            "pending_stop_drain.drain_safely",
+            exc,
+            log=logger,
+            context={"note": "owed levels are STILL owed"},
+        )
         return
     record_guarded_pass((db, broker), "pending_stop_drain.drain_safely")

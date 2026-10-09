@@ -26,7 +26,8 @@ class IntradayGating:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         config=None,
         blocking_owner_session=None,
@@ -66,7 +67,8 @@ class IntradayGating:
         """
         try:
             rows = self.db.get_recent_intraday_evaluations(
-                symbol, cooldown_hours=cooldown_hours,
+                symbol,
+                cooldown_hours=cooldown_hours,
             )
         except Exception as e:  # noqa: BLE001
             record_site(self, "cooldown_ledger", e, context={"symbol": symbol}, log=logger)
@@ -83,14 +85,18 @@ class IntradayGating:
             record_site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
             return True
         from datetime import datetime as _dt, timedelta, timezone
+
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
         for row in legacy_rows if isinstance(legacy_rows, list) else []:
             if not str(row.get("run_id") or "").startswith("intra_check-"):
                 continue
             try:
                 ts = str(row.get("timestamp") or "")
-                when = (_dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts
-                        else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc))
+                when = (
+                    _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                    if "T" in ts
+                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                )
                 if when.tzinfo is None:
                     when = when.replace(tzinfo=timezone.utc)
                 if when >= cutoff:
@@ -136,6 +142,7 @@ class IntradayGating:
     def _intra_window_remaining_s(self) -> float:
         """Seconds left in the intra_check ET window. Calendar-bound, not invented."""
         from src.trading_calendar import SESSION_WINDOWS, _minute_of_day, et_now
+
         _start, end = SESSION_WINDOWS["intra_check"]
         now = et_now()
         remaining_min = end - _minute_of_day(now)
@@ -190,27 +197,26 @@ class IntradayGating:
             last_blocking = blocking
             if blocking == "unreadable":
                 logger.warning(
-                    "Intraday scan: could not validate active-session owner — "
-                    "skipping paid discovery fail-closed",
+                    "Intraday scan: could not validate active-session owner — skipping paid discovery fail-closed",
                 )
                 return True
             remaining = self._intra_window_remaining_s()
             if remaining <= 0:
                 logger.info(
-                    "Intraday scan: %s still holds the owner lock at window "
-                    "end; paid discovery cannot run this tick", blocking,
+                    "Intraday scan: %s still holds the owner lock at window end; paid discovery cannot run this tick",
+                    blocking,
                 )
                 return True
             if first:
                 logger.info(
                     "Intraday scan: wrapper reports active %s session; waiting "
-                    "for it to finish instead of skipping this tick", blocking,
+                    "for it to finish instead of skipping this tick",
+                    blocking,
                 )
                 first = False
             _time.sleep(min(1.0, remaining))
 
-    def _another_session_recently_active(self, run_id: str,
-                                         within_minutes: float = 15.0) -> bool:
+    def _another_session_recently_active(self, run_id: str, within_minutes: float = 15.0) -> bool:
         """True when a DIFFERENT session currently owns the trading process.
 
         The 15-minute trade-row heuristic slept the 09:30 and 13:00 scans
@@ -282,7 +288,7 @@ class IntradayGating:
         finally:
             if fh is not None:
                 try:
-                    fh.close()   # releases the flock
+                    fh.close()  # releases the flock
                 except Exception as exc:  # noqa: BLE001
                     record_site(self, "scan_lock_release", exc)
 
@@ -293,7 +299,8 @@ class IntradayGating:
             self.db.record_intraday_symbol_snapshot_result(symbol, ok=True)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "intraday snapshot health: failed to record OK for %s", symbol,
+                "intraday snapshot health: failed to record OK for %s",
+                symbol,
                 exc_info=True,
             )
             record_site(self, "snapshot_ok_record", exc, context={"symbol": symbol})
@@ -307,7 +314,8 @@ class IntradayGating:
             result = self.db.record_intraday_symbol_snapshot_result(symbol, ok=False)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "intraday snapshot health: failed to record miss for %s", symbol,
+                "intraday snapshot health: failed to record miss for %s",
+                symbol,
                 exc_info=True,
             )
             record_site(self, "snapshot_miss_record", exc, context={"symbol": symbol})
@@ -324,11 +332,13 @@ class IntradayGating:
                 f"{misses} consecutive scans (~{misses * 30} min). It is being "
                 "silently excluded from intraday move detection until this "
                 "resolves — check whether the ticker is still valid/tradable "
-                "on Alpaca. Will not re-alert on this symbol for 24h.", category=_notifier.CATEGORY_OPERATIONAL,
+                "on Alpaca. Will not re-alert on this symbol for 24h.",
+                category=_notifier.CATEGORY_OPERATIONAL,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "intraday snapshot health: alert failed for %s", symbol,
+                "intraday snapshot health: alert failed for %s",
+                symbol,
                 exc_info=True,
             )
             record_site(self, "snapshot_miss_alert", exc, context={"symbol": symbol})

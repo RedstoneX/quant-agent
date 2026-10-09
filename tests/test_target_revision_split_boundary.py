@@ -1,5 +1,6 @@
 """Boundary witness for the target_revision lifts: each new module is imported
 and exercised directly, never through src.risk.target_revision."""
+
 import sys
 from pathlib import Path
 

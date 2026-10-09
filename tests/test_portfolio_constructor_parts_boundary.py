@@ -4,6 +4,7 @@
 HELD instances wired by src/portfolio_constructor/assembly.py. Each is constructed
 here from stubs alone and exercised without a PortfolioConstructor existing.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -12,7 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.portfolio_constructor.assembly import (
-    ORDER_DELEGATES, STATIC_EXIT_DELEGATES, STOP_DELEGATES, order_builder_collaborators,
+    ORDER_DELEGATES,
+    STATIC_EXIT_DELEGATES,
+    STOP_DELEGATES,
+    order_builder_collaborators,
 )
 from src.portfolio_constructor.orders import _ORDER_BUILDER_COLLABORATORS, OrderBuilders
 from src.portfolio_constructor.order_build.long_entry import LongEntryBuilder
@@ -38,11 +42,13 @@ def test_stop_rules_exercised_from_stubs_alone():
     cfg = MagicMock(name="cfg")
     rules = StopRules(read_cfg=lambda: cfg, entry_stop_resolver=MagicMock(name="resolver_factory"))
     target = MagicMock(symbol="XYZ", suggested_stop_price=9.5)
-    assert rules._resolve_stop(target, None, 10.0) == 9.5                  # typed stop wins
-    assert rules._resolve_stop(MagicMock(symbol="XYZ", suggested_stop_price=None), MagicMock(stop_loss=9.0), 10.0) == 9.0
+    assert rules._resolve_stop(target, None, 10.0) == 9.5  # typed stop wins
+    assert (
+        rules._resolve_stop(MagicMock(symbol="XYZ", suggested_stop_price=None), MagicMock(stop_loss=9.0), 10.0) == 9.0
+    )
     assert rules._reward_risk_at(10.0, 9.0, 12.0, False) == pytest.approx(2.0)
     assert rules._reward_risk_at(10.0, float("nan"), 12.0, False) is None  # malformed geometry refuses
-    assert rules.shipped_stop_rule(None, 10.0, 9.0) is None                # no analysis -> no rule named
+    assert rules.shipped_stop_rule(None, 10.0, 9.0) is None  # no analysis -> no rule named
 
 
 def test_stop_rules_reads_the_config_live_and_builds_the_resolver_per_call():
@@ -51,7 +57,7 @@ def test_stop_rules_reads_the_config_live_and_builds_the_resolver_per_call():
     rules = StopRules(read_cfg=lambda: cfgs[-1], entry_stop_resolver=factory)
     assert rules.cfg is cfgs[1]
     cfgs.append(MagicMock(name="third"))
-    assert rules.cfg is cfgs[2]                                           # handed in live, not snapshotted
+    assert rules.cfg is cfgs[2]  # handed in live, not snapshotted
     rules._resolve_entry_and_stop("a", k=1)
     rules.real_reward_risk_preview()
     assert factory.call_count == 2
@@ -68,8 +74,11 @@ def test_order_builders_read_collaborators_per_call():
     assert second.cfg is host.cfg and first.cfg is not second.cfg
     assert set(builders._order_builder_collaborators()) == {p for p, _ in _ORDER_BUILDER_COLLABORATORS}
     from src.models import TargetPosition
-    held = builders._hold_decision(TargetPosition(symbol="XYZ", target_weight_pct=0.0, conviction="LOW", thesis="keep", invalid_if="n/a"))
-    assert held.action == "HOLD" and held.symbol == "XYZ"               # exits need no collaborators at all
+
+    held = builders._hold_decision(
+        TargetPosition(symbol="XYZ", target_weight_pct=0.0, conviction="LOW", thesis="keep", invalid_if="n/a")
+    )
+    assert held.action == "HOLD" and held.symbol == "XYZ"  # exits need no collaborators at all
 
 
 def test_owner_inherits_nothing_and_delegates_every_part_name():

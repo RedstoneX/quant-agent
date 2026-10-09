@@ -47,7 +47,7 @@ def test_a_net_zero_swap_does_not_satisfy_the_ratchet() -> None:
 
 
 def test_an_unlisted_row_without_route_fields_says_so() -> None:
-    (_, detail), = ratchet_violations({"src.n.Y": _arb()}, set())
+    ((_, detail),) = ratchet_violations({"src.n.Y": _arb()}, set())
     assert "settles_by" in detail and "open_question" in detail
 
 

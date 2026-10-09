@@ -16,6 +16,7 @@ def _register_merge_drivers() -> None:
     is silently inert; scripts/check_merge_drivers.py is the loud check."""
     try:
         from scripts import check_merge_drivers as _c
+
         _c.main(["--install"])
     except Exception:
         pass
@@ -116,8 +117,7 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
             except OSError:
                 pass  # journalling must never change what the suite does
         raise requests.ConnectionError(
-            "outbound HTTP disabled in tests (conftest autouse); "
-            "patch requests.get in the test if you need it"
+            "outbound HTTP disabled in tests (conftest autouse); patch requests.get in the test if you need it"
         )
 
     monkeypatch.setattr(requests, "get", _no_network)
@@ -202,6 +202,7 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # agent lacks the persistent cost circuit; focused breaker tests override
     # this flag to verify that boundary explicitly.
     from src.agents.base import BaseAgent
+
     monkeypatch.setattr(BaseAgent, "_allow_unmetered_for_tests", True)
 
     # The alert-channel watchdog writes its durable check history to an
@@ -212,8 +213,11 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # would create and append to the developer's real database. Tests that
     # care about the contents point it at their own file.
     from src import alert_watchdog
+
     monkeypatch.setattr(
-        alert_watchdog, "DB_PATH", tmp_path / "watchdog" / "quant_agent.db",
+        alert_watchdog,
+        "DB_PATH",
+        tmp_path / "watchdog" / "quant_agent.db",
     )
 
     # `src.agents.base._TOKEN_GOVERNORS` is a module-level singleton per
@@ -238,6 +242,7 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # within a single test, so starting from an empty window changes nothing
     # they check.
     from src.agents.base import _TOKEN_GOVERNORS
+
     for _governor in _TOKEN_GOVERNORS.values():
         with _governor._lock:
             _governor._events.clear()
@@ -251,6 +256,7 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # Clearing the registry before each test restores per-test independence
     # without changing the breaker's own behaviour.
     from src.agents.base import _reset_route_breakers_for_tests
+
     _reset_route_breakers_for_tests()
 
     # The route journal memoises which DB path it created its schema on, and
@@ -258,6 +264,7 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # so a test that repoints QUANT_AGENT_DB_PATH gets a real schema and a
     # clean failure count.
     from src import llm_route_journal
+
     llm_route_journal._reset_schema_cache_for_tests()
     monkeypatch.setenv("QUANT_AGENT_DB_PATH", str(tmp_path / "route" / "quant_agent.db"))
     (tmp_path / "route").mkdir(parents=True, exist_ok=True)
@@ -318,7 +325,6 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     import src.api.db_reads as _db_reads
 
     monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
-
 
 
 @pytest.fixture(autouse=True)

@@ -1,10 +1,10 @@
 """Position-id chaining and exit vocabulary, lifted VERBATIM from ledger.py."""
+
 from __future__ import annotations
 
 import uuid
 
 from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS, _is_filled_trail_stop
-
 
 
 def _trail_stop_reduced_position(row, action: str) -> bool:
@@ -68,22 +68,26 @@ _SHORT_EXIT_PREFIXES: tuple[str, ...] = ("COVER", "PARTIAL_COVER")
 #: Exits that can retire EITHER side: a stop, a trail, a take-profit, a
 #: deterministic de-lever or a reviewer REDUCE all fire against whatever
 #: position is open, and the trades row records no side of its own.
-_EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset({
-    "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
-    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
-    # back but whose order_type it could NOT prove was a protective stop —
-    # an honest "the broker closed this, cause unattributed" marker, never
-    # a STOP_OUT it can't stand behind. It retires a real position exactly
-    # like a filled STOP_OUT, so it belongs to the exit-side chain here for
-    # position_id assignment and calibration to count it as a closed lot.
-    "RECONCILED_EXIT",
-})
+_EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset(
+    {
+        "FORCE_DELEVER",
+        "REDUCE",
+        "TAKE_PROFIT",
+        "STOP_OUT",
+        "TRAIL_STOP",
+        # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
+        # back but whose order_type it could NOT prove was a protective stop —
+        # an honest "the broker closed this, cause unattributed" marker, never
+        # a STOP_OUT it can't stand behind. It retires a real position exactly
+        # like a filled STOP_OUT, so it belongs to the exit-side chain here for
+        # position_id assignment and calibration to count it as a closed lot.
+        "RECONCILED_EXIT",
+    }
+)
 
 #: Kept as the flat union for every caller that only asks "is this row on the
 #: exit side at all" (`backfill_position_ids`, `_categorize_exit_reason`).
-_POSITION_EXIT_ACTIONS: frozenset[str] = (
-    _LONG_EXIT_ACTIONS | _SHORT_EXIT_ACTIONS | _EITHER_SIDE_EXIT_ACTIONS
-)
+_POSITION_EXIT_ACTIONS: frozenset[str] = _LONG_EXIT_ACTIONS | _SHORT_EXIT_ACTIONS | _EITHER_SIDE_EXIT_ACTIONS
 _POSITION_EXIT_PREFIXES: tuple[str, ...] = _LONG_EXIT_PREFIXES + _SHORT_EXIT_PREFIXES
 
 
@@ -115,8 +119,6 @@ def _exit_action_side(action: str | None) -> str | None:
     if act.startswith(_LONG_EXIT_PREFIXES) or act in _LONG_EXIT_ACTIONS:
         return "long"
     return None
-
-
 
 
 def _row_counts_as_executed(action: str | None, fill_status, fill_qty) -> bool:
@@ -262,9 +264,7 @@ def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
     assignments: dict[int, str | None] = dict(passthrough)
     for group in groups:
         existing_ids = [r.get("position_id") for r in group if r.get("position_id")]
-        opened = any(
-            (r.get("action") or "").upper() in _POSITION_OPEN_ACTIONS for r in group
-        )
+        opened = any((r.get("action") or "").upper() in _POSITION_OPEN_ACTIONS for r in group)
         if existing_ids:
             resolved = existing_ids[0]
         elif opened:

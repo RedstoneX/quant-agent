@@ -4,6 +4,7 @@ See scripts/import_graph.py. Only RUNTIME imports count; TYPE_CHECKING-only
 imports are ignored. Nothing here reads origin/main: the cycle rule is
 absolute and the seam pairs are a committed list that may only shrink.
 """
+
 import ast
 
 from scripts import import_graph as ig

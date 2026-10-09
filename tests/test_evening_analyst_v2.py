@@ -16,7 +16,10 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    BuyGrade, EveningReasoningChain, EveningReport, SellGrade,
+    BuyGrade,
+    EveningReasoningChain,
+    EveningReport,
+    SellGrade,
 )
 from src.pipeline import TradingPipeline
 from tests.pipeline_factory import build_pipeline
@@ -24,10 +27,13 @@ from tests.pipeline_factory import build_pipeline
 
 def _valid_rc() -> EveningReasoningChain:
     return EveningReasoningChain(
-        performance_attribution="x", outlook_retrospection="x",
+        performance_attribution="x",
+        outlook_retrospection="x",
         thesis_health_review="x",
-        decision_quality_review="x", calibration_meta="x",
-        market_regime_read="x", tomorrow_preparation="x",
+        decision_quality_review="x",
+        calibration_meta="x",
+        market_regime_read="x",
+        tomorrow_preparation="x",
     )
 
 
@@ -35,10 +41,13 @@ def _valid_rc() -> EveningReasoningChain:
 # Schema: reasoning_chain required; grades parse + validate
 # ---------------------------------------------------------------------------
 
+
 def test_evening_report_requires_reasoning_chain():
     with pytest.raises(ValidationError):
         EveningReport(
-            daily_summary="x", lessons="x", tomorrow_outlook="x",
+            daily_summary="x",
+            lessons="x",
+            tomorrow_outlook="x",
             risk_rating="low",
         )
 
@@ -47,8 +56,10 @@ def test_evening_reasoning_chain_rejects_empty_steps():
     with pytest.raises(ValidationError):
         EveningReasoningChain(
             performance_attribution="",  # empty
-            outlook_retrospection="x", decision_quality_review="x",
-            calibration_meta="x", market_regime_read="x",
+            outlook_retrospection="x",
+            decision_quality_review="x",
+            calibration_meta="x",
+            market_regime_read="x",
             tomorrow_preparation="x",
         )
 
@@ -59,40 +70,58 @@ def test_evening_report_requires_non_empty_core_prose_fields():
         EveningReport(
             reasoning_chain=_valid_rc(),
             daily_summary="",  # empty
-            lessons="ok", tomorrow_outlook="ok", risk_rating="low",
+            lessons="ok",
+            tomorrow_outlook="ok",
+            risk_rating="low",
         )
 
 
 def test_sell_grade_validates_enum_and_reason():
     # valid
     g = SellGrade(
-        symbol="NVDA", sell_date="2026-04-17",
-        sell_price=200.0, current_price=210.0, pct_move_since_sell=5.0,
-        grade="premature", reason="Uptrend intact, sold on noise",
+        symbol="NVDA",
+        sell_date="2026-04-17",
+        sell_price=200.0,
+        current_price=210.0,
+        pct_move_since_sell=5.0,
+        grade="premature",
+        reason="Uptrend intact, sold on noise",
     )
     assert g.grade == "premature"
     assert g.symbol == "NVDA"
     # invalid grade
     with pytest.raises(ValidationError):
         SellGrade(
-            symbol="NVDA", sell_date="2026-04-17",
-            sell_price=200.0, current_price=210.0, pct_move_since_sell=5.0,
-            grade="not-a-grade", reason="x",
+            symbol="NVDA",
+            sell_date="2026-04-17",
+            sell_price=200.0,
+            current_price=210.0,
+            pct_move_since_sell=5.0,
+            grade="not-a-grade",
+            reason="x",
         )
     # empty reason fails
     with pytest.raises(ValidationError):
         SellGrade(
-            symbol="NVDA", sell_date="2026-04-17",
-            sell_price=200.0, current_price=210.0, pct_move_since_sell=5.0,
-            grade="correct", reason="",
+            symbol="NVDA",
+            sell_date="2026-04-17",
+            sell_price=200.0,
+            current_price=210.0,
+            pct_move_since_sell=5.0,
+            grade="correct",
+            reason="",
         )
 
 
 def test_buy_grade_roundtrip():
     g = BuyGrade(
-        symbol="AAPL", buy_date="2026-04-15",
-        buy_price=180.0, current_price=186.0, pct_move_since_buy=3.3,
-        grade="correct", reason="Thesis on track",
+        symbol="AAPL",
+        buy_date="2026-04-15",
+        buy_price=180.0,
+        current_price=186.0,
+        pct_move_since_buy=3.3,
+        grade="correct",
+        reason="Thesis on track",
     )
     assert g.pct_move_since_buy == 3.3
 
@@ -100,21 +129,35 @@ def test_buy_grade_roundtrip():
 def test_full_evening_report_with_grades_roundtrip():
     report = EveningReport(
         reasoning_chain=_valid_rc(),
-        daily_summary="Book up 0.8%.", lessons="keep disciplined",
+        daily_summary="Book up 0.8%.",
+        lessons="keep disciplined",
         tomorrow_outlook="retail sales 08:30 ET",
         risk_rating="moderate",
-        tomorrow_bias="bullish", tomorrow_conviction="medium",
+        tomorrow_bias="bullish",
+        tomorrow_conviction="medium",
         tomorrow_key_risks=["Retail sales 08:30", "NVDA $220 target"],
-        sell_grades=[SellGrade(
-            symbol="XOM", sell_date="2026-04-17",
-            sell_price=108.0, current_price=106.0, pct_move_since_sell=-1.8,
-            grade="correct", reason="Ceasefire held",
-        )],
-        buy_grades=[BuyGrade(
-            symbol="NVDA", buy_date="2026-04-17",
-            buy_price=196.0, current_price=210.0, pct_move_since_buy=7.1,
-            grade="correct", reason="AI capex confirmed",
-        )],
+        sell_grades=[
+            SellGrade(
+                symbol="XOM",
+                sell_date="2026-04-17",
+                sell_price=108.0,
+                current_price=106.0,
+                pct_move_since_sell=-1.8,
+                grade="correct",
+                reason="Ceasefire held",
+            )
+        ],
+        buy_grades=[
+            BuyGrade(
+                symbol="NVDA",
+                buy_date="2026-04-17",
+                buy_price=196.0,
+                current_price=210.0,
+                pct_move_since_buy=7.1,
+                grade="correct",
+                reason="AI capex confirmed",
+            )
+        ],
     )
     d = report.model_dump()
     assert d["reasoning_chain"]["performance_attribution"] == "x"
@@ -127,6 +170,7 @@ def test_full_evening_report_with_grades_roundtrip():
 # _build_recent_buys_for_grading math
 # ---------------------------------------------------------------------------
 
+
 def _pipeline_with_broker_price(price: float) -> TradingPipeline:
     pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.broker.get_latest_price.return_value = price
@@ -137,9 +181,16 @@ def test_recent_buys_computes_pct_move():
     pipeline = _pipeline_with_broker_price(220.0)
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     pipeline.db.get_trades.return_value = [
-        {"action": "BUY", "symbol": "NVDA", "price": 200.0,
-         "fill_price": 200.0, "timestamp": f"{yesterday} 14:00:00",
-         "reasoning": "AI breakout", "fill_status": "filled", "fill_qty": 10},
+        {
+            "action": "BUY",
+            "symbol": "NVDA",
+            "price": 200.0,
+            "fill_price": 200.0,
+            "timestamp": f"{yesterday} 14:00:00",
+            "reasoning": "AI breakout",
+            "fill_status": "filled",
+            "fill_qty": 10,
+        },
     ]
     buys = pipeline._build_recent_buys_for_grading(lookback_days=5)
     assert len(buys) == 1
@@ -156,14 +207,35 @@ def test_recent_buys_filters_stale_and_non_buy_rows():
     new_date = (date.today() - timedelta(days=1)).isoformat()
     pipeline.db.get_trades.return_value = [
         # BUY from 10 days ago — outside lookback
-        {"action": "BUY", "symbol": "OLD", "price": 100.0, "fill_price": 100.0,
-         "timestamp": f"{old_date} 14:00:00", "fill_status": "filled", "fill_qty": 1},
+        {
+            "action": "BUY",
+            "symbol": "OLD",
+            "price": 100.0,
+            "fill_price": 100.0,
+            "timestamp": f"{old_date} 14:00:00",
+            "fill_status": "filled",
+            "fill_qty": 1,
+        },
         # SELL from yesterday — wrong action
-        {"action": "SELL", "symbol": "SOLD", "price": 50.0, "fill_price": 50.0,
-         "timestamp": f"{new_date} 14:00:00", "fill_status": "filled", "fill_qty": 1},
+        {
+            "action": "SELL",
+            "symbol": "SOLD",
+            "price": 50.0,
+            "fill_price": 50.0,
+            "timestamp": f"{new_date} 14:00:00",
+            "fill_status": "filled",
+            "fill_qty": 1,
+        },
         # Valid BUY from yesterday
-        {"action": "BUY", "symbol": "NEW", "price": 80.0, "fill_price": 80.0,
-         "timestamp": f"{new_date} 14:00:00", "fill_status": "filled", "fill_qty": 1},
+        {
+            "action": "BUY",
+            "symbol": "NEW",
+            "price": 80.0,
+            "fill_price": 80.0,
+            "timestamp": f"{new_date} 14:00:00",
+            "fill_status": "filled",
+            "fill_qty": 1,
+        },
     ]
     buys = pipeline._build_recent_buys_for_grading(lookback_days=5)
     syms = [b["symbol"] for b in buys]
@@ -177,10 +249,24 @@ def test_recent_buys_dedupes_multiple_buys_on_same_symbol():
     two_days = (date.today() - timedelta(days=2)).isoformat()
     # Sorted newest-first (matches get_trades default order)
     pipeline.db.get_trades.return_value = [
-        {"action": "BUY", "symbol": "NVDA", "price": 215.0, "fill_price": 215.0,
-         "timestamp": f"{yesterday} 14:00:00", "fill_status": "filled", "fill_qty": 5},
-        {"action": "BUY", "symbol": "NVDA", "price": 200.0, "fill_price": 200.0,
-         "timestamp": f"{two_days} 14:00:00", "fill_status": "filled", "fill_qty": 10},
+        {
+            "action": "BUY",
+            "symbol": "NVDA",
+            "price": 215.0,
+            "fill_price": 215.0,
+            "timestamp": f"{yesterday} 14:00:00",
+            "fill_status": "filled",
+            "fill_qty": 5,
+        },
+        {
+            "action": "BUY",
+            "symbol": "NVDA",
+            "price": 200.0,
+            "fill_price": 200.0,
+            "timestamp": f"{two_days} 14:00:00",
+            "fill_status": "filled",
+            "fill_qty": 10,
+        },
     ]
     buys = pipeline._build_recent_buys_for_grading(lookback_days=5)
     assert len(buys) == 1
@@ -190,6 +276,7 @@ def test_recent_buys_dedupes_multiple_buys_on_same_symbol():
 # ---------------------------------------------------------------------------
 # _build_recent_outlook_calibration math
 # ---------------------------------------------------------------------------
+
 
 def test_outlook_calibration_matches_bullish_with_positive_day():
     pipeline = build_pipeline(db=MagicMock())
@@ -232,7 +319,7 @@ def test_outlook_calibration_neutral_band():
     ]
     pipeline.db.get_daily_pnl.return_value = [
         {"date": "2026-04-15", "daily_return_pct": 0.15},  # within band → hit
-        {"date": "2026-04-16", "daily_return_pct": 0.8},   # outside band → miss
+        {"date": "2026-04-16", "daily_return_pct": 0.8},  # outside band → miss
     ]
     calib = pipeline._build_recent_outlook_calibration(lookback=10)
     # 1 of 2 neutral calls matched
@@ -281,8 +368,7 @@ def test_outlook_calibration_pairs_friday_prediction_with_monday_actual():
     ]
     calib = pipeline._build_recent_outlook_calibration(lookback=10)
     assert calib["n"] == 1, (
-        "Friday prediction must pair with Monday actual via the +1..+4d "
-        "forward walk; got no samples"
+        "Friday prediction must pair with Monday actual via the +1..+4d forward walk; got no samples"
     )
     assert calib["samples"][0]["matched"] is True
 
@@ -292,14 +378,10 @@ def test_outlook_calibration_respects_lookback_limit():
     the rolling window must NOT silently grow when more insights exist."""
     pipeline = build_pipeline(db=MagicMock())
     insights = [
-        {"date": f"2026-04-{day:02d}", "tomorrow_bias": "bullish",
-         "tomorrow_conviction": "high"}
+        {"date": f"2026-04-{day:02d}", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"}
         for day in range(1, 13)
     ]
-    pnls = [
-        {"date": f"2026-04-{day + 1:02d}", "daily_return_pct": 1.0}
-        for day in range(1, 13)
-    ]
+    pnls = [{"date": f"2026-04-{day + 1:02d}", "daily_return_pct": 1.0} for day in range(1, 13)]
     pipeline.db.get_recent_insights.return_value = insights
     pipeline.db.get_daily_pnl.return_value = pnls
     calib = pipeline._build_recent_outlook_calibration(lookback=5)
@@ -320,8 +402,8 @@ def test_outlook_calibration_stratifies_by_conviction():
         {"date": "2026-04-11", "daily_return_pct": 1.0},  # hit
         {"date": "2026-04-12", "daily_return_pct": -1.0},  # miss
         # low-conviction bullish: both hit → 100%
-        {"date": "2026-04-13", "daily_return_pct": 1.0},   # hit
-        {"date": "2026-04-14", "daily_return_pct": 1.0},   # hit
+        {"date": "2026-04-13", "daily_return_pct": 1.0},  # hit
+        {"date": "2026-04-14", "daily_return_pct": 1.0},  # hit
     ]
     calib = pipeline._build_recent_outlook_calibration(lookback=10)
     assert calib["high_conviction_hit_rate_pct"] == 50.0
@@ -332,6 +414,7 @@ def test_outlook_calibration_stratifies_by_conviction():
 # Prompt renders memory layers
 # ---------------------------------------------------------------------------
 
+
 def test_prompt_embeds_calibration_numbers():
     from src.agents.evening_analyst import EveningAnalystAgent
 
@@ -340,13 +423,19 @@ def test_prompt_embeds_calibration_numbers():
         msg = agent.build_user_message(
             positions=[],
             macro_summary={"vix": {"current": 18}},
-            total_value=100_000.0, daily_pnl=800.0, daily_return_pct=0.8,
+            total_value=100_000.0,
+            daily_pnl=800.0,
+            daily_return_pct=0.8,
             outlook_calibration={
                 "n": 5,
                 "samples": [
-                    {"date": "2026-04-14", "predicted_bias": "bullish",
-                     "predicted_conviction": "high", "actual_return_pct": 1.2,
-                     "matched": True},
+                    {
+                        "date": "2026-04-14",
+                        "predicted_bias": "bullish",
+                        "predicted_conviction": "high",
+                        "actual_return_pct": 1.2,
+                        "matched": True,
+                    },
                 ],
                 "overall_hit_rate_pct": 60.0,
                 "bullish_hit_rate_pct": 57.0,
@@ -378,7 +467,9 @@ def test_prompt_says_insufficient_when_no_calibration_history():
         msg = agent.build_user_message(
             positions=[],
             macro_summary={"vix": {"current": 18}},
-            total_value=100_000.0, daily_pnl=0.0, daily_return_pct=0.0,
+            total_value=100_000.0,
+            daily_pnl=0.0,
+            daily_return_pct=0.0,
             outlook_calibration={"n": 0, "samples": []},
         )
 
@@ -393,13 +484,19 @@ def test_prompt_contains_recent_buys_section():
         msg = agent.build_user_message(
             positions=[],
             macro_summary={"vix": {"current": 18}},
-            total_value=100_000.0, daily_pnl=0.0, daily_return_pct=0.0,
-            recent_buys=[{
-                "symbol": "NVDA", "buy_date": "2026-04-17",
-                "buy_price": 200.0, "current_price": 210.0,
-                "pct_move_since_buy": 5.0,
-                "reasoning": "AI capex thesis",
-            }],
+            total_value=100_000.0,
+            daily_pnl=0.0,
+            daily_return_pct=0.0,
+            recent_buys=[
+                {
+                    "symbol": "NVDA",
+                    "buy_date": "2026-04-17",
+                    "buy_price": 200.0,
+                    "current_price": 210.0,
+                    "pct_move_since_buy": 5.0,
+                    "reasoning": "AI capex thesis",
+                }
+            ],
         )
 
     assert "Recent BUY decisions to grade" in msg
@@ -453,6 +550,7 @@ def test_old_evening_json_without_reasoning_chain_fails_gracefully():
 # ---------------------------------------------------------------------------
 # Per-entry isolation for missed_opportunities (2026-05-01 incident)
 # ---------------------------------------------------------------------------
+
 
 def _valid_evening_json() -> dict:
     """Minimum-viable EveningReport JSON shaped like what the LLM returns.
@@ -536,9 +634,7 @@ def test_drop_invalid_missed_opportunities_strips_2026_05_01_shape():
     ]
     out = EveningAnalystAgent._drop_invalid_missed_opportunities(parsed)
     syms = [m["symbol"] for m in out["missed_opportunities"]]
-    assert syms == ["ORCL", "META"], (
-        f"CMCSA must be dropped, ORCL+META kept; got {syms}"
-    )
+    assert syms == ["ORCL", "META"], f"CMCSA must be dropped, ORCL+META kept; got {syms}"
 
 
 def test_evening_report_constructs_after_dropping_bad_missed_opportunity():
@@ -642,6 +738,7 @@ def test_drop_invalid_missed_opportunities_logs_bad_entries(caplog):
 # by a paid LLM benchmark, out of scope for this guard.
 # ---------------------------------------------------------------------------
 
+
 def _rsg_shaped_buy_grade() -> dict:
     """A well-formed BuyGrade entry for the one legitimate candidate."""
     return {
@@ -681,13 +778,15 @@ def test_out_of_scope_buy_grade_dropped_legitimate_one_kept():
     import logging
     from src.agents.evening_analyst import EveningAnalystAgent
 
-    recent_buys = [{
-        "symbol": "RSG",
-        "buy_date": "2026-08-28",
-        "buy_price": 210.50,
-        "current_price": 213.10,
-        "pct_move_since_buy": 1.24,
-    }]
+    recent_buys = [
+        {
+            "symbol": "RSG",
+            "buy_date": "2026-08-28",
+            "buy_price": 210.50,
+            "current_price": 213.10,
+            "pct_move_since_buy": 1.24,
+        }
+    ]
     allowed = {b["symbol"] for b in recent_buys}
 
     parsed = {
@@ -709,7 +808,10 @@ def test_out_of_scope_buy_grade_dropped_legitimate_one_kept():
     logger.setLevel(logging.WARNING)
     try:
         out = EveningAnalystAgent._drop_invalid_entries(
-            parsed, "buy_grades", BuyGrade, allowed_symbols=allowed,
+            parsed,
+            "buy_grades",
+            BuyGrade,
+            allowed_symbols=allowed,
         )
     finally:
         logger.removeHandler(handler)
@@ -718,17 +820,13 @@ def test_out_of_scope_buy_grade_dropped_legitimate_one_kept():
     assert syms == ["RSG"], f"expected only RSG to survive; got {syms}"
 
     out_of_scope_msgs = [m for m in caplog_records if "out of scope" in m]
-    assert out_of_scope_msgs, (
-        f"expected a distinct out-of-scope warning; got {caplog_records}"
-    )
+    assert out_of_scope_msgs, f"expected a distinct out-of-scope warning; got {caplog_records}"
     assert "GOOGL" in out_of_scope_msgs[0]
     # Must be distinguishable from a plain schema-validation failure message.
     assert "Thesis Health Review" in out_of_scope_msgs[0]
     # Must NOT be logged as an ordinary "dropping malformed" schema failure —
     # that's the confusion this guard exists to prevent.
-    assert not any(
-        "dropping malformed buy_grades entry for GOOGL" in m for m in caplog_records
-    )
+    assert not any("dropping malformed buy_grades entry for GOOGL" in m for m in caplog_records)
 
     # The surviving RSG entry must still validate cleanly end-to-end.
     validated = BuyGrade(**out["buy_grades"][0])
@@ -759,7 +857,10 @@ def test_scope_guard_is_case_insensitive_on_symbol():
 
     parsed = {"buy_grades": [dict(_rsg_shaped_buy_grade(), symbol="rsg")]}
     out = EveningAnalystAgent._drop_invalid_entries(
-        parsed, "buy_grades", BuyGrade, allowed_symbols={"RSG"},
+        parsed,
+        "buy_grades",
+        BuyGrade,
+        allowed_symbols={"RSG"},
     )
     assert len(out["buy_grades"]) == 1
 
@@ -774,13 +875,15 @@ def test_analyze_end_to_end_scope_guard_keeps_rsg_drops_googl_confusion(monkeypa
 
     agent = EveningAnalystAgent.__new__(EveningAnalystAgent)
 
-    recent_buys = [{
-        "symbol": "RSG",
-        "buy_date": "2026-08-28",
-        "buy_price": 210.50,
-        "current_price": 213.10,
-        "pct_move_since_buy": 1.24,
-    }]
+    recent_buys = [
+        {
+            "symbol": "RSG",
+            "buy_date": "2026-08-28",
+            "buy_price": 210.50,
+            "current_price": 213.10,
+            "pct_move_since_buy": 1.24,
+        }
+    ]
 
     llm_response = _valid_evening_json()
     llm_response["buy_grades"] = [
@@ -795,9 +898,13 @@ def test_analyze_end_to_end_scope_guard_keeps_rsg_drops_googl_confusion(monkeypa
     monkeypatch.setattr(agent, "run", lambda **kwargs: _FakeResult())
 
     report, _result = agent.analyze(
-        positions=[], macro_summary={}, total_value=100_000.0,
-        daily_pnl=0.0, daily_return_pct=0.0,
-        recent_buys=recent_buys, recent_sells=[],
+        positions=[],
+        macro_summary={},
+        total_value=100_000.0,
+        daily_pnl=0.0,
+        daily_return_pct=0.0,
+        recent_buys=recent_buys,
+        recent_sells=[],
     )
     assert report is not None
     syms = [g.symbol for g in report.buy_grades]
@@ -827,8 +934,11 @@ def test_analyze_omitting_recent_buys_kwarg_keeps_guard_inactive(monkeypatch):
     monkeypatch.setattr(agent, "run", lambda **kwargs: _FakeResult())
 
     report, _result = agent.analyze(
-        positions=[], macro_summary={}, total_value=100_000.0,
-        daily_pnl=0.0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={},
+        total_value=100_000.0,
+        daily_pnl=0.0,
+        daily_return_pct=0.0,
     )
     assert report is not None
     assert len(report.buy_grades) == 1

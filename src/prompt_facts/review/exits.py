@@ -15,7 +15,8 @@ class ReviewExits:
     """Post-exit reality, the missed-lesson and loss-pit digests; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         broker=None,
         sweeper=None,
@@ -27,7 +28,10 @@ class ReviewExits:
         self._EXIT_AUDIT_ACTIONS = exit_audit_actions
 
     def _build_post_exit_reality(
-        self, lookback_days: int = 14, min_age_days: int = 2, max_symbols: int = 12,
+        self,
+        lookback_days: int = 14,
+        min_age_days: int = 2,
+        max_symbols: int = 12,
     ) -> dict | None:
         """What actually happened after our recent exits — from the tape.
 
@@ -39,6 +43,7 @@ class ReviewExits:
          "worst": [{"symbol", "date", "move_pct"} × ≤3]}   # worst = ran most
         """
         from datetime import datetime as _dt, timedelta, timezone
+
         try:
             rows = self.db.get_trades(limit=120)
         except Exception as e:  # noqa: BLE001
@@ -60,19 +65,22 @@ class ReviewExits:
             is_exit = (
                 action in self._EXIT_AUDIT_ACTIONS
                 or action.startswith("PARTIAL_SELL")
-                or (action == "TRAIL_STOP"
-                    and (row.get("fill_status") or "") == "filled")
+                or (action == "TRAIL_STOP" and (row.get("fill_status") or "") == "filled")
             )
             if not is_exit:
                 continue
             if action != "TRAIL_STOP" and (row.get("fill_status") or "") not in (
-                "filled", "submitted",
+                "filled",
+                "submitted",
             ):
                 continue
             ts = row.get("timestamp") or ""
             try:
-                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
+                dt = (
+                    _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                    if "T" in ts
                     else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                )
             except (TypeError, ValueError):
                 continue
             if dt.tzinfo is None:
@@ -82,10 +90,13 @@ class ReviewExits:
             exit_px = row.get("fill_price") or row.get("price")
             if not (isinstance(exit_px, (int, float)) and exit_px > 0):
                 continue
-            exits.append({
-                "symbol": row.get("symbol"), "date": ts[:10],
-                "exit_px": float(exit_px),
-            })
+            exits.append(
+                {
+                    "symbol": row.get("symbol"),
+                    "date": ts[:10],
+                    "exit_px": float(exit_px),
+                }
+            )
         if not exits:
             return None
         # Live prices — one broker call per distinct symbol, capped.
@@ -102,10 +113,13 @@ class ReviewExits:
             cur = prices.get(e["symbol"])
             if cur is None:
                 continue
-            moves.append({
-                "symbol": e["symbol"], "date": e["date"],
-                "move_pct": round((cur - e["exit_px"]) / e["exit_px"] * 100, 1),
-            })
+            moves.append(
+                {
+                    "symbol": e["symbol"],
+                    "date": e["date"],
+                    "move_pct": round((cur - e["exit_px"]) / e["exit_px"] * 100, 1),
+                }
+            )
         if not moves:
             return None
         moves.sort(key=lambda m: -m["move_pct"])
@@ -115,6 +129,7 @@ class ReviewExits:
             "avg_move_pct": round(sum(m["move_pct"] for m in moves) / len(moves), 1),
             "worst": moves[:3],
         }
+
     def _build_recent_missed_lessons(self, lookback_days: int = 14) -> str:
         """PM L3d memory: themes that evening flagged ≥ 2 times as missed.
 
@@ -130,6 +145,7 @@ class ReviewExits:
         then shows a default "no recurring missed themes" note.
         """
         import json as _json
+
         try:
             rows = self.db.get_recent_insights(limit=lookback_days + 5)
         except Exception as e:
@@ -143,7 +159,9 @@ class ReviewExits:
         # any of it because this set filtered them out). Only the two
         # "not-really-a-miss" categories stay excluded.
         real_miss_cats = {
-            "trend_timing_miss", "theme_blindspot", "fundamentals_mispricing",
+            "trend_timing_miss",
+            "theme_blindspot",
+            "fundamentals_mispricing",
             "value_entry_missed",
         }
         theme_dates: dict[str, set[str]] = {}
@@ -163,9 +181,9 @@ class ReviewExits:
                 # is visible in logs instead of the layer just looking
                 # "empty" some days.
                 logger.warning(
-                    "recent_missed_lessons: JSON parse failed for "
-                    "insights row %s: %s",
-                    row_date or "?", e,
+                    "recent_missed_lessons: JSON parse failed for insights row %s: %s",
+                    row_date or "?",
+                    e,
                 )
                 continue
             if not isinstance(items, list):
@@ -202,6 +220,7 @@ class ReviewExits:
                         lesson = (m.get("lesson") or "").strip()
                         if lesson:
                             theme_lessons[key] = lesson[:200]
+
         # Keep themes seen in ≥ 2 distinct EPISODES (audit round 2): the
         # missed-ops digest uses a rolling 5-session window, so one big
         # single-day move re-emits the same miss on ~5 consecutive evenings —
@@ -209,10 +228,8 @@ class ReviewExits:
         # Dates within 5 days of the previous date collapse into one episode.
         def _episodes(dates: set[str]) -> int:
             from datetime import date as _d
-            parsed = sorted(
-                _d.fromisoformat(x) for x in dates
-                if isinstance(x, str) and len(x) >= 10
-            ) if dates else []
+
+            parsed = sorted(_d.fromisoformat(x) for x in dates if isinstance(x, str) and len(x) >= 10) if dates else []
             if not parsed:
                 return 0
             n = 1
@@ -226,11 +243,9 @@ class ReviewExits:
         # both flagged "nuclear/power" on adjacent days = one market episode
         # but a REAL breadth signal), which pure episode-counting would drop.
         recurring = [
-            (k, max(_episodes(theme_dates[k]),
-                    len({x for x in theme_symbols.get(k, []) if x})))
+            (k, max(_episodes(theme_dates[k]), len({x for x in theme_symbols.get(k, []) if x})))
             for k in theme_dates
-            if (_episodes(theme_dates[k]) >= 2
-                or len({x for x in theme_symbols.get(k, []) if x}) >= 2)
+            if (_episodes(theme_dates[k]) >= 2 or len({x for x in theme_symbols.get(k, []) if x}) >= 2)
         ]
         if not recurring:
             return ""
@@ -240,10 +255,7 @@ class ReviewExits:
         for key, n_days in recurring[:5]:
             syms = theme_symbols.get(key, [])
             uniq = sorted(set(syms))
-            sym_tally = ", ".join(
-                f"{s}×{syms.count(s)}" if syms.count(s) > 1 else s
-                for s in uniq[:6]
-            )
+            sym_tally = ", ".join(f"{s}×{syms.count(s)}" if syms.count(s) > 1 else s for s in uniq[:6])
             lesson = theme_lessons.get(key, "")
             label = key[4:] if key.startswith("sym:") else key
             line = f"- {label}: {n_days} days (symbols: {sym_tally})"
@@ -251,6 +263,7 @@ class ReviewExits:
                 line += f' — latest lesson: "{lesson}"'
             lines.append(line)
         return "\n".join(lines)
+
     def _build_recent_loss_pits(self, lookback_days: int = 14) -> str:
         """PM L3f memory: repeat failure modes from losing BUYs.
 
@@ -264,6 +277,7 @@ class ReviewExits:
         a default "no recurring pits" note.
         """
         import json as _json
+
         try:
             rows = self.db.get_recent_insights(limit=lookback_days + 5)
         except Exception as e:
@@ -284,9 +298,9 @@ class ReviewExits:
                 # L3f aggregates 14d of loss-root-cause patterns. Same
                 # silent-drop rationale as L3d above.
                 logger.warning(
-                    "recent_loss_pits: JSON parse failed for insights "
-                    "row %s: %s",
-                    (row.get("date") or "?"), e,
+                    "recent_loss_pits: JSON parse failed for insights row %s: %s",
+                    (row.get("date") or "?"),
+                    e,
                 )
                 continue
             if not isinstance(items, list):
@@ -308,8 +322,7 @@ class ReviewExits:
                     cause_move.setdefault(cause, []).append(float(move))
                 if ref:
                     cause_refs.setdefault(cause, []).append(ref[:100])
-        repeats = [(c, len(cause_symbols.get(c, []))) for c in cause_symbols
-                   if len(cause_symbols.get(c, [])) >= 2]
+        repeats = [(c, len(cause_symbols.get(c, []))) for c in cause_symbols if len(cause_symbols.get(c, [])) >= 2]
         if not repeats:
             return ""
         repeats.sort(key=lambda x: (-x[1], x[0]))

@@ -17,12 +17,14 @@ from src.notifier.gaps import (
     _append_coverage_gap_banner,
 )
 
+
 def _append_position_snapshot(lines: list[str], total_value: float | None) -> None:
     """Render top-3 winners + top-3 losers by unrealized P&L from the
     live positions table. Read-only DB hit; degrades gracefully on any
     error (the rest of the message still goes out)."""
     try:
         import sqlite3
+
         # Default path — same as Database default. If the pipeline
         # config changed it, this snippet won't reflect that; we
         # accept that limitation rather than threading config in.
@@ -50,8 +52,7 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
     # ~99%-deployed book on a night the money was entirely in T-bills —
     # inverting the operator's one nightly glance at exposure, and listing SGOV
     # among the P&L movers (2026-07-16 audit).
-    parked = sum(r[4] for r in rows
-                 if r[0] in _SWEEP_SYMBOLS and r[4] is not None)
+    parked = sum(r[4] for r in rows if r[0] in _SWEEP_SYMBOLS and r[4] is not None)
     rows = [r for r in rows if r[0] not in _SWEEP_SYMBOLS]
     invested = sum(r[4] for r in rows if r[4] is not None)
     cash_pct = None
@@ -115,9 +116,7 @@ def _append_earnings_body(lines: list[str], result: dict) -> None:
     if result.get("paid_analysis_suspended"):
         waiting = [f for f in (result.get("filings_waiting") or []) if isinstance(f, dict)]
         if waiting:
-            lines.append(
-                f"suspended: paid analysis is off, {len(waiting)} filing(s) waiting"
-            )
+            lines.append(f"suspended: paid analysis is off, {len(waiting)} filing(s) waiting")
             for row in waiting:
                 lines.append(
                     f"  {row.get('symbol', '?')} {row.get('form_type', '')} filed "
@@ -170,17 +169,11 @@ def _append_meta_body(lines: list[str], result: dict) -> None:
     applied = len(report.get("applied") or [])
     rej_list = report.get("rejected") or []
     rejected = len(rej_list)
-    staged = sum(
-        1 for r in rej_list
-        if isinstance(r, dict) and "dry_run" in str(r.get("reason", ""))
-    )
+    staged = sum(1 for r in rej_list if isinstance(r, dict) and "dry_run" in str(r.get("reason", "")))
     if applied or rejected:
         lines.append(f"learnings: applied={applied} rejected={rejected}")
         if staged:
-            lines.append(
-                f"🧪 {staged} proposal(s) staged for review — "
-                f"data/evolution/{period}/proposed_edits.json"
-            )
+            lines.append(f"🧪 {staged} proposal(s) staged for review — data/evolution/{period}/proposed_edits.json")
     elif result.get("proposed_learnings_count"):
         lines.append(
             f"⚠️ {result['proposed_learnings_count']} proposal(s) generated "
@@ -189,9 +182,6 @@ def _append_meta_body(lines: list[str], result: dict) -> None:
     reason = result.get("reason")
     if reason:
         lines.append(f"reason: {reason}")
-
-
-
 
 
 def build_daily_csv(closes: list[tuple[str, float]]) -> bytes:
@@ -214,6 +204,7 @@ def build_daily_csv(closes: list[tuple[str, float]]) -> bytes:
     try:
         import yfinance as yf
         import pandas as pd
+
         earliest = closes[0][0]
         start = (datetime.strptime(earliest, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d")
         end_dt = datetime.strptime(closes[-1][0], "%Y-%m-%d") + timedelta(days=2)
@@ -250,15 +241,17 @@ def build_daily_csv(closes: list[tuple[str, float]]) -> bytes:
             spy_ret = (spy_close - prev_spy) / prev_spy * 100
         else:
             spy_ret = ""
-        writer.writerow([
-            date,
-            f"{nav:.2f}",
-            f"{daily_pnl:+.2f}",
-            f"{daily_ret:+.4f}",
-            f"{drawdown:+.4f}",
-            f"{spy_close:.2f}" if spy_close else "",
-            f"{spy_ret:+.4f}" if spy_ret != "" else "",
-        ])
+        writer.writerow(
+            [
+                date,
+                f"{nav:.2f}",
+                f"{daily_pnl:+.2f}",
+                f"{daily_ret:+.4f}",
+                f"{drawdown:+.4f}",
+                f"{spy_close:.2f}" if spy_close else "",
+                f"{spy_ret:+.4f}" if spy_ret != "" else "",
+            ]
+        )
         prev_nav = nav
         prev_spy = spy_close if spy_close else prev_spy
 

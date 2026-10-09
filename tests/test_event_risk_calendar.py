@@ -46,11 +46,16 @@ from src.trading_calendar import et_today
 
 # --- helpers ---------------------------------------------------------------
 
+
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -59,8 +64,12 @@ def _decision(symbols=("NVDA",)) -> PortfolioDecision:
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="BUY", symbol=s, allocation_pct=10.0,
-                entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+                action="BUY",
+                symbol=s,
+                allocation_pct=10.0,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
                 reasoning="setup",
             )
             for s in symbols
@@ -94,7 +103,9 @@ def _calendar(payloads, *, deadline_s=20.0, **kwargs):
     simulate a transport failure.
     """
     provider = MacroEventCalendarProvider(
-        api_key="dummy", total_fetch_deadline_s=deadline_s, **kwargs,
+        api_key="dummy",
+        total_fetch_deadline_s=deadline_s,
+        **kwargs,
     )
     calls = []
 
@@ -119,6 +130,7 @@ def _dates_payload(dates):
 
 # --- defect (c): the fetched earnings date reaches the Risk Manager ---------
 
+
 def test_the_fetched_earnings_date_reaches_the_risk_managers_input_text():
     """The load-bearing proof for defect (c).
 
@@ -130,7 +142,10 @@ def test_the_fetched_earnings_date_reaches_the_risk_managers_input_text():
 
     market = _FakeMarket({"NVDA": 2, "JPM": 30})
     earnings = fetch_earnings_proximity(
-        market, ["NVDA", "JPM"], per_symbol_timeout_s=2.0, total_deadline_s=5.0,
+        market,
+        ["NVDA", "JPM"],
+        per_symbol_timeout_s=2.0,
+        total_deadline_s=5.0,
     )
     assert market.calls == ["NVDA", "JPM"]  # the dead function now has callers
     block = format_event_risk_block(
@@ -164,7 +179,10 @@ def test_risk_manager_input_says_unknown_when_the_earnings_lookup_returns_nothin
 
     market = _FakeMarket({"NVDA": None})
     earnings = fetch_earnings_proximity(
-        market, ["NVDA"], per_symbol_timeout_s=2.0, total_deadline_s=5.0,
+        market,
+        ["NVDA"],
+        per_symbol_timeout_s=2.0,
+        total_deadline_s=5.0,
     )
     assert earnings[0].status == EARNINGS_NO_FETCHED_DATE
     assert earnings[0].sessions_away is None
@@ -172,9 +190,12 @@ def test_risk_manager_input_says_unknown_when_the_earnings_lookup_returns_nothin
     agent = RiskManagerAgent.__new__(RiskManagerAgent)
     message = agent.build_user_message(
         portfolio_decision=_decision(("NVDA",)),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
         event_risk_block=format_event_risk_block(
-            earnings=earnings, events=[],
+            earnings=earnings,
+            events=[],
             coverage=EventCalendarCoverage(configured=7, succeeded=7, failed=[]),
             horizon_days=10,
         ),
@@ -189,11 +210,17 @@ def test_risk_manager_input_says_unknown_when_the_earnings_lookup_returns_nothin
 def test_risk_manager_input_says_unknown_when_the_earnings_lookup_raises():
     market = _FakeMarket(raises=True)
     earnings = fetch_earnings_proximity(
-        market, ["NVDA"], per_symbol_timeout_s=2.0, total_deadline_s=5.0,
+        market,
+        ["NVDA"],
+        per_symbol_timeout_s=2.0,
+        total_deadline_s=5.0,
     )
     assert earnings[0].status == EARNINGS_LOOKUP_FAILED
     rendered = format_event_risk_block(
-        earnings=earnings, events=[], coverage=None, horizon_days=10,
+        earnings=earnings,
+        events=[],
+        coverage=None,
+        horizon_days=10,
     )
     assert "LOOKUP FAILED" in rendered
     assert "unavailable_lookup_failed" in rendered
@@ -205,7 +232,10 @@ def test_a_hanging_earnings_lookup_is_bounded_and_labelled():
     market = _FakeMarket({"NVDA": 4}, hang_s=3.0)
     started = time.monotonic()
     earnings = fetch_earnings_proximity(
-        market, ["NVDA"], per_symbol_timeout_s=0.5, total_deadline_s=5.0,
+        market,
+        ["NVDA"],
+        per_symbol_timeout_s=0.5,
+        total_deadline_s=5.0,
     )
     elapsed = time.monotonic() - started
     assert elapsed < 2.5
@@ -218,15 +248,21 @@ def test_symbols_not_reached_inside_the_budget_are_labelled_never_dropped():
     symbol with nothing to report."""
     market = _FakeMarket({"AAA": 1, "BBB": 2, "CCC": 3}, hang_s=0.4)
     earnings = fetch_earnings_proximity(
-        market, ["AAA", "BBB", "CCC"], per_symbol_timeout_s=0.5,
+        market,
+        ["AAA", "BBB", "CCC"],
+        per_symbol_timeout_s=0.5,
         total_deadline_s=0.6,
     )
     assert [e.symbol for e in earnings] == ["AAA", "BBB", "CCC"]
     assert earnings[-1].status in (
-        EARNINGS_DEADLINE_EXCEEDED, EARNINGS_LOOKUP_TIMEOUT,
+        EARNINGS_DEADLINE_EXCEEDED,
+        EARNINGS_LOOKUP_TIMEOUT,
     )
     rendered = format_event_risk_block(
-        earnings=earnings, events=None, coverage=None, horizon_days=10,
+        earnings=earnings,
+        events=None,
+        coverage=None,
+        horizon_days=10,
     )
     assert "CCC" in rendered
 
@@ -239,7 +275,9 @@ def test_risk_manager_input_never_goes_silent_when_no_block_is_passed():
     agent = RiskManagerAgent.__new__(RiskManagerAgent)
     message = agent.build_user_message(
         portfolio_decision=_decision(("NVDA",)),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
     )
     assert "## Event Risk" in message
     assert "NOT FETCHED this run" in message
@@ -249,8 +287,10 @@ def test_earnings_proximity_only_reports_a_figure_when_measured():
     """The pace_status contract: a figure exists only under `measured`."""
     assert EarningsProximity("X", 3, EARNINGS_MEASURED).measured is True
     for status in (
-        EARNINGS_NO_FETCHED_DATE, EARNINGS_LOOKUP_FAILED,
-        EARNINGS_LOOKUP_TIMEOUT, EARNINGS_DEADLINE_EXCEEDED,
+        EARNINGS_NO_FETCHED_DATE,
+        EARNINGS_LOOKUP_FAILED,
+        EARNINGS_LOOKUP_TIMEOUT,
+        EARNINGS_DEADLINE_EXCEEDED,
     ):
         proximity = EarningsProximity("X", None, status)
         assert proximity.measured is False
@@ -258,6 +298,7 @@ def test_earnings_proximity_only_reports_a_figure_when_measured():
 
 
 # --- defect (a): a real macro event calendar --------------------------------
+
 
 def test_calendar_returns_scheduled_releases_inside_the_horizon():
     today = et_today()
@@ -310,7 +351,9 @@ def test_a_failed_calendar_is_reported_as_coverage_not_as_an_empty_calendar():
 
     rendered = format_event_risk_block(
         earnings=[EarningsProximity("NVDA", 5, EARNINGS_MEASURED)],
-        events=events, coverage=coverage, horizon_days=10,
+        events=events,
+        coverage=coverage,
+        horizon_days=10,
     )
     assert "the calendar is UNAVAILABLE" in rendered
     assert "means NOT FETCHED, never" in rendered
@@ -323,15 +366,15 @@ def test_a_partial_calendar_names_the_releases_that_failed():
     today = et_today()
     # Every release answers with a real (far-future) schedule except payrolls,
     # whose transport fails — so `failed` isolates exactly that one.
-    payloads = {
-        r.release_id: _dates_payload([today + timedelta(days=200)])
-        for r in MACRO_RELEASES
-    }
+    payloads = {r.release_id: _dates_payload([today + timedelta(days=200)]) for r in MACRO_RELEASES}
     payloads[10] = _dates_payload([today + timedelta(days=2)])
     payloads[50] = None  # transport failure for payrolls only
     provider = _calendar(
-        payloads, max_retries=0, retry_backoff_base_s=0.01,
-        retry_backoff_max_s=0.01, retry_backoff_jitter_s=0.0,
+        payloads,
+        max_retries=0,
+        retry_backoff_base_s=0.01,
+        retry_backoff_max_s=0.01,
+        retry_backoff_jitter_s=0.0,
     )
     events = provider.get_upcoming_events(horizon_days=10)
     coverage = provider.last_coverage
@@ -374,9 +417,7 @@ def test_the_fetch_window_is_the_wide_lookahead_not_the_horizon():
     provider.get_upcoming_events(horizon_days=10)
 
     assert len(provider.transport_calls) == len(MACRO_RELEASES)
-    expected_end = (
-        today + timedelta(days=RELEASE_SCHEDULE_LOOKAHEAD_DAYS)
-    ).isoformat()
+    expected_end = (today + timedelta(days=RELEASE_SCHEDULE_LOOKAHEAD_DAYS)).isoformat()
     for url, _timeout in provider.transport_calls:
         assert f"realtime_start={today.isoformat()}" in url
         assert f"realtime_end={expected_end}" in url
@@ -419,16 +460,12 @@ def test_outcome_two_a_published_schedule_beyond_the_horizon_is_not_a_failure():
         9: today + timedelta(days=22),
     }
     for release_id, first in monthly.items():
-        payloads[release_id] = _dates_payload(
-            [first, first + timedelta(days=28), first + timedelta(days=58)]
-        )
+        payloads[release_id] = _dates_payload([first, first + timedelta(days=28), first + timedelta(days=58)])
     # Everything else answers with a schedule too, so `failed` is empty only if
     # the beyond-horizon releases are genuinely counted as successes.
     for release in MACRO_RELEASES:
         if release.release_id not in monthly:
-            payloads[release.release_id] = _dates_payload(
-                [today + timedelta(days=40)]
-            )
+            payloads[release.release_id] = _dates_payload([today + timedelta(days=40)])
     provider = _calendar(payloads)
     events = provider.get_upcoming_events(horizon_days=10)
     coverage = provider.last_coverage
@@ -449,9 +486,7 @@ def test_outcome_two_a_published_schedule_beyond_the_horizon_is_not_a_failure():
     assert by_label["PPI"].event_date == monthly[46]
     # Only the NEXT one per release, and sorted soonest first.
     assert len(by_label) == len(MACRO_RELEASES)
-    assert coverage.next_beyond_horizon == sorted(
-        coverage.next_beyond_horizon, key=lambda e: (e.event_date, e.label)
-    )
+    assert coverage.next_beyond_horizon == sorted(coverage.next_beyond_horizon, key=lambda e: (e.event_date, e.label))
 
     rendered = format_macro_events_section(events, coverage, 10)
     assert monthly[10].isoformat() in rendered
@@ -479,10 +514,7 @@ def test_a_beyond_horizon_release_never_degrades_macro_coverage():
     """One release genuinely unpublished, one merely not imminent. Exactly one
     of them may appear in FAILED."""
     today = et_today()
-    payloads = {
-        r.release_id: _dates_payload([today + timedelta(days=45)])
-        for r in MACRO_RELEASES
-    }
+    payloads = {r.release_id: _dates_payload([today + timedelta(days=45)]) for r in MACRO_RELEASES}
     payloads[180] = _dates_payload([])  # genuinely nothing published
     provider = _calendar(payloads)
     provider.get_upcoming_events(horizon_days=10)
@@ -518,6 +550,7 @@ def test_an_empty_calendar_reads_as_empty_only_when_coverage_is_ok():
 def test_the_calendar_respects_its_wall_clock_ceiling():
     """A slow FRED must not stall the session. The deadline is a real ceiling,
     not an upper bound implied by retry arithmetic."""
+
     def _slow():
         time.sleep(0.6)
         return _dates_payload([])
@@ -532,10 +565,7 @@ def test_the_calendar_respects_its_wall_clock_ceiling():
     reasons = {f.reason for f in provider.last_coverage.failed}
     assert "fetch_deadline_exceeded" in reasons
     # Skipped releases are REPORTED, never quietly omitted.
-    assert (
-        provider.last_coverage.succeeded + provider.last_coverage.failed_count
-        == len(MACRO_RELEASES)
-    )
+    assert provider.last_coverage.succeeded + provider.last_coverage.failed_count == len(MACRO_RELEASES)
 
 
 def test_a_slow_release_does_not_starve_the_releases_behind_it_in_the_list():
@@ -593,12 +623,14 @@ def test_a_slow_release_does_not_starve_the_releases_behind_it_in_the_list():
     failed_labels = {f.label for f in coverage.failed}
     assert failed_labels == {"CPI"}
     for label in (
-        "PPI", "Personal Income and Outlays (PCE)", "GDP",
-        "Retail Sales (advance)", "Initial Jobless Claims",
+        "PPI",
+        "Personal Income and Outlays (PCE)",
+        "GDP",
+        "Retail Sales (advance)",
+        "Initial Jobless Claims",
     ):
         assert any(e.label == label for e in events), (
-            f"{label} was starved even though it should have gotten its "
-            "fair share of the remaining budget"
+            f"{label} was starved even though it should have gotten its fair share of the remaining budget"
         )
     # The fair-share ceiling still respects the overall wall-clock budget.
     assert elapsed < 2.0, f"calendar overran its ceiling: {elapsed:.1f}s"
@@ -617,8 +649,11 @@ def test_the_calendar_retries_a_transient_failure_before_degrading():
     payloads = {r.release_id: _dates_payload([]) for r in MACRO_RELEASES}
     payloads[10] = _flaky
     provider = _calendar(
-        payloads, max_retries=1, retry_backoff_base_s=0.01,
-        retry_backoff_max_s=0.01, retry_backoff_jitter_s=0.0,
+        payloads,
+        max_retries=1,
+        retry_backoff_base_s=0.01,
+        retry_backoff_max_s=0.01,
+        retry_backoff_jitter_s=0.0,
     )
     events = provider.get_upcoming_events(horizon_days=10)
     assert attempts["n"] == 2
@@ -639,6 +674,7 @@ def test_a_malformed_fred_response_degrades_rather_than_raising():
 
 # --- the free-source coverage boundary is declared, not hidden --------------
 
+
 def test_fred_is_still_not_the_fomc_source_and_the_gap_list_no_longer_claims_it_is():
     """FRED's release 101 ("FOMC Press Release") is a DAILY release carrying no
     meeting schedule — live-verified: over 2026-01-01..2026-08-30 it returns all
@@ -656,7 +692,8 @@ def test_fred_is_still_not_the_fomc_source_and_the_gap_list_no_longer_claims_it_
     for rendered in (
         format_macro_events_section([], None, 10),
         format_event_risk_block(
-            earnings=None, events=[],
+            earnings=None,
+            events=[],
             coverage=EventCalendarCoverage(configured=7, succeeded=7, failed=[]),
             horizon_days=10,
         ),
@@ -682,6 +719,7 @@ def test_the_tracked_releases_are_the_live_verified_ids():
 
 # --- the macro seat gets the same calendar ----------------------------------
 
+
 def test_macro_analyst_prompt_carries_the_fetched_calendar():
     from src.agents.macro_analyst import MacroAnalystAgent
 
@@ -691,9 +729,13 @@ def test_macro_analyst_prompt_carries_the_fetched_calendar():
         macro_summary={},
         universe=["SPY"],
         macro_events=[
-            type("E", (), {
-                "describe": lambda self: f"{today.isoformat()} (TODAY): CPI — x",
-            })(),
+            type(
+                "E",
+                (),
+                {
+                    "describe": lambda self: f"{today.isoformat()} (TODAY): CPI — x",
+                },
+            )(),
         ],
         event_coverage=EventCalendarCoverage(configured=7, succeeded=7, failed=[]),
         event_horizon_days=10,
@@ -713,6 +755,7 @@ def test_macro_analyst_prompt_says_not_fetched_when_no_calendar_was_passed():
 
 
 # --- the risk stage assembles it -------------------------------------------
+
 
 class _StubConfig:
     class event_risk:
@@ -776,7 +819,8 @@ def test_risk_stage_block_survives_a_broken_market_provider():
             raise RuntimeError("provider down")
 
     block = RiskStage._build_event_risk_block(
-        _StubPipeline(_Broken()), _ctx(_decision(("NVDA",))),
+        _StubPipeline(_Broken()),
+        _ctx(_decision(("NVDA",))),
     )
     assert "unavailable_lookup_failed" in block
 
@@ -787,13 +831,18 @@ def test_risk_stage_reuses_the_research_stages_calendar_without_refetching():
     from src.pipeline_stages import RiskStage
 
     today = et_today()
-    event = type("E", (), {
-        "describe": lambda self: f"{today.isoformat()} (TODAY): CPI — inflation",
-    })()
+    event = type(
+        "E",
+        (),
+        {
+            "describe": lambda self: f"{today.isoformat()} (TODAY): CPI — inflation",
+        },
+    )()
     block = RiskStage._build_event_risk_block(
         _StubPipeline(_FakeMarket({"NVDA": 9})),
         _ctx(
-            _decision(("NVDA",)), events=[event],
+            _decision(("NVDA",)),
+            events=[event],
             coverage=EventCalendarCoverage(configured=7, succeeded=6, failed=[]),
         ),
     )
@@ -832,6 +881,7 @@ from src.data.event_calendar import (  # noqa: E402 — grouped with its own tes
 # every wording below is verbatim from the live payload — a fixture that has
 # been tidied into a shape the parser finds convenient proves nothing.
 
+
 def _fomc_json_payload(rows):
     return {"events": list(rows), "announcement": []}
 
@@ -842,36 +892,54 @@ def _fomc_json_payload(rows):
 _LIVE_JSON_ROWS = [
     {
         "description": "&lt;p&gt;Two-day meeting, September 15 - 16&lt;/p&gt;&#10;&#10;&lt;p&gt;Press Conference&lt;/p&gt;",
-        "title": "FOMC Meeting", "time": "2:00 p.m.",
-        "month": "2026-09", "days": "16", "type": "FOMC",
+        "title": "FOMC Meeting",
+        "time": "2:00 p.m.",
+        "month": "2026-09",
+        "days": "16",
+        "type": "FOMC",
     },
     {
         "link": "https://www.federalreserve.gov/live-broadcast.htm",
-        "title": "FOMC Press Conference", "time": "2:30 p.m.",
-        "month": "2026-09", "days": "16", "type": "FOMC",
+        "title": "FOMC Press Conference",
+        "time": "2:30 p.m.",
+        "month": "2026-09",
+        "days": "16",
+        "type": "FOMC",
     },
     {
         "description": "&lt;p&gt;Meeting of September 15-16&lt;/p&gt;",
-        "title": " FOMC Minutes", "time": "2:00 p.m.",
-        "month": "2026-10", "days": "7", "type": "FOMC",
+        "title": " FOMC Minutes",
+        "time": "2:00 p.m.",
+        "month": "2026-10",
+        "days": "7",
+        "type": "FOMC",
     },
     {
         "description": "&lt;p&gt;Two-day meeting, October 27 - 28&lt;/p&gt;&#10;&#10;&lt;p&gt;Press Conference&lt;/p&gt;",
-        "title": "FOMC Meeting", "time": "2:00 p.m.",
-        "month": "2026-10", "days": "28", "type": "FOMC",
+        "title": "FOMC Meeting",
+        "time": "2:00 p.m.",
+        "month": "2026-10",
+        "days": "28",
+        "type": "FOMC",
     },
     # Month-straddling block. `month`/`days` give only the CONCLUDING day, in
     # November — the start is in October and has to come from the duration.
     {
         "description": "&lt;p&gt;&lt;span&gt;&lt;span&gt;Two-day meeting, &lt;/span&gt;October &lt;/span&gt;31 - November 1&lt;/p&gt;",
-        "title": "FOMC meeting", "time": "2:00 p.m.",
-        "month": "2017-11", "days": "1", "type": "FOMC",
+        "title": "FOMC meeting",
+        "time": "2:00 p.m.",
+        "month": "2017-11",
+        "days": "1",
+        "type": "FOMC",
     },
     # A non-FOMC row from the same feed — 1,059 of the live 2,582 events are
     # statistical releases, and none of them is a Fed decision.
     {
-        "description": "Economic Outlook", "title": "Speech - Governor",
-        "time": "8:30 a.m.", "month": "2026-09", "days": "3",
+        "description": "Economic Outlook",
+        "title": "Speech - Governor",
+        "time": "8:30 a.m.",
+        "month": "2026-09",
+        "days": "3",
         "type": "Speeches",
     },
 ]
@@ -903,19 +971,20 @@ def _fomc_html_page(panels):
         )
         out.extend(_fomc_html_row(m, d) for m, d in rows)
         out.append(
-            '<div class="panel-footer">* Meeting associated with a Summary of '
-            'Economic Projections. </div></div>'
+            '<div class="panel-footer">* Meeting associated with a Summary of Economic Projections. </div></div>'
         )
     return "<html><body>" + "".join(out) + "</body></html>"
 
 
-_LIVE_HTML_PAGE = _fomc_html_page([
-    # Deliberately not chronological, exactly like the live page.
-    ("2026", [("September", "15-16*"), ("October", "27-28"), ("December", "8-9*")]),
-    ("2025", [("August", "22 (notation vote)"), ("October", "28-29")]),
-    ("2021", [("Oct/Nov", "31-1")]),
-    ("2027", [("January", "26-27"), ("December", "7-8*")]),
-])
+_LIVE_HTML_PAGE = _fomc_html_page(
+    [
+        # Deliberately not chronological, exactly like the live page.
+        ("2026", [("September", "15-16*"), ("October", "27-28"), ("December", "8-9*")]),
+        ("2025", [("August", "22 (notation vote)"), ("October", "28-29")]),
+        ("2021", [("Oct/Nov", "31-1")]),
+        ("2027", [("January", "26-27"), ("December", "7-8*")]),
+    ]
+)
 
 
 def _fomc_provider(tmp_path, *, json_body=None, html_body=None, **kwargs):
@@ -929,7 +998,8 @@ def _fomc_provider(tmp_path, *, json_body=None, html_body=None, **kwargs):
     kwargs.setdefault("retry_backoff_max_s", 0.01)
     kwargs.setdefault("retry_backoff_jitter_s", 0.0)
     provider = FOMCCalendarProvider(
-        cache_path=str(tmp_path / "fomc_calendar.json"), **kwargs,
+        cache_path=str(tmp_path / "fomc_calendar.json"),
+        **kwargs,
     )
     calls = []
 
@@ -967,13 +1037,21 @@ def _two_day_html_page(concluding: date) -> tuple[date, str]:
     """
     if concluding.day < 2:
         concluding += timedelta(days=2)
-    page = _fomc_html_page([(str(concluding.year), [
-        (concluding.strftime("%B"), f"{concluding.day - 1}-{concluding.day}"),
-    ])])
+    page = _fomc_html_page(
+        [
+            (
+                str(concluding.year),
+                [
+                    (concluding.strftime("%B"), f"{concluding.day - 1}-{concluding.day}"),
+                ],
+            )
+        ]
+    )
     return concluding, page
 
 
 # --- the two parse boundaries ----------------------------------------------
+
 
 def test_the_json_feed_yields_meetings_and_ignores_minutes_and_press_conferences():
     """`type == "FOMC"` is not the same question as "is this a meeting". The
@@ -993,21 +1071,32 @@ def test_a_json_meeting_with_no_stated_duration_is_one_day_and_says_so():
     """The source gave a concluding date and nothing else. Assuming a second
     day into existence would be inventing a date; the block is reported as one
     day and the unknown is labelled."""
-    meetings = parse_fomc_meetings_from_json(_fomc_json_payload([{
-        "title": "FOMC Meeting", "month": "2026-09", "days": "16",
-        "type": "FOMC",
-    }]))
+    meetings = parse_fomc_meetings_from_json(
+        _fomc_json_payload(
+            [
+                {
+                    "title": "FOMC Meeting",
+                    "month": "2026-09",
+                    "days": "16",
+                    "type": "FOMC",
+                }
+            ]
+        )
+    )
     assert _fomc_days(meetings) == [("2026-09-16", "2026-09-16")]
     assert meetings[0].duration_stated is False
     assert "block length is UNKNOWN" in meetings[0].describe(date(2026, 9, 1))
 
 
-@pytest.mark.parametrize("payload", [
-    {"events": []},
-    {"events": [{"type": "Speeches", "title": "Speech", "month": "2026-09", "days": "3"}]},
-    {"nothing": "recognisable"},
-    "not an object at all",
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"events": []},
+        {"events": [{"type": "Speeches", "title": "Speech", "month": "2026-09", "days": "3"}]},
+        {"nothing": "recognisable"},
+        "not an object at all",
+    ],
+)
 def test_a_redesigned_json_feed_raises_instead_of_returning_no_meetings(payload):
     """The load-bearing property of the parse boundary. An empty list would
     reach the seat as "no meetings", which is exactly the false reassurance
@@ -1036,11 +1125,14 @@ def test_the_html_page_yields_meetings_including_the_awkward_real_rows():
     assert ("2027-01-26", "2027-01-27") in _fomc_days(meetings)
 
 
-@pytest.mark.parametrize("document", [
-    "<html><body><p>We have redesigned this page.</p></body></html>",
-    '<div class="panel-heading"><h4>2027 FOMC Meetings</h4></div><p>coming soon</p>',
-    "",
-])
+@pytest.mark.parametrize(
+    "document",
+    [
+        "<html><body><p>We have redesigned this page.</p></body></html>",
+        '<div class="panel-heading"><h4>2027 FOMC Meetings</h4></div><p>coming soon</p>',
+        "",
+    ],
+)
 def test_a_redesigned_fomc_page_raises_instead_of_returning_no_meetings(document):
     with pytest.raises(FOMCCalendarParseError):
         parse_fomc_meetings_from_html(document)
@@ -1050,10 +1142,17 @@ def test_an_implausible_block_is_discarded_rather_than_reported():
     """A parse that produces a plausible-looking but wrong block is worse than
     one that produces nothing: a fabricated Fed decision would be sized
     around."""
-    page = _fomc_html_page([("2026", [
-        ("September", "1-30"),        # a month-long "meeting" — not real
-        ("October", "27-28"),
-    ])])
+    page = _fomc_html_page(
+        [
+            (
+                "2026",
+                [
+                    ("September", "1-30"),  # a month-long "meeting" — not real
+                    ("October", "27-28"),
+                ],
+            )
+        ]
+    )
     assert _fomc_days(parse_fomc_meetings_from_html(page)) == [
         ("2026-10-27", "2026-10-28"),
     ]
@@ -1063,11 +1162,23 @@ def test_a_realistic_year_parses_as_eight_two_day_meetings():
     """The shape sanity check: the FOMC meets roughly eight times a year in
     two-day blocks. A source that does not look like that is the wrong
     source."""
-    page = _fomc_html_page([("2027", [
-        ("January", "26-27"), ("March", "16-17*"), ("April", "27-28"),
-        ("June", "8-9*"), ("July", "27-28"), ("September", "14-15*"),
-        ("October", "26-27"), ("December", "7-8*"),
-    ])])
+    page = _fomc_html_page(
+        [
+            (
+                "2027",
+                [
+                    ("January", "26-27"),
+                    ("March", "16-17*"),
+                    ("April", "27-28"),
+                    ("June", "8-9*"),
+                    ("July", "27-28"),
+                    ("September", "14-15*"),
+                    ("October", "26-27"),
+                    ("December", "7-8*"),
+                ],
+            )
+        ]
+    )
     meetings = parse_fomc_meetings_from_html(page)
     assert len(meetings) == 8
     assert {m.days for m in meetings} == {2}
@@ -1075,17 +1186,22 @@ def test_a_realistic_year_parses_as_eight_two_day_meetings():
 
 # --- source selection: structured first, rendered page only when needed -----
 
+
 def test_the_structured_feed_is_used_and_the_rendered_page_is_not_touched(tmp_path):
     """The rendered page is a FALLBACK. When the JSON feed answers with a
     schedule that spans the horizon, the HTML page must not be fetched at
     all."""
     today = et_today()
     far = today + timedelta(days=120)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": far.strftime("%Y-%m"), "days": str(far.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": far.strftime("%Y-%m"),
+            "days": str(far.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     provider = _fomc_provider(tmp_path, json_body=_json_bytes(rows), html_body=None)
     meetings = provider.get_meetings(horizon_days=10)
 
@@ -1108,14 +1224,20 @@ def test_the_rendered_page_is_reached_for_when_the_feed_stops_short(tmp_path):
     """
     today = et_today()
     near = today + timedelta(days=2)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": near.strftime("%Y-%m"), "days": str(near.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": near.strftime("%Y-%m"),
+            "days": str(near.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     later, page = _two_day_html_page(today + timedelta(days=60))
     provider = _fomc_provider(
-        tmp_path, json_body=_json_bytes(rows), html_body=page.encode("utf-8"),
+        tmp_path,
+        json_body=_json_bytes(rows),
+        html_body=page.encode("utf-8"),
     )
     meetings = provider.get_meetings(horizon_days=10)
 
@@ -1142,6 +1264,7 @@ def test_the_rendered_page_carries_the_schedule_when_the_feed_fails(tmp_path):
 
 
 # --- degraded paths: never the reassuring sentence --------------------------
+
 
 def test_both_sources_failing_is_reported_as_unavailable_not_as_no_meetings(tmp_path):
     provider = _fomc_provider(tmp_path, json_body=None, html_body=None)
@@ -1178,7 +1301,8 @@ def test_a_schedule_that_stops_inside_the_horizon_refuses_to_call_it_empty(tmp_p
     """
     today = et_today()
     coverage = FOMCCoverage(
-        status=FOMC_MEASURED, source=FOMC_SOURCE_JSON,
+        status=FOMC_MEASURED,
+        source=FOMC_SOURCE_JSON,
         schedule_through=today + timedelta(days=3),
         horizon_end=today + timedelta(days=10),
     )
@@ -1193,14 +1317,16 @@ def test_a_schedule_that_stops_inside_the_horizon_refuses_to_call_it_empty(tmp_p
 def test_the_reassuring_sentence_needs_a_schedule_that_spans_the_whole_horizon():
     today = et_today()
     coverage = FOMCCoverage(
-        status=FOMC_MEASURED, source=FOMC_SOURCE_JSON,
+        status=FOMC_MEASURED,
+        source=FOMC_SOURCE_JSON,
         schedule_through=today + timedelta(days=200),
         horizon_end=today + timedelta(days=10),
     )
     assert coverage.covers_horizon is True
     rendered = format_fomc_section(
         [FOMCMeeting(today + timedelta(days=199), today + timedelta(days=200))],
-        coverage, 10,
+        coverage,
+        10,
     )
     assert "None. The published FOMC schedule spans the next 10 calendar days" in rendered
     assert "Next scheduled meeting beyond this horizon" in rendered
@@ -1208,16 +1334,21 @@ def test_the_reassuring_sentence_needs_a_schedule_that_spans_the_whole_horizon()
 
 # --- caching ----------------------------------------------------------------
 
+
 def test_a_fresh_cache_that_spans_the_horizon_issues_no_request_at_all(tmp_path):
     """FOMC dates change roughly twice a year. Refetching every session is
     waste, and this is the assertion that it does not happen."""
     today = et_today()
     far = today + timedelta(days=120)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": far.strftime("%Y-%m"), "days": str(far.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": far.strftime("%Y-%m"),
+            "days": str(far.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     first = _fomc_provider(tmp_path, json_body=_json_bytes(rows))
     first.get_meetings(horizon_days=10)
     assert first.transport_calls == [first.json_url]
@@ -1235,11 +1366,15 @@ def test_a_young_cache_that_stops_short_of_the_horizon_is_refetched(tmp_path):
     being asked is not a usable cache, however new it is."""
     today = et_today()
     near = today + timedelta(days=2)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": near.strftime("%Y-%m"), "days": str(near.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": near.strftime("%Y-%m"),
+            "days": str(near.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     first = _fomc_provider(tmp_path, json_body=_json_bytes(rows))
     first.get_meetings(horizon_days=10)
 
@@ -1250,19 +1385,26 @@ def test_a_young_cache_that_stops_short_of_the_horizon_is_refetched(tmp_path):
 
 
 def test_a_stale_cache_is_served_wearing_its_age_never_as_fresh_data(tmp_path):
-    """"Degrade honestly" in one assertion: the dates are still handed over —
+    """ "Degrade honestly" in one assertion: the dates are still handed over —
     they are real published data — and the seat is told they are cached, how
     old they are, and that the live calendar did not answer."""
     today = et_today()
     far = today + timedelta(days=120)
-    (tmp_path / "fomc_calendar.json").write_text(json.dumps({
-        "fetched_on": (today - timedelta(days=400)).isoformat(),
-        "source": FOMC_SOURCE_JSON,
-        "meetings": [{
-            "start_date": (far - timedelta(days=1)).isoformat(),
-            "end_date": far.isoformat(), "duration_stated": True,
-        }],
-    }))
+    (tmp_path / "fomc_calendar.json").write_text(
+        json.dumps(
+            {
+                "fetched_on": (today - timedelta(days=400)).isoformat(),
+                "source": FOMC_SOURCE_JSON,
+                "meetings": [
+                    {
+                        "start_date": (far - timedelta(days=1)).isoformat(),
+                        "end_date": far.isoformat(),
+                        "duration_stated": True,
+                    }
+                ],
+            }
+        )
+    )
     provider = _fomc_provider(tmp_path, json_body=None, html_body=None)
     meetings = provider.get_meetings(horizon_days=10)
     coverage = provider.last_coverage
@@ -1290,17 +1432,24 @@ def test_an_unreadable_cache_is_ignored_rather_than_crashing_the_session(tmp_pat
 
 # --- the wall-clock ceiling -------------------------------------------------
 
+
 def test_a_hanging_fed_site_cannot_blow_the_wall_clock_ceiling(tmp_path):
     """A session must never wait on this. The deadline is a real ceiling, not
     an upper bound implied by retry-count x timeout arithmetic."""
+
     def _slow():
         time.sleep(0.8)
         raise OSError("read timed out")
 
     provider = _fomc_provider(
-        tmp_path, json_body=_slow, html_body=_slow,
-        request_timeout_s=1.0, total_fetch_deadline_s=1.0, max_retries=3,
-        retry_backoff_base_s=5.0, retry_backoff_max_s=30.0,
+        tmp_path,
+        json_body=_slow,
+        html_body=_slow,
+        request_timeout_s=1.0,
+        total_fetch_deadline_s=1.0,
+        max_retries=3,
+        retry_backoff_base_s=5.0,
+        retry_backoff_max_s=30.0,
     )
     started = time.monotonic()
     meetings = provider.get_meetings(horizon_days=10)
@@ -1320,18 +1469,23 @@ def test_a_source_not_reached_inside_the_budget_is_named_not_skipped_silently(tm
         raise OSError("read timed out")
 
     provider = _fomc_provider(
-        tmp_path, json_body=_slow, html_body=None,
-        request_timeout_s=1.0, total_fetch_deadline_s=1.0,
+        tmp_path,
+        json_body=_slow,
+        html_body=None,
+        request_timeout_s=1.0,
+        total_fetch_deadline_s=1.0,
     )
     provider.get_meetings(horizon_days=10)
     reason = provider.last_coverage.reason
     assert "fetch_deadline_exceeded" in reason
     assert provider.last_coverage.status in (
-        FOMC_UNAVAILABLE_FETCH_FAILED, FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
+        FOMC_UNAVAILABLE_FETCH_FAILED,
+        FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
     )
 
 
 # --- the fetched dates reach the seats --------------------------------------
+
 
 def _fomc_provider_with_real_schedule(tmp_path):
     today = et_today()
@@ -1339,8 +1493,10 @@ def _fomc_provider_with_real_schedule(tmp_path):
     beyond = today + timedelta(days=90)
     rows = [
         {
-            "title": "FOMC Meeting", "type": "FOMC",
-            "month": d.strftime("%Y-%m"), "days": str(d.day),
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": d.strftime("%Y-%m"),
+            "days": str(d.day),
             "description": "<p>Two-day meeting</p>",
         }
         for d in (inside, beyond)
@@ -1365,12 +1521,16 @@ def test_the_fetched_fomc_dates_reach_the_risk_managers_input_text(tmp_path):
     agent = RiskManagerAgent.__new__(RiskManagerAgent)
     message = agent.build_user_message(
         portfolio_decision=_decision(("NVDA",)),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
         event_risk_block=format_event_risk_block(
-            earnings=None, events=[],
+            earnings=None,
+            events=[],
             coverage=EventCalendarCoverage(configured=7, succeeded=7, failed=[]),
             horizon_days=10,
-            fomc_meetings=meetings, fomc_coverage=provider.last_coverage,
+            fomc_meetings=meetings,
+            fomc_coverage=provider.last_coverage,
         ),
     )
     assert inside.isoformat() in message
@@ -1397,12 +1557,16 @@ def test_the_risk_manager_is_told_the_fomc_calendar_is_unavailable_when_it_is(tm
     agent = RiskManagerAgent.__new__(RiskManagerAgent)
     message = agent.build_user_message(
         portfolio_decision=_decision(("NVDA",)),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
         event_risk_block=format_event_risk_block(
-            earnings=None, events=[],
+            earnings=None,
+            events=[],
             coverage=EventCalendarCoverage(configured=7, succeeded=7, failed=[]),
             horizon_days=10,
-            fomc_meetings=meetings, fomc_coverage=provider.last_coverage,
+            fomc_meetings=meetings,
+            fomc_coverage=provider.last_coverage,
         ),
     )
     assert "FOMC schedule UNAVAILABLE" in message
@@ -1420,7 +1584,9 @@ def test_the_risk_manager_is_told_when_the_fomc_calendar_was_never_fetched():
     agent = RiskManagerAgent.__new__(RiskManagerAgent)
     message = agent.build_user_message(
         portfolio_decision=_decision(("NVDA",)),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
     )
     assert "FOMC" in message
     assert "NOT FETCHED this run" in message
@@ -1437,8 +1603,10 @@ def test_the_fetched_fomc_dates_reach_the_macro_analysts_input_text(tmp_path):
 
     agent = MacroAnalystAgent.__new__(MacroAnalystAgent)
     message = agent.build_user_message(
-        macro_summary={}, universe=["NVDA"],
-        fomc_meetings=meetings, fomc_coverage=provider.last_coverage,
+        macro_summary={},
+        universe=["NVDA"],
+        fomc_meetings=meetings,
+        fomc_coverage=provider.last_coverage,
         event_horizon_days=10,
     )
     assert inside.isoformat() in message
@@ -1454,8 +1622,10 @@ def test_the_macro_analyst_is_told_when_the_fomc_calendar_is_unavailable(tmp_pat
 
     agent = MacroAnalystAgent.__new__(MacroAnalystAgent)
     message = agent.build_user_message(
-        macro_summary={}, universe=["NVDA"],
-        fomc_meetings=[], fomc_coverage=provider.last_coverage,
+        macro_summary={},
+        universe=["NVDA"],
+        fomc_meetings=[],
+        fomc_coverage=provider.last_coverage,
         event_horizon_days=10,
     )
     assert "FOMC schedule UNAVAILABLE" in message
@@ -1501,9 +1671,13 @@ def test_a_run_context_that_never_fetched_the_fomc_calendar_says_not_fetched():
         config = None
         market = None
 
-    block = RiskStage._build_event_risk_block(_Pipeline(), RunContext(
-        run_id="r1", session="morning",
-    ))
+    block = RiskStage._build_event_risk_block(
+        _Pipeline(),
+        RunContext(
+            run_id="r1",
+            session="morning",
+        ),
+    )
     assert "FOMC" in block
     assert "NOT FETCHED this run" in block
     assert "no meeting falls inside it" not in block
@@ -1529,13 +1703,19 @@ def test_a_short_schedule_whose_fallback_also_failed_names_both_facts(tmp_path):
     """
     today = et_today()
     near = today + timedelta(days=2)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": near.strftime("%Y-%m"), "days": str(near.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": near.strftime("%Y-%m"),
+            "days": str(near.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     provider = _fomc_provider(
-        tmp_path, json_body=_json_bytes(rows), html_body=None,
+        tmp_path,
+        json_body=_json_bytes(rows),
+        html_body=None,
     )
     meetings = provider.get_meetings(horizon_days=10)
     coverage = provider.last_coverage
@@ -1545,7 +1725,7 @@ def test_a_short_schedule_whose_fallback_also_failed_names_both_facts(tmp_path):
     assert len(meetings) == 1
 
     rendered = format_fomc_section(meetings, coverage, 10)
-    assert near.isoformat() in rendered            # the real date survives
+    assert near.isoformat() in rendered  # the real date survives
     assert "BEFORE THE END OF THIS HORIZON" in rendered
     assert "The fallback source did not answer either" in rendered
     assert "None. The published FOMC schedule spans" not in rendered
@@ -1559,22 +1739,35 @@ def test_a_shorter_fetched_schedule_does_not_overwrite_a_longer_cached_one(tmp_p
     today = et_today()
     far = today + timedelta(days=400)
     cache_file = tmp_path / "fomc_calendar.json"
-    cache_file.write_text(json.dumps({
-        "fetched_on": (today - timedelta(days=30)).isoformat(),
-        "source": f"{FOMC_SOURCE_JSON} + {FOMC_SOURCE_HTML}",
-        "meetings": [{
-            "start_date": (far - timedelta(days=1)).isoformat(),
-            "end_date": far.isoformat(), "duration_stated": True,
-        }],
-    }))
+    cache_file.write_text(
+        json.dumps(
+            {
+                "fetched_on": (today - timedelta(days=30)).isoformat(),
+                "source": f"{FOMC_SOURCE_JSON} + {FOMC_SOURCE_HTML}",
+                "meetings": [
+                    {
+                        "start_date": (far - timedelta(days=1)).isoformat(),
+                        "end_date": far.isoformat(),
+                        "duration_stated": True,
+                    }
+                ],
+            }
+        )
+    )
     near = today + timedelta(days=30)
-    rows = [{
-        "title": "FOMC Meeting", "type": "FOMC",
-        "month": near.strftime("%Y-%m"), "days": str(near.day),
-        "description": "<p>Two-day meeting</p>",
-    }]
+    rows = [
+        {
+            "title": "FOMC Meeting",
+            "type": "FOMC",
+            "month": near.strftime("%Y-%m"),
+            "days": str(near.day),
+            "description": "<p>Two-day meeting</p>",
+        }
+    ]
     provider = _fomc_provider(
-        tmp_path, json_body=_json_bytes(rows), html_body=None,
+        tmp_path,
+        json_body=_json_bytes(rows),
+        html_body=None,
     )
     meetings = provider.get_meetings(horizon_days=10)
 
@@ -1620,14 +1813,20 @@ def _provider(tmp_path, **kw):
 
 
 def _write_cache(tmp_path, dates, fetched_on):
-    (tmp_path / "rs.json").write_text(_json.dumps({
-        "schema": _SCHEMA,
-        "releases": {"10": {
-            "label": "CPI",
-            "fetched_on": fetched_on.isoformat(),
-            "dates": [d.isoformat() for d in dates],
-        }},
-    }))
+    (tmp_path / "rs.json").write_text(
+        _json.dumps(
+            {
+                "schema": _SCHEMA,
+                "releases": {
+                    "10": {
+                        "label": "CPI",
+                        "fetched_on": fetched_on.isoformat(),
+                        "dates": [d.isoformat() for d in dates],
+                    }
+                },
+            }
+        )
+    )
 
 
 def test_a_cached_schedule_answers_without_touching_the_wire(tmp_path):

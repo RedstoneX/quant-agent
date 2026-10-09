@@ -45,12 +45,19 @@ def test_cash_only_rule_is_hard_blocking():
 def test_cash_only_blocks_buy_that_exceeds_cash():
     engine = RiskRuleEngine(_risk_config(allow_margin=False))
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,  # $10k on $100k
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,  # $10k on $100k
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="breakout",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0, cash=5_000.0,  # only $5k cash available
+        decision=decision,
+        positions=[],
+        total_value=100_000.0,
+        cash=5_000.0,  # only $5k cash available
     )
     assert any(v.rule == "cash_only" for v in violations)
 
@@ -58,24 +65,39 @@ def test_cash_only_blocks_buy_that_exceeds_cash():
 def test_cash_only_allows_buy_when_fits_in_cash():
     engine = RiskRuleEngine(_risk_config(allow_margin=False))
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=5.0,  # $5k on $100k
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=5.0,  # $5k on $100k
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="fits",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0, cash=10_000.0,)
+        decision=decision,
+        positions=[],
+        total_value=100_000.0,
+        cash=10_000.0,
+    )
     assert not any(v.rule == "cash_only" for v in violations)
 
 
 def test_margin_mode_true_skips_cash_rule():
     engine = RiskRuleEngine(_risk_config(allow_margin=True))
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="margin ok",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0, cash=1_000.0,  # margin would be used
+        decision=decision,
+        positions=[],
+        total_value=100_000.0,
+        cash=1_000.0,  # margin would be used
     )
     assert not any(v.rule == "cash_only" for v in violations)
 
@@ -95,27 +117,40 @@ def test_item_85_negative_cash_with_margin_enabled_does_not_false_block_a_buy():
 
     engine = RiskRuleEngine(_risk_config(allow_margin=True))
     held = Position(
-        symbol="HELD", qty=100, avg_entry=100.0, current_price=106.52,
-        market_value=10_652.0, unrealized_pnl=652.0, sector="Technology",
+        symbol="HELD",
+        qty=100,
+        avg_entry=100.0,
+        current_price=106.52,
+        market_value=10_652.0,
+        unrealized_pnl=652.0,
+        sector="Technology",
     )
     decision = TradeDecision(
-        action="BUY", symbol="CRM", allocation_pct=20.0,  # ~$1,947 of $9,736
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="CRM",
+        allocation_pct=20.0,  # ~$1,947 of $9,736
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="confirmed setup",
     )
     ceiling = resolve_gross_ceiling(0.0, base_x=2.0)  # no drawdown -> 2.0x
     assert ceiling.ceiling_x == 2.0
 
     violations = engine.check(
-        decision=decision, positions=[held], total_value=9_736.0, cash=-915.83, gross_ceiling=ceiling,)
+        decision=decision,
+        positions=[held],
+        total_value=9_736.0,
+        cash=-915.83,
+        gross_ceiling=ceiling,
+    )
 
     assert not any(v.rule == "cash_only" for v in violations), (
         "cash_only must never fire with allow_margin=True — negative cash "
         "is expected once margin is on and is not a spending limit"
     )
     assert GROSS_EXPOSURE_RULE not in [v.rule for v in violations], (
-        "the BUY has real headroom under the ladder and must not be "
-        "refused for a reason unrelated to its own merit"
+        "the BUY has real headroom under the ladder and must not be refused for a reason unrelated to its own merit"
     )
 
 
@@ -123,16 +158,30 @@ def test_filter_accumulates_pending_buys_against_cash():
     """Two $6k BUYs with $10k cash: second one blocks, first passes."""
     pipeline = _pipeline_with_engine(_risk_config(allow_margin=False))
     d1 = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=6.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="first",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=6.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="first",
     )
     d2 = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=6.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="second",
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=6.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="second",
     )
 
     allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [d1, d2], positions=[], total_value=100_000.0, cash=10_000.0,)
+        [d1, d2],
+        positions=[],
+        total_value=100_000.0,
+        cash=10_000.0,
+    )
 
     symbols = [d.symbol for d in allowed]
     assert symbols == ["NVDA"]  # first passes, second blocked by cash
@@ -143,21 +192,39 @@ def test_filter_anticipates_same_session_sell_proceeds():
     """A SELL→BUY rotation must not trip cash-only since sells run first."""
     pipeline = _pipeline_with_engine(_risk_config(allow_margin=False))
     held = Position(
-        symbol="SPY", qty=100, avg_entry=500, current_price=600,
-        market_value=60_000, unrealized_pnl=10_000, sector="ETF",
+        symbol="SPY",
+        qty=100,
+        avg_entry=500,
+        current_price=600,
+        market_value=60_000,
+        unrealized_pnl=10_000,
+        sector="ETF",
     )
     pipeline.config.trading.universe = ["SPY", "NVDA"]
     sell = TradeDecision(
-        action="SELL", symbol="SPY", allocation_pct=100.0,  # full exit → $60k back
-        entry_price=0, stop_loss=0, take_profit=0, reasoning="rotate",
+        action="SELL",
+        symbol="SPY",
+        allocation_pct=100.0,  # full exit → $60k back
+        entry_price=0,
+        stop_loss=0,
+        take_profit=0,
+        reasoning="rotate",
     )
     buy = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,  # $10k — less than SPY proceeds
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="rotation target",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,  # $10k — less than SPY proceeds
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="rotation target",
     )
 
     allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # low starting cash
+        [sell, buy],
+        positions=[held],
+        total_value=100_000.0,
+        cash=5_000.0,  # low starting cash
     )
 
     symbols = {d.symbol for d in allowed}
@@ -186,25 +253,42 @@ def test_presum_partial_sell_does_not_overcredit_proceeds():
     pipeline = _pipeline_with_engine(_generous_config())
     pipeline.config.trading.universe = ["BRK", "NVDA"]
     held = Position(
-        symbol="BRK", qty=10, avg_entry=50_000, current_price=6_000,
-        market_value=60_000, unrealized_pnl=0, sector="Financial Services",
+        symbol="BRK",
+        qty=10,
+        avg_entry=50_000,
+        current_price=6_000,
+        market_value=60_000,
+        unrealized_pnl=0,
+        sector="Financial Services",
     )
     sell = TradeDecision(
-        action="SELL", symbol="BRK", allocation_pct=99.0,  # 9.9 → 9 shares = $54k
-        entry_price=0, stop_loss=0, take_profit=0, reasoning="trim",
+        action="SELL",
+        symbol="BRK",
+        allocation_pct=99.0,  # 9.9 → 9 shares = $54k
+        entry_price=0,
+        stop_loss=0,
+        take_profit=0,
+        reasoning="trim",
     )
     buy = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=58.0,  # $58k
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="rotate",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=58.0,  # $58k
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="rotate",
     )
     # cash $2k + actual proceeds $54k = $56k < $58k BUY → must block.
     # The pre-fix code credited 99% ($59.4k) → $61.4k effective → wrongly allowed.
     allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
-    symbols = {d.symbol for d in allowed}
-    assert "NVDA" not in symbols, (
-        "BUY must block — it exceeds cash + the 90% the rounded SELL realizes"
+        [sell, buy],
+        positions=[held],
+        total_value=100_000.0,
+        cash=2_000.0,
     )
+    symbols = {d.symbol for d in allowed}
+    assert "NVDA" not in symbols, "BUY must block — it exceeds cash + the 90% the rounded SELL realizes"
     assert any("NVDA" in msg and "cash" in msg.lower() for msg in blocked)
 
 
@@ -215,25 +299,43 @@ def test_presum_partial_sell_rounding_up_to_full_credits_full_proceeds():
     pipeline = _pipeline_with_engine(_generous_config())
     pipeline.config.trading.universe = ["BRK", "NVDA"]
     held = Position(
-        symbol="BRK", qty=1, avg_entry=50_000, current_price=60_000,
-        market_value=60_000, unrealized_pnl=10_000, sector="Financial Services",
+        symbol="BRK",
+        qty=1,
+        avg_entry=50_000,
+        current_price=60_000,
+        market_value=60_000,
+        unrealized_pnl=10_000,
+        sector="Financial Services",
     )
     sell = TradeDecision(
-        action="SELL", symbol="BRK", allocation_pct=40.0,  # rounds up to full exit
-        entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
+        action="SELL",
+        symbol="BRK",
+        allocation_pct=40.0,  # rounds up to full exit
+        entry_price=0,
+        stop_loss=0,
+        take_profit=0,
+        reasoning="exit",
     )
     buy = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=58.0,  # $58k
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="rotate",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=58.0,  # $58k
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        reasoning="rotate",
     )
     # cash $2k + full proceeds $60k = $62k > $58k → must allow. The pre-fix
     # code credited only 40% ($24k) → $26k effective → wrongly blocked.
     allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
+        [sell, buy],
+        positions=[held],
+        total_value=100_000.0,
+        cash=2_000.0,
+    )
     symbols = {d.symbol for d in allowed}
     assert "NVDA" in symbols, (
-        f"BUY should pass — the partial SELL rounds up to a full exit "
-        f"realizing 100% proceeds; blocked={blocked}"
+        f"BUY should pass — the partial SELL rounds up to a full exit realizing 100% proceeds; blocked={blocked}"
     )
 
 
@@ -248,10 +350,17 @@ def test_pm_prompt_surfaces_delever_mandate_when_cash_negative():
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
             analyses=[],
-            positions=[Position(
-                symbol="SPY", qty=10, avg_entry=500, current_price=600,
-                market_value=6_000, unrealized_pnl=1_000, sector="ETF",
-            )],
+            positions=[
+                Position(
+                    symbol="SPY",
+                    qty=10,
+                    avg_entry=500,
+                    current_price=600,
+                    market_value=6_000,
+                    unrealized_pnl=1_000,
+                    sector="ETF",
+                )
+            ],
             macro_analysis=None,
             cash_balance=-2_500.0,  # already on margin
             total_value=3_500.0,
@@ -272,10 +381,13 @@ def test_pm_prompt_ignores_sub_dollar_cash_noise():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
             cash_balance=-0.30,  # rounding noise
             total_value=50_000.0,
-            earnings_analyses=[], allow_margin=False,
+            earnings_analyses=[],
+            allow_margin=False,
         )
 
     assert "DE-LEVER MANDATE" not in msg
@@ -290,9 +402,13 @@ def test_pm_prompt_no_mandate_when_margin_enabled():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-5_000.0, total_value=50_000.0,
-            earnings_analyses=[], allow_margin=True,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-5_000.0,
+            total_value=50_000.0,
+            earnings_analyses=[],
+            allow_margin=True,
         )
 
     assert "DE-LEVER MANDATE" not in msg
@@ -305,12 +421,20 @@ def test_force_delever_noop_when_margin_allowed():
     pipeline.config.risk.allow_margin = True
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -5_000.0  # on margin
-    ctx.positions = [Position(
-        symbol="SPY", qty=10, avg_entry=500, current_price=600,
-        market_value=6_000, unrealized_pnl=1_000, sector="ETF",
-    )]
+    ctx.positions = [
+        Position(
+            symbol="SPY",
+            qty=10,
+            avg_entry=500,
+            current_price=600,
+            market_value=6_000,
+            unrealized_pnl=1_000,
+            sector="ETF",
+        )
+    ]
 
     orders = pipeline._force_delever(ctx)
     assert orders == []
@@ -324,6 +448,7 @@ def test_force_delever_noop_when_cash_positive():
     pipeline.config.risk.allow_margin = False
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = 1_234.56
     ctx.positions = []
@@ -340,12 +465,20 @@ def test_force_delever_skips_sub_dollar_noise():
     pipeline.config.risk.allow_margin = False
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -0.30
-    ctx.positions = [Position(
-        symbol="SPY", qty=10, avg_entry=500, current_price=600,
-        market_value=6_000, unrealized_pnl=1_000, sector="ETF",
-    )]
+    ctx.positions = [
+        Position(
+            symbol="SPY",
+            qty=10,
+            avg_entry=500,
+            current_price=600,
+            market_value=6_000,
+            unrealized_pnl=1_000,
+            sector="ETF",
+        )
+    ]
 
     orders = pipeline._force_delever(ctx)
     assert orders == []
@@ -358,7 +491,9 @@ def test_force_delever_picks_biggest_loser_first():
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted", "symbol": "LOSER",
+        "id": "ord-1",
+        "status": "accepted",
+        "symbol": "LOSER",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
@@ -366,7 +501,9 @@ def test_force_delever_picks_biggest_loser_first():
     pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
-        "cash": 500.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
+        "cash": 500.0,
+        "portfolio_value": 10_000.0,
+        "last_equity": 10_500.0,
     }
     pipeline.broker.get_positions.return_value = []
     # _live_delever_price reads the CURRENT bid/ask and prices a marketable
@@ -379,17 +516,33 @@ def test_force_delever_picks_biggest_loser_first():
     # path — set an explicit live quote so the test measures live-quote
     # pricing, not a mock artifact.
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 248.50, "ask_price": 248.90,
+        "bid_price": 248.50,
+        "ask_price": 248.90,
     }
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -500.0
     ctx.positions = [
-        Position(symbol="WINNER", qty=10, avg_entry=100, current_price=120,
-                 market_value=1_200, unrealized_pnl=200, sector="ETF"),
-        Position(symbol="LOSER",  qty=5,  avg_entry=300, current_price=250,
-                 market_value=1_250, unrealized_pnl=-250, sector="Tech"),
+        Position(
+            symbol="WINNER",
+            qty=10,
+            avg_entry=100,
+            current_price=120,
+            market_value=1_200,
+            unrealized_pnl=200,
+            sector="ETF",
+        ),
+        Position(
+            symbol="LOSER",
+            qty=5,
+            avg_entry=300,
+            current_price=250,
+            market_value=1_250,
+            unrealized_pnl=-250,
+            sector="Tech",
+        ),
     ]
 
     orders = pipeline._force_delever(ctx)
@@ -410,7 +563,9 @@ def test_force_delever_stops_once_deficit_covered():
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-X", "status": "accepted", "symbol": "X",
+        "id": "ord-X",
+        "status": "accepted",
+        "symbol": "X",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
@@ -418,19 +573,24 @@ def test_force_delever_stops_once_deficit_covered():
     pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
-        "cash": 1_000.0, "portfolio_value": 10_000.0, "last_equity": 11_000.0,
+        "cash": 1_000.0,
+        "portfolio_value": 10_000.0,
+        "last_equity": 11_000.0,
     }
     pipeline.broker.get_positions.return_value = []
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -1_000.0  # $1000 deficit
     ctx.positions = [
         # One $5k position covers the whole deficit — second should NOT sell.
-        Position(symbol="A", qty=50, avg_entry=100, current_price=100,
-                 market_value=5_000, unrealized_pnl=-100, sector="Tech"),
-        Position(symbol="B", qty=20, avg_entry=100, current_price=100,
-                 market_value=2_000, unrealized_pnl=-50, sector="Tech"),
+        Position(
+            symbol="A", qty=50, avg_entry=100, current_price=100, market_value=5_000, unrealized_pnl=-100, sector="Tech"
+        ),
+        Position(
+            symbol="B", qty=20, avg_entry=100, current_price=100, market_value=2_000, unrealized_pnl=-50, sector="Tech"
+        ),
     ]
 
     orders = pipeline._force_delever(ctx)
@@ -447,28 +607,43 @@ def test_filter_does_not_credit_zero_allocation_sell_as_proceeds():
     BUY slips through against phantom cash and actually borrows margin."""
     pipeline = _pipeline_with_engine(_risk_config(allow_margin=False))
     held = Position(
-        symbol="SPY", qty=100, avg_entry=500, current_price=600,
-        market_value=60_000, unrealized_pnl=10_000, sector="ETF",
+        symbol="SPY",
+        qty=100,
+        avg_entry=500,
+        current_price=600,
+        market_value=60_000,
+        unrealized_pnl=10_000,
+        sector="ETF",
     )
     pipeline.config.trading.universe = ["SPY", "NVDA"]
     phantom_sell = TradeDecision(
-        action="SELL", symbol="SPY", allocation_pct=0,  # skip per CLAUDE.md
-        entry_price=0, stop_loss=0, take_profit=0, reasoning="phantom",
+        action="SELL",
+        symbol="SPY",
+        allocation_pct=0,  # skip per CLAUDE.md
+        entry_price=0,
+        stop_loss=0,
+        take_profit=0,
+        reasoning="phantom",
     )
     buy = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,  # $10k needed
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,  # $10k needed
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="needs real cash, not phantom SELL proceeds",
     )
 
     allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [phantom_sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # only $5k actual
+        [phantom_sell, buy],
+        positions=[held],
+        total_value=100_000.0,
+        cash=5_000.0,  # only $5k actual
     )
 
     symbols = {d.symbol for d in allowed}
-    assert "NVDA" not in symbols, (
-        f"BUY slipped through against phantom SELL proceeds; blocked={blocked}"
-    )
+    assert "NVDA" not in symbols, f"BUY slipped through against phantom SELL proceeds; blocked={blocked}"
     assert any("NVDA" in msg and "cash" in msg.lower() for msg in blocked)
 
 
@@ -479,7 +654,9 @@ def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted", "symbol": "AAA",
+        "id": "ord-1",
+        "status": "accepted",
+        "symbol": "AAA",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
@@ -487,23 +664,29 @@ def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
     pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
-        "cash": 100.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
+        "cash": 100.0,
+        "portfolio_value": 10_000.0,
+        "last_equity": 10_500.0,
     }
     pipeline.broker.get_positions.return_value = []
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -100.0
     # Three positions all identical PnL + market_value. Reverse-alphabetical
     # iteration order so a naive (stable-but-input-order-dependent) sort
     # would pick CCC; the correct symbol-tiebreak picks AAA.
     ctx.positions = [
-        Position(symbol="CCC", qty=5, avg_entry=100, current_price=100,
-                 market_value=500, unrealized_pnl=0.0, sector="Tech"),
-        Position(symbol="BBB", qty=5, avg_entry=100, current_price=100,
-                 market_value=500, unrealized_pnl=0.0, sector="Tech"),
-        Position(symbol="AAA", qty=5, avg_entry=100, current_price=100,
-                 market_value=500, unrealized_pnl=0.0, sector="Tech"),
+        Position(
+            symbol="CCC", qty=5, avg_entry=100, current_price=100, market_value=500, unrealized_pnl=0.0, sector="Tech"
+        ),
+        Position(
+            symbol="BBB", qty=5, avg_entry=100, current_price=100, market_value=500, unrealized_pnl=0.0, sector="Tech"
+        ),
+        Position(
+            symbol="AAA", qty=5, avg_entry=100, current_price=100, market_value=500, unrealized_pnl=0.0, sector="Tech"
+        ),
     ]
 
     orders = pipeline._force_delever(ctx)
@@ -516,9 +699,11 @@ def test_margin_deficit_floor_is_single_source_of_truth():
     """The $1 floor must live in one module so tightening doesn't leave
     prompt text or one agent out of sync."""
     from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
+
     assert MARGIN_DEFICIT_FLOOR_USD == 1.0
     # Defensive: pipeline shouldn't have reintroduced a private copy
     from src.pipeline import TradingPipeline
+
     assert not hasattr(TradingPipeline, "_FORCE_DELEVER_FLOOR_USD"), (
         "Remove duplicate floor constant — use MARGIN_DEFICIT_FLOOR_USD"
     )
@@ -531,6 +716,7 @@ def test_force_delever_noop_on_empty_positions():
     pipeline.config.risk.allow_margin = False
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext.start("morning")
     ctx.cash = -500.0
     ctx.positions = []
@@ -554,12 +740,8 @@ def test_run_position_review_reconciles_after_force_delever():
     pipeline.config.risk.allow_margin = False
 
     call_log: list[str] = []
-    pipeline._force_delever = MagicMock(
-        side_effect=lambda ctx: (call_log.append("force"), [{"symbol": "NVDA"}])[1]
-    )
-    pipeline._reconcile_fills = MagicMock(
-        side_effect=lambda ctx=None: call_log.append("reconcile")
-    )
+    pipeline._force_delever = MagicMock(side_effect=lambda ctx: (call_log.append("force"), [{"symbol": "NVDA"}])[1])
+    pipeline._reconcile_fills = MagicMock(side_effect=lambda ctx=None: call_log.append("reconcile"))
 
     # Simulate just the 1a snippet of run_position_review
     ctx = RunContext.start("midday")
@@ -567,9 +749,7 @@ def test_run_position_review_reconciles_after_force_delever():
     if forced_orders:
         pipeline._reconcile_fills(ctx)
 
-    assert call_log == ["force", "reconcile"], (
-        "reconcile must follow force_delever in the 1a block"
-    )
+    assert call_log == ["force", "reconcile"], "reconcile must follow force_delever in the 1a block"
 
 
 def test_run_position_review_skips_reconcile_when_nothing_delevered():
@@ -599,10 +779,17 @@ def test_midday_reviewer_surfaces_delever_when_cash_negative():
     with patch("anthropic.Anthropic"):
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
-            positions=[Position(
-                symbol="SPY", qty=10, avg_entry=500, current_price=600,
-                market_value=6_000, unrealized_pnl=1_000, sector="ETF",
-            )],
+            positions=[
+                Position(
+                    symbol="SPY",
+                    qty=10,
+                    avg_entry=500,
+                    current_price=600,
+                    market_value=6_000,
+                    unrealized_pnl=1_000,
+                    sector="ETF",
+                )
+            ],
             macro_summary={"vix": {"current": 20, "trend": "flat"}},
             cash_balance=-1_000.0,
             total_value=5_000.0,
@@ -623,11 +810,17 @@ def test_pm_prompt_never_says_no_margin_when_margin_enabled():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-915.83, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-915.83,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     assert "no margin" not in msg.lower()
@@ -646,11 +839,17 @@ def test_pm_prompt_margin_section_discloses_ladder_headroom():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-915.83, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-915.83,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     assert "Margin Capacity" in msg
@@ -666,9 +865,13 @@ def test_pm_prompt_margin_section_honest_when_ladder_unresolved():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=500.0, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=500.0,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
             # margin_ladder_backed defaults False — ladder unresolved.
         )
 
@@ -686,11 +889,17 @@ def test_pm_prompt_never_leaks_prohibited_buying_power_fields():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-915.83, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-915.83,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     for forbidden in ("buying_power", "regt_buying_power"):
@@ -708,10 +917,11 @@ def test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget():
     import src.pipeline_stages as ps
 
     src = inspect.getsource(ps.DecisionStage.run)
-    assert "_entry_deployment_budget(pipeline, ctx, positions, total_value, cash)" in src
+    # Layout-insensitive: the pin is the call and its arguments, not where a formatter wraps them.
+    squeezed = "".join(src.split())
+    assert "_entry_deployment_budget(pipeline,ctx,positions,total_value,cash" in squeezed
     assert "margin_headroom_usd=margin_headroom_usd" in src
     assert "margin_ladder_backed=margin_ladder_backed" in src
-
 
 
 def test_reviewer_prompt_never_says_no_margin_when_margin_enabled():
@@ -722,11 +932,15 @@ def test_reviewer_prompt_never_says_no_margin_when_margin_enabled():
     with patch("anthropic.Anthropic"):
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
-            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
-            cash_balance=-915.83, total_value=9_736.0,
+            positions=[],
+            macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83,
+            total_value=9_736.0,
             allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     assert "no margin" not in msg.lower()
@@ -742,11 +956,15 @@ def test_reviewer_prompt_margin_section_discloses_ladder_headroom():
     with patch("anthropic.Anthropic"):
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
-            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
-            cash_balance=-915.83, total_value=9_736.0,
+            positions=[],
+            macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83,
+            total_value=9_736.0,
             allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     assert "Margin Capacity" in msg
@@ -762,8 +980,10 @@ def test_reviewer_prompt_margin_section_honest_when_ladder_unresolved():
     with patch("anthropic.Anthropic"):
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
-            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
-            cash_balance=500.0, total_value=9_736.0,
+            positions=[],
+            macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=500.0,
+            total_value=9_736.0,
             allow_margin=True,
             # margin_ladder_backed defaults False — ladder unresolved.
         )
@@ -781,11 +1001,15 @@ def test_reviewer_prompt_never_leaks_prohibited_buying_power_fields():
     with patch("anthropic.Anthropic"):
         agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
         msg = agent.build_user_message(
-            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
-            cash_balance=-915.83, total_value=9_736.0,
+            positions=[],
+            macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83,
+            total_value=9_736.0,
             allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     for forbidden in ("buying_power", "regt_buying_power"):
@@ -804,9 +1028,11 @@ def test_reviewer_prompt_margin_headroom_wired_from_entry_deployment_budget():
     # `run_position_review` became a thin persistence wrapper on 2026-09-18
     # (see `Database.save_session_report`); the pinned call now lives in
     # `_run_position_review_body`.
-    src = inspect.getsource(__import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run)
+    src = inspect.getsource(
+        __import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run
+    )
     assert "_entry_deployment_budget(" in src
-    assert "self, ctx, review_positions, total_value, review_cash," in src
+    assert "self,ctx,review_positions,total_value,review_cash," in "".join(src.split())
     assert "margin_headroom_usd=margin_headroom_usd" in src
     assert "margin_ladder_backed=margin_ladder_backed" in src
 
@@ -844,8 +1070,7 @@ def test_borrowing_cost_lines_never_state_a_hurdle_rate():
 
     assert "not a hurdle rate" in blob
     assert "must not invent one" in blob
-    for banned in ("hurdle rate of", "must beat", "must return at least",
-                   "required return"):
+    for banned in ("hurdle rate of", "must beat", "must return at least", "required return"):
         assert banned not in blob
 
 
@@ -881,11 +1106,17 @@ def test_pm_prompt_shows_what_the_borrowing_capacity_COSTS():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-915.83, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-915.83,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
             margin_interest_rate_pct=6.25,
         )
 
@@ -902,11 +1133,17 @@ def test_pm_prompt_omits_the_price_rather_than_guessing_it():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=-915.83, total_value=9_736.0,
-            earnings_analyses=[], allow_margin=True,
-            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
-            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=-915.83,
+            total_value=9_736.0,
+            earnings_analyses=[],
+            allow_margin=True,
+            margin_headroom_usd=11_434.37,
+            margin_ladder_backed=True,
+            margin_ladder_multiple=2.0,
+            margin_ladder_rung="none",
         )
 
     assert "What borrowing costs" not in msg
@@ -924,6 +1161,4 @@ def test_decide_forwards_the_margin_rate_to_the_prompt():
 
     src = inspect.getsource(PortfolioManagerAgent.decide)
     assert "margin_interest_rate_pct=margin_interest_rate_pct" in src
-    assert "margin_interest_rate_pct" in inspect.signature(
-        PortfolioManagerAgent.decide
-    ).parameters
+    assert "margin_interest_rate_pct" in inspect.signature(PortfolioManagerAgent.decide).parameters

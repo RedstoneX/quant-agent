@@ -12,6 +12,7 @@ Where a site has no ledger handle in scope (`db=None`) the traceback is still
 logged in full and the row is skipped, as ``record_reconciliation`` documents.
 Nothing is stored here and nothing is returned for a caller to branch on.
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,8 +32,6 @@ def record_watchdog_pass(where, exc=None, *, db=None, fault=False, context=None)
     try:
         if fault and exc is None:
             exc = sys.exc_info()[1]
-        record_guarded_outcome(db=db, where=f"coverage_watchdog.{where}", exc=exc,
-                               log=logger, context=context)
+        record_guarded_outcome(db=db, where=f"coverage_watchdog.{where}", exc=exc, log=logger, context=context)
     except Exception:  # noqa: BLE001 - an observer must not break what it observes
         logger.error("record_watchdog_pass could not record %s", where, exc_info=True)
-

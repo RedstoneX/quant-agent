@@ -98,21 +98,34 @@ _SEAT_LABELS = SEAT_LABELS
 #: block capitals; naive title-casing turns "III" into "Iii" and "LP" into
 #: "Lp". Roman numerals, personal suffixes, initials, dotted acronyms, and
 #: the entity forms that are conventionally written in capitals.
-_KEEP_UPPER = re.compile(
-    r"^(?:[IVX]+|JR|SR|LP|LLP|LLC|PLC|AG|NV|SA|SE|[A-Z]\.(?:[A-Z]\.)+\.?|[A-Z])$"
-)
+_KEEP_UPPER = re.compile(r"^(?:[IVX]+|JR|SR|LP|LLP|LLC|PLC|AG|NV|SA|SE|[A-Z]\.(?:[A-Z]\.)+\.?|[A-Z])$")
 
 _MONTHS = (
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 )
 
 #: Keys of the admission payload that are machine identifiers or internal
 #: flags. Never rendered in the readable section; passed through to the
 #: raw-evidence bucket unchanged so nothing is lost.
 _MACHINE_ADMISSION_KEYS = (
-    "accessions", "temporary", "broker", "signal_class",
-    "signal_class_reasons", "reason", "avg_dollar_volume_20d_usd",
+    "accessions",
+    "temporary",
+    "broker",
+    "signal_class",
+    "signal_class_reasons",
+    "reason",
+    "avg_dollar_volume_20d_usd",
 )
 
 
@@ -150,7 +163,7 @@ def humanize_name(raw: str) -> str:
     out: list[str] = []
     for token in str(raw).split():
         stripped = token.strip(",")
-        trailing = token[len(stripped):]
+        trailing = token[len(stripped) :]
         upper = stripped.upper()
         if stripped.isupper() and (_KEEP_UPPER.match(upper) or "." in stripped):
             out.append(stripped + trailing)
@@ -208,9 +221,7 @@ def _strip_machine_annotations(text: str) -> str:
 #: these seat/stance tokens in it. They are internal enum values and they
 #: restate, in machine shorthand, exactly what the provenance list below
 #: already says in words.
-_SEAT_STANCE = re.compile(
-    r"\b(technical|earnings|smart[_ ]money|macro|news)\s*=\s*([a-z_]+)", re.I
-)
+_SEAT_STANCE = re.compile(r"\b(technical|earnings|smart[_ ]money|macro|news)\s*=\s*([a-z_]+)", re.I)
 
 
 def _condense_thesis(text: str) -> str:
@@ -271,7 +282,8 @@ def _insider_summary(admission: dict, finding: dict) -> dict | None:
     """
     owners = [str(o).strip() for o in (admission.get("owners") or []) if str(o).strip()]
     buys = [
-        obs for obs in (finding.get("observations") or [])
+        obs
+        for obs in (finding.get("observations") or [])
         if isinstance(obs, dict) and str(obs.get("direction") or "").lower() == "buy"
     ]
     if not owners and not buys:
@@ -409,17 +421,12 @@ def _since_entry(interim: list[dict], review: dict) -> list[str]:
             where = f" to ${float(stop):,.2f}" if stop else ""
             lines.append(f"Stop raised{where}{f' on {when}' if when else ''}.")
         else:
-            lines.append(
-                f"{action.capitalize()}{f' on {when}' if when else ''}"
-                + (f" — {reason}" if reason else ".")
-            )
+            lines.append(f"{action.capitalize()}{f' on {when}' if when else ''}" + (f" — {reason}" if reason else "."))
     if review:
         bits: list[str] = []
         r_multiple = review.get("r_multiple")
         if isinstance(r_multiple, (int, float)):
-            bits.append(
-                f"the position is {r_multiple:+.2f} times the risk originally taken"
-            )
+            bits.append(f"the position is {r_multiple:+.2f} times the risk originally taken")
         progress = review.get("thesis_progress_pct")
         if isinstance(progress, (int, float)):
             bits.append(f"about {progress:.0f}% of the way to the reference target")
@@ -487,9 +494,7 @@ def _purchase_summary(entry: dict) -> dict:
     if price is not None:
         paid = f"at ${price:,.2f} a share"
         paid += (
-            " (the price actually filled)"
-            if price_is_fill
-            else " (the price on the order; no fill price was recorded)"
+            " (the price actually filled)" if price_is_fill else " (the price on the order; no fill price was recorded)"
         )
         clauses.append(paid)
 
@@ -542,9 +547,7 @@ def build_holding_why(
     reviews = by_kind.get(("position_reviewer", "review_metrics")) or []
     latest_review = _payload(reviews[-1]) if reviews else {}
     if not symbol:
-        symbol = str(
-            admission.get("symbol") or tech.get("symbol") or target.get("symbol") or ""
-        ).upper()
+        symbol = str(admission.get("symbol") or tech.get("symbol") or target.get("symbol") or "").upper()
 
     # --- the named primary driver -------------------------------------
     named = name_the_origin(rows, admission, _payload)
@@ -565,9 +568,7 @@ def build_holding_why(
         driver_detail = prov.get("technical") or str(tech.get("reasoning") or "").strip() or None
 
     # --- the thesis ---------------------------------------------------
-    why = _condense_thesis(
-        _strip_machine_annotations(target.get("thesis") or entry.get("reasoning") or "")
-    )
+    why = _condense_thesis(_strip_machine_annotations(target.get("thesis") or entry.get("reasoning") or ""))
 
     # --- the lede: one sentence, the real reason, with the numbers ----
     company = None
@@ -579,14 +580,9 @@ def build_holding_why(
 
     if insider and insider.get("total_usd_plain"):
         actor = insider.get("actor") or "an insider"
-        when = _date_range_words(
-            insider.get("first_transaction_date"), insider.get("last_transaction_date")
-        )
+        when = _date_range_words(insider.get("first_transaction_date"), insider.get("last_transaction_date"))
         price = insider.get("average_price")
-        lede = (
-            f"{side} because {actor} bought {insider['total_usd_plain']} of "
-            f"{subject}"
-        )
+        lede = f"{side} because {actor} bought {insider['total_usd_plain']} of {subject}"
         if when:
             lede += f" {when}"
         if price is not None:
@@ -628,8 +624,7 @@ def build_holding_why(
         horizon = {
             "sessions": horizon_sessions,
             "plain": (
-                f"Planned hold: about {horizon_sessions} trading sessions "
-                f"({_sessions_in_words(horizon_sessions)})."
+                f"Planned hold: about {horizon_sessions} trading sessions ({_sessions_in_words(horizon_sessions)})."
             ),
             "note": HORIZON_IS_A_PLAN,
         }
@@ -637,10 +632,7 @@ def build_holding_why(
         horizon = {
             "sessions": None,
             "plain": f"How long we meant to hold this: {NOT_RECORDED}",
-            "note": (
-                "No holding period was pinned when this position was opened, "
-                "so there is none to show."
-            ),
+            "note": ("No holding period was pinned when this position was opened, so there is none to show."),
         }
 
     # --- take-profit --------------------------------------------------
@@ -665,16 +657,11 @@ def build_holding_why(
     # it went. A refusal is a first-class outcome and is shown as one.
     revision_rows = by_kind.get(("risk_manager", "target_revision")) or []
     revision = _payload(revision_rows[-1]) if revision_rows else {}
-    revised = bool(
-        tp and entry_target and round(tp, 2) != round(entry_target, 2)
-    )
+    revised = bool(tp and entry_target and round(tp, 2) != round(entry_target, 2))
     if tp:
         move = ""
         if entry_price:
-            move = (
-                f", about {abs(tp - entry_price) / entry_price * 100:.1f}% from "
-                "where we bought"
-            )
+            move = f", about {abs(tp - entry_price) / entry_price * 100:.1f}% from where we bought"
         plain = f"Reference target: ${tp:,.2f}{move}."
         if revised and entry_target:
             plain = (
@@ -716,8 +703,7 @@ def build_holding_why(
         invalidation_plain = f"We are wrong if: {invalid_if}"
     elif stop:
         invalidation_plain = (
-            f"No invalidation condition was recorded. The position is "
-            f"protected by a stop at ${stop:,.2f}."
+            f"No invalidation condition was recorded. The position is protected by a stop at ${stop:,.2f}."
         )
     else:
         invalidation_plain = f"What would prove this wrong: {NOT_RECORDED}"
@@ -743,9 +729,7 @@ def build_holding_why(
         missing.append("what would prove the thesis wrong")
     missing.extend((insider or {}).get("not_recorded") or [])
 
-    raw_admission = {
-        k: admission[k] for k in _MACHINE_ADMISSION_KEYS if k in admission
-    }
+    raw_admission = {k: admission[k] for k in _MACHINE_ADMISSION_KEYS if k in admission}
     return {
         "symbol": symbol,
         "company_name": company,
@@ -770,9 +754,18 @@ def build_holding_why(
             "admission": raw_admission,
             "identifiers": {
                 k: entry[k]
-                for k in ("run_id", "decision_id", "position_id", "broker_order_id",
-                          "setup_type", "requested_risk_pct", "allocated_risk_pct",
-                          "conviction", "decision_model", "timestamp")
+                for k in (
+                    "run_id",
+                    "decision_id",
+                    "position_id",
+                    "broker_order_id",
+                    "setup_type",
+                    "requested_risk_pct",
+                    "allocated_risk_pct",
+                    "conviction",
+                    "decision_model",
+                    "timestamp",
+                )
                 if entry.get(k) is not None
             },
         },

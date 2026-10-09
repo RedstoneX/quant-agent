@@ -299,7 +299,9 @@ def compute_deltas(
                 continue
             provenance[name] = (before, after)
     return MetricDeltas(
-        symbol=symbol.upper(), changes=changes, prior_timestamp=prior_timestamp,
+        symbol=symbol.upper(),
+        changes=changes,
+        prior_timestamp=prior_timestamp,
         provenance=provenance,
     )
 
@@ -310,7 +312,9 @@ def is_deterioration_claim(reason: str) -> bool:
 
 
 def veto_contradicted_exit(
-    action: str, reason: str, deltas: MetricDeltas,
+    action: str,
+    reason: str,
+    deltas: MetricDeltas,
 ) -> str | None:
     """Return a veto message when an exit contradicts its own numbers, else None.
 
@@ -357,10 +361,7 @@ def veto_contradicted_exit(
         return None
     if not deltas.has_prior or not deltas.net_improved:
         return None
-    moved = ", ".join(
-        f"{name} {deltas.changes[name][0]:.2f}→{deltas.changes[name][1]:.2f}"
-        for name in deltas.improved
-    )
+    moved = ", ".join(f"{name} {deltas.changes[name][0]:.2f}→{deltas.changes[name][1]:.2f}" for name in deltas.improved)
     return (
         f"{deltas.symbol}: {action} vetoed — the reason claims the position is "
         f"deteriorating, but every metric that moved since the previous review "

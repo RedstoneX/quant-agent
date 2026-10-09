@@ -4,6 +4,7 @@ Each prepared sandbox is a full copy of a database, so the autouse fixture
 removes them when each test ends. Also holds the recording-start helper moved
 verbatim out of tests/test_rehearsal_reproduces_cost_ceiling.py.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -21,7 +22,8 @@ def _recording_started_utc(db_path, run_id: str) -> str:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         row = conn.execute(
-            "SELECT MIN(timestamp) FROM agent_logs WHERE run_id = ?", (run_id,),
+            "SELECT MIN(timestamp) FROM agent_logs WHERE run_id = ?",
+            (run_id,),
         ).fetchone()
     finally:
         conn.close()

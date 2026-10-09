@@ -2,6 +2,7 @@
 
 Each function is called with plain stand-ins and no constructor or pipeline behind it.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -12,7 +13,9 @@ from src.portfolio_constructor.config import ConstructorConfig
 
 def _owner():
     return SimpleNamespace(
-        last_data_faults={}, last_refusals={}, last_parity_standdowns={},
+        last_data_faults={},
+        last_refusals={},
+        last_parity_standdowns={},
         refusal_recorder=None,
     )
 
@@ -53,8 +56,12 @@ def test_sector_dial_weights_and_accrual(monkeypatch):
 def test_sector_dial_leaves_an_unresolved_sector_alone(monkeypatch):
     monkeypatch.setattr("src.sector_reference._get_sector", lambda sym: "Unknown")
     out = sector_dial._apply_sector_dial(
-        ConstructorConfig(), lambda *a, **k: None, "ZZZ", 4.0,
-        sector_weights={}, total_value=1000.0,
+        ConstructorConfig(),
+        lambda *a, **k: None,
+        "ZZZ",
+        4.0,
+        sector_weights={},
+        total_value=1000.0,
     )
     assert out == (4.0, "")
 
@@ -62,8 +69,13 @@ def test_sector_dial_leaves_an_unresolved_sector_alone(monkeypatch):
 def test_target_derivation_without_analysis_is_a_named_data_fault():
     faults = []
     derivation = target_derivation._derive_target(
-        ConstructorConfig(), lambda *a: faults.append(a), lambda *a: None,
-        "AAA", None, 10.0, "long",
+        ConstructorConfig(),
+        lambda *a: faults.append(a),
+        lambda *a: None,
+        "AAA",
+        None,
+        10.0,
+        "long",
     )
     assert derivation.price is None and derivation.fault
     assert faults and faults[0][0] == "AAA"

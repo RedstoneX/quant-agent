@@ -9,6 +9,7 @@ site, instead of each site remembering to record.
 A recording failure never changes the cancel's outcome: the cancel's own result
 or exception is returned or re-raised untouched.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,10 @@ class CancelRecordingClient:
                 logger.warning("cancel attempt not recorded: no sqlite connection")
                 return
             OrderAttemptLog(conn=conn).record(
-                symbol=None, side=None, qty=None, outcome=outcome,
+                symbol=None,
+                side=None,
+                qty=None,
+                outcome=outcome,
                 broker_order_id=None if broker_order_id is None else str(broker_order_id),
                 reason=reason,
             )
@@ -50,8 +54,7 @@ class CancelRecordingClient:
         try:
             result = self._inner.cancel_order_by_id(order_id, *args, **kwargs)
         except Exception as exc:
-            self._record(outcome=CANCEL_FAILED, broker_order_id=order_id,
-                         reason=f"{type(exc).__name__}: {exc}")
+            self._record(outcome=CANCEL_FAILED, broker_order_id=order_id, reason=f"{type(exc).__name__}: {exc}")
             raise
         self._record(outcome=CANCELLED, broker_order_id=order_id, reason="cancel_order_by_id")
         return result
@@ -67,21 +70,27 @@ class CancelRecordingClient:
         for item in result or []:
             status = getattr(item, "status", None)
             ok = status is None or 200 <= int(status) < 300
-            self._record(outcome=CANCELLED if ok else CANCEL_FAILED,
-                         broker_order_id=getattr(item, "id", None),
-                         reason=f"cancel_orders: http {status}")
+            self._record(
+                outcome=CANCELLED if ok else CANCEL_FAILED,
+                broker_order_id=getattr(item, "id", None),
+                reason=f"cancel_orders: http {status}",
+            )
         return result
 
 
 def install_cancel_recording(*, broker, conn_getter) -> None:
     """Wrap `broker.client` once (idempotent)."""
     if getattr(broker, "client", None) is None:
-        logger.warning("cancel recording NOT installed for %s: it has no trading client, so its cancels will not be counted", type(broker).__name__)
+        logger.warning(
+            "cancel recording NOT installed for %s: it has no trading client, so its cancels will not be counted",
+            type(broker).__name__,
+        )
         return  # a test fake with no trading client has no cancels to count; an observer must not break construction
     # The order desk is a COLLABORATOR built per call from the broker's client, not
     # the broker, so the ledger handle is lent to the client (observability only;
     # the recording wrapper delegates attribute reads to it). See src/sentinel/guarded.py.
     from src.sentinel.guarded import attach_reconciliation_db
+
     attach_reconciliation_db(broker.client, conn_getter)
     if not isinstance(broker.client, CancelRecordingClient):
         broker.client = CancelRecordingClient(inner=broker.client, conn_getter=conn_getter)
@@ -89,4 +98,5 @@ def install_cancel_recording(*, broker, conn_getter) -> None:
     # they count their reconciliation rows through — observability only, no
     # decision reads it. See src/sentinel/guarded.py.
     from src.sentinel.guarded import attach_reconciliation_db
+
     attach_reconciliation_db(broker, conn_getter)

@@ -144,8 +144,7 @@ class MacroFetchBudget:
         """
         attempts = self.max_retries + 1
         backoff_per_series = sum(
-            min(self.retry_backoff_base_s * (2 ** attempt), self.retry_backoff_max_s)
-            + self.retry_backoff_jitter_s
+            min(self.retry_backoff_base_s * (2**attempt), self.retry_backoff_max_s) + self.retry_backoff_jitter_s
             for attempt in range(self.max_retries)
         )
         n = len(self.series_ids)
@@ -164,10 +163,7 @@ class MacroFetchBudget:
         `prefetch_deadline_s`, so the reserve is large enough that
         `request_timeout_s` binds first and the prefetch is unaffected.
         """
-        span = (
-            self.deadline_span_s if self.deadline_span_s is not None
-            else self.total_fetch_deadline_s
-        )
+        span = self.deadline_span_s if self.deadline_span_s is not None else self.total_fetch_deadline_s
         return span / len(self.series_ids)
 
     def remaining_s(self) -> float | None:
@@ -180,10 +176,7 @@ class MacroFetchBudget:
     def reserved_for_waiting_s(self, series_id: str) -> float:
         """Budget that belongs to configured series which have not had their
         turn yet, and which `series_id` must therefore not spend."""
-        waiting = {
-            s for s in self.series_ids
-            if s not in self.resolved and s != series_id
-        }
+        waiting = {s for s in self.series_ids if s not in self.resolved and s != series_id}
         return len(waiting) * self.per_series_reserve_s
 
     def observation_allowance_s(self, series_id: str) -> float | None:
@@ -231,7 +224,7 @@ class MacroFetchBudget:
         in lockstep against FRED.
         """
         base = min(
-            self.retry_backoff_base_s * (2 ** attempt),
+            self.retry_backoff_base_s * (2**attempt),
             self.retry_backoff_max_s,
         )
         backoff = base + self.jitter(self.retry_backoff_jitter_s)

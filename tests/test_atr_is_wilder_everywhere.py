@@ -46,13 +46,18 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 # Fixtures: bar builders and independent reference implementations.
 # --------------------------------------------------------------------------
 
+
 def _bars(rows: list[tuple[float, float, float]]) -> list[OHLCV]:
     """(high, low, close) triples -> OHLCV on consecutive calendar days."""
     start = date(2024, 1, 1)
     return [
         OHLCV(
             date=start + timedelta(days=i),
-            open=c, high=h, low=lo, close=c, volume=1_000_000,
+            open=c,
+            high=h,
+            low=lo,
+            close=c,
+            volume=1_000_000,
         )
         for i, (h, lo, c) in enumerate(rows)
     ]
@@ -85,18 +90,15 @@ def _sma_of_true_range_reference(rows, period=ATR_PERIOD) -> list[float]:
     """The WRONG implementation this fix removed. Kept here as the thing the
     production code must not agree with under a volatility shock."""
     tr = _true_ranges(rows)
-    return [
-        sum(tr[i - period + 1: i + 1]) / period
-        for i in range(period - 1, len(tr))
-    ]
+    return [sum(tr[i - period + 1 : i + 1]) / period for i in range(period - 1, len(tr))]
 
 
 #: 60 quiet bars, one violent bar, then quiet again. The shock is what
 #: separates the two smoothings: a flat kernel forgets it in one step
 #: `period` bars later; Wilder's bleeds it off geometrically.
 _SHOCK_INDEX = 60
-_QUIET = (101.0, 100.0, 100.5)      # true range 1.0
-_SHOCK = (150.0, 100.0, 100.5)      # true range 50.0
+_QUIET = (101.0, 100.0, 100.5)  # true range 1.0
+_SHOCK = (150.0, 100.0, 100.5)  # true range 50.0
 
 
 def _shock_rows(n: int = 100) -> list[tuple[float, float, float]]:
@@ -120,8 +122,8 @@ def _drifting_rows(n: int = 320) -> list[tuple[float, float, float]]:
 # Numeric: the series IS Wilder's, and is NOT an SMA of true range.
 # --------------------------------------------------------------------------
 
-class TestSmoothingIsWilders:
 
+class TestSmoothingIsWilders:
     def test_series_matches_an_independent_wilder_recursion(self):
         rows = _drifting_rows()
         got = atr_series(_bars(rows))
@@ -147,9 +149,7 @@ class TestSmoothingIsWilders:
         # first index whose SMA window no longer contains the shock bar.
         at_shock = _SHOCK_INDEX - (ATR_PERIOD - 1)
         probe = at_shock + ATR_PERIOD
-        assert sma[probe] == pytest.approx(1.0, rel=1e-9), (
-            "the reference SMA should have forgotten the shock by now"
-        )
+        assert sma[probe] == pytest.approx(1.0, rel=1e-9), "the reference SMA should have forgotten the shock by now"
         assert got[probe] > 2.0 * sma[probe], (
             f"ATR {got[probe]:.4f} is within 2x of the simple moving average "
             f"{sma[probe]:.4f} — this is not Wilder's smoothing"
@@ -170,7 +170,6 @@ class TestSmoothingIsWilders:
 
 
 class TestSeriesShape:
-
     def test_warmup_is_trimmed_off_rather_than_zero_filled(self):
         """`ta` returns 0.0 for the first `period - 1` bars, not NaN. Those
         zeros must never reach the percentile: a zero counts as "today's ATR
@@ -199,16 +198,14 @@ class TestSeriesShape:
 # Wiring: both readers see the same number.
 # --------------------------------------------------------------------------
 
-class TestOneNumberEverywhere:
 
+class TestOneNumberEverywhere:
     def test_context_atr_pct_is_the_wilder_atr(self):
         rows = _drifting_rows()
         bars = _bars(rows)
         ctx = compute_market_context(bars)
         assert ctx is not None and ctx.atr_pct is not None
-        expected = round(
-            _wilder_reference(rows)[-1] / rows[-1][2] * 100.0, 2
-        )
+        expected = round(_wilder_reference(rows)[-1] / rows[-1][2] * 100.0, 2)
         # abs=0.01 absorbs a 2dp rounding boundary, nothing more: an SMA of
         # true range over these bars misses by several times this.
         assert ctx.atr_pct == pytest.approx(expected, abs=0.01)
@@ -271,15 +268,13 @@ def _code_only(source: str) -> str:
                 continue
             # Newline between logical lines so two unrelated statements
             # cannot be glued into a token that matches by accident.
-            kept.append("\n" if tok.type in (tokenize.NEWLINE, tokenize.NL)
-                        else tok.string)
+            kept.append("\n" if tok.type in (tokenize.NEWLINE, tokenize.NL) else tok.string)
     except (tokenize.TokenError, IndentationError):  # pragma: no cover
         return source
     return "".join(kept)
 
 
 class TestOnlyOneImplementation:
-
     def test_no_module_outside_technical_builds_true_ranges(self):
         offenders = []
         for path in _src_files():
@@ -296,23 +291,15 @@ class TestOnlyOneImplementation:
         )
 
     def test_the_library_atr_is_constructed_exactly_once(self):
-        count = sum(
-            _code_only(p.read_text()).count("AverageTrueRange(")
-            for p in _src_files()
-        )
-        assert count == 1, (
-            f"expected one AverageTrueRange construction in src/, found {count}"
-        )
+        count = sum(_code_only(p.read_text()).count("AverageTrueRange(") for p in _src_files())
+        assert count == 1, f"expected one AverageTrueRange construction in src/, found {count}"
 
     def test_the_atr_function_contains_no_flat_averaging_kernel(self):
         body = _code_only(inspect.getsource(atr_series))
-        assert "AverageTrueRange" in body, (
-            "atr_series no longer delegates to Wilder's implementation"
-        )
+        assert "AverageTrueRange" in body, "atr_series no longer delegates to Wilder's implementation"
         found = [t for t in _FLAT_KERNEL_TOKENS if t in body]
         assert not found, (
-            f"atr_series averages true ranges with {found} — Wilder's "
-            "smoothing is recursive, not a flat window"
+            f"atr_series averages true ranges with {found} — Wilder's smoothing is recursive, not a flat window"
         )
 
     def test_context_imports_its_atr_rather_than_defining_one(self):
@@ -320,7 +307,8 @@ class TestOnlyOneImplementation:
         function that produces an ATR of its own."""
         tree = ast.parse(Path(context_mod.__file__).read_text())
         local_defs = [
-            n.name for n in ast.walk(tree)
+            n.name
+            for n in ast.walk(tree)
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and ("atr" in n.name.lower() or "true_range" in n.name.lower())
         ]
@@ -334,6 +322,4 @@ class TestOnlyOneImplementation:
             and any(a.name == "atr_series" for a in n.names)
             for n in ast.walk(tree)
         )
-        assert imported, (
-            "src/data/context.py must import atr_series from src.data.technical"
-        )
+        assert imported, "src/data/context.py must import atr_series from src.data.technical"

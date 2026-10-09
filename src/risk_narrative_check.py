@@ -126,9 +126,7 @@ def check_sizing_narrative(decision: Any) -> list[SizingNarrativeMismatch]:
     if not text or not text.strip():
         return []
 
-    field_by_symbol = _authoritative_risk_by_symbol(
-        list(getattr(decision, "targets", None) or [])
-    )
+    field_by_symbol = _authoritative_risk_by_symbol(list(getattr(decision, "targets", None) or []))
     if not field_by_symbol:
         return []
 
@@ -137,9 +135,7 @@ def check_sizing_narrative(decision: Any) -> list[SizingNarrativeMismatch]:
 
     for sentence in _SENTENCE_SPLIT.split(text):
         # Keyed by VALUE, not by spelling: "2.5" and "2.50" are one claim.
-        distinct = {
-            Decimal(t): t for t in _explicit_risk_pct_claim_texts(sentence)
-        }
+        distinct = {Decimal(t): t for t in _explicit_risk_pct_claim_texts(sentence)}
         # 0 claims -> nothing to check. 2+ distinct claims in one sentence ->
         # cannot pair a value to a symbol with confidence, so MISS rather than
         # false-flag. Only the unambiguous single-value sentence is checked.
@@ -167,9 +163,7 @@ def check_sizing_narrative(decision: Any) -> list[SizingNarrativeMismatch]:
                     f"{prose_pct:g}% but emitted risk_allocation_pct="
                     f"{field_pct:g}%"
                 )
-                findings.append(
-                    SizingNarrativeMismatch(symbol, prose_pct, field_pct, detail)
-                )
+                findings.append(SizingNarrativeMismatch(symbol, prose_pct, field_pct, detail))
                 flagged.add(symbol)
                 logger.warning("sizing_narrative_mismatch: %s", detail)
 

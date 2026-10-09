@@ -45,12 +45,14 @@ _PRICE_DERIVED_CLAIM_PATTERNS = (
     (r"\bshare\s+price\b", "share price"),
     (r"\bstock\s+price\b", "stock price"),
     (r"\btrading\s+at\b", "trading at"),
-    (r"\d+(?:\.\d+)?\s*x\s+(?:forward\s+|trailing\s+|fwd\s+|ntm\s+)?"
-     r"(?:earnings|sales|revenue|book|free\s+cash\s+flow|fcf)\b", "Nx earnings/sales"),
+    (
+        r"\d+(?:\.\d+)?\s*x\s+(?:forward\s+|trailing\s+|fwd\s+|ntm\s+)?"
+        r"(?:earnings|sales|revenue|book|free\s+cash\s+flow|fcf)\b",
+        "Nx earnings/sales",
+    ),
 )
 _PRICE_DERIVED_CLAIM_RE = tuple(
-    (re.compile(pattern, re.IGNORECASE), label)
-    for pattern, label in _PRICE_DERIVED_CLAIM_PATTERNS
+    (re.compile(pattern, re.IGNORECASE), label) for pattern, label in _PRICE_DERIVED_CLAIM_PATTERNS
 )
 
 # The detector below used to be advisory-only: it logged a fabricated
@@ -119,8 +121,7 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                 # failure in _save_analysis) must not abort the WHOLE batch —
                 # the remaining symbols' filings would silently go unanalyzed
                 # while record_failure never ticked for them.
-                logger.error("earnings: analysis failed for %s %s — isolating: %s",
-                             report.symbol, report.form_type, e)
+                logger.error("earnings: analysis failed for %s %s — isolating: %s", report.symbol, report.form_type, e)
                 try:
                     self.earnings_provider_record_failure(report)
                 except Exception:  # noqa: BLE001
@@ -144,48 +145,52 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                 if analysis:
                     # Save analysis to disk
                     self._save_analysis(report.analysis_path, report, analysis)
-                    results.append({
-                        "symbol": report.symbol,
-                        "analysis": analysis,
-                        "agent_result": agent_result,
-                        "is_new": True,
-                        "form_type": report.form_type,
-                        "filing_date": report.filing_date,
-                        # Pointer for the PM's short verdict (item 18): the
-                        # full 8-field extraction is still on disk at this
-                        # path, retrievable for audit — see
-                        # PortfolioManagerAgent's earnings-section rendering
-                        # and `src/data/earnings_deep_dive.py`, which already
-                        # reads analyses back out by this same path.
-                        "analysis_path": report.analysis_path,
-                        # Real, parsed SEC XBRL values for the fields that
-                        # map one-to-one onto this analysis (see
-                        # EarningsDataProvider._xbrl_comparable_values) —
-                        # ground truth `_classify_earnings_status`
-                        # (src/pipeline_stages.py) cross-checks the LLM's
-                        # own reported figures against, to catch a
-                        # confident but fabricated number that isn't empty
-                        # and isn't self-flagged. {} (not missing) when no
-                        # XBRL data was available for this filer/period.
-                        "xbrl_facts": report.xbrl_facts,
-                    })
+                    results.append(
+                        {
+                            "symbol": report.symbol,
+                            "analysis": analysis,
+                            "agent_result": agent_result,
+                            "is_new": True,
+                            "form_type": report.form_type,
+                            "filing_date": report.filing_date,
+                            # Pointer for the PM's short verdict (item 18): the
+                            # full 8-field extraction is still on disk at this
+                            # path, retrievable for audit — see
+                            # PortfolioManagerAgent's earnings-section rendering
+                            # and `src/data/earnings_deep_dive.py`, which already
+                            # reads analyses back out by this same path.
+                            "analysis_path": report.analysis_path,
+                            # Real, parsed SEC XBRL values for the fields that
+                            # map one-to-one onto this analysis (see
+                            # EarningsDataProvider._xbrl_comparable_values) —
+                            # ground truth `_classify_earnings_status`
+                            # (src/pipeline_stages.py) cross-checks the LLM's
+                            # own reported figures against, to catch a
+                            # confident but fabricated number that isn't empty
+                            # and isn't self-flagged. {} (not missing) when no
+                            # XBRL data was available for this filer/period.
+                            "xbrl_facts": report.xbrl_facts,
+                        }
+                    )
             elif report.analysis_path and Path(report.analysis_path).exists():
                 # Existing analysis — read from disk
                 analysis = self._load_analysis(report)
                 if analysis:
-                    results.append({
-                        "symbol": report.symbol,
-                        "analysis": analysis,
-                        "agent_result": None,
-                        "is_new": False,
-                        "form_type": report.form_type,
-                        "filing_date": report.filing_date,
-                        "analysis_path": report.analysis_path,
-                        # No fresh XBRL fetch on the cached-read path (see
-                        # EarningsReport.xbrl_facts docstring) — {} reads as
-                        # "nothing to cross-check," same as fails-open.
-                        "xbrl_facts": report.xbrl_facts,
-                    })
+                    results.append(
+                        {
+                            "symbol": report.symbol,
+                            "analysis": analysis,
+                            "agent_result": None,
+                            "is_new": False,
+                            "form_type": report.form_type,
+                            "filing_date": report.filing_date,
+                            "analysis_path": report.analysis_path,
+                            # No fresh XBRL fetch on the cached-read path (see
+                            # EarningsReport.xbrl_facts docstring) — {} reads as
+                            # "nothing to cross-check," same as fails-open.
+                            "xbrl_facts": report.xbrl_facts,
+                        }
+                    )
 
         return results
 
@@ -204,8 +209,7 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
             parts = path.stem.split("_")
             return parts[-1] if parts else ""
 
-        prior_analyses = sorted(symbol_dir.glob("analysis_*.md"),
-                                key=_filing_date_key, reverse=True)
+        prior_analyses = sorted(symbol_dir.glob("analysis_*.md"), key=_filing_date_key, reverse=True)
         if prior_analyses:
             # Read the most recent prior analysis (skip current)
             for p in prior_analyses:
@@ -285,9 +289,7 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                 logger.warning("Failed to parse saved analysis: %s", report.analysis_path)
         return None
 
-    def _validate_analysis(
-        self, report: EarningsReport, parsed: dict | list, source: str
-    ) -> EarningsAnalysis | None:
+    def _validate_analysis(self, report: EarningsReport, parsed: dict | list, source: str) -> EarningsAnalysis | None:
         if not isinstance(parsed, dict):
             logger.warning("Invalid %s earnings analysis for %s: expected JSON object", source, report.symbol)
             return None
@@ -331,9 +333,7 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
             # the whole analysis. This is what closes the loop the old
             # log-only version left open (see docstring below).
             analysis = analysis.model_copy(deep=True)
-            analysis.investment_implications.reasoning_chain.valuation_context = (
-                _UNSOURCED_VALUATION_DISCLOSURE
-            )
+            analysis.investment_implications.reasoning_chain.valuation_context = _UNSOURCED_VALUATION_DISCLOSURE
             if source == "cache":
                 # The bad claim was written to disk before this fix existed
                 # (or before the prompt was corrected) and would otherwise be
@@ -345,7 +345,8 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                     logger.warning(
                         "earnings: redacted and re-saved cached analysis for %s %s "
                         "— cache no longer carries the fabricated valuation claim",
-                        report.symbol, report.form_type,
+                        report.symbol,
+                        report.form_type,
                     )
                 except Exception:  # noqa: BLE001 — redaction in memory must
                     # still take effect even if the disk re-write fails; the
@@ -353,14 +354,13 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                     logger.warning(
                         "earnings: could not re-save redacted cache for %s %s "
                         "— serving the redacted version this run only",
-                        report.symbol, report.form_type,
+                        report.symbol,
+                        report.form_type,
                     )
         return analysis
 
     @staticmethod
-    def _flag_unsourced_valuation_claims(
-        report: EarningsReport, analysis: EarningsAnalysis, source: str
-    ) -> list[str]:
+    def _flag_unsourced_valuation_claims(report: EarningsReport, analysis: EarningsAnalysis, source: str) -> list[str]:
         """Detect a price-derived valuation claim in `valuation_context`.
 
         The claim is a sentence inside an otherwise sound filing read, and
@@ -399,7 +399,10 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                 "(%s) in valuation_context, but the agent was given filing text "
                 "only — no price, market cap or multiple. The figure is not "
                 "grounded in its input; PM sizes off this field. Text: %r",
-                source, report.symbol, report.form_type,
-                ", ".join(matched), text[:220],
+                source,
+                report.symbol,
+                report.form_type,
+                ", ".join(matched),
+                text[:220],
             )
         return matched

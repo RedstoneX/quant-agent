@@ -112,10 +112,7 @@ def test_fixture_still_contains_the_no_call_majority_this_is_measuring():
     """Guard the premise. If a fixture edit removes the no-call filings, every
     assertion below would pass vacuously and prove nothing."""
     neutral = _neutral_earnings_symbols()
-    analysed = [
-        item for item in _LEVEL_LESS.raw["earnings_analyses"]
-        if isinstance(item.get("analysis"), dict)
-    ]
+    analysed = [item for item in _LEVEL_LESS.raw["earnings_analyses"] if isinstance(item.get("analysis"), dict)]
     assert len(analysed) == 65
     assert len(neutral) == 38
 
@@ -130,14 +127,14 @@ def test_every_no_call_symbol_is_still_named_in_the_prompt(rendered):
     invisible — a symbol the seat read and declined to call has to stay
     distinguishable from a symbol nobody looked at."""
     earnings = _section(rendered, "Earnings Analysis")
-    rollup = earnings[earnings.index("### Read, no call"):]
+    rollup = earnings[earnings.index("### Read, no call") :]
     listed = set(re.findall(r"^- ([A-Z][A-Z0-9.\-]*) \| ", rollup, re.M))
     assert listed == _neutral_earnings_symbols()
 
 
 def test_no_call_lines_carry_form_date_and_conviction(rendered):
     earnings = _section(rendered, "Earnings Analysis")
-    rollup = earnings[earnings.index("### Read, no call"):]
+    rollup = earnings[earnings.index("### Read, no call") :]
     for line in rollup.splitlines():
         if not line.startswith("- "):
             continue
@@ -153,7 +150,8 @@ def test_directional_filings_keep_the_full_bounded_verdict(rendered):
     ships its call, conviction, thesis, falsifier and audit pointer."""
     earnings = _section(rendered, "Earnings Analysis")
     blocks = [
-        b for b in re.split(r"\n(?=### )", earnings)
+        b
+        for b in re.split(r"\n(?=### )", earnings)
         if b.startswith("### ")
         and not b.startswith("### Read, no call")
         # The two JUST FILED placeholders are a third case: a filing dropped
@@ -185,9 +183,7 @@ def test_a_mixed_read_is_never_rolled_up():
 
 def test_neutral_technical_reads_drop_the_none_fields_not_the_conclusion(rendered):
     tech = _section(rendered, "Technical Analysis Reports")
-    neutral_lines = [
-        ln for ln in tech.splitlines() if re.match(r"^- \S+: neutral ", ln)
-    ]
+    neutral_lines = [ln for ln in tech.splitlines() if re.match(r"^- \S+: neutral ", ln)]
     assert neutral_lines, "fixture should carry neutral technical reads"
     for line in neutral_lines:
         assert "Entry: None" not in line
@@ -219,10 +215,7 @@ def test_neutral_reads_keep_the_analysts_own_sentence(rendered):
 
 def test_a_read_with_geometry_keeps_every_field(rendered):
     tech = _section(rendered, "Technical Analysis Reports")
-    sized = [
-        a for a in _LEVEL_LESS.analyses
-        if a.rating != "neutral" and a.risk_reward is not None
-    ]
+    sized = [a for a in _LEVEL_LESS.analyses if a.rating != "neutral" and a.risk_reward is not None]
     assert sized
     for analysis in sized:
         assert f"Entry: {analysis.entry_price} | Stop: {analysis.stop_loss}" in tech
@@ -259,13 +252,10 @@ def test_a_no_call_earnings_stance_still_reaches_the_registry(rendered):
     otherwise shortening the input would have quietly RAISED sizing."""
     registry_section = _section(rendered, "Canonical Current Evidence Registry")
     neutral = _neutral_earnings_symbols()
-    covered = {
-        symbol for symbol in neutral
-        if f'"{symbol}"' in registry_section
-    }
+    covered = {symbol for symbol in neutral if f'"{symbol}"' in registry_section}
     assert covered, "no rolled-up symbol survived into the registry"
     for symbol in covered:
-        block = registry_section[registry_section.index(f'"{symbol}"'):][:400]
+        block = registry_section[registry_section.index(f'"{symbol}"') :][:400]
         assert '"earnings"' in block, symbol
 
 
@@ -273,6 +263,7 @@ def test_a_no_call_earnings_stance_still_reaches_the_registry(rendered):
 # item 18e — an instruction in the briefing must have somewhere to send its
 # answer
 # ---------------------------------------------------------------------------
+
 
 def test_the_macro_audit_instruction_has_an_output_field(rendered: str) -> None:
     """The briefing ships the macro seat's whole reasoning chain verbatim
@@ -316,11 +307,20 @@ def test_macro_audit_is_not_mandatory_at_the_schema_layer() -> None:
 
     field = ReasoningChain.model_fields["macro_audit"]
     assert field.default == "", "macro_audit must validate when absent"
-    assert ReasoningChain.model_validate({
-        "macro_filter": "m", "news_check": "n", "earnings_check": "e",
-        "signal_conflicts": "s", "sizing_logic": "z",
-        "portfolio_balance": "b", "cash_target": "c",
-    }).macro_audit == ""
+    assert (
+        ReasoningChain.model_validate(
+            {
+                "macro_filter": "m",
+                "news_check": "n",
+                "earnings_check": "e",
+                "signal_conflicts": "s",
+                "sizing_logic": "z",
+                "portfolio_balance": "b",
+                "cash_target": "c",
+            }
+        ).macro_audit
+        == ""
+    )
 
 
 def test_the_risk_seat_can_see_whether_the_macro_audit_happened() -> None:
@@ -332,8 +332,7 @@ def test_the_risk_seat_can_see_whether_the_macro_audit_happened() -> None:
     rows = risk_review_mode.chain_rows(risk_review_mode.MORNING_PLAN)
     by_attr = {attr: (label, mandatory) for label, attr, mandatory in rows}
     assert "macro_audit" in by_attr, (
-        "the risk seat never sees PM's macro audit, so nothing downstream "
-        "can tell a performed audit from a skipped one"
+        "the risk seat never sees PM's macro audit, so nothing downstream can tell a performed audit from a skipped one"
     )
     label, mandatory = by_attr["macro_audit"]
     assert mandatory, (

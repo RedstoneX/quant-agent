@@ -9,6 +9,7 @@ under ``scripts/`` the only direct ``.send(`` allowed is the manual probe,
 named by identity. A new bare send fails here even when the trunk read that
 rule 3 depends on is stale or cached.
 """
+
 from __future__ import annotations
 
 from scripts import owner_alert_funnel_guard as g

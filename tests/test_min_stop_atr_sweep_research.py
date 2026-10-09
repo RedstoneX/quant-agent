@@ -5,6 +5,7 @@ measurement. This pins the bracket against the live config rather than against
 a copy of it, so moving `min_stop_atr_multiple` without widening the sweep is
 a red test, not a silently narrow study.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -28,20 +29,13 @@ def test_sweep_brackets_the_live_multiple_and_the_absolute_floor():
     live = fields["min_stop_atr_multiple"].default
     floor = fields["absolute_min_stop_atr_multiple"].default
     lo, hi = min(mod.MULTIPLES), max(mod.MULTIPLES)
-    assert lo < floor, (
-        f"sweep starts at {lo}, not below the code's absolute floor "
-        f"{floor}"
-    )
-    assert lo < live < hi, (
-        f"sweep {lo}..{hi} does not bracket the live "
-        f"min_stop_atr_multiple {live}"
-    )
+    assert lo < floor, f"sweep starts at {lo}, not below the code's absolute floor {floor}"
+    assert lo < live < hi, f"sweep {lo}..{hi} does not bracket the live min_stop_atr_multiple {live}"
     assert lo < 1.5 < hi, "sweep must also bracket the earlier 1.5 MAE reading"
 
 
 def test_sweep_reports_more_than_one_horizon():
     mod = _sweep_module()
     assert len(mod.HORIZONS) > 1, (
-        "the repo pins no default holding horizon, so a single-horizon sweep "
-        "would be a picked number"
+        "the repo pins no default holding horizon, so a single-horizon sweep would be a picked number"
     )

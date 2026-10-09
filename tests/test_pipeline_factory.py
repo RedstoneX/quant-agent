@@ -1,4 +1,5 @@
 """The factory in tests/pipeline_factory.py builds the real thing, wired."""
+
 from unittest.mock import MagicMock
 
 from src.pipeline import TradingPipeline
@@ -18,12 +19,13 @@ def test_real_init_runs_and_wires_every_service():
 def test_stand_ins_reach_constructor_wired_services():
     db, broker = MagicMock(name="db"), MagicMock(name="broker")
     p = build_pipeline(db=db, broker=broker, _atr_for_symbol=lambda s: 2.5)
-    assert p.db is db and p.risk_gate.db is db          # not bolted on after
+    assert p.db is db and p.risk_gate.db is db  # not bolted on after
     assert p.broker is broker
     assert p._atr_for_symbol("SPY") == 2.5
 
 
 def test_every_constructor_site_name_exists_in_pipeline_module():
     import src.pipeline as m
+
     missing = [s for s in CONSTRUCTOR_SITES.values() if not hasattr(m, s)]
     assert not missing, missing

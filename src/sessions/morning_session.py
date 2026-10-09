@@ -1,4 +1,5 @@
 """Morning session (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -175,8 +176,10 @@ class MorningSession:
             except Exception as e:
                 logger.error("Morning: broker snapshot failed: %s", e)
                 return {
-                    "status": "broker_error", "orders": [],
-                    "run_id": run_id, "error": str(e),
+                    "status": "broker_error",
+                    "orders": [],
+                    "run_id": run_id,
+                    "error": str(e),
                 }
             cash = account["cash"]
             total_value = account["portfolio_value"]
@@ -192,7 +195,12 @@ class MorningSession:
             self._record_account_snapshot(total_value, last_equity)
             logger.info(
                 "Account: $%.2f total, $%.2f cash (deployable $%.2f), %d positions (last close $%.2f)",
-                total_value, cash, ctx.deployable_cash, len(positions), last_equity)
+                total_value,
+                cash,
+                ctx.deployable_cash,
+                len(positions),
+                last_equity,
+            )
 
             # 1a. Cash-only safety net — force-sell if margin was entered before
             # this session. Refreshes ctx.cash / positions on completion, so
@@ -212,7 +220,8 @@ class MorningSession:
             # per-seat read. Always populates ctx.leverage for the alert and
             # the dashboard, including distance-to-forced-liquidation.
             forced_orders = list(forced_orders) + self._enforce_gross_ceiling(
-                ctx, floor_only=True,
+                ctx,
+                floor_only=True,
             )
             positions = ctx.positions
             cash = ctx.cash
@@ -225,7 +234,6 @@ class MorningSession:
             # book we just read, before the long research window.
             self._sync_positions_from_broker(positions)
 
-
             # All broker-resident and deterministic safety work above runs
             # even while the paid-analysis circuit is latched. Only now, at
             # the boundary before research/resume-RM, may it stop the run.
@@ -233,7 +241,10 @@ class MorningSession:
                 self._require_paid_analysis("morning_research")
             except PaidAnalysisSuspended as exc:
                 return self._paid_suspension_after_late_safety(
-                    run_id, session="morning", error=exc, where="paid-pre-research",
+                    run_id,
+                    session="morning",
+                    error=exc,
+                    where="paid-pre-research",
                     orders=forced_orders,
                 )
 
@@ -248,13 +259,15 @@ class MorningSession:
             # RiskStage + execution guards below all operate on live state.
             # RM always re-runs; there is no resume-past-RM.
             from src import decision_checkpoint as _dc
+
             resumed = _dc.load("morning")
             if resumed is not None:
                 logger.warning(
                     "RESUME LANE: unconsumed decision checkpoint from %s "
                     "(age %.0f min, %d decisions) — skipping research+PM, "
                     "re-entering at RiskStage on fresh account state",
-                    resumed["run_id"], resumed["age_minutes"],
+                    resumed["run_id"],
+                    resumed["age_minutes"],
                     len(resumed["portfolio_decision"].decisions),
                 )
                 ctx.macro_summary = resumed["macro_summary"]
@@ -275,12 +288,15 @@ class MorningSession:
                     if d.action != "BUY":
                         continue
                     try:
-                        bars[d.symbol] = self._market.get_ohlcv(
-                            d.symbol, self._config.trading.lookback_days,
-                        ) or []
+                        bars[d.symbol] = (
+                            self._market.get_ohlcv(
+                                d.symbol,
+                                self._config.trading.lookback_days,
+                            )
+                            or []
+                        )
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("resume: bar rehydrate failed for %s: %s",
-                                       d.symbol, e)
+                        logger.warning("resume: bar rehydrate failed for %s: %s", d.symbol, e)
                 ctx.symbols_bars = bars
             else:
                 # Phase 4 #1: research stage runs the parallel fan-out (macro /
@@ -289,20 +305,22 @@ class MorningSession:
                     self._morning_research_stage.run(ctx)
                 except PaidAnalysisSuspended as exc:
                     return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", error=exc, where="paid-research-suspended",
+                        run_id,
+                        session="morning",
+                        error=exc,
+                        where="paid-research-suspended",
                         orders=forced_orders,
                     )
                 circuit_state = self._cost_circuit_status()
                 if circuit_state.get("suspended"):
                     return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", where="post-research-circuit-open",
+                        run_id,
+                        session="morning",
+                        where="post-research-circuit-open",
                         orders=forced_orders,
-                        error=PaidAnalysisSuspended(
-                            str(circuit_state.get("trigger_detail") or "cost circuit opened")
-                        ),
+                        error=PaidAnalysisSuspended(str(circuit_state.get("trigger_detail") or "cost circuit opened")),
                     )
                 analyses = ctx.analyses
-
 
                 if not analyses:
                     logger.warning("No analyses produced, skipping trading")
@@ -329,7 +347,10 @@ class MorningSession:
                     self._decision_stage(ctx)
                 except PaidAnalysisSuspended as exc:
                     return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", error=exc, where="paid-decision-suspended",
+                        run_id,
+                        session="morning",
+                        error=exc,
+                        where="paid-decision-suspended",
                         orders=forced_orders,
                     )
                 portfolio_decision = ctx.portfolio_decision
@@ -339,18 +360,20 @@ class MorningSession:
                 # instead of a wasted research+PM spend.
                 _dc.write(ctx)
 
-
             if not portfolio_decision:
                 failure_status = ctx.analysis_failure_status or "pm_agent_failure"
                 failure_error = ctx.analysis_failure_error or "no valid PM decision"
                 logger.error(
                     "Portfolio manager produced no valid decision (%s): %s",
-                    failure_status, failure_error,
+                    failure_status,
+                    failure_error,
                 )
                 return {
                     # Terminal for this slot. main.py must not repeat the full
                     # paid stack on deterministic parse/schema/grounding faults.
-                    "status": failure_status, "orders": [], "run_id": run_id,
+                    "status": failure_status,
+                    "orders": [],
+                    "run_id": run_id,
                     "error": failure_error,
                     "data_status": dict(ctx.data_status),
                     # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
@@ -361,7 +384,9 @@ class MorningSession:
             if not portfolio_decision.decisions:
                 logger.info("Portfolio manager + Constructor: no trades suggested")
                 return {
-                    "status": "no_trades", "orders": [], "run_id": run_id,
+                    "status": "no_trades",
+                    "orders": [],
+                    "run_id": run_id,
                     "data_status": dict(ctx.data_status),
                     # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
                     # the distance to forced liquidation, for the operator alert.
@@ -374,7 +399,10 @@ class MorningSession:
                 early_exit = self._risk_stage(ctx)
             except PaidAnalysisSuspended as exc:
                 return self._paid_suspension_after_late_safety(
-                    run_id, session="morning", error=exc, where="paid-risk-suspended",
+                    run_id,
+                    session="morning",
+                    error=exc,
+                    where="paid-risk-suspended",
                     orders=forced_orders,
                 )
             # The plan has now been risk-reviewed — whatever the outcome, it
@@ -388,7 +416,9 @@ class MorningSession:
                 early_exit["run_id"] = run_id
                 early_exit["data_status"] = dict(ctx.data_status)
                 stop_updates = getattr(
-                    getattr(self, "broker", None), "stop_trade_updates", None,
+                    getattr(self, "broker", None),
+                    "stop_trade_updates",
+                    None,
                 )
                 if callable(stop_updates):
                     try:
@@ -424,29 +454,24 @@ class MorningSession:
             # paid research -> PM -> RM stack amplified cost for an execution-
             # timing issue. A future execution-only checkpoint can retry this
             # without buying another decision chain.
-            approved_buys = [
-                d for d in (portfolio_decision.decisions or [])
-                if d.action == "BUY"
-            ]
-            unfunded = [
-                s for s in ctx.execution_skips
-                if s.get("reason") == "insufficient_cash"
-            ]
+            approved_buys = [d for d in (portfolio_decision.decisions or []) if d.action == "BUY"]
+            unfunded = [s for s in ctx.execution_skips if s.get("reason") == "insufficient_cash"]
             # Sweep bookkeeping orders are not "the session traded" — only
             # real BUY/SELL submissions count against the retry decision.
             real_orders = [
-                o for o in orders
-                if not (isinstance(o, dict)
-                        and str(o.get("action", "")).startswith("SWEEP_"))
+                o for o in orders if not (isinstance(o, dict) and str(o.get("action", "")).startswith("SWEEP_"))
             ]
             if approved_buys and unfunded and not real_orders:
                 logger.warning(
                     "=== Morning run: %d approved BUY(s), 0 submitted, "
                     "%d unfunded skip(s) — reporting terminal "
-                    "buys_unfunded ===", len(approved_buys), len(unfunded),
+                    "buys_unfunded ===",
+                    len(approved_buys),
+                    len(unfunded),
                 )
                 return {
-                    "status": "buys_unfunded", "orders": orders,
+                    "status": "buys_unfunded",
+                    "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
                     # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
@@ -457,11 +482,11 @@ class MorningSession:
                 }
             if not real_orders:
                 logger.info(
-                    "=== Morning run complete: no equity order submitted "
-                    "(not marking executed) ===",
+                    "=== Morning run complete: no equity order submitted (not marking executed) ===",
                 )
                 return {
-                    "status": "no_orders", "orders": orders,
+                    "status": "no_orders",
+                    "orders": orders,
                     "run_id": run_id,
                     "data_status": dict(ctx.data_status),
                     # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
@@ -472,7 +497,9 @@ class MorningSession:
                 }
             logger.info("=== Morning run complete: %d orders executed ===", len(orders))
             return {
-                "status": "executed", "orders": orders, "run_id": run_id,
+                "status": "executed",
+                "orders": orders,
+                "run_id": run_id,
                 "data_status": dict(ctx.data_status),
                 # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
                 # the distance to forced liquidation, for the operator alert.

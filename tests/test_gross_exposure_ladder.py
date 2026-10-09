@@ -39,10 +39,11 @@ EQUITY = 10_000.0
 BASE_X = 2.0
 
 
-def _position(symbol="NVDA", qty=10.0, avg_entry=100.0, current_price=100.0,
-              sector="Technology") -> Position:
+def _position(symbol="NVDA", qty=10.0, avg_entry=100.0, current_price=100.0, sector="Technology") -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
         current_price=current_price,
         market_value=qty * current_price,
         unrealized_pnl=qty * (current_price - avg_entry),
@@ -52,17 +53,24 @@ def _position(symbol="NVDA", qty=10.0, avg_entry=100.0, current_price=100.0,
 
 def _buy(symbol="NVDA", alloc=10.0) -> TradeDecision:
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=alloc,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=115.0,
         reasoning="high conviction breakout",
     )
 
 
 def _risk_config(**overrides) -> RiskConfig:
     fields = dict(
-        max_position_pct=100, max_total_position_pct=400,
-        max_sector_pct=100, require_stop_loss=False,
-        allow_margin=True, max_gross_exposure_x=BASE_X,
+        max_position_pct=100,
+        max_total_position_pct=400,
+        max_sector_pct=100,
+        require_stop_loss=False,
+        allow_margin=True,
+        max_gross_exposure_x=BASE_X,
     )
     fields.update(overrides)
     return RiskConfig(**fields)
@@ -81,7 +89,7 @@ LADDER_CASES = [
     (-0.01, 2.0),
     (-7.99, 2.0),
     #  --- the -8% edge ---------------------------------------------------
-    (-8.0, 1.5),      # exactly on the edge: tighter rung wins
+    (-8.0, 1.5),  # exactly on the edge: tighter rung wins
     (-8.01, 1.5),
     #  --- rung 2: -8% to -15% -> 1.5x ------------------------------------
     (-11.0, 1.5),
@@ -111,8 +119,7 @@ def test_the_ladder_steps_at_every_ratified_threshold(drawdown_pct, expected_x):
     """
     ceiling = resolve_gross_ceiling(drawdown_pct, base_x=BASE_X)
     assert ceiling.ceiling_x == expected_x, (
-        f"at {drawdown_pct}% drawdown the ceiling must be {expected_x}x, "
-        f"got {ceiling.ceiling_x}x"
+        f"at {drawdown_pct}% drawdown the ceiling must be {expected_x}x, got {ceiling.ceiling_x}x"
     )
 
 
@@ -120,10 +127,7 @@ def test_the_ladder_actually_moves_rather_than_returning_one_number():
     """Guards the failure a per-case test cannot see: a ladder that is
     accidentally constant still passes every individual assertion above if
     the constant happens to be right. Four DISTINCT ceilings must exist."""
-    ceilings = {
-        resolve_gross_ceiling(dd, base_x=BASE_X).ceiling_x
-        for dd in (-1.0, -10.0, -17.0, -25.0)
-    }
+    ceilings = {resolve_gross_ceiling(dd, base_x=BASE_X).ceiling_x for dd in (-1.0, -10.0, -17.0, -25.0)}
     assert ceilings == {2.0, 1.5, 1.0, 0.5}
 
 
@@ -166,6 +170,7 @@ def test_the_ratified_rungs_are_the_ones_in_the_table():
 # THE GATE, PART 2 — new exposure is blocked BEFORE anything is trimmed.
 # ===========================================================================
 
+
 def test_new_exposure_is_refused_and_nothing_is_sold_to_make_room():
     """A book at its ceiling refuses the next BUY. It does not sell a held
     position to fund it. This ordering is the whole reason the ladder is not
@@ -175,14 +180,17 @@ def test_new_exposure_is_refused_and_nothing_is_sold_to_make_room():
     decisions = [_buy("AMD", 10.0)]
 
     outcome = apply_gross_ceiling(
-        decisions, positions, EQUITY, ceiling, min_order_usd=500.0,
+        decisions,
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
     assert outcome.decisions[0].allocation_pct == 0.0, "the BUY must be refused"
     assert outcome.blocked == ["AMD"]
     assert outcome.trims == [], (
-        "nothing may be sold to make room for a new position — the held book "
-        "is exactly AT its ceiling, not over it"
+        "nothing may be sold to make room for a new position — the held book is exactly AT its ceiling, not over it"
     )
 
 
@@ -197,24 +205,33 @@ def test_a_drawdown_blocks_first_and_only_then_trims_the_excess():
     trim is identical — asserted directly below.
     """
     positions = [
-        _position("NVDA", qty=100.0, current_price=100.0),   # $10k, +0
+        _position("NVDA", qty=100.0, current_price=100.0),  # $10k, +0
         _position("AMD", qty=100.0, current_price=100.0, avg_entry=140.0),  # $10k, -4k
     ]
     ceiling = resolve_gross_ceiling(-16.0, base_x=BASE_X)
     assert ceiling.ceiling_x == 1.0
 
     with_buy = apply_gross_ceiling(
-        [_buy("TSLA", 5.0)], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [_buy("TSLA", 5.0)],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
     assert with_buy.decisions[0].allocation_pct == 0.0
     assert with_buy.blocked == ["TSLA"]
     assert with_buy.trims, "a book at 2.0x under a 1.0x ceiling must de-lever"
 
     without_buy = apply_gross_ceiling(
-        [], list(positions), EQUITY, ceiling, min_order_usd=500.0,
+        [],
+        list(positions),
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
-    assert [(t.symbol, t.action, t.allocation_pct) for t in without_buy.trims] == \
-           [(t.symbol, t.action, t.allocation_pct) for t in with_buy.trims], (
+    assert [(t.symbol, t.action, t.allocation_pct) for t in without_buy.trims] == [
+        (t.symbol, t.action, t.allocation_pct) for t in with_buy.trims
+    ], (
         "the trim must be identical with and without a proposed BUY — if a "
         "proposal can change what gets sold, new exposure is not being "
         "blocked first"
@@ -227,11 +244,15 @@ def test_an_entry_that_still_fits_is_shrunk_rather_than_dropped():
     """A ceiling that only refuses produces no-trade sessions. Where headroom
     exists, the order is taken smaller."""
     positions = [_position("NVDA", qty=150.0, current_price=100.0)]  # $15k
-    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)   # $20k ceiling
-    decision = _buy("AMD", 100.0)                          # wants $10k
+    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)  # $20k ceiling
+    decision = _buy("AMD", 100.0)  # wants $10k
 
     outcome = apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
     assert outcome.blocked == []
@@ -245,17 +266,26 @@ def test_a_planned_exit_frees_headroom_before_entries_are_judged():
     will hold, not on what it holds now. Otherwise a legitimate rotation
     would be refused."""
     positions = [
-        _position("NVDA", qty=200.0, current_price=100.0),   # $20k = the ceiling
+        _position("NVDA", qty=200.0, current_price=100.0),  # $20k = the ceiling
     ]
     sell = TradeDecision(
-        action="SELL", symbol="NVDA", allocation_pct=50.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0, reasoning="rotate",
+        action="SELL",
+        symbol="NVDA",
+        allocation_pct=50.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
+        reasoning="rotate",
     )
-    buy = _buy("AMD", 50.0)                                  # wants $5k
+    buy = _buy("AMD", 50.0)  # wants $5k
     ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)
 
     outcome = apply_gross_ceiling(
-        [sell, buy], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [sell, buy],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
     assert buy.allocation_pct == 50.0, "the freed $10k must fund the rotation"
@@ -268,11 +298,15 @@ def test_a_remnant_below_the_old_minimum_order_is_granted_not_refused():
     arbitrary number, not a broker minimum, and Alpaca charges no stock
     commission. It is now granted at whatever headroom is left."""
     positions = [_position("NVDA", qty=199.0, current_price=100.0)]  # $19.9k
-    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)              # $20k
+    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)  # $20k
     decision = _buy("AMD", 20.0)
 
     outcome = apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
     # $100 of headroom left (well under the old $500 floor) — granted, not
@@ -286,6 +320,7 @@ def test_a_remnant_below_the_old_minimum_order_is_granted_not_refused():
 # THE GATE, PART 3 — the ladder is applied EXACTLY ONCE.
 # ===========================================================================
 
+
 def test_gross_headroom_still_converts_to_notional_via_the_multiplier():
     """The headroom the ceiling grants is measured in GROSS, and for a
     leveraged ETF that is not the same number as the order's notional cost —
@@ -297,15 +332,23 @@ def test_gross_headroom_still_converts_to_notional_via_the_multiplier():
     the gross/multiplier conversion gives it, same as any other entry.
     """
     positions = [_position("NVDA", qty=194.0, current_price=100.0)]  # $19.4k
-    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)              # $20k
+    ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)  # $20k
     short = TradeDecision(
-        action="SHORT", symbol="SQQQ", allocation_pct=10.0,
-        entry_price=100.0, stop_loss=110.0, take_profit=80.0,
+        action="SHORT",
+        symbol="SQQQ",
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=110.0,
+        take_profit=80.0,
         reasoning="hedge",
     )
 
     outcome = apply_gross_ceiling(
-        [short], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [short],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
     # $600 of gross headroom / 3x = a $200 order, granted despite being well
@@ -327,22 +370,28 @@ def test_the_ceiling_is_a_level_so_applying_it_twice_changes_nothing():
     if anyone reintroduced a compounding factor.
     """
     positions = [_position("NVDA", qty=150.0, current_price=100.0)]  # $15k
-    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)            # 1.5x = $15k
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)  # 1.5x = $15k
     decision = _buy("AMD", 100.0)
 
     first = apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
     after_first = decision.allocation_pct
     trims_first = [(t.symbol, t.allocation_pct) for t in first.trims]
 
     second = apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling, min_order_usd=500.0,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
     )
 
-    assert decision.allocation_pct == after_first, (
-        "a second pass must not shrink the order again"
-    )
+    assert decision.allocation_pct == after_first, "a second pass must not shrink the order again"
     assert [(t.symbol, t.allocation_pct) for t in second.trims] == trims_first, (
         "a second pass must not trim the book again"
     )
@@ -358,9 +407,9 @@ def test_an_order_that_fits_is_never_scaled_by_the_rung():
     intended" failure. The book here is at 0.5x with a 1.5x ceiling, so
     there is ample headroom and any change at all is a bug.
     """
-    positions = [_position("NVDA", qty=50.0, current_price=100.0)]   # $5k
-    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)            # 1.5x = $15k
-    decision = _buy("AMD", 20.0)                                     # $2k, fits
+    positions = [_position("NVDA", qty=50.0, current_price=100.0)]  # $5k
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)  # 1.5x = $15k
+    decision = _buy("AMD", 20.0)  # $2k, fits
 
     apply_gross_ceiling([decision], positions, EQUITY, ceiling)
     assert decision.allocation_pct == 20.0, (
@@ -368,9 +417,7 @@ def test_an_order_that_fits_is_never_scaled_by_the_rung():
         "is a ceiling on the book, not a multiplier on the order"
     )
     apply_gross_ceiling([decision], positions, EQUITY, ceiling)
-    assert decision.allocation_pct == 20.0, (
-        "and a second pass must still leave it alone"
-    )
+    assert decision.allocation_pct == 20.0, "and a second pass must still leave it alone"
     assert GROSS_EXPOSURE_RULE not in decision.reasoning
 
 
@@ -388,7 +435,7 @@ def test_resolving_the_ladder_twice_yields_the_same_rung():
 def test_a_de_levered_book_trimmed_once_is_not_trimmed_again():
     """The realistic double-application shape: the preamble trims, the book
     is re-measured, and the second pass must find nothing left to do."""
-    ceiling = resolve_gross_ceiling(-16.0, base_x=BASE_X)   # 1.0x = $10k
+    ceiling = resolve_gross_ceiling(-16.0, base_x=BASE_X)  # 1.0x = $10k
     positions = [_position("NVDA", qty=200.0, current_price=100.0)]  # $20k
 
     first = apply_gross_ceiling([], positions, EQUITY, ceiling)
@@ -400,14 +447,13 @@ def test_a_de_levered_book_trimmed_once_is_not_trimmed_again():
         _position("NVDA", qty=200.0 * (1 - sold_fraction), current_price=100.0),
     ]
     second = apply_gross_ceiling([], remaining, EQUITY, ceiling)
-    assert second.trims == [], (
-        "the ladder must not de-lever a book that already fits its ceiling"
-    )
+    assert second.trims == [], "the ladder must not de-lever a book that already fits its ceiling"
 
 
 # ===========================================================================
 # THE GATE, PART 4 — none of this may depend on the Portfolio Manager.
 # ===========================================================================
+
 
 def test_a_blank_portfolio_manager_session_still_de_levers():
     """**A session where the Portfolio Manager returns nothing at all, with
@@ -424,7 +470,7 @@ def test_a_blank_portfolio_manager_session_still_de_levers():
     still have a correct value and the held book must still be reduced.
     """
     positions = [
-        _position("NVDA", qty=120.0, current_price=100.0),               # $12k
+        _position("NVDA", qty=120.0, current_price=100.0),  # $12k
         _position("AMD", qty=80.0, current_price=100.0, avg_entry=150.0),  # $8k
     ]
     # -16% peak-to-trough demands 1.0x. The book is at 2.0x.
@@ -440,18 +486,22 @@ def test_a_blank_portfolio_manager_session_still_de_levers():
     # exactly as it would on a session the PM answered.
     engine = RiskRuleEngine(_risk_config())
     assert GROSS_EXPOSURE_RULE in [
-        v.rule for v in engine.check(
-            decision=_buy("TSLA", 5.0), positions=positions,
-            total_value=EQUITY, gross_ceiling=ceiling,)
+        v.rule
+        for v in engine.check(
+            decision=_buy("TSLA", 5.0),
+            positions=positions,
+            total_value=EQUITY,
+            gross_ceiling=ceiling,
+        )
     ], "the blank-PM ceiling must still refuse new exposure"
     assert outcome.trims, (
-        "THE FAILURE THIS TEST EXISTS FOR: a blank PM response must not leave "
-        "the desk levered through a drawdown"
+        "THE FAILURE THIS TEST EXISTS FOR: a blank PM response must not leave the desk levered through a drawdown"
     )
     freed = sum(
         abs(p.market_value) * (t.allocation_pct / 100.0)
         for t in outcome.trims
-        for p in positions if p.symbol == t.symbol
+        for p in positions
+        if p.symbol == t.symbol
     )
     assert outcome.held_gross - freed <= outcome.ceiling_usd + 1e-6, (
         "the trim must actually bring the book under the ceiling"
@@ -474,14 +524,16 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # on 2026-09-18 (see `Database.save_session_report`, same shape
     # `run_evening`/`_run_evening_body` already used); the preamble this
     # test pins now lives in their bodies.
-    for entry_point in (__import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run,
-                        __import__("src.pipeline_parts.review", fromlist=["review"])._run_position_review_body):
+    for entry_point in (
+        __import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run,
+        __import__("src.pipeline_parts.review", fromlist=["review"])._run_position_review_body,
+    ):
         source = inspect.getsource(entry_point)
-        assert "_enforce_gross_ceiling" in source, (
-            f"{entry_point.__name__} must de-lever in its preamble"
-        )
+        assert "_enforce_gross_ceiling" in source, f"{entry_point.__name__} must de-lever in its preamble"
 
-    morning = inspect.getsource(__import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run)
+    morning = inspect.getsource(
+        __import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run
+    )
     assert morning.index("_enforce_gross_ceiling") < morning.index("_decision_stage"), (
         "the de-lever must run BEFORE the Portfolio Manager is called, so a "
         "blank or truncated model response cannot skip it"
@@ -512,7 +564,9 @@ def test_the_preamble_de_lever_submits_sells_with_no_pm_decision_present():
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
     pipeline.broker.get_account.return_value = {
-        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+        "cash": 0.0,
+        "portfolio_value": EQUITY,
+        "last_equity": EQUITY,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline.cash_sweeper = None
@@ -534,8 +588,7 @@ def test_the_preamble_de_lever_submits_sells_with_no_pm_decision_present():
     assert ctx.leverage["drawdown_pct"] == pytest.approx(-16.0, abs=0.1)
     assert ctx.leverage["distance_to_forced_liquidation_pct"] is not None
     assert "delever_incomplete" not in ctx.leverage, (
-        "a de-lever that actually brought the book under the ceiling must "
-        "not raise the incomplete flag"
+        "a de-lever that actually brought the book under the ceiling must not raise the incomplete flag"
     )
 
 
@@ -559,7 +612,9 @@ def test_a_delever_that_fails_to_clear_the_ceiling_is_flagged():
     # Post-refresh the broker still reports an over-levered book (the sell
     # only partially filled) — 1.5x against a 1.0x ceiling.
     pipeline.broker.get_account.return_value = {
-        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+        "cash": 0.0,
+        "portfolio_value": EQUITY,
+        "last_equity": EQUITY,
     }
     pipeline.broker.get_positions.return_value = [
         _position("NVDA", qty=150.0, current_price=100.0),
@@ -588,6 +643,7 @@ def test_the_ceiling_is_computed_from_account_state_alone():
     drawdown and a configured cap. There is no parameter through which a
     Portfolio Manager decision could reach it."""
     import inspect
+
     parameters = set(inspect.signature(resolve_gross_ceiling).parameters)
     assert parameters == {"drawdown_pct", "base_x"}
 
@@ -622,10 +678,11 @@ def test_an_unknown_drawdown_holds_the_standing_cap_and_trims_nothing():
 # The measurement itself — gross, the cash park, and the margin-call distance
 # ===========================================================================
 
+
 def test_gross_is_longs_plus_the_magnitude_of_shorts():
     positions = [
-        _position("NVDA", qty=50.0, current_price=100.0),     # +$5k long
-        _position("TSLA", qty=-30.0, current_price=100.0),    # -$3k short
+        _position("NVDA", qty=50.0, current_price=100.0),  # +$5k long
+        _position("TSLA", qty=-30.0, current_price=100.0),  # -$3k short
     ]
     assert gross_exposure(positions) == pytest.approx(8_000.0)
 
@@ -639,9 +696,13 @@ def test_the_cash_park_is_not_exposure():
     ]
     assert gross_exposure(positions, cash_park_symbol="SGOV") == pytest.approx(5_000.0)
     # And it is never sold to satisfy the ceiling.
-    ceiling = resolve_gross_ceiling(-30.0, base_x=BASE_X)   # 0.5x = $5k
+    ceiling = resolve_gross_ceiling(-30.0, base_x=BASE_X)  # 0.5x = $5k
     outcome = apply_gross_ceiling(
-        [], positions, EQUITY, ceiling, cash_park_symbol="SGOV",
+        [],
+        positions,
+        EQUITY,
+        ceiling,
+        cash_park_symbol="SGOV",
     )
     assert all(t.symbol != "SGOV" for t in outcome.trims)
 
@@ -667,13 +728,18 @@ def test_distance_to_forced_liquidation_reproduces_the_ratified_figures():
 # The EXECUTION gate — the same ceiling, enforced again where orders leave
 # ===========================================================================
 
+
 def test_the_execution_gate_hard_blocks_a_breach():
     engine = RiskRuleEngine(_risk_config())
-    positions = [_position("NVDA", qty=190.0, current_price=100.0)]   # $19k
-    decision = _buy("AMD", 30.0)                                      # +$3k -> 2.2x
+    positions = [_position("NVDA", qty=190.0, current_price=100.0)]  # $19k
+    decision = _buy("AMD", 30.0)  # +$3k -> 2.2x
 
     violations = engine.check(
-        decision=decision, positions=positions, total_value=EQUITY, gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
+        decision=decision,
+        positions=positions,
+        total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
+    )
 
     rules = [v.rule for v in violations]
     assert GROSS_EXPOSURE_RULE in rules
@@ -688,15 +754,21 @@ def test_the_execution_gate_moves_with_the_ladder():
     ever passes with identical outcomes at both rungs, the execution gate is
     not reading the ladder."""
     engine = RiskRuleEngine(_risk_config())
-    positions = [_position("NVDA", qty=90.0, current_price=100.0)]    # $9k
-    order = _buy("AMD", 20.0)                                         # +$2k -> 1.1x
+    positions = [_position("NVDA", qty=90.0, current_price=100.0)]  # $9k
+    order = _buy("AMD", 20.0)  # +$2k -> 1.1x
 
     undrawn = engine.check(
-        decision=order, positions=positions, total_value=EQUITY,
-        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
+        decision=order,
+        positions=positions,
+        total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
+    )
     drawn = engine.check(
-        decision=order, positions=positions, total_value=EQUITY,
-        gross_ceiling=resolve_gross_ceiling(-16.0, base_x=BASE_X),)
+        decision=order,
+        positions=positions,
+        total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(-16.0, base_x=BASE_X),
+    )
 
     assert GROSS_EXPOSURE_RULE not in [v.rule for v in undrawn]
     assert GROSS_EXPOSURE_RULE in [v.rule for v in drawn]
@@ -704,6 +776,7 @@ def test_the_execution_gate_moves_with_the_ladder():
 
 def test_the_execution_gate_is_a_hard_block_not_an_advisory():
     from src.pipeline import HARD_BLOCK_RULES
+
     assert GROSS_EXPOSURE_RULE in HARD_BLOCK_RULES
 
 
@@ -711,10 +784,12 @@ def test_the_execution_gate_falls_back_to_the_configured_cap():
     """A caller that forgets to pass the ladder still gets A ceiling — never
     none."""
     engine = RiskRuleEngine(_risk_config(max_gross_exposure_x=1.0))
-    positions = [_position("NVDA", qty=100.0, current_price=100.0)]   # $10k = 1.0x
+    positions = [_position("NVDA", qty=100.0, current_price=100.0)]  # $10k = 1.0x
     violations = engine.check(
-        decision=_buy("AMD", 20.0), positions=positions,
-        total_value=EQUITY,)
+        decision=_buy("AMD", 20.0),
+        positions=positions,
+        total_value=EQUITY,
+    )
     assert GROSS_EXPOSURE_RULE in [v.rule for v in violations]
 
 
@@ -723,19 +798,27 @@ def test_a_short_consumes_the_ceiling_exactly_like_a_long():
     engine = RiskRuleEngine(_risk_config(max_position_pct=100))
     positions = [_position("NVDA", qty=190.0, current_price=100.0)]
     short = TradeDecision(
-        action="SHORT", symbol="TSLA", allocation_pct=30.0,
-        entry_price=100.0, stop_loss=110.0, take_profit=80.0,
+        action="SHORT",
+        symbol="TSLA",
+        allocation_pct=30.0,
+        entry_price=100.0,
+        stop_loss=110.0,
+        take_profit=80.0,
         reasoning="breakdown",
     )
     violations = engine.check(
-        decision=short, positions=positions, total_value=EQUITY,
-        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),)
+        decision=short,
+        positions=positions,
+        total_value=EQUITY,
+        gross_ceiling=resolve_gross_ceiling(0.0, base_x=BASE_X),
+    )
     assert GROSS_EXPOSURE_RULE in [v.rule for v in violations]
 
 
 # ===========================================================================
 # Refusals must read as English, naming the rule that fired
 # ===========================================================================
+
 
 def test_every_refusal_says_which_rule_fired_in_plain_language():
     positions = [_position("NVDA", qty=200.0, current_price=100.0)]
@@ -745,9 +828,7 @@ def test_every_refusal_says_which_rule_fired_in_plain_language():
     assert outcome.notes, "a refusal with no explanation is not a refusal"
     for note in outcome.notes:
         assert GROSS_EXPOSURE_RULE in note, "every note names the rule by name"
-        assert "below its equity high" in note, (
-            "and says, in words, why the ceiling is where it is"
-        )
+        assert "below its equity high" in note, "and says, in words, why the ceiling is where it is"
 
 
 def test_the_de_lever_order_explains_itself_to_the_operator():
@@ -762,6 +843,7 @@ def test_the_de_lever_order_explains_itself_to_the_operator():
 # Fail-closed on a broken broker snapshot
 # ===========================================================================
 
+
 def test_a_nan_market_value_blocks_new_exposure_and_forbids_trimming():
     """`NaN > ceiling` is False, so an unguarded comparison would switch the
     ceiling OFF on exactly the broken-snapshot day it matters most. And
@@ -772,7 +854,10 @@ def test_a_nan_market_value_blocks_new_exposure_and_forbids_trimming():
     decision = _buy("AMD", 10.0)
 
     outcome = apply_gross_ceiling(
-        [decision], [broken], EQUITY, resolve_gross_ceiling(0.0, base_x=BASE_X),
+        [decision],
+        [broken],
+        EQUITY,
+        resolve_gross_ceiling(0.0, base_x=BASE_X),
     )
 
     assert decision.allocation_pct == 0.0
@@ -783,7 +868,10 @@ def test_a_nan_market_value_blocks_new_exposure_and_forbids_trimming():
 def test_an_unusable_equity_figure_refuses_every_new_position():
     decision = _buy("AMD", 10.0)
     outcome = apply_gross_ceiling(
-        [decision], [], 0.0, resolve_gross_ceiling(0.0, base_x=BASE_X),
+        [decision],
+        [],
+        0.0,
+        resolve_gross_ceiling(0.0, base_x=BASE_X),
     )
     assert decision.allocation_pct == 0.0
     assert outcome.blocked == ["AMD"]
@@ -800,6 +888,7 @@ def test_an_unusable_equity_figure_refuses_every_new_position():
 # caller in the whole codebase is allowed to author a trim.
 # ===========================================================================
 
+
 def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
     """The real chain, in order. The sizing gate shrinks an oversized entry
     to exactly the headroom the ceiling allows; the execution gate then sees
@@ -811,16 +900,20 @@ def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
       * either gate shrinking a second time — the book would de-lever twice
         as hard as the ratified rung.
     """
-    positions = [_position("NVDA", qty=100.0, current_price=100.0)]   # $10k
-    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)             # 1.5x = $15k
+    positions = [_position("NVDA", qty=100.0, current_price=100.0)]  # $10k
+    ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)  # 1.5x = $15k
     assert ceiling.ceiling_x == 1.5
-    decision = _buy("AMD", 100.0)                                     # wants $10k
+    decision = _buy("AMD", 100.0)  # wants $10k
 
     # --- gate 1: sizing. `emit_trims=False` is exactly how the constructor
     # calls it — shrinking its own proposal is its job, trimming is not.
     apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling,
-        min_order_usd=500.0, emit_trims=False,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
+        emit_trims=False,
     )
     after_sizing = decision.allocation_pct
     assert after_sizing == pytest.approx(50.0), "shrunk to the $5k of headroom"
@@ -828,20 +921,26 @@ def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
     # --- gate 2: execution. Same ceiling, same order, same book.
     engine = RiskRuleEngine(_risk_config())
     violations = engine.check(
-        decision=decision, positions=positions, total_value=EQUITY, gross_ceiling=ceiling,)
+        decision=decision,
+        positions=positions,
+        total_value=EQUITY,
+        gross_ceiling=ceiling,
+    )
     assert GROSS_EXPOSURE_RULE not in [v.rule for v in violations], (
-        "the execution gate must not reject an order the sizing gate already "
-        "fitted under the very same ceiling"
+        "the execution gate must not reject an order the sizing gate already fitted under the very same ceiling"
     )
     assert decision.allocation_pct == after_sizing, (
-        "the execution gate BLOCKS; it must never re-size, or the two gates "
-        "would compound into a double de-lever"
+        "the execution gate BLOCKS; it must never re-size, or the two gates would compound into a double de-lever"
     )
 
     # --- and the sizing gate run again is still a no-op.
     apply_gross_ceiling(
-        [decision], positions, EQUITY, ceiling,
-        min_order_usd=500.0, emit_trims=False,
+        [decision],
+        positions,
+        EQUITY,
+        ceiling,
+        min_order_usd=500.0,
+        emit_trims=False,
     )
     assert decision.allocation_pct == after_sizing
 
@@ -873,7 +972,8 @@ def test_trimming_the_held_book_has_exactly_one_owner():
             if name != "apply_gross_ceiling":
                 continue
             emit = next(
-                (kw.value for kw in node.keywords if kw.arg == "emit_trims"), None,
+                (kw.value for kw in node.keywords if kw.arg == "emit_trims"),
+                None,
             )
             disabled = isinstance(emit, ast.Constant) and emit.value is False
             (sizing_callers if disabled else trim_owners).append(path.relative_to(src).as_posix())
@@ -882,9 +982,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
     # `_enforce_gross_ceiling` with a cut order — precisely so a second owner
     # cannot appear. A duplicate entry here means one did.
-    assert trim_owners == ["delever/enforce.py"], (
-        f"exactly one caller may author de-lever orders; found {trim_owners}"
-    )
+    assert trim_owners == ["delever/enforce.py"], f"exactly one caller may author de-lever orders; found {trim_owners}"
     assert sizing_callers == ["portfolio_constructor/__init__.py"], (
         f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
     )
@@ -897,20 +995,29 @@ def test_trimming_the_held_book_has_exactly_one_owner():
 # which rung is in force. It was shipped untested; these pin it.
 # ===========================================================================
 
+
 def test_the_session_alert_reports_the_rung_in_force():
     from src.notifier import _append_leverage_line
 
     lines: list[str] = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 1.8, "ceiling_x": 1.5, "base_ceiling_x": 2.0,
-        "drawdown_pct": -12.0, "distance_to_forced_liquidation_pct": 55.6,
-        "alert_owner": False,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 1.8,
+                "ceiling_x": 1.5,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": -12.0,
+                "distance_to_forced_liquidation_pct": 55.6,
+                "alert_owner": False,
+            }
+        },
+    )
 
     assert len(lines) == 1
     line = lines[0]
     assert "1.80x" in line and "1.50x" in line
-    assert "56% fall to a margin call" in line   # 55.6 rendered to 0dp
+    assert "56% fall to a margin call" in line  # 55.6 rendered to 0dp
     assert "12.0% below the equity high" in line
     # The de-levered STATE must be carried by the word, never by a colour
     # or an icon alone.
@@ -929,11 +1036,19 @@ def test_the_margin_call_distance_label_never_reads_as_a_stop_or_gap_metric():
     from src.notifier import _append_leverage_line
 
     lines: list[str] = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 1.8, "ceiling_x": 1.5, "base_ceiling_x": 2.0,
-        "drawdown_pct": -12.0, "distance_to_forced_liquidation_pct": 55.6,
-        "alert_owner": False,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 1.8,
+                "ceiling_x": 1.5,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": -12.0,
+                "distance_to_forced_liquidation_pct": 55.6,
+                "alert_owner": False,
+            }
+        },
+    )
 
     assert len(lines) == 1
     line = lines[0]
@@ -941,12 +1056,14 @@ def test_the_margin_call_distance_label_never_reads_as_a_stop_or_gap_metric():
     assert "fall to a margin call" in line
     # Banned mislabels this exact number must never carry.
     for banned in (
-        "gap survival", "gap-survival",
-        "distance to stop", "distance-to-stop", "stop-out", "stop out",
+        "gap survival",
+        "gap-survival",
+        "distance to stop",
+        "distance-to-stop",
+        "stop-out",
+        "stop out",
     ):
-        assert banned not in line.lower(), (
-            f"{banned!r} mislabels the broker margin-call distance in: {line!r}"
-        )
+        assert banned not in line.lower(), f"{banned!r} mislabels the broker margin-call distance in: {line!r}"
     assert "DE-LEVERED" in line
 
 
@@ -954,8 +1071,7 @@ def test_the_alert_stays_silent_when_nothing_was_measured():
     """An omitted line is honest; an invented '1.0x' is not."""
     from src.notifier import _append_leverage_line
 
-    for result in ({}, {"leverage": {}}, {"leverage": {"gross_x": None,
-                                                       "ceiling_x": 1.5}}):
+    for result in ({}, {"leverage": {}}, {"leverage": {"gross_x": None, "ceiling_x": 1.5}}):
         lines: list[str] = []
         _append_leverage_line(lines, result)
         assert lines == []
@@ -965,11 +1081,19 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
     from src.notifier import _append_leverage_line
 
     lines: list[str] = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 0.4, "ceiling_x": 0.5, "base_ceiling_x": 2.0,
-        "drawdown_pct": -24.0, "distance_to_forced_liquidation_pct": 100.0,
-        "alert_owner": True,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 0.4,
+                "ceiling_x": 0.5,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": -24.0,
+                "distance_to_forced_liquidation_pct": 100.0,
+                "alert_owner": True,
+            }
+        },
+    )
 
     assert len(lines) == 2, "the -20% rung gets its own line, not a footnote"
     alert = lines[1]
@@ -997,10 +1121,19 @@ def test_an_unmeasurable_drawdown_alert_never_claims_a_measured_number():
 
     for rung in ("unknown", "bad_read"):
         lines: list[str] = []
-        _append_leverage_line(lines, {"leverage": {
-            "gross_x": 1.1, "ceiling_x": 2.0, "base_ceiling_x": 2.0,
-            "drawdown_pct": None, "rung": rung, "alert_owner": True,
-        }})
+        _append_leverage_line(
+            lines,
+            {
+                "leverage": {
+                    "gross_x": 1.1,
+                    "ceiling_x": 2.0,
+                    "base_ceiling_x": 2.0,
+                    "drawdown_pct": None,
+                    "rung": rung,
+                    "alert_owner": True,
+                }
+            },
+        )
         assert len(lines) == 2
         alert = lines[1]
         assert "UNMEASURABLE" in alert
@@ -1008,10 +1141,19 @@ def test_an_unmeasurable_drawdown_alert_never_claims_a_measured_number():
 
     # And the state must not be readable as "we are fine": say so outright.
     lines = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 1.1, "ceiling_x": 2.0, "base_ceiling_x": 2.0,
-        "drawdown_pct": None, "rung": "unknown", "alert_owner": True,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 1.1,
+                "ceiling_x": 2.0,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": None,
+                "rung": "unknown",
+                "alert_owner": True,
+            }
+        },
+    )
     assert "NOT a book at record highs" in lines[1]
 
 
@@ -1024,11 +1166,20 @@ def test_a_failed_delever_gets_its_own_plain_language_alert():
     from src.notifier import _append_leverage_line
 
     lines: list[str] = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 1.5, "ceiling_x": 1.0, "base_ceiling_x": 2.0,
-        "drawdown_pct": -16.0, "distance_to_forced_liquidation_pct": 40.0,
-        "alert_owner": False, "delever_incomplete": True,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 1.5,
+                "ceiling_x": 1.0,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": -16.0,
+                "distance_to_forced_liquidation_pct": 40.0,
+                "alert_owner": False,
+                "delever_incomplete": True,
+            }
+        },
+    )
 
     assert len(lines) == 2, "the failed de-lever gets its own line"
     alert = lines[1]
@@ -1044,11 +1195,20 @@ def test_no_failed_delever_alert_when_the_book_cleared_the_ceiling():
     from src.notifier import _append_leverage_line
 
     lines: list[str] = []
-    _append_leverage_line(lines, {"leverage": {
-        "gross_x": 0.9, "ceiling_x": 1.0, "base_ceiling_x": 2.0,
-        "drawdown_pct": -16.0, "distance_to_forced_liquidation_pct": 40.0,
-        "alert_owner": False, "delever_incomplete": False,
-    }})
+    _append_leverage_line(
+        lines,
+        {
+            "leverage": {
+                "gross_x": 0.9,
+                "ceiling_x": 1.0,
+                "base_ceiling_x": 2.0,
+                "drawdown_pct": -16.0,
+                "distance_to_forced_liquidation_pct": 40.0,
+                "alert_owner": False,
+                "delever_incomplete": False,
+            }
+        },
+    )
 
     assert len(lines) == 1, "no incomplete-delever line when the flag is unset"
 
@@ -1070,6 +1230,7 @@ def test_no_failed_delever_alert_when_the_book_cleared_the_ceiling():
 # drawdown" branch a genuinely fresh account uses, silently holding the
 # loosest (standing) cap instead of halting new risk.
 # ===========================================================================
+
 
 def test_peak_to_trough_pct_never_lets_nan_win_the_peak():
     """The literal ask: a NaN sits among the candidates for 'peak' (as if
@@ -1119,18 +1280,17 @@ def test_peak_to_trough_pct_logs_when_dropping_non_finite_readings(caplog):
     though the return value is correct either way — this is the guard
     against the reading vanishing with no evidence it ever existed."""
     import logging
+
     with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
         peak_to_trough_pct([100_000.0, float("nan"), float("inf")], 90_000.0)
-    assert any(
-        "dropped" in r.message and "non-finite" in r.message
-        for r in caplog.records
-    )
+    assert any("dropped" in r.message and "non-finite" in r.message for r in caplog.records)
 
 
 def test_peak_to_trough_pct_no_warning_when_all_readings_are_clean(caplog):
     """Regression guard: the new logging must not fire on the ordinary
     (no corruption) path — that would turn a silent, correct case noisy."""
     import logging
+
     with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
         peak_to_trough_pct([100_000.0, 110_000.0], 105_000.0)
     assert not any("dropped" in r.message for r in caplog.records)
@@ -1144,6 +1304,7 @@ def test_peak_to_trough_pct_all_history_corrupted_is_unmeasurable_not_zero(caplo
     owner-facing line, from a book at record highs. It is now UNMEASURABLE:
     losing the curve and making new highs are opposite states."""
     import logging
+
     with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
         drawdown = peak_to_trough_pct([float("nan")] * 5, 95_000.0)
     assert drawdown is None
@@ -1158,6 +1319,7 @@ def test_peak_to_trough_pct_empty_history_is_unmeasurable_not_zero(caplog):
     data-loss event would silently disable the desk's only automatic
     seller while reporting a healthy book."""
     import logging
+
     with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
         assert peak_to_trough_pct([], 95_000.0) is None
     assert any("UNMEASURABLE" in r.message for r in caplog.records)
@@ -1210,6 +1372,7 @@ def test_insert_daily_pnl_rejects_a_nan_total_value():
 
 
 # --- TradingPipeline._resolve_gross_ceiling: the bad-current-read fix ------
+
 
 def _pipeline_for_ceiling(**risk_overrides):
     from unittest.mock import MagicMock
@@ -1296,7 +1459,8 @@ def test_resolve_gross_ceiling_normal_drawdown_path_still_works():
     still walks the ordinary ladder path (unaffected by the new branch)."""
     pipeline = _pipeline_for_ceiling()
     pipeline.db.get_daily_pnl.return_value = [
-        {"total_value": 100_000.0}, {"total_value": 150_000.0},
+        {"total_value": 100_000.0},
+        {"total_value": 150_000.0},
     ]
     ctx = _ctx_with_equity(120_000.0)
 
@@ -1341,9 +1505,9 @@ from src.risk.rules import GrossCeiling  # noqa: E402
 EXEC_PRICE = 100.0
 
 
-def _execution_pipeline(*, cash, equity, ceiling_x=BASE_X, rung="none",
-                        allow_margin=True, max_position_pct=100.0,
-                        park="SGOV", positions=()):
+def _execution_pipeline(
+    *, cash, equity, ceiling_x=BASE_X, rung="none", allow_margin=True, max_position_pct=100.0, park="SGOV", positions=()
+):
     """A pipeline stub whose §11.2 ceiling is REAL and whose sizing is
     deterministic: whole shares at $100, so every notional below is a plain
     multiple of the price and nothing hides in a rounding."""
@@ -1351,7 +1515,8 @@ def _execution_pipeline(*, cash, equity, ceiling_x=BASE_X, rung="none",
     pipeline.broker.get_latest_price.return_value = EXEC_PRICE
     pipeline.broker.submit_order.return_value = {"id": "ord", "status": "accepted"}
     pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True,
+        "shortable": True,
+        "easy_to_borrow": True,
     }
     pipeline._order_accepted.return_value = True
     pipeline._format_qty = lambda q: str(q)
@@ -1360,18 +1525,24 @@ def _execution_pipeline(*, cash, equity, ceiling_x=BASE_X, rung="none",
     # ctx-only book would be discarded and the headroom measured against an
     # empty one.
     pipeline._refresh_account_state.return_value = (
-        {"cash": cash, "portfolio_value": equity}, list(positions), {},
+        {"cash": cash, "portfolio_value": equity},
+        list(positions),
+        {},
     )
     pipeline._resolve_gross_ceiling = lambda ctx: GrossCeiling(
-        ceiling_x=ceiling_x, base_x=BASE_X, drawdown_pct=None,
-        alert_owner=False, rung=rung, reason="test rung",
+        ceiling_x=ceiling_x,
+        base_x=BASE_X,
+        drawdown_pct=None,
+        alert_owner=False,
+        rung=rung,
+        reason="test rung",
     )
     pipeline._sweep_symbol = lambda: park
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = allow_margin
     pipeline.config.risk.max_position_pct = max_position_pct
     pipeline.config.cash_sweep.min_order_usd = 500.0
-    pipeline.config.execution.fractional_enabled = False   # whole shares
+    pipeline.config.execution.fractional_enabled = False  # whole shares
     return pipeline
 
 
@@ -1380,9 +1551,13 @@ def _entry(symbol="NVDA", alloc=100.0) -> TradeDecision:
     the size. The stop sits $0.10 away so the §11.1 risk budget cannot be
     what binds — this file is about the ceiling, not about risk sizing."""
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=alloc,
-        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE - 0.10,
-        take_profit=EXEC_PRICE + 10.0, reasoning="ladder execution test",
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=EXEC_PRICE,
+        stop_loss=EXEC_PRICE - 0.10,
+        take_profit=EXEC_PRICE + 10.0,
+        reasoning="ladder execution test",
     )
 
 
@@ -1393,23 +1568,25 @@ def _exec_ctx(decisions, *, cash, equity, positions=()) -> RunContext:
     ctx.last_equity = equity
     ctx.positions = list(positions)
     ctx.decision_id = "run-x-dec-ladder"
-    ctx.symbols_bars = {}          # no bars -> no ATR stop floor
+    ctx.symbols_bars = {}  # no bars -> no ATR stop floor
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter="m", news_check="n", earnings_check="e",
-            signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+            macro_filter="m",
+            news_check="n",
+            earnings_check="e",
+            signal_conflicts="s",
+            sizing_logic="z",
+            portfolio_balance="b",
             cash_target="c",
         ),
-        decisions=decisions, portfolio_view="t",
+        decisions=decisions,
+        portfolio_view="t",
     )
     return ctx
 
 
 def _submitted_notional(pipeline) -> float:
-    return sum(
-        call.kwargs["qty"] * EXEC_PRICE
-        for call in pipeline.broker.submit_order.call_args_list
-    )
+    return sum(call.kwargs["qty"] * EXEC_PRICE for call in pipeline.broker.submit_order.call_args_list)
 
 
 def test_a_long_may_now_borrow_up_to_the_ladder_ceiling():
@@ -1417,7 +1594,7 @@ def test_a_long_may_now_borrow_up_to_the_ladder_ceiling():
     on $10,000 of equity, and the standing 2.0x rung: the long goes out at
     the size the ladder allows, not at the size the cash allows. Before the
     swap this order was cut to five shares."""
-    held = [_position(symbol="MSFT", qty=40, current_price=100.0)]   # $4,000
+    held = [_position(symbol="MSFT", qty=40, current_price=100.0)]  # $4,000
     pipeline = _execution_pipeline(cash=500.0, equity=10_000.0, positions=held)
     ctx = _exec_ctx([_entry()], cash=500.0, equity=10_000.0, positions=held)
 
@@ -1436,11 +1613,16 @@ def test_the_deployment_budget_steps_with_every_rung_including_the_floor(ceiling
     equity, held_gross = 10_000.0, 4_000.0
     held = [_position(symbol="MSFT", qty=40, current_price=100.0)]
     pipeline = _execution_pipeline(
-        cash=500.0, equity=equity, ceiling_x=ceiling_x, positions=held,
+        cash=500.0,
+        equity=equity,
+        ceiling_x=ceiling_x,
+        positions=held,
     )
     ctx = _exec_ctx(
         [_entry("NVDA"), _entry("AMD"), _entry("AAPL")],
-        cash=500.0, equity=equity, positions=held,
+        cash=500.0,
+        equity=equity,
+        positions=held,
     )
 
     ExecutionStage(pipeline=pipeline).run(ctx)
@@ -1455,9 +1637,13 @@ def test_a_deeper_rung_deploys_less_than_settled_cash_alone_would_have():
     the floor rung refuses every dollar of it, because the book is already
     over that rung."""
     equity = 10_000.0
-    held = [_position(symbol="MSFT", qty=55, current_price=100.0)]   # $5,500
+    held = [_position(symbol="MSFT", qty=55, current_price=100.0)]  # $5,500
     pipeline = _execution_pipeline(
-        cash=6_000.0, equity=equity, ceiling_x=0.5, rung="-20%", positions=held,
+        cash=6_000.0,
+        equity=equity,
+        ceiling_x=0.5,
+        rung="-20%",
+        positions=held,
     )
     ctx = _exec_ctx([_entry()], cash=6_000.0, equity=equity, positions=held)
 
@@ -1473,7 +1659,9 @@ def test_no_single_order_can_consume_the_whole_session():
     nobody made. `max_position_pct` is re-applied to the size EXECUTION
     chose — same idiom as the §10.3 notional floor beside it."""
     pipeline = _execution_pipeline(
-        cash=500.0, equity=10_000.0, max_position_pct=20.0,
+        cash=500.0,
+        equity=10_000.0,
+        max_position_pct=20.0,
     )
     ctx = _exec_ctx([_entry()], cash=500.0, equity=10_000.0)
 
@@ -1488,14 +1676,21 @@ def test_a_short_is_never_sized_or_refused_by_the_budget():
     or refused by this clamp — it goes out in full against a budget of
     ZERO, exactly as it did before the swap."""
     equity = 10_000.0
-    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]   # $5,000
+    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]  # $5,000
     pipeline = _execution_pipeline(
-        cash=0.0, equity=equity, ceiling_x=0.5, positions=held,
+        cash=0.0,
+        equity=equity,
+        ceiling_x=0.5,
+        positions=held,
     )
     short = TradeDecision(
-        action="SHORT", symbol="XOM", allocation_pct=20.0,
-        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE + 0.10,
-        take_profit=EXEC_PRICE - 10.0, reasoning="short with no headroom",
+        action="SHORT",
+        symbol="XOM",
+        allocation_pct=20.0,
+        entry_price=EXEC_PRICE,
+        stop_loss=EXEC_PRICE + 0.10,
+        take_profit=EXEC_PRICE - 10.0,
+        reasoning="short with no headroom",
     )
     ctx = _exec_ctx([short], cash=0.0, equity=equity, positions=held)
 
@@ -1513,27 +1708,34 @@ def test_a_short_consumes_the_budget_for_the_long_behind_it():
     sized by it, or a long behind it in the same batch would be sized
     against headroom the short has already spent."""
     equity = 10_000.0
-    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]   # $5,000
+    held = [_position(symbol="MSFT", qty=50, current_price=100.0)]  # $5,000
     pipeline = _execution_pipeline(
-        cash=0.0, equity=equity, ceiling_x=1.0, positions=held,
+        cash=0.0,
+        equity=equity,
+        ceiling_x=1.0,
+        positions=held,
     )
     short = TradeDecision(
-        action="SHORT", symbol="XOM", allocation_pct=20.0,   # $2,000
-        entry_price=EXEC_PRICE, stop_loss=EXEC_PRICE + 0.10,
-        take_profit=EXEC_PRICE - 10.0, reasoning="short first",
+        action="SHORT",
+        symbol="XOM",
+        allocation_pct=20.0,  # $2,000
+        entry_price=EXEC_PRICE,
+        stop_loss=EXEC_PRICE + 0.10,
+        take_profit=EXEC_PRICE - 10.0,
+        reasoning="short first",
     )
     ctx = _exec_ctx([short, _entry()], cash=0.0, equity=equity, positions=held)
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    buys = [c.kwargs for c in pipeline.broker.submit_order.call_args_list
-            if c.kwargs.get("side") == "buy"]
+    buys = [c.kwargs for c in pipeline.broker.submit_order.call_args_list if c.kwargs.get("side") == "buy"]
     # $5,000 of headroom at 1.0x, minus the $2,000 the short just took.
     assert len(buys) == 1
     assert buys[0]["qty"] * EXEC_PRICE == 3_000.0
 
 
 # --- the budget itself, unit-tested at its degraded edges -----------------
+
 
 def _budget_pipeline(**kwargs):
     return _execution_pipeline(cash=0.0, equity=0.0, **kwargs)
@@ -1543,7 +1745,11 @@ def test_the_budget_is_ladder_headroom_when_margin_is_on():
     pipeline = _budget_pipeline(ceiling_x=1.5)
     held = [_position(symbol="MSFT", qty=40, current_price=100.0)]
     budget, is_gross, note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), held, 10_000.0, 250.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        held,
+        10_000.0,
+        250.0,
     )
     assert budget == 1.5 * 10_000.0 - 4_000.0
     assert is_gross is True
@@ -1556,7 +1762,11 @@ def test_settled_cash_still_binds_when_margin_is_off():
     tighter of the two governs, which is what shipped before."""
     pipeline = _budget_pipeline(ceiling_x=2.0, allow_margin=False)
     budget, _is_gross, note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 250.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        [],
+        10_000.0,
+        250.0,
     )
     assert budget == 250.0
     assert "margin disabled" in note
@@ -1571,10 +1781,18 @@ def test_an_unusable_equity_read_buys_no_room_at_all(bad_equity):
     the guard exists for. It must fail closed instead."""
     pipeline = _budget_pipeline(ceiling_x=GROSS_LADDER[-1][1], rung="bad_read")
     bad, _is_gross, note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(bad_equity), [], bad_equity, 9_000.0,
+        pipeline,
+        _ctx_with_equity(bad_equity),
+        [],
+        bad_equity,
+        9_000.0,
     )
     good, _g, _n = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 9_000.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        [],
+        10_000.0,
+        9_000.0,
     )
 
     assert bad == 0.0
@@ -1588,10 +1806,14 @@ def test_an_unreadable_ladder_falls_back_to_cash_never_to_the_standing_cap():
     this one. An unresolvable ceiling therefore degrades to the pre-margin
     raw-cash clamp — never to 2.0x of an equity figure nobody vouched for."""
     pipeline = _budget_pipeline()
-    pipeline._resolve_gross_ceiling = lambda ctx: None    # not a GrossCeiling
+    pipeline._resolve_gross_ceiling = lambda ctx: None  # not a GrossCeiling
 
     budget, is_gross, note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), [], 10_000.0, 250.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        [],
+        10_000.0,
+        250.0,
     )
 
     assert budget == 250.0
@@ -1606,7 +1828,11 @@ def test_the_park_vehicle_is_not_charged_against_the_budget():
     pipeline = _budget_pipeline(ceiling_x=1.0)
     parked = [_position(symbol="SGOV", qty=50, current_price=100.0)]
     budget, _is_gross, _note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), parked, 10_000.0, 0.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        parked,
+        10_000.0,
+        0.0,
     )
     assert budget == 10_000.0
 
@@ -1621,7 +1847,11 @@ def test_an_unreadable_park_symbol_understates_headroom_rather_than_inflating(ba
     pipeline = _budget_pipeline(ceiling_x=1.0, park=bad_park)
     parked = [_position(symbol="SGOV", qty=50, current_price=100.0)]
     budget, _is_gross, _note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), parked, 10_000.0, 0.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        parked,
+        10_000.0,
+        0.0,
     )
     assert budget == 5_000.0
 
@@ -1631,17 +1861,21 @@ def test_a_book_already_over_its_rung_has_zero_headroom_never_negative():
     operator as "-$500 still deployable", and would silently absorb the
     first $500 of anything a later refresh credited."""
     pipeline = _budget_pipeline(ceiling_x=0.5)
-    over = [_position(symbol="MSFT", qty=55, current_price=100.0)]   # $5,500
+    over = [_position(symbol="MSFT", qty=55, current_price=100.0)]  # $5,500
     budget, _is_gross, _note = _entry_deployment_budget(
-        pipeline, _ctx_with_equity(10_000.0), over, 10_000.0, 6_000.0,
+        pipeline,
+        _ctx_with_equity(10_000.0),
+        over,
+        10_000.0,
+        6_000.0,
     )
     assert budget == 0.0
 
 
 def test_the_single_name_execution_cap_falls_back_closed_not_open():
     pipeline = _budget_pipeline()
-    pipeline.config.risk.max_position_pct = MagicMock()   # unreadable
-    assert _single_name_execution_cap(pipeline, 10_000.0) == 2_000.0   # 20% default
+    pipeline.config.risk.max_position_pct = MagicMock()  # unreadable
+    assert _single_name_execution_cap(pipeline, 10_000.0) == 2_000.0  # 20% default
     assert _single_name_execution_cap(pipeline, float("nan")) == 0.0
 
 
@@ -1675,8 +1909,9 @@ def _stop_timeline_pipeline(*, allow_margin: bool):
     pipeline._compute_deployable_cash = MagicMock(return_value=0.0)
 
     broker = MagicMock()
-    broker.snapshot_protective_stops.side_effect = (
-        lambda symbol, **_kw: (True, [{"id": f"stop-{symbol}", "stop_price": 80.0}])
+    broker.snapshot_protective_stops.side_effect = lambda symbol, **_kw: (
+        True,
+        [{"id": f"stop-{symbol}", "stop_price": 80.0}],
     )
 
     def _cancel(symbol, _specs):
@@ -1691,7 +1926,9 @@ def _stop_timeline_pipeline(*, allow_margin: bool):
     broker.submit_order.side_effect = _submit
     broker.wait_for_order_terminal.return_value = "filled"
     broker.get_account.return_value = {
-        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+        "cash": 0.0,
+        "portfolio_value": EQUITY,
+        "last_equity": EQUITY,
     }
     broker.get_positions.return_value = []
     pipeline.broker = broker
@@ -1777,12 +2014,14 @@ def test_a_multi_symbol_cash_only_delever_restores_each_stop_before_touching_the
 
 def _shortfall_rows(database):
     import json
+
     rows = database.conn.execute(
         "SELECT run_id, agent_name, kind, scope, symbol, evidence_json "
         "FROM specialist_evidence WHERE kind='pipeline_event'"
     ).fetchall()
     return [
-        (dict(r), json.loads(r["evidence_json"])) for r in rows
+        (dict(r), json.loads(r["evidence_json"]))
+        for r in rows
         if json.loads(r["evidence_json"]).get("stage") == "gross_delever"
     ]
 
@@ -1795,9 +2034,7 @@ def test_a_delever_left_over_the_ceiling_writes_a_durable_shortfall_row(tmp_path
     database.initialize()
     try:
         pipeline, _events = _stop_timeline_pipeline(allow_margin=True)
-        pipeline.db.insert_specialist_evidence.side_effect = (
-            database.insert_specialist_evidence
-        )
+        pipeline.db.insert_specialist_evidence.side_effect = database.insert_specialist_evidence
         # The limit never fills: the broker cancels it, and the refreshed
         # book is exactly as levered as before.
         pipeline.broker.wait_for_order_terminal.return_value = "canceled"
@@ -1825,11 +2062,16 @@ def test_a_delever_left_over_the_ceiling_writes_a_durable_shortfall_row(tmp_path
         assert data["ceiling_x"] == 1.0
         assert data["equity_before"] == pytest.approx(EQUITY)
         assert data["ceiling_usd_before"] == pytest.approx(EQUITY)
-        assert data["orders"] == [{
-            "symbol": "NVDA", "action": "SELL", "qty_submitted": 100.0,
-            "broker_order_id": "ord-NVDA", "terminal_status": "canceled",
-            "stop_coverage_confirmed": True,
-        }]
+        assert data["orders"] == [
+            {
+                "symbol": "NVDA",
+                "action": "SELL",
+                "qty_submitted": 100.0,
+                "broker_order_id": "ord-NVDA",
+                "terminal_status": "canceled",
+                "stop_coverage_confirmed": True,
+            }
+        ]
     finally:
         database.close()
 
@@ -1842,9 +2084,7 @@ def test_a_delever_that_cleared_the_ceiling_writes_no_shortfall_row(tmp_path):
     database.initialize()
     try:
         pipeline, _events = _stop_timeline_pipeline(allow_margin=True)
-        pipeline.db.insert_specialist_evidence.side_effect = (
-            database.insert_specialist_evidence
-        )
+        pipeline.db.insert_specialist_evidence.side_effect = database.insert_specialist_evidence
         pipeline.broker.get_positions.return_value = [
             _position("NVDA", qty=100.0, current_price=100.0),
         ]  # 1.0x after the fill: at the ceiling, not over it
@@ -1894,8 +2134,13 @@ def test_a_failed_shortfall_write_never_breaks_the_delever():
 
 
 def _gap_fill_pipeline(
-    *, gap_price, originals, allow_margin=True, live_quote="gap",
-    reject_limit=False, reject_all=False,
+    *,
+    gap_price,
+    originals,
+    allow_margin=True,
+    live_quote="gap",
+    reject_limit=False,
+    reject_all=False,
 ):
     """Real de-lever loop against a broker that fills or rests by limit price.
 
@@ -1939,13 +2184,13 @@ def _gap_fill_pipeline(
         if limit_price is None:
             fillable = True  # a MARKET order fills unconditionally
         else:
-            fillable = (
-                limit_price <= gap_price if side == "sell"
-                else limit_price >= gap_price
-            )
+            fillable = limit_price <= gap_price if side == "sell" else limit_price >= gap_price
         submitted[oid] = {
-            "symbol": symbol, "side": side, "limit_price": limit_price,
-            "qty": qty, "fillable": fillable,
+            "symbol": symbol,
+            "side": side,
+            "limit_price": limit_price,
+            "qty": qty,
+            "fillable": fillable,
         }
         return {"id": oid, "symbol": symbol, "status": "accepted"}
 
@@ -1955,10 +2200,7 @@ def _gap_fill_pipeline(
     def _positions():
         out = []
         for p in originals:
-            filled = sum(
-                o["qty"] for o in submitted.values()
-                if o["symbol"] == p.symbol and o["fillable"]
-            )
+            filled = sum(o["qty"] for o in submitted.values() if o["symbol"] == p.symbol and o["fillable"])
             remaining = abs(p.qty) - filled
             if remaining <= 1e-9:
                 continue
@@ -1985,7 +2227,8 @@ def test_live_delever_price_crosses_the_correct_side_and_falls_back_to_market():
 
     # Full two-sided quote: SELL -> bid, COVER -> ask, reference -> mid.
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 79.0, "ask_price": 81.0,
+        "bid_price": 79.0,
+        "ask_price": 81.0,
     }
     assert pipeline._live_delever_price("NVDA", "sell") == (79.0, 80.0)
     assert pipeline._live_delever_price("NVDA", "buy") == (81.0, 80.0)
@@ -1993,20 +2236,23 @@ def test_live_delever_price_crosses_the_correct_side_and_falls_back_to_market():
     # One-sided quote: the missing side yields a None limit (-> MARKET) while
     # the present side still prices and references off itself.
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 79.0, "ask_price": None,
+        "bid_price": 79.0,
+        "ask_price": None,
     }
     assert pipeline._live_delever_price("NVDA", "sell") == (79.0, 79.0)
     assert pipeline._live_delever_price("NVDA", "buy") == (None, 79.0)
 
     # No quote at all -> (None, None): a MARKET order, no reference.
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": None, "ask_price": None,
+        "bid_price": None,
+        "ask_price": None,
     }
     assert pipeline._live_delever_price("NVDA", "sell") == (None, None)
 
     # A zero/garbage bid is treated as no bid (not a $0 sell limit).
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 0.0, "ask_price": 81.0,
+        "bid_price": 0.0,
+        "ask_price": 81.0,
     }
     assert pipeline._live_delever_price("NVDA", "sell") == (None, 81.0)
 
@@ -2028,7 +2274,8 @@ def test_a_gross_delever_sell_fills_at_any_gap_size_off_the_live_quote(gap_pct):
     gap_price = round(ref * (1 - gap_pct), 2)
     originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=gap_price, originals=originals,
+        gap_price=gap_price,
+        originals=originals,
     )
     ctx = RunContext(run_id=f"run-gap-sell-{int(gap_pct * 100)}", session="morning")
     ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
@@ -2040,8 +2287,7 @@ def test_a_gross_delever_sell_fills_at_any_gap_size_off_the_live_quote(gap_pct):
     order = submitted["ord-NVDA"]
     assert order["side"] == "sell"
     assert order["limit_price"] == pytest.approx(gap_price), (
-        "the SELL limit is the LIVE bid (the gapped print), not a % of the "
-        "stale $100 mark"
+        "the SELL limit is the LIVE bid (the gapped print), not a % of the stale $100 mark"
     )
     assert order["limit_price"] <= gap_price, "a live-bid limit is marketable"
     if gap_pct > 0.03:
@@ -2050,9 +2296,7 @@ def test_a_gross_delever_sell_fills_at_any_gap_size_off_the_live_quote(gap_pct):
             "sat ABOVE the print and would have rested unfilled"
         )
     assert order["fillable"] is True
-    assert "delever_incomplete" not in ctx.leverage, (
-        "the trim filled, so the refreshed book is back at its ceiling"
-    )
+    assert "delever_incomplete" not in ctx.leverage, "the trim filled, so the refreshed book is back at its ceiling"
 
 
 @pytest.mark.parametrize("gap_pct", [0.03, 0.08, 0.20])
@@ -2067,7 +2311,8 @@ def test_a_gross_delever_covers_a_short_at_any_gap_up_off_the_live_quote(gap_pct
     gap_price = round(ref * (1 + gap_pct), 2)
     originals = [_position("TSLA", qty=-200.0, current_price=ref)]  # 2.0x gross
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=gap_price, originals=originals,
+        gap_price=gap_price,
+        originals=originals,
     )
     ctx = RunContext(run_id=f"run-gap-cover-{int(gap_pct * 100)}", session="morning")
     ctx.positions = [_position("TSLA", qty=-200.0, current_price=ref)]
@@ -2079,8 +2324,7 @@ def test_a_gross_delever_covers_a_short_at_any_gap_up_off_the_live_quote(gap_pct
     order = submitted["ord-TSLA"]
     assert order["side"] == "buy", "covering a short is a BUY-to-cover"
     assert order["limit_price"] == pytest.approx(gap_price), (
-        "the COVER limit is the LIVE ask (the gapped print), not a % of the "
-        "stale $100 mark"
+        "the COVER limit is the LIVE ask (the gapped print), not a % of the stale $100 mark"
     )
     assert order["limit_price"] >= gap_price, "a live-ask limit is marketable"
     if gap_pct > 0.03:
@@ -2103,7 +2347,9 @@ def test_a_gross_delever_uses_a_market_order_when_no_live_quote_is_available():
     gap_price = 80.0  # a 20% gap-down; the market order fills regardless
     originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=gap_price, originals=originals, live_quote=None,
+        gap_price=gap_price,
+        originals=originals,
+        live_quote=None,
     )
     ctx = RunContext(run_id="run-gap-noquote", session="morning")
     ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
@@ -2157,8 +2403,7 @@ def test_a_gross_delever_trims_down_to_the_ceiling_and_never_below_it():
     assert pipeline2._enforce_gross_ceiling(ctx2)
     trimmed = submitted2["ord-MSFT"]["qty"]
     assert trimmed == pytest.approx(49.0), (
-        "the trim floors to whole shares (49), never rounding UP to 50 and "
-        "selling the book below its ceiling"
+        "the trim floors to whole shares (49), never rounding UP to 50 and selling the book below its ceiling"
     )
     left = pipeline2.broker.get_positions()[0].qty
     assert left * ref >= 10_000.0, "the remaining book is never below the ceiling"
@@ -2177,7 +2422,9 @@ def test_a_cash_only_force_delever_fills_at_any_gap_size_off_the_live_quote(gap_
     gap_price = round(ref * (1 - gap_pct), 2)
     originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=gap_price, originals=originals, allow_margin=False,
+        gap_price=gap_price,
+        originals=originals,
+        allow_margin=False,
     )
     ctx = RunContext(run_id=f"run-force-gap-{int(gap_pct * 100)}", session="morning")
     ctx.cash = -5_000.0  # a real margin deficit forces the sweep
@@ -2190,8 +2437,7 @@ def test_a_cash_only_force_delever_fills_at_any_gap_size_off_the_live_quote(gap_
     order = submitted["ord-NVDA"]
     assert order["side"] == "sell"
     assert order["limit_price"] == pytest.approx(gap_price), (
-        "the SELL limit is the LIVE bid (the gapped print), not a % of the "
-        "stale $100 mark"
+        "the SELL limit is the LIVE bid (the gapped print), not a % of the stale $100 mark"
     )
     assert order["limit_price"] <= gap_price, "a live-bid limit is marketable"
     if gap_pct > 0.03:
@@ -2211,7 +2457,10 @@ def test_a_cash_only_force_delever_uses_a_market_order_when_no_live_quote():
     ref = 100.0
     originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=80.0, originals=originals, allow_margin=False, live_quote=None,
+        gap_price=80.0,
+        originals=originals,
+        allow_margin=False,
+        live_quote=None,
     )
     ctx = RunContext(run_id="run-force-noquote", session="morning")
     ctx.cash = -5_000.0
@@ -2238,7 +2487,9 @@ def test_a_gross_delever_escalates_to_market_when_the_marketable_limit_is_reject
     ref = 100.0
     originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
     pipeline, events, submitted = _gap_fill_pipeline(
-        gap_price=95.0, originals=originals, reject_limit=True,
+        gap_price=95.0,
+        originals=originals,
+        reject_limit=True,
     )
     ctx = RunContext(run_id="run-gross-escalate", session="morning")
     ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
@@ -2248,10 +2499,7 @@ def test_a_gross_delever_escalates_to_market_when_the_marketable_limit_is_reject
 
     assert orders, "a rejected limit must escalate, not skip the name"
     order = submitted["ord-NVDA"]
-    assert order["limit_price"] is None, (
-        "the marketable limit was rejected, so the order that landed is a "
-        "MARKET order"
-    )
+    assert order["limit_price"] is None, "the marketable limit was rejected, so the order that landed is a MARKET order"
     assert order["side"] == "sell"
     assert order["fillable"] is True
     assert ("covered", "NVDA") in events, (
@@ -2270,7 +2518,10 @@ def test_a_cash_only_force_delever_escalates_to_market_when_the_limit_is_rejecte
     ref = 100.0
     originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     pipeline, events, submitted = _gap_fill_pipeline(
-        gap_price=95.0, originals=originals, allow_margin=False, reject_limit=True,
+        gap_price=95.0,
+        originals=originals,
+        allow_margin=False,
+        reject_limit=True,
     )
     ctx = RunContext(run_id="run-force-escalate", session="morning")
     ctx.cash = -5_000.0
@@ -2298,7 +2549,9 @@ def test_a_gross_delever_reports_incomplete_only_if_even_the_market_order_fails(
     ref = 100.0
     originals = [_position("NVDA", qty=200.0, current_price=ref)]  # 2.0x
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=95.0, originals=originals, reject_all=True,
+        gap_price=95.0,
+        originals=originals,
+        reject_all=True,
     )
     ctx = RunContext(run_id="run-gross-incomplete", session="morning")
     ctx.positions = [_position("NVDA", qty=200.0, current_price=ref)]
@@ -2325,7 +2578,10 @@ def test_a_cash_only_force_delever_reports_incomplete_when_even_market_fails():
     ref = 100.0
     originals = [_position("NVDA", qty=100.0, current_price=ref, avg_entry=120.0)]
     pipeline, _events, submitted = _gap_fill_pipeline(
-        gap_price=95.0, originals=originals, allow_margin=False, reject_all=True,
+        gap_price=95.0,
+        originals=originals,
+        allow_margin=False,
+        reject_all=True,
     )
     ctx = RunContext(run_id="run-force-incomplete", session="morning")
     ctx.cash = -5_000.0
@@ -2338,8 +2594,7 @@ def test_a_cash_only_force_delever_reports_incomplete_when_even_market_fails():
     assert orders == [], "no order was accepted, so none is recorded"
     pipeline.broker._restore_stop_orders.assert_called()
     assert alert.called, (
-        "a sweep that could not clear the deficit even at market must page "
-        "the owner, not skip silently"
+        "a sweep that could not clear the deficit even at market must page the owner, not skip silently"
     )
     (msg,), _kw = alert.call_args
     assert "INCOMPLETE" in msg and "NVDA" in msg
@@ -2375,6 +2630,7 @@ def test_a_cash_only_force_delever_reports_incomplete_when_no_long_to_sell():
 # unchanged — they still happen every session it is over.
 # ===========================================================================
 
+
 def _delever_pipeline(tmp_path):
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
@@ -2390,22 +2646,27 @@ def _delever_pipeline(tmp_path):
 
 def _over_ctx(run_id, gross_x=1.5, ceiling_x=1.0):
     from src.pipeline_context import RunContext
+
     ctx = RunContext(run_id=run_id, session="close")
     ctx.leverage = {"gross_x": gross_x, "ceiling_x": ceiling_x}
     return ctx
 
 
 def test_incomplete_delever_pages_on_the_first_over_ceiling_session(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The False->True edge: first session that finishes still over the
     ceiling pages the owner, in plain words, with the real measured numbers
     and no internal jargon."""
     pipeline = _delever_pipeline(tmp_path)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     ctx = _over_ctx("s1", gross_x=1.5, ceiling_x=1.0)
@@ -2421,15 +2682,19 @@ def test_incomplete_delever_pages_on_the_first_over_ceiling_session(
 
 
 def test_incomplete_delever_does_not_page_again_while_it_stays_over(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """A book that sits over the ceiling for consecutive sessions pages ONCE,
     on the way in — not every session. The flag is still set each time."""
     pipeline = _delever_pipeline(tmp_path)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     for rid in ("s1", "s2", "s3"):
@@ -2441,18 +2706,22 @@ def test_incomplete_delever_does_not_page_again_while_it_stays_over(
 
 
 def test_incomplete_delever_pages_again_after_clearing_then_relapsing(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Clearing the ceiling resets the edge: a later relapse into still-over
     is a NEW transition and pages again."""
     pipeline = _delever_pipeline(tmp_path)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
-    pipeline._alert_owner_delever_incomplete(_over_ctx("s1", 1.5, 1.0))   # page
+    pipeline._alert_owner_delever_incomplete(_over_ctx("s1", 1.5, 1.0))  # page
     # Cleared: under the ceiling, no page, flag not set, state recorded False.
     cleared = _over_ctx("s2", gross_x=0.9, ceiling_x=1.0)
     pipeline._alert_owner_delever_incomplete(cleared)
@@ -2464,28 +2733,30 @@ def test_incomplete_delever_pages_again_after_clearing_then_relapsing(
 
 
 def test_incomplete_delever_unmeasurable_neither_pages_nor_records_state(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """An unmeasurable book (no gross_x/ceiling_x) must not page and must not
     write a ceiling-state row — so it cannot reset the transition edge for the
     next real measurement."""
     pipeline = _delever_pipeline(tmp_path)
     import src.notifier as notifier
+
     sent: list[str] = []
     monkeypatch.setattr(
-        notifier, "send_owner_alert", lambda text, **kw: sent.append(text) or True,
+        notifier,
+        "send_owner_alert",
+        lambda text, **kw: sent.append(text) or True,
     )
 
     from src.pipeline_context import RunContext
+
     ctx = RunContext(run_id="s1", session="close")
     ctx.leverage = {"gross_x": None, "ceiling_x": None}
     pipeline._alert_owner_delever_incomplete(ctx)
 
     assert sent == []
     assert pipeline.db.get_last_delever_over_ceiling() is None
-
-
-
 
 
 # ===========================================================================
@@ -2527,12 +2798,14 @@ def test_conviction_rank_trims_the_weakest_thesis_before_the_biggest_loser():
     assert baseline.trims[0].symbol == "LOS", "default order is biggest loser first"
 
     convicted = apply_gross_ceiling(
-        [], list(positions), EQUITY, ceiling,
+        [],
+        list(positions),
+        EQUITY,
+        ceiling,
         conviction_rank={"WIN": (OPPOSED, 0), "LOS": (SUPPORTED, 5)},
     )
     assert convicted.trims[0].symbol == "WIN", (
-        "the holding a seat argues against must be trimmed before the "
-        "intact-thesis loser"
+        "the holding a seat argues against must be trimmed before the intact-thesis loser"
     )
 
 
@@ -2543,7 +2816,10 @@ def test_an_unread_holding_is_never_cut_before_an_opposed_one():
     unread = _position("UNR", qty=100.0, avg_entry=100.0, current_price=100.0)
     ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)
     outcome = apply_gross_ceiling(
-        [], [opposed, unread], EQUITY, ceiling,
+        [],
+        [opposed, unread],
+        EQUITY,
+        ceiling,
         conviction_rank={"OPP": (OPPOSED, 0), "UNR": (NO_COVERAGE, 0)},
     )
     assert outcome.trims[0].symbol == "OPP"
@@ -2555,7 +2831,10 @@ def test_an_unread_holding_is_still_cut_before_a_supported_one():
     backed = _position("SUP", qty=100.0, avg_entry=100.0, current_price=100.0)
     ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)
     outcome = apply_gross_ceiling(
-        [], [unread, backed], EQUITY, ceiling,
+        [],
+        [unread, backed],
+        EQUITY,
+        ceiling,
         conviction_rank={"UNR": (NO_COVERAGE, 0), "SUP": (SUPPORTED, 3)},
     )
     assert outcome.trims[0].symbol == "UNR"
@@ -2565,7 +2844,7 @@ def _unequal_book():
     """A BIG winner and a SMALL loser — unequal gross, so the ordering is a
     real test of how much gets shed (with equal sizes any order sheds the
     same amount and the comparison proves nothing)."""
-    big = _position("BIG", qty=140.0, avg_entry=80.0, current_price=100.0)   # $14k
+    big = _position("BIG", qty=140.0, avg_entry=80.0, current_price=100.0)  # $14k
     small = _position("SML", qty=60.0, avg_entry=130.0, current_price=100.0)  # $6k
     return big, small
 
@@ -2590,12 +2869,14 @@ def test_one_trim_clears_the_breach_instead_of_dragging_in_a_second_name():
     assert ceiling.ceiling_x == 1.0
 
     convicted = apply_gross_ceiling(
-        [], [big, small], EQUITY, ceiling,
+        [],
+        [big, small],
+        EQUITY,
+        ceiling,
         conviction_rank={"BIG": (OPPOSED, 0), "SML": (SUPPORTED, 5)},
     )
     assert [t.symbol for t in convicted.trims] == ["BIG"], (
-        "one trim must clear the breach; the supported name must not be "
-        "dragged in by a rounding residue"
+        "one trim must clear the breach; the supported name must not be dragged in by a rounding residue"
     )
     # The residue is the ticket's own 0.1% precision, rounded DOWN so a trim
     # never sells the book below its ceiling — not a second name's worth.
@@ -2627,7 +2908,10 @@ def test_conviction_order_clears_the_ceiling_and_never_empties_the_book():
 
     baseline = apply_gross_ceiling([], [big, small], EQUITY, ceiling)
     convicted = apply_gross_ceiling(
-        [], [big, small], EQUITY, ceiling,
+        [],
+        [big, small],
+        EQUITY,
+        ceiling,
         conviction_rank={"BIG": (OPPOSED, 0), "SML": (SUPPORTED, 5)},
     )
     assert baseline.trims[0].symbol == "SML"
@@ -2655,7 +2939,10 @@ def test_conviction_rank_does_not_provoke_a_trim_from_new_buys():
     winner, loser = _win_and_loser()  # $20k book
     ceiling = resolve_gross_ceiling(0.0, base_x=BASE_X)  # 2.0x -> $20k, book fits
     outcome = apply_gross_ceiling(
-        [_buy("TSLA", 10.0)], [winner, loser], EQUITY, ceiling,
+        [_buy("TSLA", 10.0)],
+        [winner, loser],
+        EQUITY,
+        ceiling,
         conviction_rank={"WIN": (OPPOSED, 0), "LOS": (SUPPORTED, 5)},
     )
     assert outcome.trims == [], (
@@ -2684,7 +2971,9 @@ def _morning_delever_pipeline(drawdown_frac):
         {"total_value": EQUITY / (1.0 - drawdown_frac)},
     ]
     pipeline.broker.get_account.return_value = {
-        "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
+        "cash": 0.0,
+        "portfolio_value": EQUITY,
+        "last_equity": EQUITY,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline.cash_sweeper = None
@@ -2701,8 +2990,12 @@ def _morning_delever_pipeline(drawdown_frac):
 
 def _verdict(symbol, seat, direction, magnitude=1.0, conviction="high"):
     from src.models import AnalystVerdict, VerdictEvidence
+
     return AnalystVerdict(
-        seat=seat, symbol=symbol, direction=direction, magnitude=magnitude,
+        seat=seat,
+        symbol=symbol,
+        direction=direction,
+        magnitude=magnitude,
         conviction=conviction,
         evidence=[VerdictEvidence(label="close", value=100.0)],
         invalidation="the thesis breaks",
@@ -2721,8 +3014,7 @@ def test_the_cut_order_uses_raw_seat_verdicts_not_the_entry_survivor_list():
     source = inspect.getsource(TradingPipeline._conviction_cut_order)
     body = source.split('"""')[-1]
     assert "last_candidate_ranking" not in body, (
-        "the cut order must not read the ENTRY survivor list; rank the raw "
-        "seat verdicts instead"
+        "the cut order must not read the ENTRY survivor list; rank the raw seat verdicts instead"
     )
     assert "portfolio_manager" not in body
 
@@ -2763,9 +3055,7 @@ def test_a_holding_no_seat_read_is_unread_not_opposed():
     order = pipeline._conviction_cut_order(ctx)
     assert order["DARK"][0] == NO_COVERAGE
     assert order["OPP"][0] == OPPOSED
-    assert order["OPP"] < order["DARK"], (
-        "an unread holding must never be cut before one a seat argues against"
-    )
+    assert order["OPP"] < order["DARK"], "an unread holding must never be cut before one a seat argues against"
 
     pipeline._enforce_gross_ceiling_by_conviction(ctx)
     sold = [c.kwargs["symbol"] for c in pipeline._submit_protected_sell.call_args_list]
@@ -2913,9 +3203,7 @@ def test_a_failed_discharge_leaves_the_debt_owed_not_silently_paid():
     ctx.gross_ceiling_deferred = True
 
     pipeline._discharge_deferred_gross_ceiling(ctx)  # must not raise
-    assert ctx.gross_ceiling_deferred is True, (
-        "a discharge that could not run must leave the ceiling recorded as owed"
-    )
+    assert ctx.gross_ceiling_deferred is True, "a discharge that could not run must leave the ceiling recorded as owed"
 
 
 def test_an_unreadable_in_flight_exit_leaves_the_debt_owed():
@@ -2954,12 +3242,10 @@ def test_only_one_place_may_mark_the_gross_ceiling_debt_paid():
             if not (isinstance(node.value, ast.Constant) and node.value.value is False):
                 continue
             for target in node.targets:
-                if (isinstance(target, ast.Attribute)
-                        and target.attr == "gross_ceiling_deferred"):
+                if isinstance(target, ast.Attribute) and target.attr == "gross_ceiling_deferred":
                     clears.append(f"{path.name}:{node.lineno}")
     assert len(clears) == 1, (
-        f"exactly one place may clear the deferred gross-ceiling debt; "
-        f"found {len(clears)} at lines {clears}"
+        f"exactly one place may clear the deferred gross-ceiling debt; found {len(clears)} at lines {clears}"
     )
 
 
@@ -2997,9 +3283,7 @@ def test_an_exit_still_working_is_netted_out_of_the_next_measure():
     pipeline._enforce_gross_ceiling(ctx)
     # $18k held, $8k already working out -> $10k after exits == the ceiling.
     # Nothing more may be sold.
-    assert not pipeline._submit_protected_sell.called, (
-        "exposure already on its way out must not be shed a second time"
-    )
+    assert not pipeline._submit_protected_sell.called, "exposure already on its way out must not be shed a second time"
 
 
 def test_the_true_residual_is_still_cut_when_the_in_flight_exit_is_too_small():
@@ -3018,8 +3302,7 @@ def test_the_true_residual_is_still_cut_when_the_in_flight_exit_is_too_small():
 
     pipeline._enforce_gross_ceiling(ctx)
     assert pipeline._submit_protected_sell.called, (
-        "$18k held minus $2k working is $16k against a $10k ceiling — the "
-        "residual must still be cut"
+        "$18k held minus $2k working is $16k against a $10k ceiling — the residual must still be cut"
     )
 
 
@@ -3040,9 +3323,7 @@ def test_a_settled_order_drops_out_of_the_register_on_re_poll():
 
     pipeline._enforce_gross_ceiling(ctx)
     assert pipeline._unsettled_exit_orders == {}
-    assert pipeline._submit_protected_sell.called, (
-        "a settled order nets nothing; the book really is over its ceiling"
-    )
+    assert pipeline._submit_protected_sell.called, "a settled order nets nothing; the book really is over its ceiling"
 
 
 def test_every_exit_path_registers_its_own_settlement():
@@ -3054,9 +3335,7 @@ def test_every_exit_path_registers_its_own_settlement():
     from src.protection.sell_finalization import SellFinalization
 
     source = inspect.getsource(SellFinalization._finalize_pending_protections)
-    assert "_register_exit_settlement" in source, (
-        "every waited-on exit must register its settlement state centrally"
-    )
+    assert "_register_exit_settlement" in source, "every waited-on exit must register its settlement state centrally"
 
 
 def test_a_non_terminal_wait_registers_and_a_terminal_one_clears():
@@ -3064,19 +3343,16 @@ def test_a_non_terminal_wait_registers_and_a_terminal_one_clears():
 
     pipeline = build_pipeline(_unsettled_exit_orders={})
     pipeline._register_exit_settlement(
-        {"order_id": "o-9", "symbol": "nvda", "submitted_qty": 5.0,
-         "terminal_status": "new"},
+        {"order_id": "o-9", "symbol": "nvda", "submitted_qty": 5.0, "terminal_status": "new"},
     )
     assert pipeline._unsettled_exit_orders["o-9"]["symbol"] == "NVDA"
     pipeline._register_exit_settlement(
-        {"order_id": "o-9", "symbol": "NVDA", "submitted_qty": 5.0,
-         "terminal_status": "filled"},
+        {"order_id": "o-9", "symbol": "NVDA", "submitted_qty": 5.0, "terminal_status": "filled"},
     )
     assert pipeline._unsettled_exit_orders == {}
     # A wait that RAISED records None, which is not terminal.
     pipeline._register_exit_settlement(
-        {"order_id": "o-8", "symbol": "NVDA", "submitted_qty": 5.0,
-         "terminal_status": None},
+        {"order_id": "o-8", "symbol": "NVDA", "submitted_qty": 5.0, "terminal_status": None},
     )
     assert "o-8" in pipeline._unsettled_exit_orders
 
@@ -3098,8 +3374,7 @@ def test_the_book_is_not_sold_down_twice_across_one_morning():
     pipeline._submit_protected_sell.side_effect = _sell
 
     def _positions():
-        return [_position("NVDA", qty=start_qty - sold_qty["NVDA"],
-                          current_price=100.0)]
+        return [_position("NVDA", qty=start_qty - sold_qty["NVDA"], current_price=100.0)]
 
     pipeline.broker.get_positions.side_effect = _positions
 
@@ -3114,8 +3389,7 @@ def test_the_book_is_not_sold_down_twice_across_one_morning():
 
     # $5k over a $20k ceiling: at most that plus one 0.1% rounding step.
     assert sold_qty["NVDA"] * 100.0 <= 5_000.0 + 0.001 * 25_000.0 + 1e-6, (
-        f"the book was sold down twice: ${sold_qty['NVDA'] * 100.0:,.0f} shed "
-        f"against a $5,000 breach"
+        f"the book was sold down twice: ${sold_qty['NVDA'] * 100.0:,.0f} shed against a $5,000 breach"
     )
     assert sold_qty["NVDA"] > 0, "the breach must actually be cleared"
 
@@ -3140,9 +3414,7 @@ def test_a_sigterm_unwinds_so_the_deferred_ceiling_is_still_paid():
                 paid.append("discharged")
         except SessionTerminated:
             pass
-        assert paid == ["discharged"], (
-            "SIGTERM must unwind through finally, not end the process"
-        )
+        assert paid == ["discharged"], "SIGTERM must unwind through finally, not end the process"
     finally:
         pipeline._restore_sigterm(previous)
 
@@ -3171,16 +3443,22 @@ def test_a_holding_the_desk_already_decided_to_sell_is_not_cut_twice():
     ]
     ctx.total_value = EQUITY
     ctx.evidence_registry = {
-        "GOING": {"technical": "bearish"},   # opposed — cut first
-        "KEEP": {"technical": "bullish"},    # supported — must survive
+        "GOING": {"technical": "bearish"},  # opposed — cut first
+        "KEEP": {"technical": "bullish"},  # supported — must survive
         "SPARE": {"technical": "bullish"},
     }
     ctx.portfolio_decision = PortfolioDecision.model_construct(
-        decisions=[TradeDecision(
-            action="SELL", symbol="GOING", allocation_pct=100.0,
-            entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-            reasoning="thesis broke; the desk is exiting this name today",
-        )],
+        decisions=[
+            TradeDecision(
+                action="SELL",
+                symbol="GOING",
+                allocation_pct=100.0,
+                entry_price=0.0,
+                stop_loss=0.0,
+                take_profit=0.0,
+                reasoning="thesis broke; the desk is exiting this name today",
+            )
+        ],
     )
 
     pipeline._enforce_gross_ceiling_by_conviction(ctx)
@@ -3207,15 +3485,14 @@ def test_a_broadcast_macro_stance_alone_does_not_protect_a_holding():
     ]
     ctx.total_value = EQUITY
     ctx.evidence_registry = {
-        "BROAD": {"macro": "bullish"},       # broadcast only
-        "REAL": {"technical": "bullish"},    # a genuine per-name read
+        "BROAD": {"macro": "bullish"},  # broadcast only
+        "REAL": {"technical": "bullish"},  # a genuine per-name read
     }
     ctx.evidence_non_corroborating_sources = {"BROAD": frozenset({"macro"})}
 
     order = pipeline._conviction_cut_order(ctx)
     assert order["BROAD"][0] == NO_COVERAGE, (
-        "a broadcast macro stance is not per-name support and must not "
-        "lift a holding into the protected bucket"
+        "a broadcast macro stance is not per-name support and must not lift a holding into the protected bucket"
     )
     assert order["REAL"][0] == SUPPORTED
     assert order["BROAD"] < order["REAL"]
@@ -3234,7 +3511,10 @@ def test_a_symbol_absent_from_the_cut_order_is_unread_not_opposed():
     opposed = _position("OPP", qty=100.0, current_price=100.0)
     ceiling = resolve_gross_ceiling(-10.0, base_x=BASE_X)
     outcome = apply_gross_ceiling(
-        [], [missing, opposed], EQUITY, ceiling,
+        [],
+        [missing, opposed],
+        EQUITY,
+        ceiling,
         conviction_rank={"OPP": (OPPOSED, 0)},  # GONE deliberately absent
     )
     assert outcome.trims[0].symbol == "OPP"

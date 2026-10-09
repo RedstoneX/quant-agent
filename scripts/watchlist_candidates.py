@@ -53,10 +53,7 @@ def _print_table(candidates: list[dict], window_days: int) -> None:
 
     print(f"\nWatchlist Candidates — last {window_days} days")
     print("=" * 72)
-    print(
-        f"{'Symbol':<8} {'Add':>3} {'Watch':>5} {'Days':>4}  "
-        f"{'Themes':<24} Latest Reason"
-    )
+    print(f"{'Symbol':<8} {'Add':>3} {'Watch':>5} {'Days':>4}  {'Themes':<24} Latest Reason")
     print("-" * 72)
     for c in candidates:
         themes = ", ".join(c["themes"]) if c["themes"] else "—"
@@ -100,19 +97,24 @@ def _print_json(candidates: list[dict], window_days: int) -> None:
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
-        "--lookback", type=int, default=30,
+        "--lookback",
+        type=int,
+        default=30,
         help="Days of evening insights to scan (default 30)",
     )
     parser.add_argument(
-        "--db", default="data/quant_agent.db",
+        "--db",
+        default="data/quant_agent.db",
         help="Path to the SQLite database (default data/quant_agent.db)",
     )
     parser.add_argument(
-        "--json", action="store_true",
+        "--json",
+        action="store_true",
         help="Emit JSON instead of a human-readable table",
     )
     parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="Skip the empty-result explainer; useful for shell piping",
     )
     args = parser.parse_args()

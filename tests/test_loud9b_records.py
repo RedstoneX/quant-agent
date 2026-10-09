@@ -1,4 +1,5 @@
 """Swallowed faults in the stop write-back and exit records leave a counted row."""
+
 from src.exits.exit_records import ExitRecords
 from src.execution.stop_records import write_back_stop_loss
 from src.storage.db import Database

@@ -1,4 +1,5 @@
 """The merge-driver registration guard: bites on a missing driver, spares built-ins."""
+
 import subprocess
 from pathlib import Path
 

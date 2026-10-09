@@ -47,8 +47,7 @@ def _bars(lows, *, peak):
     """
     bars = [_Bar(high=lo + 0.2, low=lo) for lo in lows]
     assert peak > max(b.high for b in bars), (
-        "the constructed peak must be the run high for the chandelier to be "
-        "the level this test intends"
+        "the constructed peak must be the run high for the chandelier to be the level this test intends"
     )
     bars[-1] = _Bar(high=peak, low=bars[-1].low)
     return bars
@@ -60,17 +59,21 @@ def _peak_for(chandelier: float) -> float:
 
 def _evaluate(bars):
     return evaluate_trailing_stop(
-        symbol="AAA", setup_type="breakout", entry=100.0,
-        current_price=PRICE, current_stop=STOP, reference_target=None,
-        bars=bars, atr=ATR,
+        symbol="AAA",
+        setup_type="breakout",
+        entry=100.0,
+        current_price=PRICE,
+        current_stop=STOP,
+        reference_target=None,
+        bars=bars,
+        atr=ATR,
     )
 
 
 # A strict local minimum with three higher lows on each side — `PIVOT_WINDOW`
 # is 3, so seven bars is the minimum that can confirm one pivot.
 def _pivot_at(level: float):
-    return [level + 1.5, level + 1.0, level + 0.5, level,
-            level + 0.5, level + 1.0, level + 1.5]
+    return [level + 1.5, level + 1.0, level + 0.5, level, level + 0.5, level + 1.0, level + 1.5]
 
 
 def test_a_pivot_inside_the_noise_band_no_longer_suppresses_the_chandelier():
@@ -126,11 +129,17 @@ def test_too_few_bars_reports_the_missing_data_not_an_empty_search():
     filters bars to since-entry and leaves them empty on any fetch failure,
     so this is the common case, not the exotic one."""
     from src.risk.trailing import MIN_BARS_FOR_A_READING, TRAIL_CODE_TOO_FEW_BARS
+
     for n in (0, 1, MIN_BARS_FOR_A_READING - 1):
         result = evaluate_trailing_stop(
-            symbol="AAA", setup_type="breakout", entry=100.0,
-            current_price=PRICE, current_stop=STOP, reference_target=None,
-            bars=_bars([101.0] * n, peak=102.0) if n else [], atr=None,
+            symbol="AAA",
+            setup_type="breakout",
+            entry=100.0,
+            current_price=PRICE,
+            current_stop=STOP,
+            reference_target=None,
+            bars=_bars([101.0] * n, peak=102.0) if n else [],
+            atr=None,
         )
         assert result.proposal is None, n
         assert result.code == TRAIL_CODE_TOO_FEW_BARS, n
@@ -140,9 +149,14 @@ def test_bars_present_but_no_usable_leg_still_reports_no_candidate():
     """Bars DID arrive and neither leg could use them: the empty-set reason
     code is unchanged by the widened search."""
     result = evaluate_trailing_stop(
-        symbol="AAA", setup_type="breakout", entry=100.0,
-        current_price=PRICE, current_stop=STOP, reference_target=None,
-        bars=_bars([130.0] * 7, peak=131.0), atr=None,
+        symbol="AAA",
+        setup_type="breakout",
+        entry=100.0,
+        current_price=PRICE,
+        current_stop=STOP,
+        reference_target=None,
+        bars=_bars([130.0] * 7, peak=131.0),
+        atr=None,
     )
     assert result.proposal is None
     assert result.code == TRAIL_CODE_NO_CANDIDATE

@@ -36,6 +36,7 @@ def _broker() -> AlpacaBroker:
 # get_latest_price — trade first, then quote midpoint, then one-sided quote
 # ---------------------------------------------------------------------------
 
+
 def _price_client(trade=None, quote=None, raises=None):
     client = MagicMock()
     if raises is not None:
@@ -63,10 +64,13 @@ def test_latest_price_falls_back_to_the_quote_midpoint():
     assert b.get_latest_price("NVDA") == 100.0
 
 
-@pytest.mark.parametrize("ask,bid,expected", [
-    (101.0, 0, 101.0),   # ask-only book
-    (0, 99.0, 99.0),     # bid-only book
-])
+@pytest.mark.parametrize(
+    "ask,bid,expected",
+    [
+        (101.0, 0, 101.0),  # ask-only book
+        (0, 99.0, 99.0),  # bid-only book
+    ],
+)
 def test_latest_price_accepts_a_one_sided_quote(ask, bid, expected):
     b = _broker()
     b._data_client = _price_client(
@@ -90,10 +94,12 @@ def test_latest_price_returns_none_when_nothing_is_quotable():
 def test_latest_quote_returns_truthful_sides():
     b = _broker()
     b._data_client = _price_client(
-        trade=None, quote=SimpleNamespace(ask_price=101.25, bid_price=101.0),
+        trade=None,
+        quote=SimpleNamespace(ask_price=101.25, bid_price=101.0),
     )
     assert b.get_latest_quote("NVDA") == {
-        "bid_price": 101.0, "ask_price": 101.25,
+        "bid_price": 101.0,
+        "ask_price": 101.25,
     }
 
 
@@ -112,10 +118,13 @@ def test_latest_price_lazily_builds_one_data_client():
     assert ctor.call_count == 1
 
 
-@pytest.mark.parametrize("payload,expected", [
-    ({"NVDA": SimpleNamespace(price=1.0)}, 1.0),          # dict form
-    (SimpleNamespace(NVDA=SimpleNamespace(price=2.0)), 2.0),  # attribute form
-])
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"NVDA": SimpleNamespace(price=1.0)}, 1.0),  # dict form
+        (SimpleNamespace(NVDA=SimpleNamespace(price=2.0)), 2.0),  # attribute form
+    ],
+)
 def test_extract_symbol_payload_handles_both_sdk_shapes(payload, expected):
     b = _broker()
     client = MagicMock()
@@ -128,10 +137,15 @@ def test_extract_symbol_payload_handles_both_sdk_shapes(payload, expected):
 # get_bars — the yfinance fallback path
 # ---------------------------------------------------------------------------
 
+
 def _bar(day: int, close: float = 10.0, **overrides):
     base = dict(
         timestamp=datetime(2026, 8, day, tzinfo=timezone.utc),
-        open=9.0, high=11.0, low=8.0, close=close, volume=1000,
+        open=9.0,
+        high=11.0,
+        low=8.0,
+        close=close,
+        volume=1000,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -168,17 +182,13 @@ def test_get_bars_skips_a_bar_with_no_timestamp():
     """A dateless bar has nothing to index on — drop it, keep the rest,
     rather than failing the whole lookback."""
     b = _broker()
-    b._data_client = _bars_client(
-        SimpleNamespace(data={"NVDA": [_bar(3), _bar(4, timestamp=None)]})
-    )
+    b._data_client = _bars_client(SimpleNamespace(data={"NVDA": [_bar(3), _bar(4, timestamp=None)]}))
     assert [x.date for x in b.get_bars("NVDA")] == [date(2026, 8, 3)]
 
 
 def test_get_bars_skips_a_bar_with_unparseable_values():
     b = _broker()
-    b._data_client = _bars_client(
-        SimpleNamespace(data={"NVDA": [_bar(3, close="not-a-number"), _bar(4)]})
-    )
+    b._data_client = _bars_client(SimpleNamespace(data={"NVDA": [_bar(3, close="not-a-number"), _bar(4)]}))
     assert [x.date for x in b.get_bars("NVDA")] == [date(2026, 8, 4)]
 
 
@@ -196,18 +206,30 @@ def test_get_bars_returns_empty_when_the_data_api_raises():
 def test_get_intraday_chart_bars_preserves_timestamp_and_timeframe():
     b = _broker()
     b._data_client = _bars_client(
-        SimpleNamespace(data={"MRVL": [_bar(
-            21, close=237.07,
-            timestamp=datetime(2026, 8, 21, 13, 30, tzinfo=timezone.utc),
-        )]})
+        SimpleNamespace(
+            data={
+                "MRVL": [
+                    _bar(
+                        21,
+                        close=237.07,
+                        timestamp=datetime(2026, 8, 21, 13, 30, tzinfo=timezone.utc),
+                    )
+                ]
+            }
+        )
     )
     bars = b.get_intraday_chart_bars("MRVL", timeframe="5m", lookback_days=1)
-    assert bars == [{
-        "date": "2026-08-21",
-        "timestamp": "2026-08-21T13:30:00+00:00",
-        "open": 9.0, "high": 11.0, "low": 8.0,
-        "close": 237.07, "volume": 1000,
-    }]
+    assert bars == [
+        {
+            "date": "2026-08-21",
+            "timestamp": "2026-08-21T13:30:00+00:00",
+            "open": 9.0,
+            "high": 11.0,
+            "low": 8.0,
+            "close": 237.07,
+            "volume": 1000,
+        }
+    ]
     request = b._data_client.get_stock_bars.call_args.args[0]
     assert str(request.timeframe) == "5Min"
 
@@ -239,11 +261,14 @@ def test_get_intraday_chart_bars_rejects_unknown_timeframe_without_a_call():
 # open_buy_notional — the None-vs-0.0 distinction the cash sweeper relies on
 # ---------------------------------------------------------------------------
 
-def _open_order(symbol="NVDA", side="buy", qty="10",
-                limit_price=None, stop_price=None):
+
+def _open_order(symbol="NVDA", side="buy", qty="10", limit_price=None, stop_price=None):
     return SimpleNamespace(
-        symbol=symbol, side=SimpleNamespace(value=side), qty=qty,
-        limit_price=limit_price, stop_price=stop_price,
+        symbol=symbol,
+        side=SimpleNamespace(value=side),
+        qty=qty,
+        limit_price=limit_price,
+        stop_price=stop_price,
     )
 
 
@@ -254,10 +279,12 @@ def _with_orders(orders):
 
 
 def test_open_buy_notional_sums_limit_priced_buys():
-    b = _with_orders([
-        _open_order(qty="10", limit_price="100"),
-        _open_order(qty="5", limit_price="20"),
-    ])
+    b = _with_orders(
+        [
+            _open_order(qty="10", limit_price="100"),
+            _open_order(qty="5", limit_price="20"),
+        ]
+    )
     assert b.open_buy_notional() == pytest.approx(1100.0)
 
 
@@ -284,10 +311,12 @@ def test_open_buy_notional_returns_none_when_a_market_order_cannot_be_priced():
 def test_open_buy_notional_ignores_non_buy_rows():
     """The SDK filter already asks for BUYs; the in-loop side check is the
     second belt, and it must not count a SELL toward the hold."""
-    b = _with_orders([
-        _open_order(qty="10", limit_price="100"),
-        _open_order(side="sell", qty="10", limit_price="100"),
-    ])
+    b = _with_orders(
+        [
+            _open_order(qty="10", limit_price="100"),
+            _open_order(side="sell", qty="10", limit_price="100"),
+        ]
+    )
     assert b.open_buy_notional() == pytest.approx(1000.0)
 
 
@@ -321,6 +350,7 @@ def test_open_buy_notional_skips_a_non_positive_price_and_uses_the_quote():
 # symbol) — this is what makes running a scan every intra_check tick cheap.
 # ---------------------------------------------------------------------------
 
+
 def _snapshot_client(snapshots: dict):
     client = MagicMock()
     client.get_stock_snapshot.return_value = snapshots
@@ -338,46 +368,57 @@ def test_intraday_snapshots_reads_last_trade_prior_close_and_session_bar():
     trade_at = _dt(2026, 9, 17, 10, 30, tzinfo=ET)
     bar_at = _dt(2026, 9, 17, 0, 0, tzinfo=ET)
     minute_at = _dt(2026, 9, 17, 10, 29, tzinfo=ET)
-    b._data_client = _snapshot_client({
-        "NVDA": SimpleNamespace(
-            symbol="NVDA",
-            latest_trade=SimpleNamespace(price=185.0, timestamp=trade_at),
-            previous_daily_bar=SimpleNamespace(close=180.0),
-            minute_bar=SimpleNamespace(close=184.9, timestamp=minute_at),
-            daily_bar=SimpleNamespace(open=181.0, high=186.0, low=180.5,
-                                      close=185.0, volume=1_250_000,
-                                      timestamp=bar_at),
-        ),
-    })
+    b._data_client = _snapshot_client(
+        {
+            "NVDA": SimpleNamespace(
+                symbol="NVDA",
+                latest_trade=SimpleNamespace(price=185.0, timestamp=trade_at),
+                previous_daily_bar=SimpleNamespace(close=180.0),
+                minute_bar=SimpleNamespace(close=184.9, timestamp=minute_at),
+                daily_bar=SimpleNamespace(
+                    open=181.0, high=186.0, low=180.5, close=185.0, volume=1_250_000, timestamp=bar_at
+                ),
+            ),
+        }
+    )
     out = b.get_intraday_snapshots(["NVDA"])
     # `session_bar_at`, `minute_close`, `minute_bar_at` and `session_close`
     # are board item 120: without the two timestamps nothing downstream can
     # tell WHICH session the `session_*` block belongs to, and without the
     # two prices a name whose last trade is a prior session's has no today
     # print to fall back to on the same entitled venue.
-    assert out == {"NVDA": {
-        "last_price": 185.0, "last_trade_at": trade_at, "prev_close": 180.0,
-        "session_bar_at": bar_at,
-        "minute_close": 184.9, "minute_bar_at": minute_at,
-        "session_open": 181.0, "session_close": 185.0, "session_high": 186.0,
-        "session_low": 180.5, "session_volume": 1_250_000.0,
-    }}
+    assert out == {
+        "NVDA": {
+            "last_price": 185.0,
+            "last_trade_at": trade_at,
+            "prev_close": 180.0,
+            "session_bar_at": bar_at,
+            "minute_close": 184.9,
+            "minute_bar_at": minute_at,
+            "session_open": 181.0,
+            "session_close": 185.0,
+            "session_high": 186.0,
+            "session_low": 180.5,
+            "session_volume": 1_250_000.0,
+        }
+    }
 
 
 def test_intraday_snapshots_report_an_absent_minute_or_daily_bar_as_none():
     """A snapshot with no `minute_bar`/`daily_bar` must not invent stamps —
     the resolver reads a missing timestamp as not-today, which fails visible."""
     b = _broker()
-    b._data_client = _snapshot_client({
-        "NVDA": SimpleNamespace(
-            symbol="NVDA",
-            latest_trade=SimpleNamespace(price=185.0),
-            previous_daily_bar=SimpleNamespace(close=180.0),
-        ),
-    })
+    b._data_client = _snapshot_client(
+        {
+            "NVDA": SimpleNamespace(
+                symbol="NVDA",
+                latest_trade=SimpleNamespace(price=185.0),
+                previous_daily_bar=SimpleNamespace(close=180.0),
+            ),
+        }
+    )
     out = b.get_intraday_snapshots(["NVDA"])["NVDA"]
-    for field in ("session_bar_at", "minute_close", "minute_bar_at",
-                  "session_close", "session_open"):
+    for field in ("session_bar_at", "minute_close", "minute_bar_at", "session_close", "session_open"):
         assert out[field] is None, field
 
 
@@ -387,31 +428,38 @@ def test_intraday_snapshots_carries_the_trades_own_timestamp():
     `Trade` model does carry `timestamp` (verified against the installed
     SDK); this pins that it survives the flatten unmodified."""
     from datetime import datetime, timezone
+
     trade_ts = datetime(2026, 9, 13, 14, 30, tzinfo=timezone.utc)
     b = _broker()
-    b._data_client = _snapshot_client({
-        "NVDA": SimpleNamespace(
-            symbol="NVDA",
-            latest_trade=SimpleNamespace(price=185.0, timestamp=trade_ts),
-            previous_daily_bar=SimpleNamespace(close=180.0),
-        ),
-    })
+    b._data_client = _snapshot_client(
+        {
+            "NVDA": SimpleNamespace(
+                symbol="NVDA",
+                latest_trade=SimpleNamespace(price=185.0, timestamp=trade_ts),
+                previous_daily_bar=SimpleNamespace(close=180.0),
+            ),
+        }
+    )
     out = b.get_intraday_snapshots(["NVDA"])
     assert out["NVDA"]["last_trade_at"] == trade_ts
 
 
 def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
     b = _broker()
-    b._data_client = _snapshot_client({
-        "NVDA": SimpleNamespace(
-            symbol="NVDA", latest_trade=SimpleNamespace(price=185.0),
-            previous_daily_bar=SimpleNamespace(close=180.0),
-        ),
-        "AAPL": SimpleNamespace(
-            symbol="AAPL", latest_trade=SimpleNamespace(price=210.0),
-            previous_daily_bar=SimpleNamespace(close=200.0),
-        ),
-    })
+    b._data_client = _snapshot_client(
+        {
+            "NVDA": SimpleNamespace(
+                symbol="NVDA",
+                latest_trade=SimpleNamespace(price=185.0),
+                previous_daily_bar=SimpleNamespace(close=180.0),
+            ),
+            "AAPL": SimpleNamespace(
+                symbol="AAPL",
+                latest_trade=SimpleNamespace(price=210.0),
+                previous_daily_bar=SimpleNamespace(close=200.0),
+            ),
+        }
+    )
     out = b.get_intraday_snapshots(["NVDA", "AAPL"])
     assert out["NVDA"]["last_price"] == 185.0
     assert out["AAPL"]["prev_close"] == 200.0
@@ -421,12 +469,15 @@ def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
 
 def test_intraday_snapshots_normalizes_class_share_for_alpaca():
     b = _broker()
-    b._data_client = _snapshot_client({
-        "BRK.B": SimpleNamespace(
-            symbol="BRK.B", latest_trade=SimpleNamespace(price=500.0),
-            previous_daily_bar=SimpleNamespace(close=495.0),
-        ),
-    })
+    b._data_client = _snapshot_client(
+        {
+            "BRK.B": SimpleNamespace(
+                symbol="BRK.B",
+                latest_trade=SimpleNamespace(price=500.0),
+                previous_daily_bar=SimpleNamespace(close=495.0),
+            ),
+        }
+    )
 
     out = b.get_intraday_snapshots(["BRK-B"])
 
@@ -446,7 +497,8 @@ def test_intraday_snapshots_isolates_one_rejected_symbol():
             raise ValueError("invalid symbol: BAD")
         return {
             symbol: SimpleNamespace(
-                symbol=symbol, latest_trade=SimpleNamespace(price=100.0),
+                symbol=symbol,
+                latest_trade=SimpleNamespace(price=100.0),
                 previous_daily_bar=SimpleNamespace(close=95.0),
             )
             for symbol in symbols
@@ -466,12 +518,21 @@ def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():
     b = _broker()
     b._data_client = _snapshot_client({})  # SGOV not in the response at all
     out = b.get_intraday_snapshots(["SGOV"])
-    assert out == {"SGOV": {
-        "last_price": None, "last_trade_at": None, "prev_close": None,
-        "session_bar_at": None, "minute_close": None, "minute_bar_at": None,
-        "session_open": None, "session_close": None, "session_high": None,
-        "session_low": None, "session_volume": None,
-    }}
+    assert out == {
+        "SGOV": {
+            "last_price": None,
+            "last_trade_at": None,
+            "prev_close": None,
+            "session_bar_at": None,
+            "minute_close": None,
+            "minute_bar_at": None,
+            "session_open": None,
+            "session_close": None,
+            "session_high": None,
+            "session_low": None,
+            "session_volume": None,
+        }
+    }
 
 
 def test_intraday_snapshots_returns_empty_dict_on_total_failure():
@@ -498,6 +559,7 @@ def test_intraday_snapshots_empty_symbol_list_short_circuits():
 # These pin the two freshness answers apart: `is_today` (the provider stamped
 # it today, trade or quote) and `is_today_print` (additionally a real trade).
 # ---------------------------------------------------------------------------
+
 
 def _at(day: date, hour: int = 15) -> datetime:
     """An aware ET-comparable timestamp on `day` (UTC, as Alpaca sends)."""
@@ -528,8 +590,8 @@ def test_stamped_price_refuses_to_call_yesterdays_print_today():
     )
     with patch("src.trading_calendar.et_now", return_value=now):
         stamped = b.get_latest_price_stamped("NVDA")
-    assert stamped.price == 181.25          # still reported, never invented
-    assert stamped.is_today is False        # but not as today's price
+    assert stamped.price == 181.25  # still reported, never invented
+    assert stamped.is_today is False  # but not as today's price
     assert stamped.is_today_print is False
 
 
@@ -542,7 +604,9 @@ def test_stamped_price_never_calls_a_quote_a_print():
     b._data_client = _price_client(
         trade=SimpleNamespace(price=0),
         quote=SimpleNamespace(
-            ask_price=101.0, bid_price=99.0, timestamp=_at(date(2026, 9, 17)),
+            ask_price=101.0,
+            bid_price=99.0,
+            timestamp=_at(date(2026, 9, 17)),
         ),
     )
     with patch("src.trading_calendar.et_now", return_value=now):

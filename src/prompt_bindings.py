@@ -49,6 +49,7 @@ bound is invisible to it. Those limits are the same ones the deletion-site
 check accepts, for the same reason: an enforcement that asks for annotation
 on every sentence forever is the design that was rejected.
 """
+
 from __future__ import annotations
 
 import ast
@@ -104,11 +105,7 @@ def _strip_docstring(node: ast.AST) -> ast.AST:
         if not isinstance(body, list) or not body:
             continue
         first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
             del body[0]
     return node
 
@@ -120,9 +117,13 @@ def _find_symbol(tree: ast.AST, symbol: str) -> ast.AST | None:
     for part in parts:
         found = None
         for child in ast.iter_child_nodes(node):  # type: ignore[arg-type]
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-            ) and child.name == part:
+            if (
+                isinstance(
+                    child,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
+                and child.name == part
+            ):
                 found = child
                 break
         if found is None:
@@ -130,9 +131,13 @@ def _find_symbol(tree: ast.AST, symbol: str) -> ast.AST | None:
             # fall back to a full walk so `Class.method` still resolves when
             # the class is itself nested.
             for child in ast.walk(node):  # type: ignore[arg-type]
-                if isinstance(
-                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                ) and child.name == part:
+                if (
+                    isinstance(
+                        child,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    )
+                    and child.name == part
+                ):
                     found = child
                     break
         if found is None:
@@ -168,14 +173,9 @@ def _fstring_text(node: ast.JoinedStr) -> str:
             parts.append(f"lit={literal!r}")
             literal = ""
         if isinstance(value, ast.FormattedValue):
-            spec = (
-                ast.unparse(value.format_spec)
-                if value.format_spec is not None
-                else ""
-            )
+            spec = ast.unparse(value.format_spec) if value.format_spec is not None else ""
             parts.append(
-                f"sub={ast.unparse(value.value)}"
-                f"!{value.conversion}:{spec}",
+                f"sub={ast.unparse(value.value)}!{value.conversion}:{spec}",
             )
         else:  # pragma: no cover - no other node type is legal here
             parts.append(f"other={ast.unparse(value)}")
@@ -298,8 +298,7 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Binding]:
         raise BindingError(f"{path}: top-level `bindings:` must be a list")
     if not entries:
         raise BindingError(
-            f"{path}: the registry is empty, which would make this check "
-            f"pass while checking nothing",
+            f"{path}: the registry is empty, which would make this check pass while checking nothing",
         )
     out: list[Binding] = []
     for i, item in enumerate(entries):
@@ -308,12 +307,9 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Binding]:
         for required in ("name", "why", "code", "prose", "code_digest", "prose_digest"):
             if required not in item:
                 raise BindingError(
-                    f"{path}: entry #{i} ({item.get('name', '?')}) has no "
-                    f"`{required}`",
+                    f"{path}: entry #{i} ({item.get('name', '?')}) has no `{required}`",
                 )
-        code = tuple(
-            CodeAnchor(str(c["file"]), str(c["symbol"])) for c in item["code"]
-        )
+        code = tuple(CodeAnchor(str(c["file"]), str(c["symbol"])) for c in item["code"])
         prose = tuple(
             ProseAnchor(
                 str(p["file"]),
@@ -323,14 +319,12 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Binding]:
         )
         if not code or not prose:
             raise BindingError(
-                f"{path}: entry `{item['name']}` binds nothing on one side, "
-                f"so it can never disagree with itself",
+                f"{path}: entry `{item['name']}` binds nothing on one side, so it can never disagree with itself",
             )
         for p in prose:
             if not p.contains:
                 raise BindingError(
-                    f"{path}: prose anchor {p.file} in `{item['name']}` "
-                    f"selects no lines",
+                    f"{path}: prose anchor {p.file} in `{item['name']}` selects no lines",
                 )
             for needle in p.contains:
                 if len(needle) < 8:
@@ -338,14 +332,16 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Binding]:
                         f"{path}: anchor {needle!r} in `{item['name']}` is "
                         f"too short to select one description reliably",
                     )
-        out.append(Binding(
-            name=str(item["name"]),
-            why=str(item["why"]),
-            code=code,
-            prose=prose,
-            code_digest=str(item["code_digest"]),
-            prose_digest=str(item["prose_digest"]),
-        ))
+        out.append(
+            Binding(
+                name=str(item["name"]),
+                why=str(item["why"]),
+                code=code,
+                prose=prose,
+                code_digest=str(item["code_digest"]),
+                prose_digest=str(item["prose_digest"]),
+            )
+        )
     return out
 
 
@@ -367,19 +363,13 @@ def check(
         where_code = ", ".join(f"{c.file}:{c.symbol}" for c in binding.code)
         where_prose = ", ".join(p.file for p in binding.prose)
         if code_moved and not prose_moved:
-            headline = (
-                "the BEHAVIOUR changed and the prose describing it did not"
-            )
+            headline = "the BEHAVIOUR changed and the prose describing it did not"
         elif prose_moved and not code_moved:
             headline = (
-                "the prose changed and the behaviour did not — confirm the "
-                "new wording is still true, then re-pin"
+                "the prose changed and the behaviour did not — confirm the new wording is still true, then re-pin"
             )
         else:
-            headline = (
-                "both sides changed — confirm they changed to agree, then "
-                "re-pin"
-            )
+            headline = "both sides changed — confirm they changed to agree, then re-pin"
         problems.append(
             f"binding `{binding.name}`: {headline}.\n"
             f"    code:  {where_code}\n"
@@ -399,7 +389,4 @@ def current_digests(
     """`{name: (code_digest, prose_digest)}` as the tree stands right now."""
     root = Path(root)
     bindings = load_registry(registry_path or root / "config" / "prompt_bindings.yaml")
-    return {
-        b.name: (code_digest(root, b.code), prose_digest(root, b.prose))
-        for b in bindings
-    }
+    return {b.name: (code_digest(root, b.code), prose_digest(root, b.prose)) for b in bindings}

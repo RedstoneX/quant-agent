@@ -14,6 +14,7 @@ Usage:
                                                       # leave the watermark alone
   python scripts/log_health_report.py --since-hours 48 --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,9 +52,7 @@ def main() -> int:
         action="store_true",
         help="print the message; send nothing and do not advance the watermark",
     )
-    parser.add_argument(
-        "--no-telegram", action="store_true", help="analyse and print, never send"
-    )
+    parser.add_argument("--no-telegram", action="store_true", help="analyse and print, never send")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -63,13 +62,9 @@ def main() -> int:
         start = now - timedelta(hours=args.since_hours)
         records = log_health.read_window(start, now, args.log_dir)
         state = log_health.load_state(args.state)
-        report = log_health.analyse(
-            records, start, now, log_dir=args.log_dir, previous=state.get("reported")
-        )
+        report = log_health.analyse(records, start, now, log_dir=args.log_dir, previous=state.get("reported"))
     else:
-        report = log_health.build_report(
-            now=now, log_dir=args.log_dir, state_path=args.state
-        )
+        report = log_health.build_report(now=now, log_dir=args.log_dir, state_path=args.state)
 
     messages = log_health.render(report)
     for message in messages:
@@ -86,7 +81,10 @@ def main() -> int:
         # message is built from fixed sentences and integers, so there is no
         # model or broker text in it that could carry stray markup.
         ok, _ = send_owner_alert_with_outcome(
-            message, notifier=notifier, kind="log_health", pnl_header=False,
+            message,
+            notifier=notifier,
+            kind="log_health",
+            pnl_header=False,
             preserve_structural_markup=True,
         )
         delivered = ok and delivered

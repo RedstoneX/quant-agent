@@ -3,17 +3,24 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_admission.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import sqlite3
 import uuid
 from typing import Any, Callable, TypeVar
-from src.cost_circuit.refusal import CallReservation, OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended, _fmt_settled
+from src.cost_circuit.refusal import (
+    CallReservation,
+    OptionalPaidAnalysisRetrySkipped,
+    PaidAnalysisSuspended,
+    _fmt_settled,
+)
 from src.cost_circuit.clock import _et_day_and_utc_bounds
 
 
 class Admission:
     def __init__(
-        self, *,
+        self,
+        *,
         config,
         enabled,
         connect,
@@ -96,33 +103,55 @@ class Admission:
 
         if unknown_cost_rows > 0:
             self._trip_locked(
-                conn, code="legacy_unknown_cost",
-                detail=(f"{unknown_cost_rows} same-day row(s) (pre-deployment agent "
-                        "logs, or a fully-failed call with unknown cost — see "
-                        "fail_call / complete_call with no telemetry) have unknown "
-                        "cost; daily spend cannot be bounded safely"),
-                run_id=run_id, mode=mode, agent_name=agent_name,
-                attempts=attempts, attempts_exact=attempts_exact,
-                costs_exact=False, session_cost=session, daily_cost=daily,
+                conn,
+                code="legacy_unknown_cost",
+                detail=(
+                    f"{unknown_cost_rows} same-day row(s) (pre-deployment agent "
+                    "logs, or a fully-failed call with unknown cost — see "
+                    "fail_call / complete_call with no telemetry) have unknown "
+                    "cost; daily spend cannot be bounded safely"
+                ),
+                run_id=run_id,
+                mode=mode,
+                agent_name=agent_name,
+                attempts=attempts,
+                attempts_exact=attempts_exact,
+                costs_exact=False,
+                session_cost=session,
+                daily_cost=daily,
             )
         elif daily >= float(self.config.daily_cost_limit_usd):
             self._trip_locked(
-                conn, code="daily_cost_limit",
-                detail=(f"daily LLM spend {_fmt_settled(daily)} reached safe limit "
-                        f"${float(self.config.daily_cost_limit_usd):.2f}"),
-                run_id=run_id, mode=mode, agent_name=agent_name,
-                attempts=attempts, attempts_exact=attempts_exact,
-                session_cost=session, daily_cost=daily,
+                conn,
+                code="daily_cost_limit",
+                detail=(
+                    f"daily LLM spend {_fmt_settled(daily)} reached safe limit "
+                    f"${float(self.config.daily_cost_limit_usd):.2f}"
+                ),
+                run_id=run_id,
+                mode=mode,
+                agent_name=agent_name,
+                attempts=attempts,
+                attempts_exact=attempts_exact,
+                session_cost=session,
+                daily_cost=daily,
                 costs_exact=daily_exact,
             )
         elif session >= float(self.config.session_cost_limit_usd):
             self._trip_locked(
-                conn, code="session_cost_limit",
-                detail=(f"session LLM spend {_fmt_settled(session)} reached safe limit "
-                        f"${float(self.config.session_cost_limit_usd):.2f}"),
-                run_id=run_id, mode=mode, agent_name=agent_name,
-                attempts=attempts, attempts_exact=attempts_exact,
-                session_cost=session, daily_cost=daily,
+                conn,
+                code="session_cost_limit",
+                detail=(
+                    f"session LLM spend {_fmt_settled(session)} reached safe limit "
+                    f"${float(self.config.session_cost_limit_usd):.2f}"
+                ),
+                run_id=run_id,
+                mode=mode,
+                agent_name=agent_name,
+                attempts=attempts,
+                attempts_exact=attempts_exact,
+                session_cost=session,
+                daily_cost=daily,
                 costs_exact=session_exact,
             )
 
@@ -152,15 +181,24 @@ class Admission:
                 attempts = int(row["provider_attempts"] if row else 0)
                 attempts_exact = not (row and row["status"] == "legacy")
                 self._enforce_settled_limits_locked(
-                    conn, day=day, run_id=run_id, mode=mode,
-                    agent_name=agent_name, attempts=attempts,
-                    attempts_exact=attempts_exact, daily=daily, session=session,
+                    conn,
+                    day=day,
+                    run_id=run_id,
+                    mode=mode,
+                    agent_name=agent_name,
+                    attempts=attempts,
+                    attempts_exact=attempts_exact,
+                    daily=daily,
+                    session=session,
                 )
                 conn.commit()
 
         try:
             self._run_with_infra_retry(
-                _enforce, agent_name=agent_name, run_id=run_id, mode=mode,
+                _enforce,
+                agent_name=agent_name,
+                run_id=run_id,
+                mode=mode,
             )
         except Exception:
             # Latched durably already by `_run_with_infra_retry`. This
@@ -221,12 +259,14 @@ class Admission:
             self._seed_today(conn)
             self._reconcile_quota_holds_locked(conn, current_day=day)
             state = self._effective_state_locked(
-                conn, day=day, run_id=run_id, mode=mode,
+                conn,
+                day=day,
+                run_id=run_id,
+                mode=mode,
             )
             daily, session = self._totals(conn, day, run_id)
             session_row = conn.execute(
-                "SELECT provider_attempts, logical_calls, retry_attempts "
-                "FROM llm_budget_sessions WHERE run_id=?",
+                "SELECT provider_attempts, logical_calls, retry_attempts FROM llm_budget_sessions WHERE run_id=?",
                 (run_id,),
             ).fetchone()
             attempts = int(session_row["provider_attempts"] if session_row else 0)
@@ -238,28 +278,33 @@ class Admission:
                 raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
             if session_row is None:
-                raise RuntimeError(
-                    f"cost-circuit session accounting row is missing for run {run_id}"
-                )
+                raise RuntimeError(f"cost-circuit session accounting row is missing for run {run_id}")
 
             # (b): Reset clears the latch, not historical spend.  Recheck the
             # REAL settled-cost ceilings in this same write transaction so
             # neither a direct caller nor an already-running job can spend
             # through the gap between reset and a later pipeline preflight.
             self._enforce_settled_limits_locked(
-                conn, day=day, run_id=run_id, mode=mode,
-                agent_name=agent_name, attempts=attempts,
-                attempts_exact=True, daily=daily, session=session,
+                conn,
+                day=day,
+                run_id=run_id,
+                mode=mode,
+                agent_name=agent_name,
+                attempts=attempts,
+                attempts_exact=True,
+                daily=daily,
+                session=session,
             )
             state = self._effective_state_locked(
-                conn, day=day, run_id=run_id, mode=mode,
+                conn,
+                day=day,
+                run_id=run_id,
+                mode=mode,
             )
             if int(state.get("suspended") or 0):
                 conn.commit()
                 self._notify_if_needed()
-                raise PaidAnalysisSuspended(
-                    str(state.get("trigger_detail") or "circuit open"), state
-                )
+                raise PaidAnalysisSuspended(str(state.get("trigger_detail") or "circuit open"), state)
 
             # (c): runaway-loop backstop by call COUNT, independent of price.
             max_calls = int(self.config.max_calls_per_session)
@@ -284,14 +329,22 @@ class Admission:
                         },
                     )
                 self._trip_locked(
-                    conn, code="session_call_count_limit",
+                    conn,
+                    code="session_call_count_limit",
                     detail=detail,
-                    run_id=run_id, mode=mode, agent_name=agent_name,
-                    attempts=attempts, session_cost=session, daily_cost=daily,
+                    run_id=run_id,
+                    mode=mode,
+                    agent_name=agent_name,
+                    attempts=attempts,
+                    session_cost=session,
+                    daily_cost=daily,
                     costs_exact=True,
                 )
                 state = self._effective_state_locked(
-                    conn, day=day, run_id=run_id, mode=mode,
+                    conn,
+                    day=day,
+                    run_id=run_id,
+                    mode=mode,
                 )
                 conn.commit()
                 self._notify_if_needed()
@@ -300,11 +353,10 @@ class Admission:
             updated_session = conn.execute(
                 "UPDATE llm_budget_sessions SET logical_calls=logical_calls+1, "
                 "retry_attempts=retry_attempts+?, updated_at=datetime('now') "
-                "WHERE run_id=?", (1 if retry_kind else 0, run_id)
+                "WHERE run_id=?",
+                (1 if retry_kind else 0, run_id),
             )
             if updated_session.rowcount != 1:
-                raise RuntimeError(
-                    f"cost-circuit session row disappeared while authorizing call for {run_id}"
-                )
+                raise RuntimeError(f"cost-circuit session row disappeared while authorizing call for {run_id}")
             conn.commit()
         return CallReservation(reservation_id, run_id, mode, agent_name, model)

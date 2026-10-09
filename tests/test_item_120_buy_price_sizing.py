@@ -37,12 +37,18 @@ from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
 from src.data.live_price import ONLY_STALE, resolve_live_price
 from src.execution.broker import LivePrice
 from src.models import (
-    Position, PortfolioDecision, TargetPosition, TradeDecision,
-    TechAnalysisResult, TechReasoningChain,
+    Position,
+    PortfolioDecision,
+    TargetPosition,
+    TradeDecision,
+    TechAnalysisResult,
+    TechReasoningChain,
 )
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
-    ExecutionStage, _rotation_buy_leg_projected_refusal, _today_sizing_price,
+    ExecutionStage,
+    _rotation_buy_leg_projected_refusal,
+    _today_sizing_price,
 )
 from src.portfolio_constructor import PortfolioConstructor
 from tests.session_clock import todays_session_bar_stamp
@@ -60,10 +66,17 @@ SEP17_BAR_AT = datetime(2026, 9, 17, 0, 0, tzinfo=ET)
 def _snap(**kw) -> dict:
     """A `get_intraday_snapshots` payload with every field present."""
     base = {
-        "last_price": None, "last_trade_at": None, "prev_close": 100.0,
-        "session_bar_at": None, "minute_close": None, "minute_bar_at": None,
-        "session_open": None, "session_close": None, "session_high": None,
-        "session_low": None, "session_volume": None,
+        "last_price": None,
+        "last_trade_at": None,
+        "prev_close": 100.0,
+        "session_bar_at": None,
+        "minute_close": None,
+        "minute_bar_at": None,
+        "session_open": None,
+        "session_close": None,
+        "session_high": None,
+        "session_low": None,
+        "session_volume": None,
     }
     base.update(kw)
     return base
@@ -71,20 +84,28 @@ def _snap(**kw) -> dict:
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x",
-        volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
-def _analysis(symbol: str, entry: float, stop: float, target: float,
-              horizon: int = 60) -> TechAnalysisResult:
+def _analysis(symbol: str, entry: float, stop: float, target: float, horizon: int = 60) -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=entry,
-        stop_loss=stop, reference_target=target, reasoning="test",
-        support_levels=[stop], resistance_levels=[target],
+        symbol=symbol,
+        rating="buy",
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target],
         computed_levels=[stop, target],
         atr_14=(entry - stop) / 3.5,
-        setup_type="range", expected_horizon_sessions=horizon,
+        setup_type="range",
+        expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -102,21 +123,20 @@ def _split(snapshots: dict[str, dict], syms: list[str], when: datetime):
         if resolved.is_today_print:
             price_map[sym] = resolved.price
         else:
-            unpriceable[sym] = (
-                FAULT_STALE_PRICE if resolved.unavailable == ONLY_STALE
-                else FAULT_NO_PRICE
-            )
+            unpriceable[sym] = FAULT_STALE_PRICE if resolved.unavailable == ONLY_STALE else FAULT_NO_PRICE
     return price_map, unpriceable
 
 
 # --- constructor surface ----------------------------------------------------
 
+
 def test_new_name_buy_sizes_off_the_resolved_last_trade():
     """A fresh today print prices the buy — and it is the RESOLVED last
     trade, not the analyst's (possibly hours-old) entry_price."""
     snapshots = {
-        "NVDA": _snap(last_price=110.0, last_trade_at=SEP17_FRESH_PRINT,
-                      session_bar_at=SEP17_BAR_AT, session_close=110.0),
+        "NVDA": _snap(
+            last_price=110.0, last_trade_at=SEP17_FRESH_PRINT, session_bar_at=SEP17_BAR_AT, session_close=110.0
+        ),
     }
     price_map, unpriceable = _split(snapshots, ["NVDA"], when=SEP17_1031)
     assert price_map == {"NVDA": 110.0}
@@ -126,15 +146,16 @@ def test_new_name_buy_sizes_off_the_resolved_last_trade():
     # TA entry is deliberately DIFFERENT (100) from the live print (110) so a
     # buy priced off the TA fallback would be visibly detectable.
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
-                                conviction="high", thesis="AI")],
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0, conviction="high", thesis="AI")],
         # Level above entry is 135, not 115: priced off the live 110 print a
         # 115 level would risk 15 to make 5, which the parity refusal declines
         # outright (owner ruling 2026-10-01, board item 218). This test is
         # about WHICH price sizes the buy, so the geometry is made passable
         # rather than the refusal being bypassed.
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=135)],
-        total_value=100_000, price_map=price_map,
+        positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=135)],
+        total_value=100_000,
+        price_map=price_map,
         unpriceable_symbols=unpriceable,
     )
     assert len(decisions) == 1
@@ -156,10 +177,11 @@ def test_stale_only_snapshot_refuses_the_name_as_stale_price():
 
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
-                                conviction="high", thesis="AI")],
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
-        total_value=100_000, price_map=price_map,
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0, conviction="high", thesis="AI")],
+        positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
+        total_value=100_000,
+        price_map=price_map,
         unpriceable_symbols=unpriceable,
     )
     assert decisions == []  # refused, not sized on the stale 161.79 or TA 100
@@ -181,10 +203,11 @@ def test_a_quote_mid_only_snapshot_refuses_as_no_price_never_sizes():
 
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
-                                conviction="high", thesis="AI")],
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
-        total_value=100_000, price_map=price_map,
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0, conviction="high", thesis="AI")],
+        positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
+        total_value=100_000,
+        price_map=price_map,
         unpriceable_symbols=unpriceable,
     )
     assert decisions == []
@@ -199,15 +222,21 @@ def test_a_held_name_is_never_made_unpriceable_by_this_path():
     assert unpriceable == {}
 
     constructor = PortfolioConstructor()
-    held = Position(symbol="NVDA", qty=100, avg_entry=90.0, current_price=100.0,
-                    market_value=10_000.0, unrealized_pnl=1_000.0,
-                    sector="Technology")
+    held = Position(
+        symbol="NVDA",
+        qty=100,
+        avg_entry=90.0,
+        current_price=100.0,
+        market_value=10_000.0,
+        unrealized_pnl=1_000.0,
+        sector="Technology",
+    )
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="NVDA", target_weight_pct=5.0,
-                                conviction="high", thesis="trim")],
+        targets=[TargetPosition(symbol="NVDA", target_weight_pct=5.0, conviction="high", thesis="trim")],
         positions=[held],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
-        total_value=100_000, price_map={"NVDA": 100.0},
+        total_value=100_000,
+        price_map={"NVDA": 100.0},
         unpriceable_symbols={},
     )
     assert constructor.drain_data_faults() == {}
@@ -216,19 +245,19 @@ def test_a_held_name_is_never_made_unpriceable_by_this_path():
 
 # --- execution surface (REAL pipeline_stages wiring, not a reimplementation) -
 
+
 def _broker_stamped(live: LivePrice | None):
     """A broker whose stamped price is a REAL LivePrice (so the
     `is_today_print` gate in `_today_sizing_price` actually bites), and whose
     bare `get_latest_price` mirrors it as the fill reference."""
     return SimpleNamespace(
         get_latest_price_stamped=lambda s: live,
-        get_latest_price=lambda s: (live.price if live is not None else None),
+        get_latest_price=lambda s: live.price if live is not None else None,
     )
 
 
 def test_today_sizing_price_returns_a_real_today_print():
-    live = LivePrice(price=110.0, source="last_trade", trade_at=SEP17_FRESH_PRINT,
-                     is_today=True, is_today_print=True)
+    live = LivePrice(price=110.0, source="last_trade", trade_at=SEP17_FRESH_PRINT, is_today=True, is_today_print=True)
     pipeline = SimpleNamespace(broker=_broker_stamped(live))
     assert _today_sizing_price(pipeline, "NVDA") == 110.0
 
@@ -236,22 +265,23 @@ def test_today_sizing_price_returns_a_real_today_print():
 def test_today_sizing_price_refuses_a_quote_mid_even_when_stamped_today():
     """The exact defect: a quote mid is is_today=True but is_today_print=False,
     so the FILL reference accepts it and the SIZING price must not."""
-    mid = LivePrice(price=158.05, source="quote_mid", trade_at=SEP17_FRESH_PRINT,
-                    is_today=True, is_today_print=False)
+    mid = LivePrice(price=158.05, source="quote_mid", trade_at=SEP17_FRESH_PRINT, is_today=True, is_today_print=False)
     pipeline = SimpleNamespace(broker=_broker_stamped(mid))
     assert _today_sizing_price(pipeline, "NVDA") is None
 
 
 def test_today_sizing_price_refuses_a_prior_session_print():
-    stale = LivePrice(price=161.79, source="last_trade", trade_at=SEP16_CLOSE,
-                      is_today=False, is_today_print=False)
+    stale = LivePrice(price=161.79, source="last_trade", trade_at=SEP16_CLOSE, is_today=False, is_today_print=False)
     pipeline = SimpleNamespace(broker=_broker_stamped(stale))
     assert _today_sizing_price(pipeline, "NVDA") is None
 
 
 def _buy_decision(symbol="NVDA"):
     return SimpleNamespace(
-        symbol=symbol, action="BUY", entry_price=110.0, stop_loss=104.0,
+        symbol=symbol,
+        action="BUY",
+        entry_price=110.0,
+        stop_loss=104.0,
         allocation_pct=5.0,
     )
 
@@ -260,13 +290,17 @@ def test_rotation_buy_leg_refuses_to_size_off_a_quote_mid():
     """The real execution-stage sizing gate: a today quote mid is a valid
     FILL reference (passes `_live_fill_price`) but is refused as a SIZING
     reference, so the replacement buy is not sized on it."""
-    mid = LivePrice(price=110.0, source="quote_mid", trade_at=SEP17_FRESH_PRINT,
-                    is_today=True, is_today_print=False)
+    mid = LivePrice(price=110.0, source="quote_mid", trade_at=SEP17_FRESH_PRINT, is_today=True, is_today_print=False)
     pipeline = SimpleNamespace(broker=_broker_stamped(mid))
     clearance, reason, detail = _rotation_buy_leg_projected_refusal(
-        pipeline, SimpleNamespace(), rotation=SimpleNamespace(),
-        buy_decision=_buy_decision(), positions=[], total_value=100_000.0,
-        rotation_sell=None, cash=50_000.0,
+        pipeline,
+        SimpleNamespace(),
+        rotation=SimpleNamespace(),
+        buy_decision=_buy_decision(),
+        positions=[],
+        total_value=100_000.0,
+        rotation_sell=None,
+        cash=50_000.0,
     )
     assert clearance is None
     assert reason == "no_price"
@@ -275,12 +309,18 @@ def test_rotation_buy_leg_refuses_to_size_off_a_quote_mid():
 
 # --- REAL ExecutionStage submit loop ----------------------------------------
 
+
 def _pm_rc():
     from src.models import ReasoningChain
+
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -291,20 +331,27 @@ def _exec_pipeline_with_print(price: float):
     now = datetime.now(ET)
     pipeline = MagicMock()
     pipeline.broker.get_latest_price_stamped.return_value = LivePrice(
-        price=price, source="last_trade", trade_at=now,
-        is_today=True, is_today_print=True,
+        price=price,
+        source="last_trade",
+        trade_at=now,
+        is_today=True,
+        is_today_print=True,
     )
     pipeline.broker.get_latest_price.return_value = price
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": price - 1.0, "ask_price": price + 1.0,
+        "bid_price": price - 1.0,
+        "ask_price": price + 1.0,
     }
     pipeline.broker.submit_order.return_value = {
-        "id": "o1", "status": "accepted",
+        "id": "o1",
+        "status": "accepted",
     }
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     return pipeline
 
@@ -329,7 +376,9 @@ def _run_exec(pipeline, decision, monkeypatch):
     ctx.positions = []
     ctx.symbols_bars = {}
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[decision], portfolio_view="t",
+        reasoning_chain=_pm_rc(),
+        decisions=[decision],
+        portfolio_view="t",
     )
     ExecutionStage(pipeline=pipeline).run(ctx)
     _ = real  # keep a reference; monkeypatch restores it after the test
@@ -342,8 +391,12 @@ def test_submit_loop_short_is_not_over_sized_off_the_below_market_limit(monkeypa
     shares — a bigger short). Drives the real submit loop."""
     pipeline = _exec_pipeline_with_print(100.0)
     short = TradeDecision(
-        action="SHORT", symbol="TSLA", allocation_pct=10,
-        entry_price=100.0, stop_loss=106.0, take_profit=88.0,
+        action="SHORT",
+        symbol="TSLA",
+        allocation_pct=10,
+        entry_price=100.0,
+        stop_loss=106.0,
+        take_profit=88.0,
         reasoning="short new name",
     )
     captured = _run_exec(pipeline, short, monkeypatch)
@@ -356,8 +409,12 @@ def test_submit_loop_buy_never_sizes_below_the_print(monkeypatch):
     below the print. The ceiling can only make the buy SMALLER (accepted)."""
     pipeline = _exec_pipeline_with_print(100.0)
     buy = TradeDecision(
-        action="BUY", symbol="TSLA", allocation_pct=10,
-        entry_price=100.0, stop_loss=94.0, take_profit=118.0,
+        action="BUY",
+        symbol="TSLA",
+        allocation_pct=10,
+        entry_price=100.0,
+        stop_loss=94.0,
+        take_profit=118.0,
         reasoning="buy new name",
     )
     captured = _run_exec(pipeline, buy, monkeypatch)
@@ -377,16 +434,21 @@ def test_execution_and_constructor_agree_on_a_today_session_bar():
     stale_last_trade_at = datetime(2020, 1, 1, tzinfo=ET)
     session_bar_at = todays_session_bar_stamp()
     snapshot = _snap(
-        last_price=161.79, last_trade_at=stale_last_trade_at,  # stale
+        last_price=161.79,
+        last_trade_at=stale_last_trade_at,  # stale
         session_bar_at=session_bar_at,
-        session_open=158.38, session_close=158.55,
+        session_open=158.38,
+        session_close=158.55,
     )
     constructor_price = resolve_live_price(snapshot).price  # session bar close
 
     broker = MagicMock()
     broker.get_latest_price_stamped.return_value = LivePrice(
-        price=161.79, source="last_trade", trade_at=stale_last_trade_at,
-        is_today=False, is_today_print=False,  # stale print, refused for sizing
+        price=161.79,
+        source="last_trade",
+        trade_at=stale_last_trade_at,
+        is_today=False,
+        is_today_print=False,  # stale print, refused for sizing
     )
     broker.get_intraday_snapshots.return_value = {"NVDA": snapshot}
     pipeline = SimpleNamespace(broker=broker)

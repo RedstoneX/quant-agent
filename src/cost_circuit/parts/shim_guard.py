@@ -5,6 +5,7 @@ imported from there: src.cost_circuit may not reach the broker seam). A
 lifted body passed back into the standalone object as a collaborator would
 overwrite that object's own method with a function that calls back into it.
 """
+
 from __future__ import annotations
 import functools
 

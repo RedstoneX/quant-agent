@@ -6,6 +6,7 @@ client and its `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES` vocabulary (that set
 stays in broker.py beside the sets it extends, so this module never imports
 the adapter and there is no import cycle).
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,12 +59,19 @@ _CLIENT_ORDER_ID_DUPLICATE_TEXT = "client_order_id must be unique"
 def _session_date_key() -> str:
     """ET trading-day key 'YYYY-MM-DD' — the desk's shared per-day key."""
     from src.trading_calendar import session_date_key
+
     return session_date_key()
 
 
 def _client_order_id(
-    *, purpose: str, symbol: str, side: str, session_date: str,
-    qty: float, price: float | None, supersedes: str | None = None,
+    *,
+    purpose: str,
+    symbol: str,
+    side: str,
+    session_date: str,
+    qty: float,
+    price: float | None,
+    supersedes: str | None = None,
 ) -> str:
     """Deterministic idempotency key for ONE order intent (see block above).
 
@@ -89,12 +97,10 @@ def _client_order_id(
     test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops.
     """
     import hashlib
+
     side_token = side.lower().replace("_", "")
     price_token = "mkt" if price is None else repr(float(price))
-    natural = (
-        f"{purpose}-{symbol}-{side_token}-{session_date}-"
-        f"{repr(float(qty))}-{price_token}"
-    )
+    natural = f"{purpose}-{symbol}-{side_token}-{session_date}-{repr(float(qty))}-{price_token}"
     if supersedes:
         natural += f"-s{supersedes}"
     if len(natural) <= _CLIENT_ORDER_ID_MAX_LEN:
@@ -113,10 +119,7 @@ def _is_duplicate_client_order_id_rejection(exc: BaseException) -> bool:
     above). Both the code and the text are required so a different 422
     (bad parameters) is never mistaken for "already exists".
     """
-    return (
-        getattr(exc, "status_code", None) == 422
-        and _CLIENT_ORDER_ID_DUPLICATE_TEXT in str(exc).lower()
-    )
+    return getattr(exc, "status_code", None) == 422 and _CLIENT_ORDER_ID_DUPLICATE_TEXT in str(exc).lower()
 
 
 # The set for a THIRD question, asked only by the idempotent stop-submit
@@ -160,8 +163,7 @@ def _is_dead_stop_result(result: object, holds_shares_statuses: frozenset) -> bo
     return status.lower() not in holds_shares_statuses
 
 
-def _existing_order_for_client_id(client, client_order_id: str,
-                                  duplicate_exc: BaseException):
+def _existing_order_for_client_id(client, client_order_id: str, duplicate_exc: BaseException):
     """Fetch the order the broker says already holds `client_order_id`.
 
     Called only after `_is_duplicate_client_order_id_rejection` — the
@@ -179,9 +181,17 @@ def _existing_order_for_client_id(client, client_order_id: str,
             f"read back ({lookup_exc}); treat as PLACED, not rejected"
         ) from duplicate_exc
 
+
 def _submit_stop_request_idempotent(
-    client, build_request, *, purpose: str, alpaca_symbol: str, side: str,
-    session_date: str, qty: float, price: float,
+    client,
+    build_request,
+    *,
+    purpose: str,
+    alpaca_symbol: str,
+    side: str,
+    session_date: str,
+    qty: float,
+    price: float,
     holds_shares_statuses: frozenset,
 ):
     """Submit ONE protective-stop request under its idempotency key and
@@ -219,8 +229,12 @@ def _submit_stop_request_idempotent(
     seen_dead: set[str] = set()
     while True:
         client_order_id = _client_order_id(
-            purpose=purpose, symbol=alpaca_symbol, side=side,
-            session_date=session_date, qty=qty, price=price,
+            purpose=purpose,
+            symbol=alpaca_symbol,
+            side=side,
+            session_date=session_date,
+            qty=qty,
+            price=price,
             supersedes=supersedes,
         )
         request = build_request(client_order_id)
@@ -230,11 +244,11 @@ def _submit_stop_request_idempotent(
             if not _is_duplicate_client_order_id_rejection(exc):
                 raise
             existing = _existing_order_for_client_id(
-                client, client_order_id, exc,
+                client,
+                client_order_id,
+                exc,
             )
-        status = str(
-            getattr(existing.status, "value", existing.status)
-        ).lower()
+        status = str(getattr(existing.status, "value", existing.status)).lower()
         if status in holds_shares_statuses:
             # The guard working: this exact stop already rests at the
             # broker (a retry after a timed-out POST) — or is being
@@ -243,7 +257,11 @@ def _submit_stop_request_idempotent(
                 "protective stop already rests at broker for %s %s "
                 "qty=%s @ %s (client_order_id=%s, status=%s) — "
                 "returning it instead of submitting a duplicate.",
-                purpose, alpaca_symbol, qty, price, client_order_id,
+                purpose,
+                alpaca_symbol,
+                qty,
+                price,
+                client_order_id,
                 status,
             )
             return existing
@@ -260,13 +278,15 @@ def _submit_stop_request_idempotent(
             "protective stop key %s for %s is held by order %s whose "
             "status is %s — that order is NOT protection; submitting a "
             "new stop under a superseding key.",
-            client_order_id, alpaca_symbol, dead_id, status,
+            client_order_id,
+            alpaca_symbol,
+            dead_id,
+            status,
         )
         supersedes = dead_id
 
 
-def _submit_entry_request_idempotent(client, request, *, client_order_id: str,
-                                     side: str, qty, symbol: str):
+def _submit_entry_request_idempotent(client, request, *, client_order_id: str, side: str, qty, symbol: str):
     """Submit ONE entry/exit request under its key. A duplicate-key refusal is
     the guard working: the EXISTING order is read back and returned instead of
     a second trade. Every other failure propagates to the caller unchanged."""
@@ -279,6 +299,10 @@ def _submit_entry_request_idempotent(client, request, *, client_order_id: str,
         logger.info(
             "Order already exists at broker for %s %s %s (client_order_id=%s) "
             "— returning the existing order %s instead of submitting a duplicate.",
-            side, qty, symbol, client_order_id, order.id,
+            side,
+            qty,
+            symbol,
+            client_order_id,
+            order.id,
         )
         return order

@@ -11,6 +11,7 @@ the caller on every return (a refused symbol included) and is handed to the
 next symbol, exactly as the loop-local variable was. Sell-side code:
 behaviour is identical.
 """
+
 import logging
 
 from src.exits_parts.midday_state import SKIP, MiddayLoop
@@ -21,7 +22,11 @@ logger = logging.getLogger("src.pipeline")
 
 
 def midday_holding_discipline(
-    loop: MiddayLoop, action_item: dict, act, symbol, reason_text,
+    loop: MiddayLoop,
+    action_item: dict,
+    act,
+    symbol,
+    reason_text,
     hd_position_history: dict | None,
 ):
     """Fact-check one exit's named trigger; `(SKIP, history)` drops it."""
@@ -68,8 +73,11 @@ def midday_holding_discipline(
                 hd_position_history = {}
         try:
             hd_check = self._holding_discipline_check_for_exit(
-                symbol=symbol, action=act, reason=reason_text,
-                positions=positions, run_id=run_id,
+                symbol=symbol,
+                action=act,
+                reason=reason_text,
+                positions=positions,
+                run_id=run_id,
                 position_history=hd_position_history,
                 # The STRUCTURED trigger, so the fact-check reads
                 # the claim from the field the seat filled rather
@@ -91,13 +99,15 @@ def midday_holding_discipline(
             hd_check = None
         if hd_check is not None and hd_check.blocks:
             logger.warning(
-                "Position reviewer: blocking %s %s — holding-"
-                "discipline claim PROVEN FALSE. %s",
-                act, symbol, hd_check.finding,
+                "Position reviewer: blocking %s %s — holding-discipline claim PROVEN FALSE. %s",
+                act,
+                symbol,
+                hd_check.finding,
             )
             try:
                 self.db.record_intraday_evaluation(
-                    symbol=symbol, run_id=run_id,
+                    symbol=symbol,
+                    run_id=run_id,
                     status="exit_blocked_holding_discipline_claim_false",
                     detail=(hd_check.finding or "")[:500],
                 )
@@ -112,9 +122,13 @@ def midday_holding_discipline(
                     effect="audit row not written",
                 )
             from src.risk.exit_refusal import CODE_HOLDING_DISCIPLINE_FALSE
+
             self._record_exit_refusal(
-                symbol=symbol, run_id=run_id, action=act,
-                code=CODE_HOLDING_DISCIPLINE_FALSE, dropped=True,
+                symbol=symbol,
+                run_id=run_id,
+                action=act,
+                code=CODE_HOLDING_DISCIPLINE_FALSE,
+                dropped=True,
                 detail=(hd_check.finding or "")[:400],
                 layer="holding_discipline",
             )
@@ -124,7 +138,8 @@ def midday_holding_discipline(
             logger.warning("Holding discipline: %s", hd_check.finding)
             try:
                 self.db.record_intraday_evaluation(
-                    symbol=symbol, run_id=run_id,
+                    symbol=symbol,
+                    run_id=run_id,
                     status="holding_discipline_claim_unverified",
                     detail=(hd_check.finding or "")[:500],
                 )

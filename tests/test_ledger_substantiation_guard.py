@@ -1,4 +1,5 @@
 """Board item 232: a citation that resolves is not thereby one that substantiates."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,16 +29,19 @@ def _verdicts(source: str, value=7, site="src.m.CEILING", tmp: Path | None = Non
     return [p.verdict for p in g.classify(ledger, lambda rel: SRC if rel == "src/m.py" else None)]
 
 
-@pytest.mark.parametrize("cite,expected", [
-    ("src/m.py@`from os import path`", "dead"),
-    ("src/m.py::__all__", "dead"),
-    ("src/m.py@`# a comment that says 7 is the ceiling`", "dead"),
-    ("src/m.py@`__all__ = [\"CEILING\", \"other\"]`", "dead"),
-    ("src/m.py::unrelated", "no_mention"),
-    ("src/m.py::CEILING", "mentions"),
-    ("src/m.py::uses", "mentions"),
-    ("src/missing.py::CEILING", "unresolved"),
-])
+@pytest.mark.parametrize(
+    "cite,expected",
+    [
+        ("src/m.py@`from os import path`", "dead"),
+        ("src/m.py::__all__", "dead"),
+        ("src/m.py@`# a comment that says 7 is the ceiling`", "dead"),
+        ('src/m.py@`__all__ = ["CEILING", "other"]`', "dead"),
+        ("src/m.py::unrelated", "no_mention"),
+        ("src/m.py::CEILING", "mentions"),
+        ("src/m.py::uses", "mentions"),
+        ("src/missing.py::CEILING", "unresolved"),
+    ],
+)
 def test_each_landing_is_classified_by_the_ast(cite, expected):
     assert _verdicts(cite) == [expected]
 
@@ -85,8 +89,11 @@ def test_the_allow_list_file_is_sorted_and_names_no_line_numbers():
 def test_a_known_wrong_source_row_fails_absolutely_even_if_the_list_holds_it():
     """The MIN_TOUCHES shape as it stood on the trunk: `source` pinned a real function that
     never mentions MIN_TOUCHES or 2. Red before the ledger fix, independent of the trunk."""
-    row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
-           "source": "src/data/levels.py::stop_rests_on_level carries the measurement"}
+    row = {
+        "id": "src.data.levels.MIN_TOUCHES",
+        "value": 2,
+        "source": "src/data/levels.py::stop_rests_on_level carries the measurement",
+    }
     pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
     assert [p.verdict for p in pins] == ["no_mention"]
     bad = g.violations(now=[], allowed=set(), sources=pins)
@@ -94,8 +101,11 @@ def test_a_known_wrong_source_row_fails_absolutely_even_if_the_list_holds_it():
 
 
 def test_the_corrected_source_row_is_green():
-    row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
-           "source": "src/data/levels.py::MIN_TOUCHES carries the measurement"}
+    row = {
+        "id": "src.data.levels.MIN_TOUCHES",
+        "value": 2,
+        "source": "src/data/levels.py::MIN_TOUCHES carries the measurement",
+    }
     pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
     assert g.violations(now=[], allowed=set(), sources=pins) == []
 
@@ -111,14 +121,17 @@ def test_every_source_pin_in_the_real_ledger_carries_its_number():
     assert g.source_violations() == []
 
 
-@pytest.mark.parametrize("cite,expected", [
-    ("ops/m.py@`from os import path`", "dead"),
-    ("ops/m.py::__all__", "dead"),
-    ("ops/m.py@`# a comment that says 7 is the ceiling`", "dead"),
-    ("ops/m.py::unrelated", "no_mention"),
-    ("ops/m.py::CEILING", "mentions"),
-    ("ops/missing.py::CEILING", "unresolved"),
-])
+@pytest.mark.parametrize(
+    "cite,expected",
+    [
+        ("ops/m.py@`from os import path`", "dead"),
+        ("ops/m.py::__all__", "dead"),
+        ("ops/m.py@`# a comment that says 7 is the ceiling`", "dead"),
+        ("ops/m.py::unrelated", "no_mention"),
+        ("ops/m.py::CEILING", "mentions"),
+        ("ops/missing.py::CEILING", "unresolved"),
+    ],
+)
 def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
     """Widening the citation pattern to ops/ must not loosen a single verdict."""
     ledger = {"src.m.CEILING": {"id": "src.m.CEILING", "value": 7, "source": cite}}
@@ -129,6 +142,7 @@ def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
 
 def test_a_gzipped_path_is_not_truncated_into_a_different_file():
     from src.ledger_citations import _CITATION_RE
+
     assert _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400") is None
     assert _CITATION_RE.search("see ops/a/b.json, 400").group(1) == "ops/a/b.json"
     assert _CITATION_RE.search("see src/x.py.").group(1) == "src/x.py"
@@ -160,11 +174,14 @@ def test_real_ledger_uncited_set_matches_the_list():
     assert g.uncited_violations() == []
 
 
-@pytest.mark.parametrize("window,wanted", [
-    ("(-0.3, -0.1)", -0.3),
-    ("THRESHOLD = -5", -5),
-    ("offsets = [1, -2.5]", -2.5),
-])
+@pytest.mark.parametrize(
+    "window,wanted",
+    [
+        ("(-0.3, -0.1)", -0.3),
+        ("THRESHOLD = -5", -5),
+        ("offsets = [1, -2.5]", -2.5),
+    ],
+)
 def test_a_negative_value_is_seen_when_the_minus_is_a_sign(window, wanted):
     """A row whose value is negative must be able to reach `mentions`."""
     assert g.mentions(window, "m.OTHER", wanted)

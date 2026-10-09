@@ -40,6 +40,7 @@ from src.api.broker_reads import (
     read_positions,
     read_price_bars,
 )
+
 # `src.quantities` holds the single definition of every number this
 # dashboard shares with the trading engine. It is dependency-free and lives
 # OUTSIDE `src.risk`, so importing it here does not breach the structural
@@ -81,6 +82,7 @@ from src.api.schemas import (
     EarningsEvent,
     SymbolEventsResponse,
 )
+
 # Market-data read only (yfinance) — same dependency `/prices`' underlying
 # stop-adjustment/risk-prompt code already uses for the single-next-value
 # `get_upcoming_ex_dividend`/`get_next_earnings_date` calls; this route uses
@@ -106,7 +108,12 @@ router = APIRouter()
 _market_data = MarketDataProvider()
 
 _LAST_RUN_MODES = [
-    "morning", "midday", "close", "evening", "intra_check", "earnings_preprocess",
+    "morning",
+    "midday",
+    "close",
+    "evening",
+    "intra_check",
+    "earnings_preprocess",
 ]
 
 _ORDER_STATUS_VALUES = {"open", "closed", "all"}
@@ -206,6 +213,7 @@ def get_health() -> HealthResponse:
     try:
         try:
             from src.api.db_reads import get_llm_circuit_health, session_prefixes_logged_on
+
             sessions_logged_today = session_prefixes_logged_on()
             llm_health = get_llm_circuit_health()
             db_reachable = True
@@ -220,6 +228,7 @@ def get_health() -> HealthResponse:
         # ordinary state, and must not be reported as "database unreachable".
         try:
             from src.api.db_reads import get_alert_channel_health
+
             alert_channel = get_alert_channel_health()
         except Exception:
             record_dashboard_fault("get_health.2")
@@ -250,8 +259,7 @@ def get_health() -> HealthResponse:
 
         recent_agent_statuses = (llm_health or {}).get("recent_agent_statuses") or {}
         failed_agents = sorted(
-            name for name, item in recent_agent_statuses.items()
-            if _failed_status((item or {}).get("status"))
+            name for name, item in recent_agent_statuses.items() if _failed_status((item or {}).get("status"))
         )
         # Compatibility with a database populated before the per-agent health
         # map existed in this API process.
@@ -277,17 +285,13 @@ def get_health() -> HealthResponse:
         # amber, but does not flip the whole board red: a missing
         # measurement is not a detected fault, and a permanently-red board
         # teaches the operator to ignore red.
-        alert_channel_degraded = str(
-            (alert_channel or {}).get("status") or "unknown"
-        ) in ("broken", "stale", "muted")
+        alert_channel_degraded = str((alert_channel or {}).get("status") or "unknown") in ("broken", "stale", "muted")
         # A box running code that was never merged-then-deployed is degraded:
         # every fix believed to be live is not. `unknown` (never checked) is
         # shown in the payload but does not flip the board, for the same
         # reason the alert channel's `unknown` does not — a missing
         # measurement is not a detected fault.
-        deploy_drift_degraded = str(
-            (deploy_drift or {}).get("status") or "unknown"
-        ) in ("behind", "stale")
+        deploy_drift_degraded = str((deploy_drift or {}).get("status") or "unknown") in ("behind", "stale")
         degraded_causes: list[str] = []
         if not db_reachable:
             degraded_causes.append("database unreachable")
@@ -296,24 +300,21 @@ def get_health() -> HealthResponse:
         if decision_path_status != "ok":
             degraded_causes.append(f"decision path: {decision_path_status}")
         if alert_channel_degraded:
-            degraded_causes.append(
-                "alert channel "
-                + str((alert_channel or {}).get("status") or "unknown")
-            )
+            degraded_causes.append("alert channel " + str((alert_channel or {}).get("status") or "unknown"))
         if deploy_drift_degraded:
-            degraded_causes.append(
-                "deploy drift "
-                + str((deploy_drift or {}).get("status") or "unknown")
-            )
+            degraded_causes.append("deploy drift " + str((deploy_drift or {}).get("status") or "unknown"))
         if (llm_balance or {}).get("status") == "low":
             degraded_causes.append(llm_balance["message"])
         overall_status = (
             "degraded"
-            if ((llm_balance or {}).get("status") == "low"
-                or not db_reachable or broker_reachable is False
+            if (
+                (llm_balance or {}).get("status") == "low"
+                or not db_reachable
+                or broker_reachable is False
                 or decision_path_status != "ok"
                 or alert_channel_degraded
-                or deploy_drift_degraded)
+                or deploy_drift_degraded
+            )
             else "ok"
         )
 
@@ -386,16 +387,10 @@ def _compute_liquidity(
         positions_result = read_positions()
     if positions_result.get("error") is None:
         sweep_parked_value = sum(
-            p.get("market_value") or 0.0
-            for p in positions_result.get("positions", [])
-            if p.get("is_cash_equivalent")
+            p.get("market_value") or 0.0 for p in positions_result.get("positions", []) if p.get("is_cash_equivalent")
         )
 
-    reserve_usd = (
-        sweep_reserve_usd(portfolio_value, reserve_pct)
-        if portfolio_value is not None
-        else None
-    )
+    reserve_usd = sweep_reserve_usd(portfolio_value, reserve_pct) if portfolio_value is not None else None
     # One definition, shared with the engine: cash + the sweep vehicle the
     # BUY phase liquidates on demand. Unknown until BOTH halves are known —
     # a positions-read failure must not print raw cash as if it were the
@@ -416,11 +411,7 @@ def _compute_liquidity(
         if cash is not None and sweep_parked_value is not None
         else None
     )
-    above_reserve = (
-        cash_above_reserve(cash, reserve_usd)
-        if cash is not None and reserve_usd is not None
-        else None
-    )
+    above_reserve = cash_above_reserve(cash, reserve_usd) if cash is not None and reserve_usd is not None else None
 
     return LiquidityBreakdown(
         sweep_enabled=sweep_enabled,
@@ -462,7 +453,8 @@ def _compute_exposure(
     # The engine splits the sweep vehicle out of `positions` before the risk
     # gate sees them; this payload is unsplit, so exclude it by symbol here.
     net_usd = net_exposure_usd(
-        positions_result.get("positions", []), cash_park_symbol=sweep_symbol,
+        positions_result.get("positions", []),
+        cash_park_symbol=sweep_symbol,
     )
     return ExposureBreakdown(
         net_exposure_usd=net_usd,
@@ -527,15 +519,18 @@ def get_account() -> AccountResponse:
         history: list[DailyPnlPoint] = []
         try:
             from src.api.db_reads import get_recent_daily_pnl
+
             rows = get_recent_daily_pnl(limit=30) or []
             for row in rows:
-                history.append(DailyPnlPoint(
-                    date=row.get("date"),
-                    total_value=row.get("total_value"),
-                    daily_pnl=row.get("daily_pnl"),
-                    daily_return_pct=row.get("daily_return_pct"),
-                    equity_close=row.get("equity_close"),
-                ))
+                history.append(
+                    DailyPnlPoint(
+                        date=row.get("date"),
+                        total_value=row.get("total_value"),
+                        daily_pnl=row.get("daily_pnl"),
+                        daily_return_pct=row.get("daily_return_pct"),
+                        equity_close=row.get("equity_close"),
+                    )
+                )
         except Exception:
             record_dashboard_fault("get_account.1")
             history = []
@@ -553,6 +548,7 @@ def get_account() -> AccountResponse:
         total_pnl_since = None
         try:
             from src.api.db_reads import get_earliest_daily_pnl
+
             earliest = get_earliest_daily_pnl()
             if earliest and portfolio_value is not None:
                 baseline = float(earliest["total_value"]) - float(earliest["daily_pnl"])
@@ -572,18 +568,10 @@ def get_account() -> AccountResponse:
         # /account response built from two different broker snapshots is
         # its own way of making two numbers disagree.
         positions_result = read_positions() if acct.get("error") is None else None
-        liquidity = (
-            _compute_liquidity(cash, portfolio_value, positions_result)
-            if acct.get("error") is None else None
-        )
-        exposure = (
-            _compute_exposure(portfolio_value, positions_result)
-            if acct.get("error") is None else None
-        )
+        liquidity = _compute_liquidity(cash, portfolio_value, positions_result) if acct.get("error") is None else None
+        exposure = _compute_exposure(portfolio_value, positions_result) if acct.get("error") is None else None
         risk_limits = _compute_risk_limits()
-        margin_interest = (
-            _compute_margin_interest(cash) if acct.get("error") is None else None
-        )
+        margin_interest = _compute_margin_interest(cash) if acct.get("error") is None else None
 
         return AccountResponse(
             cash=cash,
@@ -689,10 +677,7 @@ def get_quotes(symbols: str = Query(..., description="Comma-separated symbols, e
             return LiveQuotesResponse(quotes=[], as_of=now, error="no symbols requested")
         result = read_live_quotes(syms)
         result_quotes = result.get("quotes", {})
-        quotes = [
-            LiveQuote(symbol=sym, **(result_quotes.get(sym) or {}))
-            for sym in syms
-        ]
+        quotes = [LiveQuote(symbol=sym, **(result_quotes.get(sym) or {})) for sym in syms]
         return LiveQuotesResponse(quotes=quotes, as_of=now, error=result.get("error"))
     except Exception as exc:
         record_dashboard_fault("get_quotes", exc)
@@ -715,19 +700,17 @@ def get_prices(
     an order."""
     try:
         symbol = symbol.strip().upper()
-        result = read_price_bars(
-            symbol, lookback_days=lookback_days, timeframe=timeframe
-        )
+        result = read_price_bars(symbol, lookback_days=lookback_days, timeframe=timeframe)
         bars = [PriceBar(**b) for b in result.get("bars", [])]
         return PriceBarsResponse(
-            symbol=symbol, timeframe=timeframe, bars=bars,
+            symbol=symbol,
+            timeframe=timeframe,
+            bars=bars,
             error=result.get("error"),
         )
     except Exception as exc:
         record_dashboard_fault("get_prices", exc)
-        return PriceBarsResponse(
-            symbol=symbol, timeframe=timeframe, bars=[], error=str(exc)
-        )
+        return PriceBarsResponse(symbol=symbol, timeframe=timeframe, bars=[], error=str(exc))
 
 
 @router.get("/events/{symbol}", response_model=SymbolEventsResponse)
@@ -747,7 +730,9 @@ def get_symbol_events(
         dividends = [DividendEvent(**d) for d in result.get("dividends", [])]
         earnings = [EarningsEvent(**e) for e in result.get("earnings", [])]
         return SymbolEventsResponse(
-            symbol=symbol, dividends=dividends, earnings=earnings,
+            symbol=symbol,
+            dividends=dividends,
+            earnings=earnings,
             earnings_degraded=result.get("earnings_degraded"),
         )
     except Exception as exc:
@@ -776,6 +761,4 @@ def get_company_identity(symbol: str) -> CompanyIdentityResponse:
         return CompanyIdentityResponse(symbol=profile.symbol, name=profile.name)
     except Exception as exc:
         record_dashboard_fault("get_company_identity", exc)
-        return CompanyIdentityResponse(
-            symbol=symbol.strip().upper(), name=None, error=str(exc)
-        )
+        return CompanyIdentityResponse(symbol=symbol.strip().upper(), name=None, error=str(exc))

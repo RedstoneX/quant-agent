@@ -33,6 +33,7 @@ that cannot fail when a stage is skipped proves nothing.
 No network (tests/conftest.py already refuses outbound HTTP), no real
 credentials (sentinel keys), no real account, synthetic prices only.
 """
+
 from __future__ import annotations
 
 import json
@@ -46,20 +47,31 @@ import pytest
 import yaml
 
 from src.models import (
-    AnalystProvenance, MacroAnalysis, MacroNarrative, MacroPositionGuidance, MacroReasoningChain,
-    NewsIntelligenceReport, OHLCV, PortfolioDecision, ReasoningChain,
-    RiskReasoningChain, RiskVerdict, TargetPosition, TechAnalysisResult,
+    AnalystProvenance,
+    MacroAnalysis,
+    MacroNarrative,
+    MacroPositionGuidance,
+    MacroReasoningChain,
+    NewsIntelligenceReport,
+    OHLCV,
+    PortfolioDecision,
+    ReasoningChain,
+    RiskReasoningChain,
+    RiskVerdict,
+    TargetPosition,
+    TechAnalysisResult,
     TechReasoningChain,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SYMBOL = "SPY"          # a synthetic series; no desk output, no real price
-SESSION_AT = datetime(2026, 10, 1, 10, 0)   # a Thursday; frozen for the run
+SYMBOL = "SPY"  # a synthetic series; no desk output, no real price
+SESSION_AT = datetime(2026, 10, 1, 10, 0)  # a Thursday; frozen for the run
 
 
 # --------------------------------------------------------------------------
 # Deterministic stand-ins
 # --------------------------------------------------------------------------
+
 
 def _synthetic_bars(n: int = 160) -> list[OHLCV]:
     """A range: repeated swing highs near RANGE_HIGH and swing lows near
@@ -81,10 +93,16 @@ def _synthetic_bars(n: int = 160) -> list[OHLCV]:
         # and rising: the next bar's phase is -0.7 rad from the trough.
         phase = 2 * math.pi * (i - (n - 1)) / 24 - 0.7 * 2 * math.pi / 24 * 0 - math.pi / 2 + 0.7
         close = RANGE_MID + RANGE_AMP * math.sin(phase)
-        bars.append(OHLCV(
-            date=d, open=round(close - 0.1, 2), high=round(close + 0.4, 2),
-            low=round(close - 0.4, 2), close=round(close, 2), volume=1_000_000,
-        ))
+        bars.append(
+            OHLCV(
+                date=d,
+                open=round(close - 0.1, 2),
+                high=round(close + 0.4, 2),
+                low=round(close - 0.4, 2),
+                close=round(close, 2),
+                volume=1_000_000,
+            )
+        )
         i += 1
     return bars
 
@@ -98,59 +116,97 @@ RANGE_LOW, RANGE_HIGH = RANGE_MID - RANGE_AMP, RANGE_MID + RANGE_AMP
 def _scripted_answers() -> dict[str, dict]:
     """What each seat 'says', as the JSON object its parser expects."""
     tech = TechAnalysisResult(
-        symbol=SYMBOL, rating="buy", entry_price=LAST_CLOSE,
-        reference_target=RANGE_HIGH, stop_loss=round(RANGE_LOW - 1.0, 2),
-        support_levels=[RANGE_LOW], resistance_levels=[RANGE_HIGH],
-        setup_type="range", expected_horizon_sessions=60,
-        reasoning="synthetic uptrend", thesis_invalid_if="closes below support",
+        symbol=SYMBOL,
+        rating="buy",
+        entry_price=LAST_CLOSE,
+        reference_target=RANGE_HIGH,
+        stop_loss=round(RANGE_LOW - 1.0, 2),
+        support_levels=[RANGE_LOW],
+        resistance_levels=[RANGE_HIGH],
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning="synthetic uptrend",
+        thesis_invalid_if="closes below support",
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
     )
     pm = PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter="x", news_check="x", earnings_check="x",
-            signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+            macro_filter="x",
+            news_check="x",
+            earnings_check="x",
+            signal_conflicts="x",
+            sizing_logic="x",
+            portfolio_balance="x",
             cash_target="x",
         ),
-        targets=[TargetPosition(
-            symbol=SYMBOL, target_weight_pct=10.0, conviction="high",
-            thesis="synthetic", thesis_invalid_if="closes below support",
-            provenance=[AnalystProvenance(
-                source="technical", observed_stance="buy",
-                relationship="supports", evidence="rating buy, trend up",
-            )],
-        )],
+        targets=[
+            TargetPosition(
+                symbol=SYMBOL,
+                target_weight_pct=10.0,
+                conviction="high",
+                thesis="synthetic",
+                thesis_invalid_if="closes below support",
+                provenance=[
+                    AnalystProvenance(
+                        source="technical",
+                        observed_stance="buy",
+                        relationship="supports",
+                        evidence="rating buy, trend up",
+                    )
+                ],
+            )
+        ],
         portfolio_view="constructive",
     )
     rm = RiskVerdict(
-        approved=True, modifications=[], reasoning="approved",
+        approved=True,
+        modifications=[],
+        reasoning="approved",
         reasoning_chain=RiskReasoningChain(
-            rr_audit="x", signal_fidelity="x", correlation_check="x",
-            event_risk="x", sizing_sanity="x", overall="x",
+            rr_audit="x",
+            signal_fidelity="x",
+            correlation_check="x",
+            event_risk="x",
+            sizing_sanity="x",
+            overall="x",
         ),
     )
     macro = MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="medium", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="medium",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=75.0, cash_recommendation_pct=25.0,
+            target_invested_pct=75.0,
+            cash_recommendation_pct=25.0,
             reasoning="stub",
         ),
         summary="stub macro",
     )
     news = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=str(SESSION_AT.date()), era_themes=["synthetic"],
+            last_updated=str(SESSION_AT.date()),
+            era_themes=["synthetic"],
             current_regime="risk-on",
         ),
-        state_changes=[], stock_news={}, pm_briefing="stub",
-        market_sentiment="neutral", confidence="medium",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="stub",
+        market_sentiment="neutral",
+        confidence="medium",
     )
     return {
         # Only what a model emits: the Python-set fields (computed levels,
@@ -173,8 +229,7 @@ def _scripted_model_seats(trace: list):
     from src.agents.base import BaseAgent
 
     answers = _scripted_answers()
-    names = ("_anthropic_call", "_call_openai", "_call_deepseek",
-             "_openai_wire_call")
+    names = ("_anthropic_call", "_call_openai", "_call_deepseek", "_openai_wire_call")
     original = {n: getattr(BaseAgent, n) for n in names}
 
     def _answer(agent, model, authorize):
@@ -190,9 +245,8 @@ def _scripted_model_seats(trace: list):
     BaseAgent._anthropic_call = lambda self, client, model, msg, *, authorize=None: _answer(self, model, authorize)
     BaseAgent._call_openai = lambda self, msg, *, authorize=None: _answer(self, self.model, authorize)
     BaseAgent._call_deepseek = lambda self, msg, *, authorize=None: _answer(self, self.model, authorize)
-    BaseAgent._openai_wire_call = (
-        lambda self, client, model, provider, msg, *, provider_order=None,
-        authorize=None: _answer(self, model, authorize)
+    BaseAgent._openai_wire_call = lambda self, client, model, provider, msg, *, provider_order=None, authorize=None: (
+        _answer(self, model, authorize)
     )
     try:
         yield
@@ -205,9 +259,7 @@ def _market_stub():
     m = MagicMock(name="MarketDataProvider")
     bars = BARS
     m.get_ohlcv.side_effect = lambda symbol, lookback_days=120: list(bars)
-    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {
-        s: list(bars) for s in symbols
-    }
+    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {s: list(bars) for s in symbols}
     return m
 
 
@@ -215,8 +267,7 @@ def _macro_feed_stub():
     m = MagicMock(name="MacroDataProvider")
     m.get_macro_summary.return_value = {
         "vix": {"current": 18.0, "mean_5d": 17.5, "trend": "falling"},
-        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2,
-                     "inverted": True},
+        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True},
         "fed_funds_rate": {"current": 5.25},
     }
     return m
@@ -249,10 +300,14 @@ def _build_config(tmp_path: Path):
     raw.setdefault("execution", {})["fill_stream_enabled"] = False
     # The FRED calendars reuse this retry policy; outbound HTTP is refused
     # by conftest, so retries would only buy sleep.
-    raw.setdefault("macro", {}).update({
-        "max_retries": 0, "retry_backoff_base_s": 0.001,
-        "retry_backoff_max_s": 0.001, "retry_backoff_jitter_s": 0.0,
-    })
+    raw.setdefault("macro", {}).update(
+        {
+            "max_retries": 0,
+            "retry_backoff_base_s": 0.001,
+            "retry_backoff_max_s": 0.001,
+            "retry_backoff_jitter_s": 0.0,
+        }
+    )
     cfg_path = tmp_path / "config" / "settings.yaml"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(yaml.safe_dump(raw, sort_keys=False))
@@ -262,8 +317,7 @@ def _build_config(tmp_path: Path):
 
 def _trace_stages(pipeline, trace: list, *, skip: str | None = None):
     """Record each stage entry in order; optionally skip one outright."""
-    for attr in ("morning_research_stage", "decision_stage", "risk_stage",
-                 "execution_stage"):
+    for attr in ("morning_research_stage", "decision_stage", "risk_stage", "execution_stage"):
         stage = getattr(pipeline, attr)
         real_run = stage.run
 
@@ -289,19 +343,25 @@ def _run_session(tmp_path, monkeypatch, *, skip: str | None = None):
     now = SESSION_AT.replace(tzinfo=ET)
     trace: list = []
 
-    with _sentinel_credentials(), \
-         patch("src.pipeline.MarketDataProvider", return_value=_market_stub()), \
-         patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()), \
-         patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()), \
-         patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()), \
-         frozen_clock(now, run_id="e2e-morning"), \
-         _scripted_model_seats(trace):
+    with (
+        _sentinel_credentials(),
+        patch("src.pipeline.MarketDataProvider", return_value=_market_stub()),
+        patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()),
+        patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()),
+        patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()),
+        frozen_clock(now, run_id="e2e-morning"),
+        _scripted_model_seats(trace),
+    ):
         from src.pipeline import TradingPipeline
 
         pipeline = TradingPipeline(config)
         snapshot = BrokerSnapshot(
-            as_of=now.date(), cash=10_000.0, portfolio_value=10_000.0,
-            last_equity=10_000.0, positions=[], prices={SYMBOL: LAST_CLOSE},
+            as_of=now.date(),
+            cash=10_000.0,
+            portfolio_value=10_000.0,
+            last_equity=10_000.0,
+            positions=[],
+            prices={SYMBOL: LAST_CLOSE},
         )
         trading = install_rehearsal_broker(pipeline.broker, snapshot, now=now)
         # The rehearsal data client serves a price with no timestamp, and
@@ -325,15 +385,13 @@ def _run_session(tmp_path, monkeypatch, *, skip: str | None = None):
 
         def _stamped_latest_trade(request):
             return {
-                sym: SimpleNamespace(price=LAST_CLOSE, timestamp=print_stamp)
-                for sym in trading_data_symbols(request)
+                sym: SimpleNamespace(price=LAST_CLOSE, timestamp=print_stamp) for sym in trading_data_symbols(request)
             }
 
         trading_data_symbols = pipeline.broker._data_client._symbols
         pipeline.broker._data_client.get_stock_latest_trade = _stamped_latest_trade
         pipeline.broker.get_intraday_snapshots = lambda symbols, *a, **k: {
-            s: {"last_price": LAST_CLOSE, "last_trade_at": print_stamp}
-            for s in symbols
+            s: {"last_price": LAST_CLOSE, "last_trade_at": print_stamp} for s in symbols
         }
         _trace_stages(pipeline, trace, skip=skip)
         result = pipeline.run_morning()
@@ -343,9 +401,13 @@ def _run_session(tmp_path, monkeypatch, *, skip: str | None = None):
 def _assert_full_shape(result: dict, trace: list, trading) -> None:
     stages = [name for kind, name in trace if kind == "stage"]
     assert stages == [
-        "morning_research_stage", "decision_stage", "risk_stage",
+        "morning_research_stage",
+        "decision_stage",
+        "risk_stage",
         "execution_stage",
-    ], f"stages ran out of order or were skipped: {stages}; result={ {k: v for k, v in result.items() if k != 'leverage'} }"
+    ], (
+        f"stages ran out of order or were skipped: {stages}; result={ {k: v for k, v in result.items() if k != 'leverage'} }"
+    )
 
     seats = [name for kind, name in trace if kind == "llm"]
     assert seats.count("portfolio") == 1, f"PM asked {seats.count('portfolio')}x: {seats}"
@@ -353,9 +415,7 @@ def _assert_full_shape(result: dict, trace: list, trading) -> None:
     pm_at, rm_at = seats.index("portfolio"), seats.index("risk")
     assert pm_at < rm_at, f"Risk Manager answered before the PM: {seats}"
     analysts = {"tech", "macro", "news"}
-    assert analysts <= set(seats[:pm_at]), (
-        f"an analyst seat did not answer before the PM: {seats[:pm_at]}"
-    )
+    assert analysts <= set(seats[:pm_at]), f"an analyst seat did not answer before the PM: {seats[:pm_at]}"
     # The stage trace and the seat trace must interleave the right way:
     # every analyst inside research, the PM inside decision, the RM inside risk.
     order = [name for _, name in trace]
@@ -370,31 +430,34 @@ def _assert_full_shape(result: dict, trace: list, trading) -> None:
     )
     buys = [o for o in trading.submitted if str(o.side).lower().endswith("buy")]
     assert [o.symbol for o in buys] == [SYMBOL], (
-        f"broker received {[(o.symbol, str(o.side)) for o in trading.submitted]}, "
-        f"decision called for a BUY of {SYMBOL}"
+        f"broker received {[(o.symbol, str(o.side)) for o in trading.submitted]}, decision called for a BUY of {SYMBOL}"
     )
     assert all(float(o.qty or 0) > 0 or float(o.notional or 0) > 0 for o in buys)
     assert len(result["orders"]) >= 1
 
 
 def test_morning_session_runs_every_stage_in_order_and_executes_the_decision(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     result, trace, trading = _run_session(tmp_path, monkeypatch)
     _assert_full_shape(result, trace, trading)
 
 
 def test_the_shape_check_fails_when_the_decision_stage_is_skipped(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Sensitivity: a run whose decision stage silently does nothing must
     be REJECTED by the same checker, or the first test proves nothing."""
     result, trace, trading = _run_session(
-        tmp_path, monkeypatch, skip="decision_stage",
+        tmp_path,
+        monkeypatch,
+        skip="decision_stage",
     )
     with pytest.raises(AssertionError) as caught:
         _assert_full_shape(result, trace, trading)
     message = str(caught.value)
     assert "skipped" in message and "risk_stage" in message, message
-    assert "pm_agent_failure" in message, message   # the desk's own verdict
+    assert "pm_agent_failure" in message, message  # the desk's own verdict
     assert trading.submitted == [], "a skipped decision must place nothing"

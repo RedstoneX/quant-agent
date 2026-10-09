@@ -103,9 +103,7 @@ def _string_fields(value: Any) -> list[str]:
     return []
 
 
-def unresolved_citations(
-    ledger: dict[str, dict[str, Any]], root: Path
-) -> list[tuple[str, str, str]]:
+def unresolved_citations(ledger: dict[str, dict[str, Any]], root: Path) -> list[tuple[str, str, str]]:
     """LAYER 1 (resolves). Repo citations in the ledger that are false or
     unverifiable:
     `(site_id, why, cite)`.
@@ -124,9 +122,7 @@ def unresolved_citations(
             rel = match.group(1)
             if rel not in texts:
                 target = root / rel
-                texts[rel] = (
-                    target.read_text(encoding="utf-8") if target.is_file() else None
-                )
+                texts[rel] = target.read_text(encoding="utf-8") if target.is_file() else None
             body = texts[rel]
             if body is None:
                 out.append((site_id, "no such file", match.group(0)))
@@ -153,9 +149,7 @@ def unresolved_citations(
     return out
 
 
-def unsubstantiated_citations(
-    ledger: dict[str, dict[str, Any]], root: Path
-) -> list[tuple[str, str, str]]:
+def unsubstantiated_citations(ledger: dict[str, dict[str, Any]], root: Path) -> list[tuple[str, str, str]]:
     """LAYER 2 (substantiates), item 232: `(site_id, why, cite)` for citations
     that may resolve yet cannot justify a number - an import line, a module
     dunder such as `__all__`, or a text pin that starts mid-sentence. Missing
@@ -168,9 +162,7 @@ def unsubstantiated_citations(
             rel = match.group(1)
             if rel not in bodies:
                 target = root / rel
-                bodies[rel] = (
-                    target.read_text(encoding="utf-8") if target.is_file() else None
-                )
+                bodies[rel] = target.read_text(encoding="utf-8") if target.is_file() else None
             body = bodies[rel]
             if body is None:
                 continue
@@ -194,8 +186,6 @@ def unsubstantiated_citations(
     return out
 
 
-def broken_citations(
-    ledger: dict[str, dict[str, Any]], root: Path
-) -> list[tuple[str, str, str]]:
+def broken_citations(ledger: dict[str, dict[str, Any]], root: Path) -> list[tuple[str, str, str]]:
     """Both layers: everything wrong with a citation, resolving or substantiating."""
     return unresolved_citations(ledger, root) + unsubstantiated_citations(ledger, root)

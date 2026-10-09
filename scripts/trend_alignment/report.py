@@ -1,4 +1,5 @@
 """Self-test and the measurement run for the trend-alignment measurement."""
+
 from __future__ import annotations
 
 import statistics
@@ -77,8 +78,7 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
     last = max(b[-1].date for b in allbars.values())
     print(
         f"PROOF OF DATA: {len(allbars)} symbols, {sum(len(b) for b in allbars.values())} "
-        f"daily bars, {first} .. {last}; per symbol: "
-        + ", ".join(f"{s}={len(b)}" for s, b in sorted(allbars.items())),
+        f"daily bars, {first} .. {last}; per symbol: " + ", ".join(f"{s}={len(b)}" for s, b in sorted(allbars.items())),
         flush=True,
     )
 
@@ -93,8 +93,7 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
             continue
         start, end = idx[0], len(bars) - 1
         if info.get("exit"):
-            end = max(start, max(i for i, b in enumerate(bars)
-                                 if b.date <= date.fromisoformat(info["exit"])))
+            end = max(start, max(i for i, b in enumerate(bars) if b.date <= date.fromisoformat(info["exit"])))
         closes = [b.close for b in bars]
         fires = {k: None for k in SHAPES}
         peak_at = {k: None for k in SHAPES}
@@ -108,12 +107,13 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
         sign = -1 if is_short else 1
         entry_px = info["entry_px"]
         final = closes[end]
-        line = (f"{sym:6s} {info['side']:5s} entry {entry_d} @{entry_px:.2f} "
-                f"sessions={end - start + 1} peak={peak:.2f} last={final:.2f} "
-                f"({sign * (final - entry_px) / entry_px * 100:+.1f}% vs entry)")
+        line = (
+            f"{sym:6s} {info['side']:5s} entry {entry_d} @{entry_px:.2f} "
+            f"sessions={end - start + 1} peak={peak:.2f} last={final:.2f} "
+            f"({sign * (final - entry_px) / entry_px * 100:+.1f}% vs entry)"
+        )
         if info.get("exit"):
-            line += (f" ACTUAL EXIT {info['exit']} {info.get('exit_kind', '')} "
-                     f"@{info.get('exit_px', 0):.2f}")
+            line += f" ACTUAL EXIT {info['exit']} {info.get('exit_kind', '')} @{info.get('exit_px', 0):.2f}"
         print(line)
         for k in SHAPES:
             i = fires[k]
@@ -121,9 +121,11 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
                 print(f"     {k:12s} never fired")
             else:
                 gb = sign * (peak_at[k] - closes[i]) / peak_at[k] * 100
-                print(f"     {k:12s} fired {bars[i].date} @{closes[i]:.2f}  "
-                      f"giveback from peak {gb:.1f}%  "
-                      f"({sign * (closes[i] - entry_px) / entry_px * 100:+.1f}% vs entry)")
+                print(
+                    f"     {k:12s} fired {bars[i].date} @{closes[i]:.2f}  "
+                    f"giveback from peak {gb:.1f}%  "
+                    f"({sign * (closes[i] - entry_px) / entry_px * 100:+.1f}% vs entry)"
+                )
 
     print(
         f"\n=== (2) SAME INSTRUMENTS, 2 YEARS: giveback from the {REF}-session high; "
@@ -134,8 +136,10 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
     agg, measured = measure_two_years(allbars)
     require_nonempty_result(agg, measured)
 
-    print(f"{'shape':12s} {'fires':>6s} {'/yr/sym':>8s} {'gb60 med':>10s} {'p75':>6s} "
-          f"{'gbRUN med':>10s} {'false-exit':>11s} {'median fwd':>11s}")
+    print(
+        f"{'shape':12s} {'fires':>6s} {'/yr/sym':>8s} {'gb60 med':>10s} {'p75':>6s} "
+        f"{'gbRUN med':>10s} {'false-exit':>11s} {'median fwd':>11s}"
+    )
     for k, a in agg.items():
         gb = sorted(a["gb"])
         if not gb:
@@ -143,10 +147,11 @@ def run(positions: dict, cache: str, cache_only: bool) -> int:
             continue
         fwd = sorted(a["fwd"]) or [0.0]
         gbr = sorted(a["gbr"])
-        print(f"{k:12s} {a['n']:6d} {a['n'] / a['years']:8.1f} "
-              f"{statistics.median(gb):9.1f}% {gb[int(len(gb) * 0.75)]:5.1f}% "
-              f"{statistics.median(gbr):9.1f}% {a['false'] / a['n'] * 100:10.0f}% "
-              f"{statistics.median(fwd):+10.1f}%")
+        print(
+            f"{k:12s} {a['n']:6d} {a['n'] / a['years']:8.1f} "
+            f"{statistics.median(gb):9.1f}% {gb[int(len(gb) * 0.75)]:5.1f}% "
+            f"{statistics.median(gbr):9.1f}% {a['false'] / a['n'] * 100:10.0f}% "
+            f"{statistics.median(fwd):+10.1f}%"
+        )
     print("symbols:", measured)
     return 0
-

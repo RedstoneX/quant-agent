@@ -1,4 +1,5 @@
 """Dashboard catch-alls log a full traceback; the endpoint answer is unchanged."""
+
 import logging
 
 from src.api import drift_state, loud_reads, routes_live

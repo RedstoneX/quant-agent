@@ -19,6 +19,7 @@ Re-running calls the live LLM (tokens + non-deterministic). It needs the same
 .env keys the system uses. Supported agents: portfolio_manager, risk_manager,
 macro_analyst, tech_analyst, evening_analyst, position_reviewer.
 """
+
 import argparse
 import importlib
 import json
@@ -35,20 +36,19 @@ from src.replay import load_decisions, replay_decision, diff_pm_targets
 # agent_name (as in agent_logs) -> (module, class, config base key)
 _AGENT_FACTORY = {
     "portfolio_manager": ("src.agents.portfolio_manager", "PortfolioManagerAgent", "portfolio_manager"),
-    "risk_manager":      ("src.agents.risk_manager", "RiskManagerAgent", "risk_manager"),
-    "macro_analyst":     ("src.agents.macro_analyst", "MacroAnalystAgent", "macro_analyst"),
-    "tech_analyst":      ("src.agents.tech_analyst", "TechAnalystAgent", "tech_analyst"),
-    "evening_analyst":   ("src.agents.evening_analyst", "EveningAnalystAgent", "evening_analyst"),
+    "risk_manager": ("src.agents.risk_manager", "RiskManagerAgent", "risk_manager"),
+    "macro_analyst": ("src.agents.macro_analyst", "MacroAnalystAgent", "macro_analyst"),
+    "tech_analyst": ("src.agents.tech_analyst", "TechAnalystAgent", "tech_analyst"),
+    "evening_analyst": ("src.agents.evening_analyst", "EveningAnalystAgent", "evening_analyst"),
     "position_reviewer": ("src.agents.position_reviewer", "PositionReviewerAgent", "position_reviewer"),
 }
 
 
 def build_agent(agent_name: str, config):
     from src.agents.base import resolve_provider
+
     if agent_name not in _AGENT_FACTORY:
-        raise SystemExit(
-            f"replay not wired for agent {agent_name!r}; supported: {sorted(_AGENT_FACTORY)}"
-        )
+        raise SystemExit(f"replay not wired for agent {agent_name!r}; supported: {sorted(_AGENT_FACTORY)}")
     mod, cls, base = _AGENT_FACTORY[agent_name]
     Cls = getattr(importlib.import_module(mod), cls)
     model = getattr(config.llm, f"{base}_model")
@@ -63,18 +63,17 @@ def build_agent(agent_name: str, config):
         key = config.api_keys.openrouter
     else:
         key = config.api_keys.anthropic
-    return Cls(api_key=key, model=model, max_tokens=max_tokens,
-               fallback_api_key=config.api_keys.anthropic, provider=provider)
+    return Cls(
+        api_key=key, model=model, max_tokens=max_tokens, fallback_api_key=config.api_keys.anthropic, provider=provider
+    )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--agent", default="portfolio_manager")
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--limit", type=int, default=3)
-    ap.add_argument("--no-llm", action="store_true",
-                    help="don't call the LLM; just list which decisions would replay")
+    ap.add_argument("--no-llm", action="store_true", help="don't call the LLM; just list which decisions would replay")
     ap.add_argument("--db", default="data/quant_agent.db")
     ap.add_argument("--config", default="config/settings.yaml")
     args = ap.parse_args()
@@ -86,15 +85,16 @@ def main() -> None:
     conn = sqlite3.connect(db_path)
     decisions = load_decisions(conn, args.agent, limit=args.limit, run_id=args.run_id)
     if not decisions:
-        print(f"No replayable stored decisions for agent={args.agent!r} "
-              f"(need a non-empty input_message).")
+        print(f"No replayable stored decisions for agent={args.agent!r} (need a non-empty input_message).")
         return
     print(f"Loaded {len(decisions)} stored {args.agent} decision(s), newest first.")
 
     if args.no_llm:
         for d in decisions:
-            print(f"  {d.timestamp}  run={(d.run_id or '')[:18]:18}  orig_model={d.model:18}  "
-                  f"input={len(d.input_message)}c  response={len(d.full_response)}c")
+            print(
+                f"  {d.timestamp}  run={(d.run_id or '')[:18]:18}  orig_model={d.model:18}  "
+                f"input={len(d.input_message)}c  response={len(d.full_response)}c"
+            )
         print("\n(--no-llm: not calling the model. Drop the flag to replay through the current prompt.)")
         return
 
@@ -104,9 +104,12 @@ def main() -> None:
     config = load_config(config_path)
     agent = build_agent(args.agent, config)
     from src.cost_circuit import protect_paid_agent
+
     protect_paid_agent(
-        agent, config,
-        run_id=f"replay-{uuid.uuid4().hex[:8]}", mode="replay",
+        agent,
+        config,
+        run_id=f"replay-{uuid.uuid4().hex[:8]}",
+        mode="replay",
         db_path=db_path,
     )
     print(f"Replaying through CURRENT prompt + model={agent.model}\n")
@@ -121,14 +124,21 @@ def main() -> None:
         if args.agent == "portfolio_manager":
             diff = diff_pm_targets(d.full_response, result.raw_text)
             tag = "MATERIALLY DIFFERENT" if diff["materially_different"] else "same decision shape"
-            print(f"  → {tag}  (old {diff['old_n']} targets → new {diff['new_n']})  "
-                  f"cost={result.cost_usd}  truncated={result.truncated}")
-            print(json.dumps({k: v for k, v in diff.items()
-                              if k in ("added", "removed", "changed")}, indent=2, default=str))
+            print(
+                f"  → {tag}  (old {diff['old_n']} targets → new {diff['new_n']})  "
+                f"cost={result.cost_usd}  truncated={result.truncated}"
+            )
+            print(
+                json.dumps(
+                    {k: v for k, v in diff.items() if k in ("added", "removed", "changed")}, indent=2, default=str
+                )
+            )
         else:
             old_ok = result.parse_json() is not None
-            print(f"  old {len(d.full_response)}c → new {len(result.raw_text)}c  "
-                  f"parse_ok={old_ok}  cost={result.cost_usd}  truncated={result.truncated}")
+            print(
+                f"  old {len(d.full_response)}c → new {len(result.raw_text)}c  "
+                f"parse_ok={old_ok}  cost={result.cost_usd}  truncated={result.truncated}"
+            )
         print()
 
 

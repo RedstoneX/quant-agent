@@ -55,8 +55,8 @@ _GOOGLE_PREFIXES = ("gemini-",)
 # Source: official /pricing (v4 = 384K out) + create-chat-completion reference.
 _DEEPSEEK_MAX_OUTPUT = {
     "deepseek-v4-flash": 384000,
-    "deepseek-v4-pro":   384000,
-    "deepseek-chat":     384000,  # legacy alias -> v4-flash (current routing)
+    "deepseek-v4-pro": 384000,
+    "deepseek-chat": 384000,  # legacy alias -> v4-flash (current routing)
     "deepseek-reasoner": 384000,  # legacy alias -> v4-flash (current routing)
 }
 _DEEPSEEK_DEFAULT_CEILING = 8192  # unknown deepseek-* id -> conservative cap
@@ -70,8 +70,7 @@ def _is_openai_model(model: str) -> bool:
     return any(model.startswith(p) for p in _OPENAI_PREFIXES)
 
 
-def _governor_domain_for(model: str, agent, *, is_failover: bool = False,
-                         is_tertiary: bool = False) -> str:
+def _governor_domain_for(model: str, agent, *, is_failover: bool = False, is_tertiary: bool = False) -> str:
     """Which provider's token budget this request will actually consume.
 
     Keyed on which PATH this attempt is taking, not on sniffing the model
@@ -99,8 +98,7 @@ def _governor_domain_for(model: str, agent, *, is_failover: bool = False,
     """
     if is_tertiary:
         tertiary_provider = getattr(agent, "_tertiary_provider", None)
-        return (tertiary_provider if tertiary_provider in _TOKEN_GOVERNORS
-                else "openai")
+        return tertiary_provider if tertiary_provider in _TOKEN_GOVERNORS else "openai"
     if is_failover:
         fallback_provider = getattr(agent, "_fallback_provider", None)
         return fallback_provider if fallback_provider in _TOKEN_GOVERNORS else "openrouter"

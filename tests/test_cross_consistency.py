@@ -116,11 +116,11 @@ def _naive_cash_complement_pct(book: Book) -> float:
 #: docstring in `tests/book_fixtures.py`. If a fixture's numbers change, these
 #: must change with them, which is the point.
 _EXPECTED_EXPOSURE = {
-    "ordinary_long":     (60.0, 60.0, 60.0),
+    "ordinary_long": (60.0, 60.0, 60.0),
     "leveraged_inverse": (60.0, -100.0, 140.0),
-    "net_short":         (44.4444, -44.4444, 44.4444),
-    "winning_short":     (65.0, -15.0, 65.0),
-    "sweep_parked":      (46.0, 46.0, 46.0),
+    "net_short": (44.4444, -44.4444, 44.4444),
+    "winning_short": (65.0, -15.0, 65.0),
+    "sweep_parked": (46.0, 46.0, 46.0),
 }
 
 
@@ -135,13 +135,14 @@ def test_book_exposure_matches_the_arithmetic_each_fixture_documents(factory):
     """
     book = factory()
     exposure = book_exposure(
-        book.positions, book.total_value, cash_park_symbol=SWEEP_SYMBOL,
+        book.positions,
+        book.total_value,
+        cash_park_symbol=SWEEP_SYMBOL,
     )
     want_deployed, want_net, want_gross = _EXPECTED_EXPOSURE[book.name]
 
     assert exposure.deployed_pct == pytest.approx(want_deployed, abs=1e-3), (
-        f"{book.name}: deployed% is {exposure.deployed_pct:.4f}, the fixture "
-        f"docstring works out {want_deployed}"
+        f"{book.name}: deployed% is {exposure.deployed_pct:.4f}, the fixture docstring works out {want_deployed}"
     )
     assert exposure.net_pct == pytest.approx(want_net, abs=1e-3), (
         f"{book.name}: net% is {exposure.net_pct:.4f}, expected {want_net} "
@@ -154,7 +155,8 @@ def test_book_exposure_matches_the_arithmetic_each_fixture_documents(factory):
 
 
 @pytest.mark.parametrize(
-    "factory", [net_short_book, winning_short_book, sweep_parked_book],
+    "factory",
+    [net_short_book, winning_short_book, sweep_parked_book],
     ids=lambda f: f.__name__,
 )
 def test_the_pre_fix_cash_complement_is_still_wrong_on_these_books(factory):
@@ -175,7 +177,9 @@ def test_the_pre_fix_cash_complement_is_still_wrong_on_these_books(factory):
     book = factory()
     naive = _naive_cash_complement_pct(book)
     deployed = book_exposure(
-        book.positions, book.total_value, cash_park_symbol=SWEEP_SYMBOL,
+        book.positions,
+        book.total_value,
+        cash_park_symbol=SWEEP_SYMBOL,
     ).deployed_pct
 
     assert abs(naive - deployed) > ABS_TOL_PCT, (
@@ -198,14 +202,14 @@ def test_the_control_book_hides_the_exposure_defect():
     """
     book = ordinary_long_book()
     exposure = book_exposure(
-        book.positions, book.total_value, cash_park_symbol=SWEEP_SYMBOL,
+        book.positions,
+        book.total_value,
+        cash_park_symbol=SWEEP_SYMBOL,
     )
     assert exposure.deployed_pct == pytest.approx(60.0, abs=1e-9)
     assert exposure.net_pct == pytest.approx(exposure.deployed_pct, abs=1e-9)
     assert exposure.gross_pct == pytest.approx(exposure.deployed_pct, abs=1e-9)
-    assert _naive_cash_complement_pct(book) == pytest.approx(
-        exposure.deployed_pct, abs=1e-9
-    )
+    assert _naive_cash_complement_pct(book) == pytest.approx(exposure.deployed_pct, abs=1e-9)
 
 
 # ===========================================================================
@@ -214,6 +218,7 @@ def test_the_control_book_hides_the_exposure_defect():
 # One source: `src/risk/rules.py::weight_pct_of` / `position_weight_pct`.
 # Signed, gross-levered.
 # ===========================================================================
+
 
 def test_position_weight_is_gross_levered_on_the_inverse_etf():
     """`Weight: 18.0% ... DRIFT` and `drift-flagged: 0`, three lines apart.
@@ -231,8 +236,7 @@ def test_position_weight_is_gross_levered_on_the_inverse_etf():
 
     assert raw == pytest.approx(40.0, abs=1e-9), "fixture drifted"
     assert weight == pytest.approx(120.0, abs=1e-9), (
-        f"SQQQ is 40% of the book by market value and -3x levered; its gross "
-        f"weight is 120%, not {weight:.1f}%"
+        f"SQQQ is 40% of the book by market value and -3x levered; its gross weight is 120%, not {weight:.1f}%"
     )
 
 
@@ -247,9 +251,7 @@ def test_position_weight_is_signed_on_a_held_short():
     short = position_weight_pct(book.by_symbol("TSLA"), book.total_value)
     long = position_weight_pct(book.by_symbol("AAPL"), book.total_value)
 
-    assert short == pytest.approx(-40.0, abs=1e-9), (
-        f"a held short's weight must be negative; got {short:.1f}%"
-    )
+    assert short == pytest.approx(-40.0, abs=1e-9), f"a held short's weight must be negative; got {short:.1f}%"
     assert long == pytest.approx(25.0, abs=1e-9)
 
 
@@ -265,13 +267,9 @@ def test_the_constructor_and_the_risk_rules_weigh_a_position_the_same():
     from src.portfolio_constructor import PortfolioConstructor
 
     book = leveraged_inverse_book()
-    weights = PortfolioConstructor._current_weights(
-        book.positions, book.total_value
-    )
+    weights = PortfolioConstructor._current_weights(book.positions, book.total_value)
     for position in book.positions:
-        assert weights[position.symbol] == pytest.approx(
-            position_weight_pct(position, book.total_value)
-        ), (
+        assert weights[position.symbol] == pytest.approx(position_weight_pct(position, book.total_value)), (
             f"{position.symbol}: the constructor weighs it "
             f"{weights[position.symbol]:.2f}% and the risk rules weigh it "
             f"{position_weight_pct(position, book.total_value):.2f}%"
@@ -308,8 +306,7 @@ def test_pnl_percent_is_measured_on_the_absolute_cost_basis(symbol):
 
     assert got is not None, f"{symbol}: P&L% is unknowable on a complete book"
     assert got == pytest.approx(want, abs=1e-3), (
-        f"{symbol}: P&L% is {got:.4f}%, expected {want}% "
-        f"(the pre-fix implementation printed {pre_fix}%)"
+        f"{symbol}: P&L% is {got:.4f}%, expected {want}% (the pre-fix implementation printed {pre_fix}%)"
     )
 
 
@@ -331,9 +328,7 @@ def test_two_positions_that_made_the_same_dollars_report_the_same_way():
             f"basis (signed cost = {position.avg_entry * position.qty:,.0f})"
         )
     # Smaller basis, same dollars, larger percentage. Ordering, not a value.
-    assert unrealized_pnl_pct(book.by_symbol("AAPL")) > unrealized_pnl_pct(
-        book.by_symbol("TSLA")
-    )
+    assert unrealized_pnl_pct(book.by_symbol("AAPL")) > unrealized_pnl_pct(book.by_symbol("TSLA"))
 
 
 # ===========================================================================
@@ -343,6 +338,7 @@ def test_two_positions_that_made_the_same_dollars_report_the_same_way():
 # value`, the money the account already owns. The API published
 # `max(cash - reserve, 0)` under the same word.
 # ===========================================================================
+
 
 def test_deployable_cash_on_the_sweep_book_is_cash_plus_parked(monkeypatch):
     """The engine sizes trades against one figure; the operator saw another.
@@ -380,9 +376,7 @@ def test_deployable_cash_on_the_sweep_book_is_cash_plus_parked(monkeypatch):
 
     assert parked == pytest.approx(14_000.0), "fixture drifted"
     assert liquidity.deployable_cash is not None, "API produced no deployable_cash"
-    assert liquidity.deployable_cash == pytest.approx(
-        book.cash + parked, rel=REL_TOL
-    ), (
+    assert liquidity.deployable_cash == pytest.approx(book.cash + parked, rel=REL_TOL), (
         f"deployable_cash is {liquidity.deployable_cash:,.0f}; the engine sizes "
         f"against cash + parked sweep value = {book.cash + parked:,.0f}"
     )
@@ -402,6 +396,7 @@ def test_deployable_cash_on_the_sweep_book_is_cash_plus_parked(monkeypatch):
 # to the read surface. This is the one live seam left in this file.
 # ===========================================================================
 
+
 @pytest.mark.parametrize("factory", ALL_BOOKS, ids=lambda f: f.__name__)
 def test_the_cockpit_gauge_and_the_engine_ceiling_measure_the_same_magnitude(factory):
     """A gauge whose needle and whose redline come from different definitions
@@ -417,7 +412,9 @@ def test_the_cockpit_gauge_and_the_engine_ceiling_measure_the_same_magnitude(fac
     """
     book = factory()
     engine_signed = book_exposure(
-        book.positions, book.total_value, cash_park_symbol=SWEEP_SYMBOL,
+        book.positions,
+        book.total_value,
+        cash_park_symbol=SWEEP_SYMBOL,
     ).net_pct
     served = net_exposure_pct(
         net_exposure_usd(book.positions, cash_park_symbol=SWEEP_SYMBOL),
@@ -436,9 +433,7 @@ def test_the_cockpit_gauge_and_the_engine_ceiling_measure_the_same_magnitude(fac
     )
 
 
-@pytest.mark.parametrize(
-    "factory", [leveraged_inverse_book, net_short_book], ids=lambda f: f.__name__
-)
+@pytest.mark.parametrize("factory", [leveraged_inverse_book, net_short_book], ids=lambda f: f.__name__)
 def test_the_signed_and_the_magnitude_forms_are_deliberately_different(factory):
     """Not drift — a difference that must survive, so it is pinned here.
 
@@ -454,7 +449,9 @@ def test_the_signed_and_the_magnitude_forms_are_deliberately_different(factory):
     """
     book = factory()
     signed = book_exposure(
-        book.positions, book.total_value, cash_park_symbol=SWEEP_SYMBOL,
+        book.positions,
+        book.total_value,
+        cash_park_symbol=SWEEP_SYMBOL,
     ).net_pct
     magnitude = net_exposure_pct(
         net_exposure_usd(book.positions, cash_park_symbol=SWEEP_SYMBOL),
@@ -486,11 +483,7 @@ def _adv_dropping_the_halt(bars) -> float:
     fixture it reads 5.26% high.
     """
     recent = bars[-20:]
-    values = [
-        float(b.close) * float(b.volume)
-        for b in recent
-        if float(b.volume) > 0
-    ]
+    values = [float(b.close) * float(b.volume) for b in recent if float(b.volume) > 0]
     return sum(values) / len(values)
 
 
@@ -511,8 +504,7 @@ def test_a_halted_session_is_kept_as_a_real_zero():
     )
     assert measured < dropped
     assert dropped / measured - 1 == pytest.approx(0.0526, abs=5e-4), (
-        "the fixture no longer separates the two definitions — the halt must "
-        "land inside the trailing 20-session window"
+        "the fixture no longer separates the two definitions — the halt must land inside the trailing 20-session window"
     )
 
 
@@ -534,16 +526,12 @@ def test_both_real_consumers_report_the_pinned_number():
     assert digest_millions is not None, "digest produced no dollar volume"
     assert context is not None and context.avg_dollar_volume_20d is not None
 
-    assert digest_millions * 1_000_000 == pytest.approx(
-        _HALTED_FIXTURE_ADV_USD, rel=REL_TOL
-    ), (
+    assert digest_millions * 1_000_000 == pytest.approx(_HALTED_FIXTURE_ADV_USD, rel=REL_TOL), (
         f"pipeline.py::_missed_ops_quality_metrics reports "
         f"${digest_millions:,.2f}M, expected "
         f"${_HALTED_FIXTURE_ADV_USD / 1e6:,.2f}M"
     )
-    assert context.avg_dollar_volume_20d == pytest.approx(
-        _HALTED_FIXTURE_ADV_USD, rel=REL_TOL
-    ), (
+    assert context.avg_dollar_volume_20d == pytest.approx(_HALTED_FIXTURE_ADV_USD, rel=REL_TOL), (
         f"data/context.py::compute_market_context reports "
         f"{context.avg_dollar_volume_20d:,.0f}, expected "
         f"{_HALTED_FIXTURE_ADV_USD:,.0f}"
@@ -616,8 +604,7 @@ def test_the_analyst_and_the_risk_path_read_one_wilder_atr():
 
     indicators = compute_indicators("TEST", bars)
     assert indicators.atr_14 == pytest.approx(round(wilder, 2), abs=1e-9), (
-        f"the risk path's atr_14 is {indicators.atr_14}, the shared Wilder "
-        f"series ends at {wilder:.4f}"
+        f"the risk path's atr_14 is {indicators.atr_14}, the shared Wilder series ends at {wilder:.4f}"
     )
 
     context = compute_market_context(bars)
@@ -631,6 +618,4 @@ def test_the_analyst_and_the_risk_path_read_one_wilder_atr():
         f"\n      a flat kernel over the same bars would be {flat_pct:>10.2f}%"
         "\n  Two ATRs is two different books, not two views of one."
     )
-    assert context.atr_pct != pytest.approx(flat_pct, abs=1e-9), (
-        "context.py is reporting the flat-kernel average again"
-    )
+    assert context.atr_pct != pytest.approx(flat_pct, abs=1e-9), "context.py is reporting the flat-kernel average again"

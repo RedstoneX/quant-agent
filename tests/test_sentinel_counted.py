@@ -4,6 +4,7 @@ These sites sit in plain functions with no ledger handle in scope, so the
 only thing that proves the record is durable is reading it back out of the
 database file after the call returns and the connection is closed.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -27,16 +28,13 @@ def desk_db(tmp_path, monkeypatch):
 def rows(path):
     conn = sqlite3.connect(path)
     try:
-        return conn.execute(
-            "SELECT kind, agreed, detail FROM reconciliation_runs ORDER BY id"
-        ).fetchall()
+        return conn.execute("SELECT kind, agreed, detail FROM reconciliation_runs ORDER BY id").fetchall()
     finally:
         conn.close()
 
 
 def test_swallowed_fault_lands_as_a_durable_disagreed_row(desk_db):
-    counted.record_swallowed("macro._write_cache.serialise", ValueError("bad frame"),
-                             series_id="DGS10")
+    counted.record_swallowed("macro._write_cache.serialise", ValueError("bad frame"), series_id="DGS10")
     got = rows(desk_db)
     assert len(got) == 1
     kind, agreed, detail = got[0]

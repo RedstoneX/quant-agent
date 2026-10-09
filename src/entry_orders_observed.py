@@ -12,6 +12,7 @@ defaults are verbatim, and nothing is stored here.
 passes ``db=None``, which logs the traceback and skips the row. That is honest
 about what it can see rather than inventing a second channel.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,6 +26,7 @@ from src.sentinel.entry_guard import (
 
 logger = logging.getLogger("src.pipeline_entry_orders")
 
+
 def _trade_updates_already_started(pipeline) -> bool:
     started = getattr(getattr(pipeline, "broker", None), "trade_updates_started", None)
     if not callable(started):
@@ -36,6 +38,7 @@ def _trade_updates_already_started(pipeline) -> bool:
         return False
     record_clean_pass(pipeline, "stream.already_started")
     return answer
+
 
 def _fill_stream_enabled(pipeline) -> bool:
     """Whether the desk may open the `trade_updates` socket at all.
@@ -101,18 +104,13 @@ def _alert_owner_entry_cancelled(pipeline, spec: dict, info: dict) -> None:
         ceiling = spec.get("ceiling")
         outcome = str(spec.get("repeg_outcome") or "")
         ending = _REPEG_OUTCOME_TEXT.get(
-            outcome, "no automatic reprice was made",
+            outcome,
+            "no automatic reprice was made",
         )
         prices = [p for p in [limit_price] if isinstance(p, (int, float))]
         prices += attempted
-        tried = (
-            " → ".join(f"${p:,.2f}" for p in prices)
-            if prices else "(no limit price recorded — market order)"
-        )
-        ceiling_line = (
-            f"Ceiling it may not cross: ${ceiling:,.2f}\n"
-            if isinstance(ceiling, (int, float)) else ""
-        )
+        tried = " → ".join(f"${p:,.2f}" for p in prices) if prices else "(no limit price recorded — market order)"
+        ceiling_line = f"Ceiling it may not cross: ${ceiling:,.2f}\n" if isinstance(ceiling, (int, float)) else ""
         body = (
             "ENTRY DID NOT FILL — cancelled at the end of its session\n"
             f"{symbol}: the entry limit did not fill; {ending}.\n"
@@ -133,17 +131,18 @@ def _alert_owner_entry_cancelled(pipeline, spec: dict, info: dict) -> None:
             "pay."
         )
         from src import notifier as _notifier
+
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
-        record_swallowed(pipeline, "alert.entry_cancelled", exc,
-                         symbol=str(spec.get("symbol")))
+        record_swallowed(pipeline, "alert.entry_cancelled", exc, symbol=str(spec.get("symbol")))
         logger.warning(
             "entry-cancel alert for %s could not be sent: %s",
-            spec.get("symbol"), exc,
+            spec.get("symbol"),
+            exc,
         )
     else:
-        record_clean_pass(pipeline, "alert.entry_cancelled",
-                          symbol=str(spec.get("symbol")))
+        record_clean_pass(pipeline, "alert.entry_cancelled", symbol=str(spec.get("symbol")))
+
 
 def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
     """Page the owner: these symbols could not be MEASURED this session.
@@ -178,8 +177,7 @@ def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
             "DATA FAULT — symbols UNMEASURABLE this session, not judged\n"
             f"{len(symbols)} symbol(s) could not be measured because an input "
             "a real market always has (a price, volatility, usable bars, an "
-            "analysis) was not obtained by the desk:\n"
-            + "\n".join(lines) + "\n"
+            "analysis) was not obtained by the desk:\n" + "\n".join(lines) + "\n"
             "\n"
             "WHAT HAPPENED: none of these was traded (fail-closed, "
             "unchanged). They are recorded as data faults, NOT as trades "
@@ -190,10 +188,10 @@ def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
             "them."
         )
         from src import notifier as _notifier
+
         _notifier.send_owner_alert(body, symbols=symbols)
     except Exception as exc:  # noqa: BLE001
         record_swallowed(None, "alert.unmeasurable_symbols", exc)
         logger.warning("unmeasurable-symbols alert could not be sent: %s", exc)
     else:
         record_clean_pass(None, "alert.unmeasurable_symbols")
-

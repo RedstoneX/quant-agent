@@ -70,30 +70,39 @@ ZONE_PCT = CLUSTER_TOLERANCE_PCT
 #    close below 98.
 # ---------------------------------------------------------------------------
 
+
 def test_thesis_invalid_if_triggered_two_consecutive_closes_lifts_protection():
     """The key behaviour change: a broken thesis CONFIRMED on two
     consecutive trading-day closes lifts protection regardless of how young
     the position is (days_held is not even a parameter any more)."""
     result = check_structural_protection(
         thesis_invalid_if="closes below MA20",
-        current_price=95.0,   # today's CLOSE: 95 < 98 -> TRIGGERED
+        current_price=95.0,  # today's CLOSE: 95 < 98 -> TRIGGERED
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
-        break_seen_prior_close=True,   # yesterday's close was ALSO below MA20
+        break_seen_prior_close=True,  # yesterday's close was ALSO below MA20
     )
     assert result.raw_broken is True
     assert result.protected is False
     assert result.basis == "thesis_invalid_if_triggered"
-    assert structural_protection_broken(
-        thesis_invalid_if="closes below MA20",
-        current_price=95.0, entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
-        ma_20=98.0, break_seen_prior_close=True,
-    ) is True
+    assert (
+        structural_protection_broken(
+            thesis_invalid_if="closes below MA20",
+            current_price=95.0,
+            entry_price=100.0,
+            stop_loss=90.0,
+            atr=2.0,
+            min_level_touches=MIN_TOUCHES,
+            level_cluster_tolerance_pct=ZONE_PCT,
+            ma_20=98.0,
+            break_seen_prior_close=True,
+        )
+        is True
+    )
 
 
 def test_thesis_invalid_if_triggered_single_close_stays_protected():
@@ -108,7 +117,7 @@ def test_thesis_invalid_if_triggered_single_close_stays_protected():
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
-        break_seen_prior_close=False,   # no prior confirming close on record
+        break_seen_prior_close=False,  # no prior confirming close on record
     )
     assert result.raw_broken is True
     assert result.protected is True
@@ -122,20 +131,28 @@ def test_spring_reversal_the_next_day_does_not_lift_protection():
     scratch rather than instantly firing off the stale day-1 break."""
     day1 = check_structural_protection(
         thesis_invalid_if="closes below MA20",
-        current_price=95.0,        # day 1 close: below MA20 -> broken
-        entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
-        ma_20=98.0, break_seen_prior_close=False,
+        current_price=95.0,  # day 1 close: below MA20 -> broken
+        entry_price=100.0,
+        stop_loss=90.0,
+        atr=2.0,
+        min_level_touches=MIN_TOUCHES,
+        level_cluster_tolerance_pct=ZONE_PCT,
+        ma_20=98.0,
+        break_seen_prior_close=False,
     )
     assert day1.raw_broken is True
-    assert day1.protected is True   # single close never lifts protection
+    assert day1.protected is True  # single close never lifts protection
 
     day2 = check_structural_protection(
         thesis_invalid_if="closes below MA20",
-        current_price=99.0,        # day 2 close: reclaimed above MA20 (98.0)
-        entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
-        ma_20=98.0, break_seen_prior_close=day1.raw_broken,
+        current_price=99.0,  # day 2 close: reclaimed above MA20 (98.0)
+        entry_price=100.0,
+        stop_loss=90.0,
+        atr=2.0,
+        min_level_touches=MIN_TOUCHES,
+        level_cluster_tolerance_pct=ZONE_PCT,
+        ma_20=98.0,
+        break_seen_prior_close=day1.raw_broken,
     )
     assert day2.raw_broken is False
     assert day2.protected is True
@@ -143,10 +160,14 @@ def test_spring_reversal_the_next_day_does_not_lift_protection():
 
     day3 = check_structural_protection(
         thesis_invalid_if="closes below MA20",
-        current_price=95.0,        # breaks again on day 3
-        entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
-        ma_20=98.0, break_seen_prior_close=day2.raw_broken,   # False -> resets
+        current_price=95.0,  # breaks again on day 3
+        entry_price=100.0,
+        stop_loss=90.0,
+        atr=2.0,
+        min_level_touches=MIN_TOUCHES,
+        level_cluster_tolerance_pct=ZONE_PCT,
+        ma_20=98.0,
+        break_seen_prior_close=day2.raw_broken,  # False -> resets
     )
     assert day3.protected is True
     assert day3.basis == "thesis_invalid_if_pending_confirmation"
@@ -158,14 +179,14 @@ def test_thesis_invalid_if_not_triggered_stays_protected_indefinitely():
     days_held parameter to time it out with any more."""
     result = check_structural_protection(
         thesis_invalid_if="closes below MA20",
-        current_price=105.0,   # close above MA20 -> NOT_TRIGGERED
+        current_price=105.0,  # close above MA20 -> NOT_TRIGGERED
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
-        break_seen_prior_close=True,   # even a stale confirmed break can't matter here
+        break_seen_prior_close=True,  # even a stale confirmed break can't matter here
     )
     assert result.protected is True
     assert result.basis == "thesis_invalid_if_intact"
@@ -178,6 +199,7 @@ def test_thesis_invalid_if_not_triggered_stays_protected_indefinitely():
 #    MARGIN as `BREAK_CONFIRMATION_ATR_MULTIPLE` (1.0), not the level-zone tolerance.
 # ---------------------------------------------------------------------------
 
+
 def test_structural_level_broken_two_consecutive_closes_lifts_protection():
     # Long: entry 100, stop 90, atr 2. Level IDENTIFICATION tolerance =
     # 0.25 * 2 = 0.5 -> a verified level at 90.3 (gap 0.3 <= 0.5) with 6
@@ -186,7 +208,7 @@ def test_structural_level_broken_two_consecutive_closes_lifts_protection():
     assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
     result = check_structural_protection(
         thesis_invalid_if=None,
-        current_price=88.0,   # <= 88.3 -> decisively broken
+        current_price=88.0,  # <= 88.3 -> decisively broken
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
@@ -242,7 +264,7 @@ def test_small_close_below_level_within_break_margin_is_not_a_break():
     as — a wick that recovered."""
     result = check_structural_protection(
         thesis_invalid_if=None,
-        current_price=90.0,   # AT the level, well inside the 2.0 margin -> not broken
+        current_price=90.0,  # AT the level, well inside the 2.0 margin -> not broken
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
@@ -256,7 +278,7 @@ def test_small_close_below_level_within_break_margin_is_not_a_break():
         computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
-        break_seen_prior_close=True,   # even a stale prior break can't matter — not broken now
+        break_seen_prior_close=True,  # even a stale prior break can't matter — not broken now
     )
     assert result.raw_broken is False
     assert result.protected is True
@@ -268,7 +290,7 @@ def test_structural_level_intact_stays_protected_at_30_days_equivalent():
     structure protects a position with no time limit at all."""
     result = check_structural_protection(
         thesis_invalid_if=None,
-        current_price=95.0,   # well above the level -> intact
+        current_price=95.0,  # well above the level -> intact
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
@@ -294,7 +316,7 @@ def test_structural_level_broken_short_side_mirrors_long():
     # margin 2.0 -> broken when close >= level + margin = 111.8.
     result = check_structural_protection(
         thesis_invalid_if=None,
-        current_price=112.0,   # >= 111.8 -> broken
+        current_price=112.0,  # >= 111.8 -> broken
         entry_price=100.0,
         stop_loss=110.0,
         atr=2.0,
@@ -340,6 +362,7 @@ def test_unparseable_thesis_falls_back_to_structural_level():
 #    (owner refinement 2026-09-04), immediate (no confirmation gate).
 # ---------------------------------------------------------------------------
 
+
 def test_no_basis_within_noise_band_stays_protected():
     # entry 100, atr 2, NOISE_BAND_ATR_MULTIPLE == 1.0 -> band is 2.0.
     # Adverse move of 1.0 is inside the band.
@@ -373,7 +396,7 @@ def test_no_basis_beyond_noise_band_loses_protection_immediately():
         computed_level_touches={},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
-        break_seen_prior_close=False,   # irrelevant to this basis
+        break_seen_prior_close=False,  # irrelevant to this basis
     )
     assert result.protected is False
     assert result.basis == "noise_band_broken"
@@ -382,7 +405,7 @@ def test_no_basis_beyond_noise_band_loses_protection_immediately():
 def test_no_basis_flat_or_winning_stays_protected():
     result = check_structural_protection(
         thesis_invalid_if=None,
-        current_price=105.0,   # in profit
+        current_price=105.0,  # in profit
         entry_price=100.0,
         stop_loss=90.0,
         atr=2.0,
@@ -429,7 +452,7 @@ def test_low_touch_level_does_not_qualify_falls_back_to_noise_band():
         stop_loss=90.0,
         atr=2.0,
         computed_levels=[90.3],
-        computed_level_touches={90.3: 2},   # below the 5-touch bar
+        computed_level_touches={90.3: 2},  # below the 5-touch bar
         computed_level_bars={90.3: [(90.0, 90.6)]},  # bar is fine; touches are not
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,

@@ -16,23 +16,22 @@ def _persist_review_metrics(pipeline, position_facts: dict, *, run_id: str) -> N
     which the guard handles, and must not take down the current session.
     """
     import json as _json
+
     for symbol, facts in (position_facts or {}).items():
-        payload = {
-            key: facts.get(key)
-            for key in pipeline._REVIEW_METRIC_KEYS
-            if facts.get(key) is not None
-        }
+        payload = {key: facts.get(key) for key in pipeline._REVIEW_METRIC_KEYS if facts.get(key) is not None}
         if not payload:
             continue
         try:
             pipeline.db.save_position_review_metrics(
-                run_id=run_id, symbol=symbol,
+                run_id=run_id,
+                symbol=symbol,
                 metrics_json=_json.dumps(payload, sort_keys=True),
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "review memory: failed to snapshot %s (%s) — next review "
-                "will have no prior for it", symbol, e,
+                "review memory: failed to snapshot %s (%s) — next review will have no prior for it",
+                symbol,
+                e,
             )
 
 

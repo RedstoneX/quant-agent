@@ -81,6 +81,7 @@ EXIT CODES
     1  it did not — the desk currently has no way to reach the operator
     2  bad arguments
 """
+
 from __future__ import annotations
 
 import argparse
@@ -108,7 +109,6 @@ STATE_PATH = PROJECT_ROOT / "data" / "alerting" / "heartbeat.json"
 HISTORY_LIMIT = 60
 
 
-
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -128,8 +128,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     except (OSError, ValueError):
         raw = None
     if not isinstance(raw, dict):
-        return {"history": [], "last_ok": None, "last_failure": None,
-                "consecutive_failures": 0}
+        return {"history": [], "last_ok": None, "last_failure": None, "consecutive_failures": 0}
     raw.setdefault("history", [])
     raw.setdefault("last_ok", None)
     raw.setdefault("last_failure", None)
@@ -259,8 +258,7 @@ def run_probe(now: datetime | None = None) -> tuple[int, str]:
     print(message, file=sys.stderr)
     delivered = push_ops_alert(message, kind="alert_heartbeat", notifier=notifier)
     return 1, (
-        f"alert_heartbeat: {result.summary()}; "
-        f"failure alert {'delivered' if delivered else 'could NOT be delivered'}"
+        f"alert_heartbeat: {result.summary()}; failure alert {'delivered' if delivered else 'could NOT be delivered'}"
     )
 
 
@@ -410,13 +408,14 @@ def _coverage_db_and_last_buy():
         db.initialize()
     except Exception as exc:  # noqa: BLE001
         print(
-            f"coverage_watchdog: no recorded-stop lookup available ({exc}) — "
-            "reporting only, placing nothing",
+            f"coverage_watchdog: no recorded-stop lookup available ({exc}) — reporting only, placing nothing",
             file=sys.stderr,
         )
         return None, None
     last_buy = lambda symbol, action="BUY": db.get_symbol_last_buy(
-        symbol, include_in_flight=True, action=action,
+        symbol,
+        include_in_flight=True,
+        action=action,
     )
     return db, last_buy
 
@@ -446,9 +445,17 @@ def run_coverage_check(now: datetime | None = None) -> str:
     import uuid
 
     from src.coverage_watchdog import (
-        SWEEP_AGENT_NAME, SWEEP_LOG_NAME, alert_text, check_coverage,
-        record_sweep_run, repair_failure_text, status_line, sweep_log_line,
-        sweep_summary, unguarded_text, unreadable_stop_text,
+        SWEEP_AGENT_NAME,
+        SWEEP_LOG_NAME,
+        alert_text,
+        check_coverage,
+        record_sweep_run,
+        repair_failure_text,
+        status_line,
+        sweep_log_line,
+        sweep_summary,
+        unguarded_text,
+        unreadable_stop_text,
     )
 
     # Board item 131: every run leaves a named line in the desk's log and
@@ -461,8 +468,11 @@ def run_coverage_check(now: datetime | None = None) -> str:
     db, last_buy = _coverage_db_and_last_buy()
     try:
         status = check_coverage(
-            _build_broker(), now=now, sweep_symbol=_cash_sweep_symbol(),
-            last_buy=last_buy, db=db,
+            _build_broker(),
+            now=now,
+            sweep_symbol=_cash_sweep_symbol(),
+            last_buy=last_buy,
+            db=db,
         )
     except Exception as exc:  # noqa: BLE001 — record it, then let main report it
         summary = sweep_summary(None, entry=entry, run_id=run_id, error=str(exc))
@@ -484,10 +494,7 @@ def run_coverage_check(now: datetime | None = None) -> str:
         text = repair_resolution_text(names)
         print(text, file=sys.stderr)
         ok = bool(_send_resolution(text, symbols=names))
-        sent.append(
-            f"stop-repair all-clear "
-            f"{'delivered' if ok else 'could NOT be delivered'}"
-        )
+        sent.append(f"stop-repair all-clear {'delivered' if ok else 'could NOT be delivered'}")
     if status.should_alert_repair_performed:
         # 2026-09-30: this event used to log "alert none sent". A repair
         # means something upstream failed silently; same owner channel as
@@ -497,9 +504,7 @@ def run_coverage_check(now: datetime | None = None) -> str:
 
         text = repair_performed_text(status)
         print(text, file=sys.stderr)
-        told = {
-            str(s).strip().upper() for s in status.resolution_notice_symbols
-        }
+        told = {str(s).strip().upper() for s in status.resolution_notice_symbols}
         # Durable, not in-memory: this unit is a timer-run process, so a
         # set built here lives only for one run and the same repair pages
         # again on the next sweep. `claim_typed_alert` reserves today's
@@ -511,24 +516,16 @@ def run_coverage_check(now: datetime | None = None) -> str:
 
         names = claim_typed_alert(
             "repair_performed",
-            [
-                r.symbol for r in status.repaired
-                if str(r.symbol).strip().upper() not in told
-            ],
+            [r.symbol for r in status.repaired if str(r.symbol).strip().upper() not in told],
         )
         if names:
             ok = bool(_send_repaired(text, symbols=names))
-            sent.append(
-                f"stop-repaired alert "
-                f"{'delivered' if ok else 'could NOT be delivered'}"
-            )
+            sent.append(f"stop-repaired alert {'delivered' if ok else 'could NOT be delivered'}")
         else:
-            sent.append(
-                "stop-repaired alert suppressed — every repaired name was "
-                "already reported to the owner today"
-            )
+            sent.append("stop-repaired alert suppressed — every repaired name was already reported to the owner today")
     if (
-        status.should_alert or status.should_alert_repair_failure
+        status.should_alert
+        or status.should_alert_repair_failure
         or status.should_alert_unreadable
         or status.should_alert_unguarded
     ):
@@ -560,13 +557,13 @@ def run_coverage_check(now: datetime | None = None) -> str:
             rows = status.unreadable_fresh or status.unreadable
             text = unreadable_stop_text(rows)
             print(text, file=sys.stderr)
-            ok = bool(send_owner_alert(
-                text, symbols=[r.symbol for r in rows],
-            ))
-            sent.append(
-                f"unreadable-stop alert "
-                f"{'delivered' if ok else 'could NOT be delivered'}"
+            ok = bool(
+                send_owner_alert(
+                    text,
+                    symbols=[r.symbol for r in rows],
+                )
             )
+            sent.append(f"unreadable-stop alert {'delivered' if ok else 'could NOT be delivered'}")
         if status.should_alert_unguarded:
             # Board item 193. Sent on its own footing, never folded into the
             # coverage gap alert: this position is unguarded BY DESIGN and
@@ -575,37 +572,39 @@ def run_coverage_check(now: datetime | None = None) -> str:
             # fact cancelled deliberately. `unguarded_fresh` is what
             # `check_coverage` already claimed for today.
             rows = status.unguarded_fresh
-            ok = bool(send_owner_alert(
-                unguarded_text(rows), symbols=[r.symbol for r in rows],
-            ))
-            sent.append(
-                f"unguarded-window alert "
-                f"{'sent' if ok else 'FAILED'} ({len(rows)} symbol(s))"
+            ok = bool(
+                send_owner_alert(
+                    unguarded_text(rows),
+                    symbols=[r.symbol for r in rows],
+                )
             )
+            sent.append(f"unguarded-window alert {'sent' if ok else 'FAILED'} ({len(rows)} symbol(s))")
         if status.should_alert_repair_failure:
             text = repair_failure_text(status)
             print(text, file=sys.stderr)
-            ok = bool(send_owner_alert(
-                text, symbols=[r.symbol for r in status.repair_failures],
-            ))
-            sent.append(
-                f"placement-failure alert "
-                f"{'delivered' if ok else 'could NOT be delivered'}"
+            ok = bool(
+                send_owner_alert(
+                    text,
+                    symbols=[r.symbol for r in status.repair_failures],
+                )
             )
+            sent.append(f"placement-failure alert {'delivered' if ok else 'could NOT be delivered'}")
         if status.should_alert:
             text = alert_text(status)
             print(text, file=sys.stderr)
-            ok = bool(send_owner_alert(
-                text, symbols=[g.symbol for g in status.gaps],
-            ))
-            sent.append(
-                f"exposure alert "
-                f"{'delivered' if ok else 'could NOT be delivered'}"
+            ok = bool(
+                send_owner_alert(
+                    text,
+                    symbols=[g.symbol for g in status.gaps],
+                )
             )
+            sent.append(f"exposure alert {'delivered' if ok else 'could NOT be delivered'}")
     summary = sweep_summary(status, entry=entry, run_id=run_id, alerts=sent)
     finished = sweep_log_line(summary)
     if summary["outcome"] in (
-        "repair_failed", "could_not_check", "unreadable_stops",
+        "repair_failed",
+        "could_not_check",
+        "unreadable_stops",
     ):
         # WARNING, not ERROR: the failure itself is already logged at ERROR
         # by the module that hit it, under wording `src/log_health.py`
@@ -626,7 +625,9 @@ def run_refusal_signature_check(now: datetime | None = None) -> str:
     trading timers are paused, because the streak it needs must end on the
     most recent trading day. Returns the journal line."""
     from src.refusal_signature import (
-        alert_text, check_refusal_signature, status_line,
+        alert_text,
+        check_refusal_signature,
+        status_line,
     )
 
     status = check_refusal_signature(now=now, broker=_build_broker())
@@ -646,11 +647,13 @@ def main(argv: list[str] | None = None) -> int:
         description="Prove the operator alert channel still works.",
     )
     parser.add_argument(
-        "--status", action="store_true",
+        "--status",
+        action="store_true",
         help="print the record and exit; sends nothing, exercises nothing",
     )
     parser.add_argument(
-        "--coverage-only", action="store_true",
+        "--coverage-only",
+        action="store_true",
         help=(
             "run ONLY the stop-coverage check (no channel probe, no Telegram "
             "self-test). This is what the every-30-minutes coverage-sweep "

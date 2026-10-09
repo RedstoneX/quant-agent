@@ -1,4 +1,5 @@
 """Name-coverage record step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -38,20 +39,15 @@ class NameCoverageRecordSession:
 
         try:
             seat_symbols: dict[str, set] = {}
-            seat_symbols["tech"] = {
-                getattr(a, "symbol", "") for a in (getattr(ctx, "analyses", None) or ())
-            }
+            seat_symbols["tech"] = {getattr(a, "symbol", "") for a in (getattr(ctx, "analyses", None) or ())}
             seat_symbols["earnings"] = {
                 (r.get("symbol") if isinstance(r, dict) else getattr(r, "symbol", ""))
                 for r in (getattr(ctx, "earnings_results", None) or ())
             }
             smart: set = set()
             for bucket in ("smart_money_observations", "smart_money_findings"):
-                for item in (getattr(ctx, bucket, None) or ()):
-                    smart.add(
-                        item.get("symbol") if isinstance(item, dict)
-                        else getattr(item, "symbol", "")
-                    )
+                for item in getattr(ctx, bucket, None) or ():
+                    smart.add(item.get("symbol") if isinstance(item, dict) else getattr(item, "symbol", ""))
             seat_symbols["smart_money"] = smart
             intel = getattr(ctx, "news_intel", None)
             if intel is not None:
@@ -63,19 +59,14 @@ class NameCoverageRecordSession:
             universe: set = set()
             for names in seat_symbols.values():
                 universe |= {n for n in names if n}
-            universe |= {
-                str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())
-            }
+            universe |= {str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())}
             # HELD NAMES ARE IN THE UNIVERSE (board item 220). The rule binds
             # on STAYING as well as entering, and a held name that no seat
             # answered about this review was previously absent from this
             # record entirely — the one case where "no row" meant "nothing to
             # see" rather than "nobody looked".
-            for pos in (getattr(ctx, "positions", None) or ()):
-                sym = (
-                    pos.get("symbol") if isinstance(pos, dict)
-                    else getattr(pos, "symbol", "")
-                )
+            for pos in getattr(ctx, "positions", None) or ():
+                sym = pos.get("symbol") if isinstance(pos, dict) else getattr(pos, "symbol", "")
                 if sym:
                     universe.add(str(sym))
             # A name whose technical row came back unreadable may be in no
@@ -94,7 +85,8 @@ class NameCoverageRecordSession:
                 pass
 
             coverage_by_name = recorder.coverage(
-                universe, seat_symbols,
+                universe,
+                seat_symbols,
                 unreadable_by_seat=unreadable_by_seat,
                 asked_no_answer_by_seat=asked_no_answer_by_seat,
             )
@@ -127,13 +119,11 @@ class NameCoverageRecordSession:
                     "may stop the desk — treated as a missing seat, never as "
                     "agreement: %s%s",
                     len(gaps),
-                    "; ".join(
-                        f"{n}={','.join(seats)}" for n, seats in sorted(gaps.items())
-                    ),
+                    "; ".join(f"{n}={','.join(seats)}" for n, seats in sorted(gaps.items())),
                     (
-                        " (returned-but-unreadable: "
-                        + ", ".join(sorted(unreadable_by_seat["tech"])) + ")"
-                        if unreadable_by_seat["tech"] else ""
+                        " (returned-but-unreadable: " + ", ".join(sorted(unreadable_by_seat["tech"])) + ")"
+                        if unreadable_by_seat["tech"]
+                        else ""
                     ),
                 )
         except Exception:  # noqa: BLE001 — never break the decision

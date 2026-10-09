@@ -5,6 +5,7 @@ from pydantic.json_schema import SkipJsonSchema
 from src.models.base import LLMOutputModel, _normalize_symbol
 from src.models.analysis import AnalystVerdict, NO_STATED_STRENGTH, VerdictEvidence
 
+
 class InsiderPurchaseCluster(BaseModel):
     """Two or more distinct insiders buying the same stock on the same day.
 
@@ -22,6 +23,7 @@ class InsiderPurchaseCluster(BaseModel):
     date — how long ago the cluster became fully knowable. It changes daily
     and is therefore excluded from the synthesis evidence hash.
     """
+
     transaction_date: date
     distinct_insiders: int = Field(ge=2)
     insider_ciks: list[str] = Field(min_length=2)
@@ -37,6 +39,7 @@ class SmartMoneyObservation(LLMOutputModel):
     by the first provider.  SEC Form 4 observations add accession-level
     provenance and never rely on the LLM to classify a transaction code.
     """
+
     symbol: str
     stream: Literal["congressional", "insider"] = "congressional"
     actor: str = Field(min_length=1)
@@ -90,9 +93,7 @@ class SmartMoneyObservation(LLMOutputModel):
     # who held nothing beforehand (no ratio exists — that is a distinct fact,
     # not a missing one).
     holdings_fraction: float | None = Field(default=None, ge=0.0)
-    holdings_fraction_band: Literal[
-        "", "under_10pct", "10_to_50pct", "over_50pct", "no_prior_holding"
-    ] = ""
+    holdings_fraction_band: Literal["", "under_10pct", "10_to_50pct", "over_50pct", "no_prior_holding"] = ""
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
     # Populated only for stream="congressional" (src/data/congressional_trading.py).
     # Two independent free sources (kadoa-org/congress-trading-monitor,
@@ -138,7 +139,8 @@ class SmartMoneyObservation(LLMOutputModel):
                 self.accepted_at = self.known_at
             if self.admission_eligible or self.transient_admission_eligible:
                 eligible = (
-                    self.direction == "buy" and self.transaction_code == "P"
+                    self.direction == "buy"
+                    and self.transaction_code == "P"
                     # A routine purchase carries no predictive power, so it can
                     # never be the reason a symbol is admitted to the trading
                     # surface. This only ever narrows admission.
@@ -292,10 +294,7 @@ class SmartMoneyFinding(LLMOutputModel):
     @model_validator(mode="after")
     def deterministic_eligibility(self):
         streams = {o.stream for o in self.observations}
-        directional = {
-            o.direction for o in self.observations
-            if o.direction in {"buy", "sell"}
-        }
+        directional = {o.direction for o in self.observations if o.direction in {"buy", "sell"}}
         # 2026-09-11, owner redesign: a calendar-age cutoff on WHETHER this
         # evidence can support a thesis is gone. Owner's framing, direct:
         # "this is one piece of information — if it doesn't correlate with
@@ -340,10 +339,7 @@ class SmartMoneyFinding(LLMOutputModel):
                 len(self.observations) >= 2
                 and len(actors) >= 2
                 and len(directional) == 1
-                and all(
-                    o.lag_days <= 45 and not o.disclosure_date_estimated
-                    for o in self.observations
-                )
+                and all(o.lag_days <= 45 and not o.disclosure_date_estimated for o in self.observations)
             )
             # Owner ruling 2026-09-19 (docs/INCIDENT_HISTORY.md, 2026-09-20
             # entry): congressional disclosures are evidence and must never
@@ -371,14 +367,9 @@ class SmartMoneyFinding(LLMOutputModel):
         # alone justify pulling a brand-new symbol into the universe, which
         # is a different risk than confirming a thesis on a symbol already
         # in play.
-        self.support_eligible = (
-            bool(directional)
-            and len(directional) == 1
-        )
+        self.support_eligible = bool(directional) and len(directional) == 1
         self.transient_admission_eligible = any(
-            o.transient_admission_eligible
-            and o.transaction_code == "P"
-            and o.direction == "buy"
+            o.transient_admission_eligible and o.transaction_code == "P" and o.direction == "buy"
             for o in self.observations
         )
         # Same honesty rule as the congressional branch above: the model's
@@ -395,8 +386,7 @@ class SmartMoneyFinding(LLMOutputModel):
         """The deterministic purchase cluster stamped on this finding's
         insider rows, or None. Congressional rows never carry one."""
         stamped = [
-            o.purchase_cluster for o in self.observations
-            if o.stream == "insider" and o.purchase_cluster is not None
+            o.purchase_cluster for o in self.observations if o.stream == "insider" and o.purchase_cluster is not None
         ]
         if not stamped:
             return None
@@ -466,20 +456,24 @@ class SmartMoneyFinding(LLMOutputModel):
         if self.why_now.strip():
             evidence.append(VerdictEvidence(label="why_now", text=self.why_now.strip()))
         if cluster is not None:
-            evidence.append(VerdictEvidence(
-                label="insider_purchase_cluster",
-                value=cluster.combined_value_usd,
-                as_of=cluster.transaction_date,
-                text=(
-                    f"{cluster.distinct_insiders} distinct insiders made "
-                    "opportunistic open-market purchases on "
-                    f"{cluster.transaction_date.isoformat()}, combined "
-                    f"${cluster.combined_value_usd:,.0f}; latest filing "
-                    f"{cluster.filing_age_days} days old"
-                ),
-            ))
+            evidence.append(
+                VerdictEvidence(
+                    label="insider_purchase_cluster",
+                    value=cluster.combined_value_usd,
+                    as_of=cluster.transaction_date,
+                    text=(
+                        f"{cluster.distinct_insiders} distinct insiders made "
+                        "opportunistic open-market purchases on "
+                        f"{cluster.transaction_date.isoformat()}, combined "
+                        f"${cluster.combined_value_usd:,.0f}; latest filing "
+                        f"{cluster.filing_age_days} days old"
+                    ),
+                )
+            )
         most_recent = sorted(
-            self.observations, key=lambda o: o.transaction_date, reverse=True,
+            self.observations,
+            key=lambda o: o.transaction_date,
+            reverse=True,
         )[:5]
         for obs in most_recent:
             detail = f"{obs.actor}: {obs.direction}"
@@ -490,9 +484,7 @@ class SmartMoneyFinding(LLMOutputModel):
 
         invalidation = ""
         if stance != "neutral":
-            invalidation = (
-                f"the why-now premise no longer holds: {self.why_now.strip()}"
-            )
+            invalidation = f"the why-now premise no longer holds: {self.why_now.strip()}"
 
         return AnalystVerdict(
             seat="smart_money",
@@ -514,5 +506,3 @@ class SmartMoneySynthesis(LLMOutputModel):
     is never itself constructed from a response."""
 
     findings: list[SmartMoneyFinding]
-
-

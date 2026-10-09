@@ -13,6 +13,7 @@ These tests assert three things the guard promises:
   3. Ops can flip it with `touch`/`rm` alone: no path is disabled when the
      file is absent, and every guarded method still works normally then.
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,13 +30,16 @@ def _broker(tmp_path, *, halted: bool, garbage: bool = False) -> AlpacaBroker:
         else:
             flag.touch()
     broker = AlpacaBroker(
-        api_key="test", secret_key="test", paper=True,
+        api_key="test",
+        secret_key="test",
+        paper=True,
         kill_switch_path=str(flag),
     )
     return broker
 
 
 # --- _kill_switch_active(): path.exists() and nothing more -----------------
+
 
 @patch("src.execution.broker.TradingClient")
 def test_kill_switch_inactive_when_file_absent(mock_tc_cls, tmp_path):
@@ -86,6 +90,7 @@ def test_kill_switch_takes_effect_between_calls(mock_tc_cls, tmp_path):
 
 # --- submit_order(): halts BUY (entry) and SELL (exit) alike ---------------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_submit_order_buy_blocked_when_halted(mock_tc_cls, tmp_path):
     mock_client = MagicMock()
@@ -134,7 +139,8 @@ def test_submit_order_proceeds_normally_when_not_halted(mock_tc_cls, tmp_path):
     """Regression guard: the guard must not block ordinary operation."""
     mock_client = MagicMock()
     mock_client.submit_order.return_value = MagicMock(
-        id="abc123", status="accepted",
+        id="abc123",
+        status="accepted",
     )
     mock_tc_cls.return_value = mock_client
     broker = _broker(tmp_path, halted=False)
@@ -149,6 +155,7 @@ def test_submit_order_proceeds_normally_when_not_halted(mock_tc_cls, tmp_path):
 # --- _submit_stop_limit_order(): a protective stop is risk-reducing, and --
 # --- the kill switch is the one guard that blocks it anyway --------------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_protective_stop_blocked_when_halted(mock_tc_cls, tmp_path):
     mock_client = MagicMock()
@@ -156,7 +163,9 @@ def test_protective_stop_blocked_when_halted(mock_tc_cls, tmp_path):
     broker = _broker(tmp_path, halted=True)
 
     result = broker._submit_stop_limit_order(
-        symbol="NVDA", qty=10, stop_price=95.0,
+        symbol="NVDA",
+        qty=10,
+        stop_price=95.0,
     )
 
     assert result["id"] is None
@@ -172,7 +181,9 @@ def test_protective_stop_proceeds_normally_when_not_halted(mock_tc_cls, tmp_path
     broker = _broker(tmp_path, halted=False)
 
     result = broker._submit_stop_limit_order(
-        symbol="NVDA", qty=10, stop_price=95.0,
+        symbol="NVDA",
+        qty=10,
+        stop_price=95.0,
     )
 
     assert result["id"] == "stop1"
@@ -180,6 +191,7 @@ def test_protective_stop_proceeds_normally_when_not_halted(mock_tc_cls, tmp_path
 
 
 # --- replace_entry_limit(): re-pegging is still order flow -----------------
+
 
 @patch("src.execution.broker.TradingClient")
 def test_replace_entry_limit_blocked_when_halted(mock_tc_cls, tmp_path):
@@ -208,6 +220,7 @@ def test_replace_entry_limit_proceeds_normally_when_not_halted(mock_tc_cls, tmp_
 
 
 # --- Pipeline-level early check: visible, single alert, saves LLM spend ---
+
 
 def _pipeline_with_kill_switch(tmp_path, *, halted: bool):
     from src.pipeline import TradingPipeline
@@ -253,7 +266,13 @@ def test_run_morning_short_circuits_when_halted(mock_tc_cls, tmp_path, monkeypat
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
 
-    pipeline = build_pipeline(_kill_switch_path=flag, _is_trading_day=lambda: True, _reconcile_stop_coverage=MagicMock( side_effect=AssertionError("must not run past the kill switch"), ))
+    pipeline = build_pipeline(
+        _kill_switch_path=flag,
+        _is_trading_day=lambda: True,
+        _reconcile_stop_coverage=MagicMock(
+            side_effect=AssertionError("must not run past the kill switch"),
+        ),
+    )
 
     result = pipeline.run_morning()
 
@@ -269,7 +288,13 @@ def test_run_intra_check_short_circuits_when_halted(mock_tc_cls, tmp_path):
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
 
-    pipeline = build_pipeline(_kill_switch_path=flag, _is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock( side_effect=AssertionError("must not run past the kill switch"), ))
+    pipeline = build_pipeline(
+        _kill_switch_path=flag,
+        _is_trading_day=lambda: True,
+        _drain_pending_protection_restores=MagicMock(
+            side_effect=AssertionError("must not run past the kill switch"),
+        ),
+    )
 
     result = pipeline.run_intra_check()
 

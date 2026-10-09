@@ -6,11 +6,17 @@ constructor argument, so this builds and runs with no agent behind it.
 """
 
 from datetime import date
-from src.models import (EarningsAnalysis, NewsIntelligenceReport, Position, SmartMoneyFinding, TechAnalysisResult, normalize_sector_stance)
+from src.models import (
+    EarningsAnalysis,
+    NewsIntelligenceReport,
+    Position,
+    SmartMoneyFinding,
+    TechAnalysisResult,
+    normalize_sector_stance,
+)
 from src.quantities import collapse_stances
 from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
 from src.trading_calendar import et_today
-
 
 
 class PromptEvidence:
@@ -23,7 +29,8 @@ class PromptEvidence:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         collapse_stances=None,
         earnings_stance_rows=None,
         macro_sectors=None,
@@ -79,10 +86,7 @@ class PromptEvidence:
         if isinstance(raw, dict):
             pairs = list(raw.items())
         elif isinstance(raw, list):
-            pairs = [
-                (row.get("sector"), row.get("stance"))
-                for row in raw if isinstance(row, dict)
-            ]
+            pairs = [(row.get("sector"), row.get("stance")) for row in raw if isinstance(row, dict)]
         else:
             return []
         rows: list[dict] = []
@@ -93,7 +97,8 @@ class PromptEvidence:
         return rows
 
     def _macro_sectors(
-        self, positions: list[Position],
+        self,
+        positions: list[Position],
         symbol_sectors: dict[str, str] | None,
     ) -> dict[str, str]:
         """`{SYMBOL: sector}` from the caller's map, back-filled from the
@@ -138,9 +143,7 @@ class PromptEvidence:
             stance = row.get("stance")
             if sector and stance:
                 guidance.setdefault(sector, []).append(str(stance))
-        broad = self._collapse_stances([
-            macro_analysis.get("equity_outlook") or macro_analysis.get("regime")
-        ])
+        broad = self._collapse_stances([macro_analysis.get("equity_outlook") or macro_analysis.get("regime")])
         rows: list[tuple[str, str, bool]] = []
         for symbol in symbols:
             sector = sectors.get(symbol, "").strip().lower()
@@ -151,7 +154,8 @@ class PromptEvidence:
         return rows
 
     def _earnings_stance_rows(
-        self, earnings_analyses: list[dict],
+        self,
+        earnings_analyses: list[dict],
     ) -> list[tuple[str, str, str]]:
         """`(SYMBOL, stance, filing_date)` for every earnings entry that
         produces a registry stance, in input order.
@@ -179,14 +183,17 @@ class PromptEvidence:
             symbol = str(item.get("symbol") or "").strip().upper()
             if not symbol or not stance:
                 continue
-            filing_date = str(
-                item.get("filing_date") or analysis.get("filing_date") or ""
-            ).strip()
+            filing_date = str(item.get("filing_date") or analysis.get("filing_date") or "").strip()
             rows.append((symbol, stance, filing_date))
         return rows
 
     def _render_earnings_verdict(
-        self, *, sym: str, analysis: dict, filing_label: str, source_note: str,
+        self,
+        *,
+        sym: str,
+        analysis: dict,
+        filing_label: str,
+        source_note: str,
         analysis_path: str | None,
     ) -> str:
         """Item 18 (2026-09-04): earnings used to courier its whole eight-
@@ -214,10 +221,7 @@ class PromptEvidence:
         conviction = impl.get("conviction", "N/A")
         thesis = (impl.get("key_thesis") or "").strip() or "not disclosed"
 
-        pointer = (
-            f"data/earnings/{sym}/... ({filing_label})" if not analysis_path
-            else analysis_path
-        )
+        pointer = f"data/earnings/{sym}/... ({filing_label})" if not analysis_path else analysis_path
 
         verdict = None
         try:
@@ -228,14 +232,16 @@ class PromptEvidence:
 
         if verdict is not None:
             falsifier_line = (
-                f"- Invalidated if: {verdict.invalidation}" if verdict.invalidation
+                f"- Invalidated if: {verdict.invalidation}"
+                if verdict.invalidation
                 else "- Invalidated if: not disclosed by the analyst"
             )
         else:
             falsifier = impl.get("bear_case") if sentiment == "bullish" else impl.get("bull_case")
             falsifier = (falsifier or "").strip()
             falsifier_line = (
-                f"- Invalidated if: {falsifier}" if falsifier and falsifier.lower() != "not disclosed"
+                f"- Invalidated if: {falsifier}"
+                if falsifier and falsifier.lower() != "not disclosed"
                 else "- Invalidated if: not disclosed by the analyst"
             )
 
@@ -286,15 +292,14 @@ class PromptEvidence:
             "### Read, no call — {n} filing(s)".format(n=len(rows)),
             "The earnings seat read each of these and did not reach a "
             "direction, so there is no thesis and no falsifier to show. They "
-            "are listed rather than omitted so that \"covered, concluded "
-            "nothing\" is never mistaken for \"not covered\". Each still "
+            'are listed rather than omitted so that "covered, concluded '
+            'nothing" is never mistaken for "not covered". Each still '
             "carries a `neutral` earnings stance in the registry below and "
             "is counted there against any direction you propose.",
         ]
         for row in rows:
             lines.append(
-                f"- {row['symbol']} | {row['filing_label']} | "
-                f"conviction {row['conviction']}{row['source_note']}"
+                f"- {row['symbol']} | {row['filing_label']} | conviction {row['conviction']}{row['source_note']}"
             )
         return "\n".join(lines)
 
@@ -439,7 +444,9 @@ class PromptEvidence:
         return {
             symbol: frozenset({"macro"})
             for symbol, _stance, is_broadcast in self._macro_stance_rows(
-                macro_analysis=macro_analysis, symbols=symbols, sectors=sectors,
+                macro_analysis=macro_analysis,
+                symbols=symbols,
+                sectors=sectors,
             )
             if is_broadcast
         }

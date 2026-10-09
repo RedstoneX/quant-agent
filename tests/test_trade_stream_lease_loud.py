@@ -1,4 +1,5 @@
 """A converted trade-stream handler is loud, and the clean pass has its own row."""
+
 from __future__ import annotations
 
 import logging
@@ -46,6 +47,7 @@ def test_clean_pass_writes_its_own_distinct_row(rows, tmp_path):
 def test_stream_flag_handler_logs_the_traceback(caplog):
     class Frozen:
         __slots__ = ()
+
     with caplog.at_level(logging.ERROR):
         trade_stream._fell_back_to_deprecated_auth(Frozen(), None)
     assert any(r.exc_info for r in caplog.records)

@@ -42,18 +42,28 @@ from tests.pipeline_factory import build_pipeline
 # Fixtures / builders
 # ============================================================================
 
+
 def _trc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
 
 def _tech_result(symbol: str, rating: str = "buy") -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, entry_price=100, reference_target=120,
-        stop_loss=90, support_levels=[90.0], resistance_levels=[120.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol=symbol,
+        rating=rating,
+        entry_price=100,
+        reference_target=120,
+        stop_loss=90,
+        support_levels=[90.0],
+        resistance_levels=[120.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning="responder-covered candidate",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -63,8 +73,12 @@ def _tech_result(symbol: str, rating: str = "buy") -> TechAnalysisResult:
 def _bars(n: int = 30) -> list[OHLCV]:
     return [
         OHLCV(
-            date=date.today() - timedelta(days=n - i), open=100, high=102,
-            low=99, close=100, volume=200_000,
+            date=date.today() - timedelta(days=n - i),
+            open=100,
+            high=102,
+            low=99,
+            close=100,
+            volume=200_000,
         )
         for i in range(n)
     ]
@@ -73,13 +87,20 @@ def _bars(n: int = 30) -> list[OHLCV]:
 def _macro_analysis(nominations=None) -> MacroAnalysis:
     return MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
-        regime="risk-on", confidence="high", equity_outlook="bullish",
+        regime="risk-on",
+        confidence="high",
+        equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
+            reasoning="y",
         ),
         summary="z",
         nominations=nominations or [],
@@ -89,7 +110,8 @@ def _macro_analysis(nominations=None) -> MacroAnalysis:
 def _news_report(nominations=None) -> NewsIntelligenceReport:
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=date.today().isoformat(), era_themes=["theme"],
+            last_updated=date.today().isoformat(),
+            era_themes=["theme"],
             current_regime="steady",
         ),
         pm_briefing="brief",
@@ -101,15 +123,24 @@ def _news_report(nominations=None) -> NewsIntelligenceReport:
 
 def _earnings_analysis(nominations=None) -> EarningsAnalysis:
     return EarningsAnalysis(
-        symbol="AAPL", form_type="10-Q", filing_date="2026-03-15",
-        revenue={"total": "$95.4B"}, profitability={}, cash_flow={},
-        balance_sheet={}, guidance="flat", data_quality="complete",
+        symbol="AAPL",
+        form_type="10-Q",
+        filing_date="2026-03-15",
+        revenue={"total": "$95.4B"},
+        profitability={},
+        cash_flow={},
+        balance_sheet={},
+        guidance="flat",
+        data_quality="complete",
         investment_implications={
-            "sentiment": "bullish", "conviction": "medium",
+            "sentiment": "bullish",
+            "conviction": "medium",
             "key_thesis": "services mix",
             "reasoning_chain": {
-                "fundamental_quality": "strong", "growth_trajectory": "stable",
-                "strategic_risks": "vision pro", "management_execution": "credible",
+                "fundamental_quality": "strong",
+                "growth_trajectory": "stable",
+                "strategic_risks": "vision pro",
+                "management_execution": "credible",
                 "valuation_context": "conditional on services mix",
             },
         },
@@ -145,7 +176,8 @@ def _build_stage(
         macro_agent.analyze.return_value = macro_analysis_result
     else:
         macro_agent.analyze.return_value = (
-            None, AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
+            None,
+            AgentResult(raw_text="{}", tokens_used=0, model="test", user_message="x"),
         )
 
     macro_store = MagicMock()
@@ -184,7 +216,8 @@ def _simple_config(universe, max_per_seat=3, max_total=6):
         trading=SimpleNamespace(universe=universe, lookback_days=30),
         smart_money=SimpleNamespace(enabled=False),
         nominations=SimpleNamespace(
-            max_per_seat_per_run=max_per_seat, max_total_per_run=max_total,
+            max_per_seat_per_run=max_per_seat,
+            max_total_per_run=max_total,
         ),
     )
 
@@ -192,6 +225,7 @@ def _simple_config(universe, max_per_seat=3, max_total=6):
 # ============================================================================
 # D1 — Nomination model
 # ============================================================================
+
 
 def test_nomination_requires_non_empty_observation():
     with pytest.raises(Exception):
@@ -216,10 +250,13 @@ def test_report_drops_malformed_nomination_without_failing_whole_report():
     its entire structured output for the run."""
     report = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=date.today().isoformat(), era_themes=["t"],
+            last_updated=date.today().isoformat(),
+            era_themes=["t"],
             current_regime="steady",
         ),
-        pm_briefing="brief", market_sentiment="bullish", confidence="medium",
+        pm_briefing="brief",
+        market_sentiment="bullish",
+        confidence="medium",
         nominations=[
             {"symbol": "abc", "conviction": "high", "observation": ""},
             {"symbol": "xyz", "conviction": "medium", "observation": "genuine catalyst"},
@@ -232,17 +269,23 @@ def test_report_drops_malformed_nomination_without_failing_whole_report():
 # D3 — cap / dedupe / ranking (src/nominations.py, pure logic)
 # ============================================================================
 
+
 def _n(symbol, conviction, seat="news_analyst", observation="obs"):
     return Nomination(symbol=symbol, conviction=conviction, observation=observation)
 
 
 def test_per_seat_cap_keeps_highest_conviction_then_alphabetical():
     noms = [
-        _n("EEE", "low"), _n("AAA", "high"), _n("CCC", "medium"),
-        _n("BBB", "high"), _n("DDD", "medium"),
+        _n("EEE", "low"),
+        _n("AAA", "high"),
+        _n("CCC", "medium"),
+        _n("BBB", "high"),
+        _n("DDD", "medium"),
     ]
     candidates = select_nominations(
-        {"news_analyst": noms}, max_per_seat=3, max_total=10,
+        {"news_analyst": noms},
+        max_per_seat=3,
+        max_total=10,
     )
     # cap=3 keeps: AAA(high), BBB(high), then highest of the mediums (CCC
     # alphabetically before DDD) — EEE(low) and DDD(medium) are dropped.
@@ -268,7 +311,9 @@ def test_cross_seat_dedupe_records_both_nominators_as_one_candidate():
 def test_global_cap_ranks_by_conviction_then_seat_count_then_symbol():
     by_seat = {
         "news_analyst": [
-            _n("AAA", "high"), _n("BBB", "high"), _n("CCC", "medium"),
+            _n("AAA", "high"),
+            _n("BBB", "high"),
+            _n("CCC", "medium"),
             _n("DDD", "medium"),
         ],
         "macro_analyst": [_n("BBB", "high"), _n("CCC", "medium")],
@@ -293,36 +338,51 @@ def test_ranking_is_deterministic_regardless_of_input_order():
     }
     result_a = select_nominations(by_seat_a, max_per_seat=3, max_total=6)
     result_b = select_nominations(by_seat_b, max_per_seat=3, max_total=6)
-    assert [(c.symbol, c.conviction, sorted(c.seats)) for c in result_a] == \
-        [(c.symbol, c.conviction, sorted(c.seats)) for c in result_b]
+    assert [(c.symbol, c.conviction, sorted(c.seats)) for c in result_a] == [
+        (c.symbol, c.conviction, sorted(c.seats)) for c in result_b
+    ]
 
 
 def test_empty_seats_produce_no_candidates():
-    assert select_nominations(
-        {"news_analyst": [], "macro_analyst": [], "earnings_analyst": []},
-        max_per_seat=3, max_total=6,
-    ) == []
+    assert (
+        select_nominations(
+            {"news_analyst": [], "macro_analyst": [], "earnings_analyst": []},
+            max_per_seat=3,
+            max_total=6,
+        )
+        == []
+    )
 
 
 # ============================================================================
 # D3 — shared external-admission gate (src/pipeline.py)
 # ============================================================================
 
-def _gate_pipeline(monkeypatch, *, sector="Utilities", broker_eligible=True,
-                    bars=None, min_history=20, min_price=5.0, min_dv=10_000_000):
+
+def _gate_pipeline(
+    monkeypatch,
+    *,
+    sector="Utilities",
+    broker_eligible=True,
+    bars=None,
+    min_history=20,
+    min_price=5.0,
+    min_dv=10_000_000,
+):
     pipeline = build_pipeline(broker=MagicMock(), market=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
-            max_external_candidates=3, min_external_history_days=min_history,
+            max_external_candidates=3,
+            min_external_history_days=min_history,
             min_external_price_usd=min_price,
             min_external_avg_dollar_volume_usd=min_dv,
         ),
     )
     pipeline.broker.get_transient_equity_eligibility.return_value = (
         {"eligible": True, "reason": "eligible", "name": "Vistra Corp", "exchange": "nyse"}
-        if broker_eligible else
-        {"eligible": False, "reason": "not_shortable_or_tradable"}
+        if broker_eligible
+        else {"eligible": False, "reason": "not_shortable_or_tradable"}
     )
     pipeline.market.get_ohlcv.return_value = bars if bars is not None else _bars(30)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: sector)
@@ -346,8 +406,7 @@ def test_gate_rejects_insufficient_history(monkeypatch):
 
 def test_gate_rejects_price_below_minimum(monkeypatch):
     bars = [
-        OHLCV(date=date.today() - timedelta(days=30 - i), open=2, high=2.1,
-              low=1.9, close=2.0, volume=5_000_000)
+        OHLCV(date=date.today() - timedelta(days=30 - i), open=2, high=2.1, low=1.9, close=2.0, volume=5_000_000)
         for i in range(30)
     ]
     pipeline = _gate_pipeline(monkeypatch, bars=bars, min_price=5.0)
@@ -358,8 +417,7 @@ def test_gate_rejects_price_below_minimum(monkeypatch):
 
 def test_gate_rejects_dollar_volume_below_minimum(monkeypatch):
     bars = [
-        OHLCV(date=date.today() - timedelta(days=30 - i), open=10, high=10.1,
-              low=9.9, close=10.0, volume=1_000)
+        OHLCV(date=date.today() - timedelta(days=30 - i), open=10, high=10.1, low=9.9, close=10.0, volume=1_000)
         for i in range(30)
     ]
     pipeline = _gate_pipeline(monkeypatch, bars=bars, min_dv=10_000_000)
@@ -397,6 +455,7 @@ def test_admit_nominated_external_symbols_uses_shared_gate(monkeypatch):
 # Smart-money lane unchanged after the gate refactor (explicit before/after)
 # ============================================================================
 
+
 def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypatch):
     """Same fixture shape as the pre-existing
     tests/test_bugfixes.py::test_transient_admission_requires_sec_purchase_broker_and_market_quality
@@ -406,22 +465,31 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
-            max_external_candidates=3, min_external_history_days=20,
+            max_external_candidates=3,
+            min_external_history_days=20,
             min_external_price_usd=5.0,
             min_external_avg_dollar_volume_usd=10_000_000,
         ),
     )
     pipeline.broker.get_transient_equity_eligibility.return_value = {
-        "eligible": True, "reason": "eligible", "name": "Vistra Corp",
+        "eligible": True,
+        "reason": "eligible",
+        "name": "Vistra Corp",
         "exchange": "nyse",
     }
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = _bars(30)
-    observations = [SimpleNamespace(
-        symbol="VST", transaction_code="P", admission_eligible=True,
-        transaction_value_usd=500_000, accession_number="0001-26-000001",
-        actor="Example Director", known_at="2026-08-25T12:00:00Z",
-    )]
+    observations = [
+        SimpleNamespace(
+            symbol="VST",
+            transaction_code="P",
+            admission_eligible=True,
+            transaction_value_usd=500_000,
+            accession_number="0001-26-000001",
+            actor="Example Director",
+            known_at="2026-08-25T12:00:00Z",
+        )
+    ]
 
     admitted, details = pipeline.admission._admit_transient_smart_money_symbols(observations)
     assert admitted == {"VST"}
@@ -444,6 +512,7 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
 # D2/D4 — the responder pass itself
 # ============================================================================
 
+
 def test_news_nomination_for_unanalyzed_symbol_triggers_responder_call_and_reaches_pm():
     """A News nomination for a symbol Technical didn't analyse in the first
     batch results in a second Technical call covering EXACTLY that symbol,
@@ -461,13 +530,17 @@ def test_news_nomination_for_unanalyzed_symbol_triggers_responder_call_and_reach
         AgentResult(raw_text="{}", tokens_used=10, model="test", user_message="x", cost_usd=0.01),
     )
 
-    news = _news_report(nominations=[
-        Nomination(symbol="XYZ", conviction="high", observation="genuine catalyst: $2B contract"),
-    ])
+    news = _news_report(
+        nominations=[
+            Nomination(symbol="XYZ", conviction="high", observation="genuine catalyst: $2B contract"),
+        ]
+    )
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(news, None),
             has_actionable_signal_fn=lambda *a, **kw: False,  # nothing prefilters
         )
@@ -501,7 +574,9 @@ def test_no_nominations_means_no_second_technical_call():
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(_news_report(), None),
             macro_analysis_result=(
                 _macro_analysis(),
@@ -539,7 +614,9 @@ def test_zero_nominations_full_run_produces_byte_identical_pm_inputs():
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(_news_report(), None),
             macro_analysis_result=(
                 _macro_analysis(),
@@ -561,6 +638,7 @@ def test_zero_nominations_full_run_produces_byte_identical_pm_inputs():
 # D3 — nomination for an out-of-universe symbol goes through the gate
 # ============================================================================
 
+
 def test_nominated_out_of_universe_symbol_is_gated_before_responder_call(monkeypatch):
     """An out-of-universe nomination must clear the same deterministic
     gate the smart-money lane uses before it can reach the responder call
@@ -581,13 +659,17 @@ def test_nominated_out_of_universe_symbol_is_gated_before_responder_call(monkeyp
         assert symbols == ["VST"]
         return {"VST"}, {"VST": {"temporary": True, "reason": "nomination_external_admission", "sector": "Utilities"}}
 
-    news = _news_report(nominations=[
-        Nomination(symbol="VST", conviction="high", observation="cluster insider buying + earnings beat"),
-    ])
+    news = _news_report(
+        nominations=[
+            Nomination(symbol="VST", conviction="high", observation="cluster insider buying + earnings beat"),
+        ]
+    )
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(news, None),
             admit_nominated_candidates_fn=_admit,
             has_actionable_signal_fn=lambda *a, **kw: False,
@@ -610,13 +692,17 @@ def test_nominated_out_of_universe_symbol_rejected_by_gate_never_reaches_respond
     def _admit(symbols):
         return set(), {}  # every gate fails
 
-    news = _news_report(nominations=[
-        Nomination(symbol="JUNK", conviction="high", observation="thin, illiquid microcap chatter"),
-    ])
+    news = _news_report(
+        nominations=[
+            Nomination(symbol="JUNK", conviction="high", observation="thin, illiquid microcap chatter"),
+        ]
+    )
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(news, None),
             admit_nominated_candidates_fn=_admit,
             has_actionable_signal_fn=lambda *a, **kw: False,
@@ -647,14 +733,18 @@ def test_earnings_nomination_aggregated_across_seat_and_reaches_responder():
         AgentResult(raw_text="{}", tokens_used=10, model="test", user_message="x", cost_usd=0.01),
     )
 
-    earnings_analysis = _earnings_analysis(nominations=[
-        Nomination(symbol="AAPL", conviction="high", observation="blowout beat, Services +14%"),
-    ])
+    earnings_analysis = _earnings_analysis(
+        nominations=[
+            Nomination(symbol="AAPL", conviction="high", observation="blowout beat, Services +14%"),
+        ]
+    )
     earnings_results = ([], [{"symbol": "AAPL", "analysis": earnings_analysis.model_dump()}])
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             earnings_result=earnings_results,
             has_actionable_signal_fn=lambda *a, **kw: False,
         )
@@ -683,13 +773,17 @@ def test_symbol_already_analyzed_by_primary_batch_gets_no_responder_call():
         AgentResult(raw_text="{}", tokens_used=10, model="test", user_message="x", cost_usd=0.01),
     )
 
-    news = _news_report(nominations=[
-        Nomination(symbol="SPY", conviction="medium", observation="index-wide catalyst"),
-    ])
+    news = _news_report(
+        nominations=[
+            Nomination(symbol="SPY", conviction="medium", observation="index-wide catalyst"),
+        ]
+    )
 
     with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
-            config=config, market=market, tech_analyst=tech_analyst,
+            config=config,
+            market=market,
+            tech_analyst=tech_analyst,
             news_intel_result=(news, None),
             has_actionable_signal_fn=lambda *a, **kw: True,
         )

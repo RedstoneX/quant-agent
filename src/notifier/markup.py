@@ -70,9 +70,7 @@ def _linkify_symbols(escaped_text: str, symbols: list[str] | None) -> str:
     # Longest-first so a short ticker that happens to be a prefix of a
     # longer one (rare, but e.g. "A" vs "AA") can't win the alternation
     # before the longer, more specific match is tried.
-    pattern = re.compile(
-        r"\b(" + "|".join(re.escape(s) for s in sorted(seen, key=len, reverse=True)) + r")\b"
-    )
+    pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in sorted(seen, key=len, reverse=True)) + r")\b")
 
     def _wrap(match: "re.Match[str]") -> str:
         sym = match.group(0)
@@ -140,7 +138,6 @@ def _close_open_markup(body: str) -> str:
     return body
 
 
-
 def _dedupe_symbols(symbols: list) -> list[str]:
     seen: list[str] = []
     for raw in symbols or []:
@@ -149,17 +146,27 @@ def _dedupe_symbols(symbols: list) -> list[str]:
             seen.append(symbol)
     return seen
 
+
 # === Helpers ===
+
 
 def _status_emoji(status: str) -> str:
     if status in (
-        "executed", "analyzed", "reviewed", "preprocessed", "reflected",
+        "executed",
+        "analyzed",
+        "reviewed",
+        "preprocessed",
+        "reflected",
         "sent",
     ):
         return "🟢"
     if status in (
-        "no_trades", "no_data", "nothing_new", "ok",
-        "market_holiday", "early_close",
+        "no_trades",
+        "no_data",
+        "nothing_new",
+        "ok",
+        "market_holiday",
+        "early_close",
     ):
         return "⚪"
     # `digest_only` is intentionally classified as a warning, not success:
@@ -172,20 +179,28 @@ def _status_emoji(status: str) -> str:
     # decide because a seat's answer never arrived. It looks like a quiet
     # day and is not one, which is exactly how retired item 11 hid.
     if status in (
-        "emergency_sold", "hard_risk_block", "digest_only",
+        "emergency_sold",
+        "hard_risk_block",
+        "digest_only",
         "evidence_gate_skip",
     ):
         return "🟡"
-    if ("error" in status or status.startswith("pm_")
-            or status in (
-                "rejected", "failed", "paid_analysis_suspended",
-                # Guard 1 (2026-09-02): ops halted the desk with the
-                # kill-switch flag file. This is the one status that fires
-                # even on an intra_check tick, which is otherwise silent —
-                # see the "kill_switch_halted" not being in the
-                # mode == "intra_check" silence tuple above.
-                "kill_switch_halted",
-            )):
+    if (
+        "error" in status
+        or status.startswith("pm_")
+        or status
+        in (
+            "rejected",
+            "failed",
+            "paid_analysis_suspended",
+            # Guard 1 (2026-09-02): ops halted the desk with the
+            # kill-switch flag file. This is the one status that fires
+            # even on an intra_check tick, which is otherwise silent —
+            # see the "kill_switch_halted" not being in the
+            # mode == "intra_check" silence tuple above.
+            "kill_switch_halted",
+        )
+    ):
         # Item 21b: shape, not colour — a red circle reads the same as the
         # green/yellow/white ones to the owner. 🛑 is the only shape swap in
         # this bucket; the plain-text "FAILED: " prefix that goes with it is
@@ -210,13 +225,20 @@ def _order_side(order: Any) -> str:
     # SELL-ish bucket below just because "COVER" reads like an exit.
     if "COVER" in action:
         return "buy"
-    if any(s in action for s in (
-        "SELL", "REDUCE", "TAKE_PROFIT", "EMERGENCY_SELL",
-        "FORCE_DELEVER", "PARTIAL_SELL",
-        # SHORT is a sell-side broker order (selling borrowed shares) even
-        # though it OPENS risk rather than closing it.
-        "SHORT",
-    )):
+    if any(
+        s in action
+        for s in (
+            "SELL",
+            "REDUCE",
+            "TAKE_PROFIT",
+            "EMERGENCY_SELL",
+            "FORCE_DELEVER",
+            "PARTIAL_SELL",
+            # SHORT is a sell-side broker order (selling borrowed shares) even
+            # though it OPENS risk rather than closing it.
+            "SHORT",
+        )
+    ):
         return "sell"
     if action == "BUY":
         return "buy"
@@ -271,6 +293,7 @@ def _fmt_elapsed(seconds: float) -> str:
     minutes = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{minutes}m {secs}s"
+
 
 def _attr_or_key(obj: Any, name: str) -> Any:
     """Get `name` from either an attribute (Pydantic model) or a

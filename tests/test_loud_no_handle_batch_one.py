@@ -1,4 +1,5 @@
 """Handlers that bound no exception name now leave a counted row."""
+
 from unittest.mock import MagicMock
 
 from src.data.technical import atr_for_symbol

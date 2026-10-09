@@ -1,4 +1,5 @@
 """Calendar availability stays distinct from a confirmed closed market."""
+
 from __future__ import annotations
 
 from datetime import date

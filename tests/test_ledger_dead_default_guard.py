@@ -1,4 +1,5 @@
 """A dead-default excuse in the number ledger must name a caller that really passes the argument."""
+
 from __future__ import annotations
 
 import yaml
@@ -11,16 +12,36 @@ NOPASS = "class S:\n    def run(self):\n        return self.build(lookback_days=
 NOCALL = "class S:\n    def run(self):\n        return 1\n"
 POSITIONAL = "class S:\n    def run(self):\n        return self.build(5, 15)\n"
 SAME_NAME = "from src import m\n\ndef build():\n    return m.build(top_n=15)\n"
-SAME_FILE_SIBLING = "class S:\n    def build(self, lookback_days=5, top_n=15):\n        return top_n\n\n" \
-                    "def build():\n    return S().build(top_n=15)\n"
-FILES = {"src/m.py": CALLEE, "src/good.py": GOOD, "src/nopass.py": NOPASS, "src/nocall.py": NOCALL,
-         "src/pos.py": POSITIONAL, "src/same_name.py": SAME_NAME, "src/sib.py": SAME_FILE_SIBLING}
+SAME_FILE_SIBLING = (
+    "class S:\n    def build(self, lookback_days=5, top_n=15):\n        return top_n\n\n"
+    "def build():\n    return S().build(top_n=15)\n"
+)
+FILES = {
+    "src/m.py": CALLEE,
+    "src/good.py": GOOD,
+    "src/nopass.py": NOPASS,
+    "src/nocall.py": NOCALL,
+    "src/pos.py": POSITIONAL,
+    "src/same_name.py": SAME_NAME,
+    "src/sib.py": SAME_FILE_SIBLING,
+}
 
 
 def _row(cite: str, param: str = "top_n") -> str:
     note = f"Dead default ({cite}): the one caller passes it explicitly." if cite else "Dead default: passed."
-    return yaml.safe_dump({"numbers": [{"id": f"src.m.build({param})", "value": 15, "site": "src/m.py",
-                                        "status": "not-trade-governing", "note": note}]})
+    return yaml.safe_dump(
+        {
+            "numbers": [
+                {
+                    "id": f"src.m.build({param})",
+                    "value": 15,
+                    "site": "src/m.py",
+                    "status": "not-trade-governing",
+                    "note": note,
+                }
+            ]
+        }
+    )
 
 
 def _bad(cite: str, param: str = "top_n") -> list[str]:
@@ -53,16 +74,36 @@ def test_a_caller_that_shares_the_methods_name_is_a_caller_not_the_definition():
 
 
 def test_same_file_same_name_is_judged_by_position():
-    sib = yaml.safe_dump({"numbers": [{"id": "src.sib.S.build(top_n)", "value": 15, "site": "src/sib.py",
-                                       "note": "Dead default (src/sib.py::build): the caller passes it."}]})
+    sib = yaml.safe_dump(
+        {
+            "numbers": [
+                {
+                    "id": "src.sib.S.build(top_n)",
+                    "value": 15,
+                    "site": "src/sib.py",
+                    "note": "Dead default (src/sib.py::build): the caller passes it.",
+                }
+            ]
+        }
+    )
     assert g.check(sib, FILES.get) == []
     self_cite = sib.replace("src/sib.py::build", "src/sib.py::S.build")
     assert "definition itself" in g.check(self_cite, FILES.get)[0]
 
 
 def test_a_row_whose_definition_cannot_be_found_is_refused_not_excused():
-    gone = yaml.safe_dump({"numbers": [{"id": "src.m.vanished(top_n)", "value": 15, "site": "src/m.py",
-                                        "note": "Dead default (src/good.py::S.run): passed."}]})
+    gone = yaml.safe_dump(
+        {
+            "numbers": [
+                {
+                    "id": "src.m.vanished(top_n)",
+                    "value": 15,
+                    "site": "src/m.py",
+                    "note": "Dead default (src/good.py::S.run): passed.",
+                }
+            ]
+        }
+    )
     assert "cannot be told" in g.check(gone, FILES.get)[0]
 
 

@@ -10,6 +10,7 @@ line reads as before. `acted_today` is the method's own list, so cuts
 submitted earlier in the same pass are seen. Sell-side code: behaviour is
 identical.
 """
+
 import logging
 
 from src.exits_parts.midday_state import SKIP, MiddayLoop
@@ -22,6 +23,7 @@ logger = logging.getLogger("src.pipeline")
 def midday_spent_trigger(loop: MiddayLoop, action_item: dict, act, symbol):
     """Refuse a cut on a spent trigger; returns `SKIP` or the check result."""
     from src.risk.spent_trigger import SPENT_LAYER, spent_trigger_check
+
     self = loop.owner
     run_id = loop.run_id
     already_trimmed = loop.already_trimmed
@@ -44,46 +46,61 @@ def midday_spent_trigger(loop: MiddayLoop, action_item: dict, act, symbol):
     # seeing in the log even when it is legitimate.
     if act in ("SELL", "REDUCE", "COVER") and symbol in already_trimmed:
         logger.warning(
-            "Position reviewer: %s %s is a SECOND sell-side action "
-            "today. Reason: %r",
-            act, symbol, (action_item.get("reason") or "")[:160],
+            "Position reviewer: %s %s is a SECOND sell-side action today. Reason: %r",
+            act,
+            symbol,
+            (action_item.get("reason") or "")[:160],
         )
     # Board item 74 — the RESIDUAL GAP above, now closed. The line is
     # the RECORD the seat cites, never a cooldown or a score: same
     # trigger + same cited record = spent, refuse; a different record
     # = new information, execute and say so.
     spent = spent_trigger_check(
-        action=act, symbol=symbol,
+        action=act,
+        symbol=symbol,
         trigger=action_item.get("exit_trigger"),
         evidence=action_item.get("trigger_evidence"),
         acted_today=acted_today,
     )
     if spent.verdict == "uncertain":
         logger.error(
-            "Spent-trigger check: today's acted-trigger record is "
-            "unreadable — failing OPEN on %s %s. %s",
-            act, symbol, spent.detail,
+            "Spent-trigger check: today's acted-trigger record is unreadable — failing OPEN on %s %s. %s",
+            act,
+            symbol,
+            spent.detail,
         )
     elif spent.blocks:
         logger.warning(
-            "Position reviewer: REFUSING %s %s — the trigger is "
-            "SPENT. %s", act, symbol, spent.detail,
+            "Position reviewer: REFUSING %s %s — the trigger is SPENT. %s",
+            act,
+            symbol,
+            spent.detail,
         )
         try:
             self.db.record_intraday_evaluation(
-                symbol=symbol, run_id=run_id,
+                symbol=symbol,
+                run_id=run_id,
                 status="exit_blocked_trigger_already_spent",
                 detail=spent.detail[:500],
             )
             record_exit_guard(self, "spent_trigger.audit_write")
         except Exception as e:  # noqa: BLE001
             record_exit_guard(
-                self, "spent_trigger.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                self,
+                "spent_trigger.audit_write",
+                e,
+                logger,
+                symbol=symbol,
+                effect="audit row not written",
             )
         self._record_exit_refusal(
-            symbol=symbol, run_id=run_id, action=act,
-            code=spent.code, dropped=True,
-            detail=spent.detail[:400], layer=SPENT_LAYER,
+            symbol=symbol,
+            run_id=run_id,
+            action=act,
+            code=spent.code,
+            dropped=True,
+            detail=spent.detail[:400],
+            layer=SPENT_LAYER,
         )
         return SKIP
     elif spent.verdict in ("new_evidence", "unidentifiable"):
@@ -94,13 +111,19 @@ def midday_spent_trigger(loop: MiddayLoop, action_item: dict, act, symbol):
         # already lets through — the two must not disagree about the
         # identical input. Both are recorded for the evening grade.
         logger.warning(
-            "Position reviewer: %s %s is a second cut on the same "
-            "trigger — allowed (%s). %s",
-            act, symbol, spent.verdict, spent.detail,
+            "Position reviewer: %s %s is a second cut on the same trigger — allowed (%s). %s",
+            act,
+            symbol,
+            spent.verdict,
+            spent.detail,
         )
         self._record_exit_refusal(
-            symbol=symbol, run_id=run_id, action=act,
-            code=spent.code, dropped=False,
-            detail=spent.detail[:400], layer=SPENT_LAYER,
+            symbol=symbol,
+            run_id=run_id,
+            action=act,
+            code=spent.code,
+            dropped=False,
+            detail=spent.detail[:400],
+            layer=SPENT_LAYER,
         )
     return spent

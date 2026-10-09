@@ -117,6 +117,7 @@ Exit codes
     0  no problems found, or no base commit to measure against
     1  at least one problem — the same text pytest fails with
 """
+
 from __future__ import annotations
 
 import argparse
@@ -148,7 +149,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _git(*args: str, repo: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(repo or REPO_ROOT), *args],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -198,8 +201,7 @@ def base_ref(repo: Path | None = None) -> str | None:
             head = _git("rev-parse", "HEAD", repo=repo)
             if head.returncode == 0:
                 sha = head.stdout.strip()
-                _git("fetch", "-q", "--depth=2", "origin",
-                     f"+{sha}:refs/ci-work-md-base-probe", repo=repo)
+                _git("fetch", "-q", "--depth=2", "origin", f"+{sha}:refs/ci-work-md-base-probe", repo=repo)
         r = _git("rev-parse", "--verify", "-q", "HEAD^1", repo=repo)
         return r.stdout.strip() or None
     _git("fetch", "-q", "origin", "main", repo=repo)
@@ -231,20 +233,23 @@ def read_scope_note(change: "Change | None", repo: Path | None = None) -> str:
     they are in without opening this script.
     """
     if change is None:
-        return ("no base commit could be resolved — every check below is "
-                "silent, not passing; nothing was read")
+        return "no base commit could be resolved — every check below is silent, not passing; nothing was read"
     head = _git("rev-parse", "HEAD", repo=repo)
     head_sha = head.stdout.strip()[:12] if head.returncode == 0 else "HEAD"
     base_sha = change.base[:12] if change.base else change.base
-    note = (f"read commit messages only, range {base_sha}..{head_sha} "
-            f"(`git log {base_sha}..{head_sha}`) — the pull request "
-            f"DESCRIPTION box is never read by this gate, only commit "
-            f"messages count")
+    note = (
+        f"read commit messages only, range {base_sha}..{head_sha} "
+        f"(`git log {base_sha}..{head_sha}`) — the pull request "
+        f"DESCRIPTION box is never read by this gate, only commit "
+        f"messages count"
+    )
     if is_shallow(repo):
-        note += ("; this checkout is SHALLOW, so an earlier commit on a "
-                 "multi-commit branch may be missing from that range even "
-                 "though the base above resolved — see item 132 and make "
-                 "sure the workflow's checkout step uses `fetch-depth: 0`")
+        note += (
+            "; this checkout is SHALLOW, so an earlier commit on a "
+            "multi-commit branch may be missing from that range even "
+            "though the base above resolved — see item 132 and make "
+            "sure the workflow's checkout step uses `fetch-depth: 0`"
+        )
     return note
 
 
@@ -263,8 +268,7 @@ def changed_paths(ref: str, repo: Path | None = None) -> set[str]:
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
-def changed_line_ranges(ref: str, path: str,
-                        repo: Path | None = None) -> list[tuple[int, int]]:
+def changed_line_ranges(ref: str, path: str, repo: Path | None = None) -> list[tuple[int, int]]:
     """Line ranges this change touched in `path`, in POST-change numbering.
 
     Needed because "the file was touched" is not "the site was touched",
@@ -305,7 +309,9 @@ _ANY_TRAILER_START = re.compile(r"^[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]*:", re.I)
 _GATE_KEYS = re.compile(
     r"^[ \t]*(Acceptance-observable|Objection-\d+|Response-\d+"
     r"|Done-criteria-met|Done-criteria-deferred|Consumers-unchanged)"
-    r"[ \t]*:", re.I)
+    r"[ \t]*:",
+    re.I,
+)
 
 
 def unwrap_trailers(messages: str) -> str:
@@ -426,8 +432,7 @@ RETIRED_LINE_PREFIX = "**Retired item numbers"
 #: can predate the append-only migration): without it, a base snapshot in
 #: the old shape would read as zero retired numbers and every migration
 #: commit would look like it closed the entire backlog in one change.
-_LEGACY_RETIRED_RUN = re.compile(
-    r"^\*\*Retired item numbers[^*]*\*\*\s*((?:\d+\s*,\s*)*\d+)\b")
+_LEGACY_RETIRED_RUN = re.compile(r"^\*\*Retired item numbers[^*]*\*\*\s*((?:\d+\s*,\s*)*\d+)\b")
 
 TRAILER = r"^[ \t]*{key}[ \t]*:[ \t]*(.+?)[ \t]*$"
 
@@ -449,13 +454,13 @@ def retired_numbers(work_md: str | None) -> set[str]:
     if not work_md:
         return set()
     from scripts.board_numbers import retired_item_numbers
+
     result = retired_item_numbers(work_md)
     if not result.error:
         return {str(n) for n in result.queue}
     # Fall back to the pre-2026-09-30 single-line shape — see
     # `_LEGACY_RETIRED_RUN`'s own comment for why this stays.
-    line = next((l for l in work_md.splitlines()
-                 if l.startswith(RETIRED_LINE_PREFIX)), "")
+    line = next((l for l in work_md.splitlines() if l.startswith(RETIRED_LINE_PREFIX)), "")
     match = _LEGACY_RETIRED_RUN.match(line)
     if not match:
         return set()
@@ -464,14 +469,12 @@ def retired_numbers(work_md: str | None) -> set[str]:
 
 def items_closed(change: Change) -> set[str]:
     """Items this change retires: numbers newly on the retired line."""
-    return (retired_numbers(change.work_md_after)
-            - retired_numbers(change.work_md_before))
+    return retired_numbers(change.work_md_after) - retired_numbers(change.work_md_before)
 
 
 def items_filed(change: Change) -> set[str]:
     """Items this change files: headings that did not exist at the base."""
-    return (set(item_blocks(change.work_md_after))
-            - set(item_blocks(change.work_md_before)))
+    return set(item_blocks(change.work_md_after)) - set(item_blocks(change.work_md_before))
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +490,7 @@ def declared_criteria_problems(change: Change) -> list[str]:
     the `CHECKS` registry below pointing at one name.
     """
     from scripts.dod_declared_criteria import declared_criteria_problems as f
+
     return f(change)
 
 
@@ -561,32 +565,38 @@ SHARED_QUANTITIES: tuple[SharedQuantity, ...] = (
         name="holding time, in trading sessions",
         symbol="trading_sessions_held",
         defined_in="src/trading_calendar.py",
-        why=("added 2026-09-04 to replace a calendar-day count; exactly one "
-             "of its consumers was switched over and `src/pipeline.py` still "
-             "divides a calendar-day `days_held` by a session horizon"),
+        why=(
+            "added 2026-09-04 to replace a calendar-day count; exactly one "
+            "of its consumers was switched over and `src/pipeline.py` still "
+            "divides a calendar-day `days_held` by a session horizon"
+        ),
         rival=RivalShape(
             target=r"^days_held$",
             attribute="days",
             describe="a holding time assigned from a calendar-day "
-                     "`(a - b).days` subtraction instead of the "
-                     "weekend-aware session counter",
+            "`(a - b).days` subtraction instead of the "
+            "weekend-aware session counter",
         ),
     ),
     SharedQuantity(
         name="unrealised P&L percent",
         symbol="unrealized_pnl_pct",
         defined_in="src/risk/metrics.py",
-        why=("one definition that returns None when unknowable; the guard it "
-             "replaced silently returned None for every short, so a reader "
-             "left on the old shape shows an empty short book"),
+        why=(
+            "one definition that returns None when unknowable; the guard it "
+            "replaced silently returned None for every short, so a reader "
+            "left on the old shape shows an empty short book"
+        ),
     ),
     SharedQuantity(
         name="evidence-coverage verdict",
         symbol="evaluate",
         defined_in="src/evidence_gate.py",
-        why=("the refusal that stops the desk deciding on evidence that "
-             "never arrived; a seat status added for one reader and not the "
-             "others is how the #428 split failed to reach Risk"),
+        why=(
+            "the refusal that stops the desk deciding on evidence that "
+            "never arrived; a seat status added for one reader and not the "
+            "others is how the #428 split failed to reach Risk"
+        ),
     ),
 )
 
@@ -595,8 +605,7 @@ def _module_name(path: str) -> str:
     return Path(path).stem
 
 
-def derive_consumers(quantity: SharedQuantity,
-                     tree: Path) -> dict[str, tuple[int, int]]:
+def derive_consumers(quantity: SharedQuantity, tree: Path) -> dict[str, tuple[int, int]]:
     """Every site in `src/` that reads this quantity, by AST walk.
 
     Maps `file.py:enclosing_function` to the enclosing definition's line
@@ -626,17 +635,17 @@ def derive_consumers(quantity: SharedQuantity,
         stack: list[tuple[str, int, int]] = []
 
         def visit(node: ast.AST) -> None:
-            named = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                      ast.ClassDef))
+            named = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             if named:
-                stack.append((
-                    node.name,  # type: ignore[attr-defined]
-                    node.lineno,  # type: ignore[attr-defined]
-                    getattr(node, "end_lineno", None) or total,
-                ))
+                stack.append(
+                    (
+                        node.name,  # type: ignore[attr-defined]
+                        node.lineno,  # type: ignore[attr-defined]
+                        getattr(node, "end_lineno", None) or total,
+                    )
+                )
             if isinstance(node, (ast.Name, ast.Attribute)):
-                found = (getattr(node, "id", None)
-                         or getattr(node, "attr", None))
+                found = getattr(node, "id", None) or getattr(node, "attr", None)
                 if found == quantity.symbol:
                     if stack:
                         name, start, end = stack[-1]
@@ -654,8 +663,7 @@ def derive_consumers(quantity: SharedQuantity,
     return out
 
 
-def derive_rivals(quantity: SharedQuantity,
-                  tree: Path) -> dict[str, tuple[int, int]]:
+def derive_rivals(quantity: SharedQuantity, tree: Path) -> dict[str, tuple[int, int]]:
     """Sites in `src/` computing this quantity by hand, by arithmetic shape.
 
     Same return shape as `derive_consumers` — site to enclosing line range —
@@ -679,24 +687,21 @@ def derive_rivals(quantity: SharedQuantity,
         stack: list[tuple[str, int, int]] = []
 
         def visit(node: ast.AST) -> None:
-            named = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                      ast.ClassDef))
+            named = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             if named:
-                stack.append((
-                    node.name,  # type: ignore[attr-defined]
-                    node.lineno,  # type: ignore[attr-defined]
-                    getattr(node, "end_lineno", None) or total,
-                ))
+                stack.append(
+                    (
+                        node.name,  # type: ignore[attr-defined]
+                        node.lineno,  # type: ignore[attr-defined]
+                        getattr(node, "end_lineno", None) or total,
+                    )
+                )
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                targets = (node.targets if isinstance(node, ast.Assign)
-                           else [node.target])
-                names = {getattr(t, "id", None) or getattr(t, "attr", None)
-                         for t in targets} - {None}
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names = {getattr(t, "id", None) or getattr(t, "attr", None) for t in targets} - {None}
                 value = getattr(node, "value", None)
-                if value is not None and any(
-                        target.match(n) for n in names):  # type: ignore[arg-type]
-                    attrs = {a.attr for a in ast.walk(value)
-                             if isinstance(a, ast.Attribute)}
+                if value is not None and any(target.match(n) for n in names):  # type: ignore[arg-type]
+                    attrs = {a.attr for a in ast.walk(value) if isinstance(a, ast.Attribute)}
                     if quantity.rival.attribute in attrs:
                         if stack:
                             name, start, end = stack[-1]
@@ -737,12 +742,10 @@ def _segment(source: str | None, symbol: str) -> str | None:
     except SyntaxError:
         return source
     for node in ast.walk(module):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef)) and node.name == symbol:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == symbol:
             return ast.get_source_segment(source, node)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = (node.targets if isinstance(node, ast.Assign)
-                       else [node.target])
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if getattr(target, "id", None) == symbol:
                     return ast.get_source_segment(source, node)
@@ -768,8 +771,7 @@ def consumer_completeness_problems(change: Change) -> list[str]:
     """
     problems: list[str] = []
     declared = [v for v in trailer(change.messages, "Consumers-unchanged")]
-    declared_sites = {v.split("—")[0].split("--")[0].strip().rstrip(",")
-                      for v in declared}
+    declared_sites = {v.split("—")[0].split("--")[0].strip().rstrip(",") for v in declared}
     declared_sites = {s for s in declared_sites if s}
 
     def _touched_at_site(site: str, span: tuple[int, int]) -> bool:
@@ -777,9 +779,10 @@ def consumer_completeness_problems(change: Change) -> list[str]:
         if path not in change.paths:
             return False
         start, end = span
-        return any(hunk_start <= end and hunk_end >= start
-                   for hunk_start, hunk_end
-                   in changed_line_ranges(change.base, path, change.tree))
+        return any(
+            hunk_start <= end and hunk_end >= start
+            for hunk_start, hunk_end in changed_line_ranges(change.base, path, change.tree)
+        )
 
     for quantity in SHARED_QUANTITIES:
         if not _touches_definition(change, quantity):
@@ -788,9 +791,7 @@ def consumer_completeness_problems(change: Change) -> list[str]:
         rivals = derive_rivals(quantity, change.tree)
         consumers.update(rivals)
         unaccounted = sorted(
-            site for site, span in consumers.items()
-            if not _touched_at_site(site, span)
-            and site not in declared_sites
+            site for site, span in consumers.items() if not _touched_at_site(site, span) and site not in declared_sites
         )
         if unaccounted:
             rival_note = ""
@@ -814,9 +815,9 @@ def consumer_completeness_problems(change: Change) -> list[str]:
                 f"one. Why this quantity is registered: {quantity.why}."
             )
         stale = sorted(
-            site for site in declared_sites
-            if ":" in site and site not in consumers
-            and site.split(":")[0] in {c.split(":")[0] for c in consumers}
+            site
+            for site in declared_sites
+            if ":" in site and site not in consumers and site.split(":")[0] in {c.split(":")[0] for c in consumers}
         )
         if stale:
             problems.append(
@@ -832,11 +833,8 @@ def consumer_completeness_problems(change: Change) -> list[str]:
 # CHECK 3 — a falsifiable adversary record
 # ---------------------------------------------------------------------------
 
-OBJECTION = re.compile(r"^[ \t]*Objection-(\d+)[ \t]*:[ \t]*(.+?)[ \t]*$",
-                       re.I | re.M)
-RESPONSE = re.compile(
-    r"^[ \t]*Response-(\d+)[ \t]*:[ \t]*(CHANGED|REJECTED)\b[ \t]*(.*?)[ \t]*$",
-    re.I | re.M)
+OBJECTION = re.compile(r"^[ \t]*Objection-(\d+)[ \t]*:[ \t]*(.+?)[ \t]*$", re.I | re.M)
+RESPONSE = re.compile(r"^[ \t]*Response-(\d+)[ \t]*:[ \t]*(CHANGED|REJECTED)\b[ \t]*(.*?)[ \t]*$", re.I | re.M)
 
 #: An objection shorter than this is a label, not an argument. Low on
 #: purpose — the check below is about structure and falsifiability, and a
@@ -892,8 +890,7 @@ def adversary_record_problems(change: Change) -> list[str]:
     numbers = ", ".join(sorted(closed, key=int))
     problems: list[str] = []
     objections = {m.group(1): m.group(2) for m in OBJECTION.finditer(change.messages)}
-    responses = {m.group(1): (m.group(2).upper(), m.group(3))
-                 for m in RESPONSE.finditer(change.messages)}
+    responses = {m.group(1): (m.group(2).upper(), m.group(3)) for m in RESPONSE.finditer(change.messages)}
 
     if len(objections) < MIN_OBJECTIONS:
         problems.append(
@@ -919,10 +916,7 @@ def adversary_record_problems(change: Change) -> list[str]:
                 f"rejection; an unanswered one is the half that gets lost."
             )
     for ordinal in sorted(set(responses) - set(objections)):
-        problems.append(
-            f"`Response-{ordinal}` answers an objection that was never "
-            f"stated. Add `Objection-{ordinal}:`."
-        )
+        problems.append(f"`Response-{ordinal}` answers an objection that was never stated. Add `Objection-{ordinal}:`.")
 
     seen: dict[str, str] = {}
     for ordinal, text in sorted(objections.items()):
@@ -1041,9 +1035,7 @@ def acceptance_observable_problems(change: Change) -> list[str]:
         missing = [p for p in cited if not (change.tree / p).exists()]
         if missing:
             problems.append(
-                f"`Acceptance-observable` cites "
-                f"{', '.join(missing)}, which does not exist after this "
-                f"change."
+                f"`Acceptance-observable` cites {', '.join(missing)}, which does not exist after this change."
             )
             continue
         # This one is long enough and points at something real. Done.
@@ -1073,19 +1065,20 @@ def run_all(change: Change | None) -> dict[str, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--consumers", metavar="SYMBOL",
-                        help="print the derived consumer set for a "
-                             "registered quantity and exit")
+    parser.add_argument(
+        "--consumers", metavar="SYMBOL", help="print the derived consumer set for a registered quantity and exit"
+    )
     args = parser.parse_args(argv)
 
     if args.consumers:
-        match = next((q for q in SHARED_QUANTITIES
-                      if q.symbol == args.consumers), None)
+        match = next((q for q in SHARED_QUANTITIES if q.symbol == args.consumers), None)
         if match is None:
-            print(f"{args.consumers} is not a registered shared quantity. "
-                  f"Registered: "
-                  f"{', '.join(q.symbol for q in SHARED_QUANTITIES)}",
-                  file=sys.stderr)
+            print(
+                f"{args.consumers} is not a registered shared quantity. "
+                f"Registered: "
+                f"{', '.join(q.symbol for q in SHARED_QUANTITIES)}",
+                file=sys.stderr,
+            )
             return 1
         for site in sorted(derive_consumers(match, REPO_ROOT)):
             print(site)
@@ -1095,8 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
     results = run_all(change)
     failing = any(results.values())
     if args.json:
-        payload = {"base": change.base if change else None,
-                   "problems": results}
+        payload = {"base": change.base if change else None, "problems": results}
         if failing:
             payload["read_scope"] = read_scope_note(change)
         print(json.dumps(payload, indent=2))

@@ -10,6 +10,7 @@ listed owner that no longer duplicates (stale entry).
 
 Run it directly: ``PYTHONPATH=. .venv/bin/python -m scripts.pipeline_method_guard``.
 """
+
 from __future__ import annotations
 
 import ast

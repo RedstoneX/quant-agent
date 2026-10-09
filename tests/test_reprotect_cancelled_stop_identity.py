@@ -15,6 +15,7 @@ NOT satisfy the check (a stop is placed), and a genuinely live stop from a
 PREVIOUS attempt must still satisfy it (the duplicate-stop protection the
 2026-05-27 audit note describes is not weakened).
 """
+
 import functools
 from unittest.mock import MagicMock
 
@@ -41,7 +42,8 @@ def _pipeline(existing):
     p.broker._list_open_sell_stop_orders.return_value = existing
     p.broker._list_open_protective_stop_orders.return_value = existing
     p.broker._submit_stop_limit_order.return_value = {
-        "id": "new-stop-1", "status": "accepted",
+        "id": "new-stop-1",
+        "status": "accepted",
     }
     # The reprotect path submits through the desk's ONE protective-stop
     # submit, not the raw order call, so the test drives the real thing
@@ -53,13 +55,16 @@ def _pipeline(existing):
     # shims below reach the real bodies over this mock's collaborators
     # instead of a child mock. Same functions, new home -- nothing stubbed.
     p.broker._stop_placer = functools.partial(
-        AlpacaBroker._stop_placer, p.broker,
+        AlpacaBroker._stop_placer,
+        p.broker,
     )
     p.broker._submit_stop_leg_retrying = functools.partial(
-        AlpacaBroker._submit_stop_leg_retrying, p.broker,
+        AlpacaBroker._submit_stop_leg_retrying,
+        p.broker,
     )
     p.broker._submit_protective_stop_retrying = functools.partial(
-        AlpacaBroker._submit_protective_stop_retrying, p.broker,
+        AlpacaBroker._submit_protective_stop_retrying,
+        p.broker,
     )
     p.db = None
     return p
@@ -73,8 +78,7 @@ def test_just_cancelled_stop_does_not_satisfy_idempotency():
 
     assert p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs) is True
     assert p.broker._submit_stop_limit_order.called, (
-        "reprotect skipped on the stop it had just cancelled — this is the "
-        "2026-09-30 naked-position incident"
+        "reprotect skipped on the stop it had just cancelled — this is the 2026-09-30 naked-position incident"
     )
 
 
@@ -152,6 +156,7 @@ def test_pending_new_stop_is_neither_banked_nor_duplicated():
     p = _pipeline([_order("ord-PREVIOUS", 323.74, status="pending_new")])
     written = []
     import src.execution.stop_records as sr
+
     real = sr.write_back_stop_loss
     sr.write_back_stop_loss = lambda *a, **k: written.append(a)
     try:
@@ -159,10 +164,7 @@ def test_pending_new_stop_is_neither_banked_nor_duplicated():
     finally:
         sr.write_back_stop_loss = real
 
-    assert result is False, (
-        "an in-flight stop was banked as protection and the recovery "
-        "intent drained"
-    )
+    assert result is False, "an in-flight stop was banked as protection and the recovery intent drained"
     assert not p.broker._submit_stop_limit_order.called, (
         "a second stop was submitted over an in-flight stop — the duplicate"
     )
@@ -179,6 +181,7 @@ def test_identity_decides_even_when_the_price_differs():
     p = _pipeline([_order("ord-PREVIOUS", 323.73, status="new")])
     written = []
     import src.execution.stop_records as sr
+
     real = sr.write_back_stop_loss
     sr.write_back_stop_loss = lambda db, sym, price, **k: written.append(price)
     try:
@@ -188,13 +191,9 @@ def test_identity_decides_even_when_the_price_differs():
 
     assert result is True
     assert not p.broker._submit_stop_limit_order.called, (
-        "a duplicate stop was placed over a live stop one cent away — the "
-        "incident's own price-first filter"
+        "a duplicate stop was placed over a live stop one cent away — the incident's own price-first filter"
     )
-    assert written == [323.73], (
-        "the desk recorded the stop it WANTED, not the one resting at the "
-        "broker"
-    )
+    assert written == [323.73], "the desk recorded the stop it WANTED, not the one resting at the broker"
 
 
 def test_unprovable_identity_is_recorded_durably_before_any_price_filter():
@@ -211,8 +210,7 @@ def test_unprovable_identity_is_recorded_durably_before_any_price_filter():
     assert p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs) is True
     assert p.broker._submit_stop_limit_order.called
     assert recorded, (
-        "the desk submitted over an unidentifiable broker stop and left no "
-        "durable per-symbol record of why"
+        "the desk submitted over an unidentifiable broker stop and left no durable per-symbol record of why"
     )
     assert recorded[0]["symbol"] == "AAPL"
     assert recorded[0]["code"] == "reprotect_broker_state_unprovable"
@@ -226,11 +224,9 @@ def test_no_price_tolerance_literal_survives_in_the_reprotect_path():
     construction. The need for it is removed, not re-justified."""
     import inspect
     from src.pipeline import TradingPipeline as _TP
+
     body = inspect.getsource(_TP._reprotect_residual_after_partial_sell)
-    code = "\n".join(
-        line for line in body.splitlines()
-        if not line.lstrip().startswith("#")
-    )
+    code = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
     assert "0.005" not in code
 
 
@@ -290,9 +286,7 @@ def test_partial_cover_reports_the_quantity_actually_covered():
     assert p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs) is False
     assert p._alert_owner_no_stop.called
     (naked,), _ = p._alert_owner_no_stop.call_args
-    assert float(naked[0]["covered_qty"]) == 2.0, (
-        "the whole-share leg landed; reporting 0 covered is a lie"
-    )
+    assert float(naked[0]["covered_qty"]) == 2.0, "the whole-share leg landed; reporting 0 covered is a lie"
     assert float(naked[0]["held_qty"]) == 2.43
 
 
@@ -313,9 +307,7 @@ def test_fractional_sliver_is_submitted_before_the_whole_share_gtc():
 
     assert p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs) is True
     assert len(order) == 2
-    assert order[0] < 1 < order[1], (
-        f"sliver must be placed before the whole-share GTC leg, got {order}"
-    )
+    assert order[0] < 1 < order[1], f"sliver must be placed before the whole-share GTC leg, got {order}"
 
 
 def test_a_transient_refusal_is_retried_not_reported_naked():

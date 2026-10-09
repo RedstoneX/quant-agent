@@ -121,12 +121,14 @@ _BODY_WEIGHT = 1.0 - _TITLE_WEIGHT
 # Tokens too common to carry event identity. Kept deliberately small — IDF
 # already down-weights frequent terms; this list only removes function words
 # that would otherwise inflate similarity between unrelated headlines.
-_STOPWORDS = frozenset("""
+_STOPWORDS = frozenset(
+    """
 a an the of to in on for at by with and or as is are was were be been from
 that this it its into over under after before amid says say said will would
 could new his her their your our not no more less than about up down what
 whats who how why when where do does did has have had can may might
-""".split())
+""".split()
+)
 
 _PUNCT_RE = re.compile(r"[^a-z0-9%$.,]+")
 _APOSTROPHE_RE = re.compile(r"[‘’'`]")
@@ -167,13 +169,15 @@ def normalize_link(link: str) -> str:
         return ""
     try:
         parts = urlsplit(link)
-        return urlunsplit((
-            parts.scheme.lower(),
-            (parts.netloc or "").lower(),
-            (parts.path or "").rstrip("/"),
-            "",
-            "",
-        ))
+        return urlunsplit(
+            (
+                parts.scheme.lower(),
+                (parts.netloc or "").lower(),
+                (parts.path or "").rstrip("/"),
+                "",
+                "",
+            )
+        )
     except ValueError:
         return link.strip().lower()
 
@@ -218,10 +222,7 @@ class NewsCluster:
 
     @property
     def earliest_published(self) -> datetime | None:
-        stamps = [
-            p for p in (getattr(m, "published", None) for m in self.members)
-            if p is not None
-        ]
+        stamps = [p for p in (getattr(m, "published", None) for m in self.members) if p is not None]
         return min(stamps) if stamps else None
 
 
@@ -337,9 +338,8 @@ def cluster_news(
     has_summary = [bool((getattr(i, "summary", "") or "").strip()) for i in items]
 
     def score(i: int, j: int) -> float:
-        return (
-            _TITLE_WEIGHT * _cosine(title_vecs[i], title_vecs[j])
-            + _BODY_WEIGHT * _cosine(body_vecs[i], body_vecs[j])
+        return _TITLE_WEIGHT * _cosine(title_vecs[i], title_vecs[j]) + _BODY_WEIGHT * _cosine(
+            body_vecs[i], body_vecs[j]
         )
 
     def bar(i: int, j: int) -> float:
@@ -367,10 +367,7 @@ def cluster_news(
         placed = False
         for members in clusters:
             # Complete linkage: must match EVERY member, not just one.
-            if all(
-                is_exact_dup(idx, m) or score(idx, m) >= bar(idx, m)
-                for m in members
-            ):
+            if all(is_exact_dup(idx, m) or score(idx, m) >= bar(idx, m) for m in members):
                 members.append(idx)
                 placed = True
                 break

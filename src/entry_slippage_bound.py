@@ -25,6 +25,7 @@ Persistence is best-effort by construction (trading-core rule): a failed write
 never affects the order. Read the rows back with
 ``kind = 'entry_slippage_check'`` in `specialist_evidence`.
 """
+
 from __future__ import annotations
 
 from src.recording_accessors import pinned_evidence
@@ -101,9 +102,12 @@ def record_slippage_check(
             "daily_range_pct": latest_daily_range_pct(bars),
         }
         _persist_evidence(
-            pipeline.db, run_id=pinned_evidence(ctx, "run_id"),
-            agent_name="execution", kind="entry_slippage_check",
-            scope="symbol", symbol=symbol,
+            pipeline.db,
+            run_id=pinned_evidence(ctx, "run_id"),
+            agent_name="execution",
+            kind="entry_slippage_check",
+            scope="symbol",
+            symbol=symbol,
             decision_id=getattr(ctx, "decision_id", None),
             evidence_json=json.dumps(payload),
         )
@@ -140,9 +144,15 @@ def entry_bound(
     else:
         observed_bps = (float(quote_price) - market_price) / market_price * 10_000.0
     record_slippage_check(
-        pipeline, ctx, symbol, is_short=is_short,
-        reference_price=market_price, quote_price=quote_price,
-        observed_bps=observed_bps, cap_bps=slippage_bps,
-        bound_price=bound_price, pinned=pinned,
+        pipeline,
+        ctx,
+        symbol,
+        is_short=is_short,
+        reference_price=market_price,
+        quote_price=quote_price,
+        observed_bps=observed_bps,
+        cap_bps=slippage_bps,
+        bound_price=bound_price,
+        pinned=pinned,
     )
     return EntryBound(bound_price, limit_price, observed_bps)

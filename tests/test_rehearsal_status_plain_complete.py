@@ -5,6 +5,7 @@ PR 1115 moved the scan-failure status into src/intraday_scan_outcome.py
 which is at its size cap); that derivation cannot read statuses built there,
 check reads the status vocabularies directly instead of scanning return sites.
 """
+
 from ops.rehearsal.report import STATUS_PLAIN
 from src.intraday_scan_outcome import _BANNERS, failed_scan_result
 from src.refusal_signature import NON_DECIDING_STATUSES

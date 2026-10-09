@@ -7,6 +7,7 @@ money-at-risk alarms always land, operational noise is dropped AND
 recorded, the hard mute still silences everything, and an unclassified
 send fails CLOSED (delivered).
 """
+
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -38,9 +39,7 @@ def _rows(db):
         return []
     conn = sqlite3.connect(str(db))
     try:
-        return conn.execute(
-            "SELECT kind, status, text FROM notifier_sends ORDER BY id"
-        ).fetchall()
+        return conn.execute("SELECT kind, status, text FROM notifier_sends ORDER BY id").fetchall()
     finally:
         conn.close()
 
@@ -86,9 +85,7 @@ OPERATIONAL_MESSAGES = [
 ]
 
 
-@pytest.mark.parametrize(
-    "label,kind,text", OPERATIONAL_MESSAGES, ids=[m[0] for m in OPERATIONAL_MESSAGES]
-)
+@pytest.mark.parametrize("label,kind,text", OPERATIONAL_MESSAGES, ids=[m[0] for m in OPERATIONAL_MESSAGES])
 def test_operational_messages_suppressed_and_recorded(creds, monkeypatch, label, kind, text):
     monkeypatch.setenv("TELEGRAM_RISK_ONLY", "1")
     category = CATEGORY_OPERATIONAL if kind in ("generic", "owner_alert") else None
@@ -111,6 +108,7 @@ def test_filtered_status_is_distinct_from_sent_and_muted(creds, monkeypatch):
 
 
 # --- requirement 7: fail closed ---
+
 
 def test_unclassified_generic_send_is_delivered(creds, monkeypatch):
     """No category, no kind mapping -> money-at-risk -> goes through."""
@@ -139,6 +137,7 @@ def test_resolve_category_fails_closed():
 
 # --- requirement 1/2: the hard mute is unchanged and wins ---
 
+
 def test_hard_mute_still_silences_everything(creds, monkeypatch):
     monkeypatch.setenv("TELEGRAM_DISABLED", "1")
     ok, post = _send("🔴 NO STOP AT ALL", kind="owner_alert", category=CATEGORY_RISK)
@@ -160,6 +159,7 @@ def test_hard_mute_wins_over_risk_only(creds, monkeypatch):
 
 
 # --- requirement 8: nothing changes when neither switch is set ---
+
 
 @pytest.mark.parametrize(
     "kind,category",
@@ -207,7 +207,8 @@ def test_a_suppressed_cost_alert_is_not_reported_as_delivered(tmp_path):
     notifier = MagicMock()
     notifier.send.return_value = SUPPRESSED
     circuit = UnavailableLLMCostCircuit(
-        RuntimeError("breaker unavailable"), notifier=notifier,
+        RuntimeError("breaker unavailable"),
+        notifier=notifier,
     )
     circuit._alert()
 
@@ -228,7 +229,8 @@ def test_a_delivered_cost_alert_is_still_reported_as_delivered(tmp_path):
     notifier = MagicMock()
     notifier.send.return_value = True
     circuit = UnavailableLLMCostCircuit(
-        RuntimeError("breaker unavailable"), notifier=notifier,
+        RuntimeError("breaker unavailable"),
+        notifier=notifier,
     )
     circuit._alert()
     state = circuit.status()

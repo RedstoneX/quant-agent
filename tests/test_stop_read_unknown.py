@@ -1,4 +1,5 @@
 """An unreadable protective stop is not "no stop": it is recorded and alerted."""
+
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ ALERT = "src.notifier.owner_alert.send_owner_alert"
 @pytest.fixture(autouse=True)
 def _fresh_dedupe():
     from src.execution import stop_read
+
     stop_read._alerted.clear()
     with patch.object(stop_read, "_sleep"):
         yield
@@ -21,6 +23,7 @@ def _fresh_dedupe():
 
 def _pipeline(broker_stop, _s=None):
     import src.pipeline_protection as pp
+
     p = ProtectionMixin.__new__(ProtectionMixin)
     p.broker = MagicMock()
     p.broker.is_trading_day.return_value = True
@@ -32,8 +35,7 @@ def _pipeline(broker_stop, _s=None):
     p.db = MagicMock()
     p.db.get_trades.return_value = []
     p.market = MagicMock()
-    p.market.get_upcoming_ex_dividend.return_value = {
-        "date": pp.et_today() + timedelta(days=1), "amount": 0.5}
+    p.market.get_upcoming_ex_dividend.return_value = {"date": pp.et_today() + timedelta(days=1), "amount": 0.5}
     return p
 
 
@@ -77,6 +79,7 @@ def test_a_found_stop_still_shifts():
 def test_broker_read_failure_raises_instead_of_returning_none(mock_tc_cls):
     from src.execution.broker import AlpacaBroker
     from src.execution.stop_read import StopReadUnavailable
+
     b = AlpacaBroker(api_key="t", secret_key="t", paper=True)
     b.client = MagicMock()
     b.client.get_orders.side_effect = RuntimeError("503")
@@ -89,6 +92,7 @@ def test_broker_read_failure_raises_instead_of_returning_none(mock_tc_cls):
 
 def test_read_stop_three_answers_cannot_be_confused():
     from src.execution.stop_read import read_stop
+
     broker = MagicMock()
     broker.client.get_orders.side_effect = RuntimeError("bulk down too")
     with patch(ALERT, return_value=True):
@@ -107,6 +111,7 @@ def test_read_stop_three_answers_cannot_be_confused():
 def _heat(unreadable):
     from src.risk.heat_unreadable import portfolio_heat_with_unreadable as portfolio_heat
     from src.risk.metrics import format_heat_block
+
     pos = [SimpleNamespace(symbol="ZZZT", qty=10, avg_entry=50.0, current_price=50.0)]
     heat = portfolio_heat(pos, 10_000.0, stops={}, unreadable_stops=unreadable)
     return format_heat_block(heat, 5.0)
@@ -126,14 +131,17 @@ def test_prompt_still_says_unprotected_for_a_genuine_no_stop():
 
 def test_stop_map_separates_unreadable_from_absent():
     from src.pipeline_prompt_facts import PromptFactsMixin as M
+
     m = M.__new__(M)
     m.db = MagicMock()
     m.db.get_symbol_last_buy.return_value = None
     m.broker = MagicMock()
+
     def _answer(sym):
         if sym == "AAA":
             raise RuntimeError("x")
         return {"BBB": None, "CCC": 9.0}[sym]
+
     m.broker.get_current_stop_price.side_effect = _answer
     m.broker.client.get_orders.side_effect = RuntimeError("bulk down too")
     pos = [SimpleNamespace(symbol=s, qty=1) for s in ("AAA", "BBB", "CCC")]
@@ -144,9 +152,11 @@ def test_stop_map_separates_unreadable_from_absent():
 
 # ---- escalation: retry, ask a different way, act (owner ruling 2026-10-02) ----
 
+
 @pytest.fixture
 def _no_sleep():
     from src.execution import stop_read
+
     with patch.object(stop_read, "_sleep") as s:
         yield s
 
@@ -157,6 +167,7 @@ def _order(price, side="sell", sym="ZZZT"):
 
 def test_read_failing_twice_then_succeeding_places_no_duplicate(_no_sleep):
     from src.execution import stop_read
+
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = [RuntimeError("a"), RuntimeError("b"), 9.5]
     establish = MagicMock()
@@ -170,6 +181,7 @@ def test_read_failing_twice_then_succeeding_places_no_duplicate(_no_sleep):
 
 def test_per_symbol_failure_is_answered_by_the_bulk_read(_no_sleep):
     from src.execution.stop_read import read_stop
+
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = RuntimeError("down")
     broker.client.get_orders.return_value = [_order(7.0), _order(99.0, sym="OTHR")]
@@ -184,6 +196,7 @@ def test_per_symbol_failure_is_answered_by_the_bulk_read(_no_sleep):
 
 def test_bulk_read_showing_no_stop_is_absent_not_unreadable(_no_sleep):
     from src.execution.stop_read import read_stop
+
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = RuntimeError("down")
     broker.client.get_orders.return_value = []
@@ -192,6 +205,7 @@ def test_bulk_read_showing_no_stop_is_absent_not_unreadable(_no_sleep):
 
 def test_total_outage_records_alerts_and_states_what_it_did(_no_sleep):
     from src.execution.stop_read import read_stop
+
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = RuntimeError("down")
     broker.client.get_orders.side_effect = RuntimeError("down too")
@@ -237,6 +251,7 @@ def test_read_failing_twice_then_succeeding_places_nothing_through_the_caller():
 
 def test_non_numeric_answer_is_unreadable_not_no_stop():
     from src.execution.stop_read import read_stop
+
     broker = MagicMock()
     broker.get_current_stop_price.return_value = "garbage"
     broker.client.get_orders.side_effect = RuntimeError("down")

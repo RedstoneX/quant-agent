@@ -56,9 +56,7 @@ def test_gate_passes_when_all_conditions_hold(tmp_path):
     settings = _paper_settings(tmp_path)
     att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
 
-    gate = lcp.evaluate(
-        settings_path=settings, attestations_path=att, paper_guard_probe=_PROBE
-    )
+    gate = lcp.evaluate(settings_path=settings, attestations_path=att, paper_guard_probe=_PROBE)
 
     assert gate.passed is True
     assert gate.blocking == []
@@ -94,9 +92,7 @@ def test_missing_attestation_file_blocks(tmp_path):
         attestations_path=tmp_path / "does_not_exist.yaml",
     )
     assert gate.passed is False
-    assert all(
-        r.status == lcp.BLOCK for r in gate.results if r.kind == "manual"
-    )
+    assert all(r.status == lcp.BLOCK for r in gate.results if r.kind == "manual")
 
 
 @pytest.mark.parametrize("cond", [c.condition_id for c in lcp.MANUAL_CONDITIONS])
@@ -124,9 +120,7 @@ def test_incomplete_attestation_blocks(tmp_path):
     gate = lcp.evaluate(settings_path=settings, attestations_path=att)
 
     assert gate.passed is False
-    owner = next(
-        r for r in gate.results if r.condition_id == "explicit_owner_approval"
-    )
+    owner = next(r for r in gate.results if r.condition_id == "explicit_owner_approval")
     assert owner.status == lcp.BLOCK
 
 
@@ -146,21 +140,15 @@ def test_settings_not_paper_fails(tmp_path):
     gate = lcp.evaluate(settings_path=settings, attestations_path=att)
 
     assert gate.passed is False
-    mech = next(
-        r for r in gate.results if r.condition_id == "settings_declare_paper"
-    )
+    mech = next(r for r in gate.results if r.condition_id == "settings_declare_paper")
     assert mech.status == lcp.FAIL
 
 
 def test_missing_settings_file_fails(tmp_path):
     att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
-    gate = lcp.evaluate(
-        settings_path=tmp_path / "nope.yaml", attestations_path=att
-    )
+    gate = lcp.evaluate(settings_path=tmp_path / "nope.yaml", attestations_path=att)
     assert gate.passed is False
-    mech = next(
-        r for r in gate.results if r.condition_id == "settings_declare_paper"
-    )
+    mech = next(r for r in gate.results if r.condition_id == "settings_declare_paper")
     assert mech.status == lcp.FAIL
 
 
@@ -179,9 +167,7 @@ def test_paper_only_guard_check_fails_closed_without_a_probe(tmp_path):
     assert "probe" in detail
     gate = lcp.evaluate(
         settings_path=_paper_settings(tmp_path),
-        attestations_path=_write(
-            tmp_path / "att.yaml", yaml.safe_dump(_all_attested())
-        ),
+        attestations_path=_write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested())),
     )
     assert gate.passed is False
     assert [r.condition_id for r in gate.blocking] == ["paper_only_guard_active"]
@@ -197,6 +183,7 @@ def test_gate_module_never_imports_config():
     """The cycle config -> preflight -> config was broken by injection; the gate
     must not grow the reverse edge back (function-level imports included)."""
     import ast
+
     tree = ast.parse(Path(lcp.__file__).read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("src.config"):
@@ -210,14 +197,7 @@ def test_main_blocks_with_nonzero_exit(tmp_path):
     # shipped-style file: all false
     att = _write(
         tmp_path / "att.yaml",
-        yaml.safe_dump(
-            {
-                "attestations": {
-                    c.condition_id: {"attested": False}
-                    for c in lcp.MANUAL_CONDITIONS
-                }
-            }
-        ),
+        yaml.safe_dump({"attestations": {c.condition_id: {"attested": False} for c in lcp.MANUAL_CONDITIONS}}),
     )
     rc = lcp.main(["--settings", str(settings), "--attestations", str(att)])
     assert rc == 1
@@ -271,10 +251,8 @@ EXPECTED_MANUAL_IDS = (
 
 
 def test_condition_roster_is_pinned():
-    assert tuple(c.condition_id for c in lcp.MECHANICAL_CONDITIONS) == \
-        EXPECTED_MECHANICAL_IDS
-    assert tuple(c.condition_id for c in lcp.MANUAL_CONDITIONS) == \
-        EXPECTED_MANUAL_IDS
+    assert tuple(c.condition_id for c in lcp.MECHANICAL_CONDITIONS) == EXPECTED_MECHANICAL_IDS
+    assert tuple(c.condition_id for c in lcp.MANUAL_CONDITIONS) == EXPECTED_MANUAL_IDS
 
 
 def test_activation_scope_roster_is_pinned(tmp_path):
@@ -296,8 +274,7 @@ def test_audit_scope_covers_every_condition(tmp_path):
         attestations_path=att,
         scope=lcp.AUDIT,
     )
-    assert tuple(r.condition_id for r in gate.results) == \
-        EXPECTED_MECHANICAL_IDS + EXPECTED_MANUAL_IDS
+    assert tuple(r.condition_id for r in gate.results) == EXPECTED_MECHANICAL_IDS + EXPECTED_MANUAL_IDS
 
 
 def test_unknown_scope_is_rejected(tmp_path):
@@ -318,17 +295,13 @@ def test_activation_refuses_when_any_single_condition_unmet(tmp_path, cond):
     data["attestations"][cond.condition_id]["attested"] = False
     att = _write(tmp_path / "att.yaml", yaml.safe_dump(data))
     with pytest.raises(lcp.LiveCapitalBlocked) as exc:
-        lcp.assert_live_capital_authorized(
-            settings_path=_paper_settings(tmp_path), attestations_path=att
-        )
+        lcp.assert_live_capital_authorized(settings_path=_paper_settings(tmp_path), attestations_path=att)
     assert cond.condition_id in str(exc.value)
 
 
 def test_activation_passes_when_all_attested(tmp_path):
     att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
-    gate = lcp.assert_live_capital_authorized(
-        settings_path=_paper_settings(tmp_path), attestations_path=att
-    )
+    gate = lcp.assert_live_capital_authorized(settings_path=_paper_settings(tmp_path), attestations_path=att)
     assert gate.passed
 
 
@@ -369,9 +342,7 @@ def test_config_refuses_live_when_gate_blocks(monkeypatch):
     assert "explicit_owner_approval" in message
 
 
-def test_config_allows_live_only_when_code_authorized_and_gate_passes(
-    monkeypatch, tmp_path
-):
+def test_config_allows_live_only_when_code_authorized_and_gate_passes(monkeypatch, tmp_path):
     """The one path to a live account: code-authorized AND every condition met."""
     from src import config as cfg
 

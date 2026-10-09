@@ -61,7 +61,8 @@ def _record_account_snapshot(pipeline, total_value, last_equity) -> None:
     """
     try:
         pipeline._last_account_snapshot = (
-            float(total_value), float(last_equity),
+            float(total_value),
+            float(last_equity),
         )
     except (TypeError, ValueError):
         pipeline._last_account_snapshot = None
@@ -84,15 +85,19 @@ def _attach_pnl(pipeline, result) -> None:
     if not isinstance(result, dict):
         return
     keys = (
-        "daily_pnl", "daily_return_pct",
-        "total_pnl", "total_return_pct", "total_pnl_since",
+        "daily_pnl",
+        "daily_return_pct",
+        "total_pnl",
+        "total_return_pct",
+        "total_pnl_since",
     )
     if any(k in result for k in keys):
         return
     snapshot = getattr(pipeline, "_last_account_snapshot", None)
     if not snapshot:
         result.setdefault(
-            "pnl_unavailable_reason", "ended_before_account_read",
+            "pnl_unavailable_reason",
+            "ended_before_account_read",
         )
         return
     try:
@@ -101,9 +106,7 @@ def _attach_pnl(pipeline, result) -> None:
             daily_pnl = total_value - last_equity
             result["daily_pnl"] = daily_pnl
             result["daily_return_pct"] = daily_pnl / last_equity * 100
-        total_pnl, total_return_pct, total_pnl_since = (
-            pipeline._total_pnl_since_reset(total_value)
-        )
+        total_pnl, total_return_pct, total_pnl_since = pipeline._total_pnl_since_reset(total_value)
         if total_pnl is not None:
             result["total_pnl"] = total_pnl
             result["total_return_pct"] = total_return_pct
@@ -126,12 +129,16 @@ def _persist_session_report(pipeline, mode: str, result: dict) -> None:
         return
     try:
         pipeline.db.save_session_report(
-            mode=mode, date=session_date_key(),
-            run_id=result.get("run_id"), payload=result,
+            mode=mode,
+            date=session_date_key(),
+            run_id=result.get("run_id"),
+            payload=result,
         )
     except Exception as exc:  # noqa: BLE001 — never break the push
         logger.warning(
-            "%s report persistence failed (non-fatal): %s", mode, exc,
+            "%s report persistence failed (non-fatal): %s",
+            mode,
+            exc,
         )
 
 

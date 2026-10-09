@@ -6,6 +6,7 @@ A `SimpleNamespace` carrying only the attributes each function reads is enough
 to drive them, which is what docs/ARCHITECTURE.md section 3 calls a boundary.
 This file deliberately never names the pipeline class or module.
 """
+
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,7 +51,9 @@ class _Seat:
 
 def _stub(circuit):
     return SimpleNamespace(
-        cost_circuit=circuit, tech_analyst=_Seat(), portfolio_manager=_Seat(),
+        cost_circuit=circuit,
+        tech_analyst=_Seat(),
+        portfolio_manager=_Seat(),
         _attach_cost_circuit_to_agents=lambda: None,
     )
 
@@ -81,7 +84,9 @@ def test_cost_gate_attaches_the_circuit_to_every_seat_it_finds():
 
 def test_suspension_payload_carries_orders_and_waiting_filings():
     payload = pipeline_cost_gate._paid_suspended_payload(
-        "run-2", orders=[{"symbol": "X"}], error=RuntimeError("boom"),
+        "run-2",
+        orders=[{"symbol": "X"}],
+        error=RuntimeError("boom"),
         filings_waiting=[{"a": 1}, {"b": 2}],
     )
     assert payload["status"] == "paid_analysis_suspended"
@@ -92,16 +97,26 @@ def test_suspension_payload_carries_orders_and_waiting_filings():
 
 def test_late_safety_suspension_marks_morning_only(monkeypatch):
     from src import decision_checkpoint as dc
+
     written = []
     monkeypatch.setattr(dc, "write_status", lambda *a: written.append(a))
     stub = SimpleNamespace(_paid_suspended_payload=pipeline_cost_gate._paid_suspended_payload)
     out = pipeline_cost_gate._paid_suspension_after_late_safety(
-        stub, "run-3", session="morning", error=RuntimeError("x"), where="pm", extra={"k": 1},
+        stub,
+        "run-3",
+        session="morning",
+        error=RuntimeError("x"),
+        where="pm",
+        extra={"k": 1},
     )
     assert out["k"] == 1 and out["paid_analysis_suspended"] is True
     assert written == [("morning", "paid_analysis_suspended")]
     pipeline_cost_gate._paid_suspension_after_late_safety(
-        stub, "run-4", session="intra_check", error=RuntimeError("x"), where="pm",
+        stub,
+        "run-4",
+        session="intra_check",
+        error=RuntimeError("x"),
+        where="pm",
     )
     assert len(written) == 1
 
@@ -124,8 +139,12 @@ def test_evidence_gate_proceeds_from_a_stub_when_every_seat_answered():
         _record_name_coverage=lambda ctx, record: recorded.append("coverage"),
     )
     ctx = SimpleNamespace(
-        data_status={"technical": "ok"}, analyses=[], run_id="run-6",
-        session="morning", evidence_freshness=None, positions=[],
+        data_status={"technical": "ok"},
+        analyses=[],
+        run_id="run-6",
+        session="morning",
+        evidence_freshness=None,
+        positions=[],
     )
     assert pipeline_halt_gates._evidence_gate_skip(stub, ctx, "run-6") is None
     assert recorded == ["coverage"]

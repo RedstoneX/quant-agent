@@ -1,4 +1,5 @@
 """The hanging-endpoint safety test, split out of test_alert_watchdog.py."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -8,7 +9,9 @@ from tests.test_alert_watchdog import _run_session, telegram_env  # noqa: F401
 
 
 def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
-    tmp_path, monkeypatch, telegram_env,
+    tmp_path,
+    monkeypatch,
+    telegram_env,
 ):
     """The load-bearing safety test: Telegram goes dark and the session is
     unaffected except for being told the alarm is down.

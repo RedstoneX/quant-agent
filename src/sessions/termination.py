@@ -5,6 +5,7 @@ stops before settling) cannot import the pipeline, which imports the
 sessions. `src.pipeline` re-exports it, so `from src.pipeline import
 SessionTerminated` keeps working.
 """
+
 from __future__ import annotations
 
 

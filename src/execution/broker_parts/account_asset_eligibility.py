@@ -2,6 +2,7 @@
 
 A mixin so `AccountReads` does not grow; it uses only `self` plus the broker logger.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,11 +47,13 @@ class AssetEligibilityReads:
                 "account_reads.shortability",
                 exc,
                 log=logger,
-                context={**{"symbol": canonical}, "effect": "reported not shortable"}
+                context={**{"symbol": canonical}, "effect": "reported not shortable"},
             )
             result = {
-                "shortable": False, "easy_to_borrow": False,
-                "reason": "asset_lookup_failed", "symbol": canonical,
+                "shortable": False,
+                "easy_to_borrow": False,
+                "reason": "asset_lookup_failed",
+                "symbol": canonical,
             }
             self._shortable_cache[canonical] = result
             return result
@@ -71,8 +74,10 @@ class AssetEligibilityReads:
         else:
             reason = "hard_to_borrow"
         result = {
-            "shortable": shortable, "easy_to_borrow": easy_to_borrow,
-            "reason": reason, "symbol": canonical,
+            "shortable": shortable,
+            "easy_to_borrow": easy_to_borrow,
+            "reason": reason,
+            "symbol": canonical,
         }
         self._shortable_cache[canonical] = result
         return result
@@ -110,10 +115,11 @@ class AssetEligibilityReads:
                 "account_reads.fractionability",
                 exc,
                 log=logger,
-                context={**{"symbol": canonical}, "effect": "sized in whole shares"}
+                context={**{"symbol": canonical}, "effect": "sized in whole shares"},
             )
             result = {
-                "fractionable": False, "reason": "asset_lookup_failed",
+                "fractionable": False,
+                "reason": "asset_lookup_failed",
                 "symbol": canonical,
             }
             self._fractionable_cache[canonical] = result
@@ -129,17 +135,20 @@ class AssetEligibilityReads:
             # The record came back but carries no flag — an older API shape,
             # a stub, a mock. "Absent" is not "true".
             result = {
-                "fractionable": False, "reason": "fractionable_unknown",
+                "fractionable": False,
+                "reason": "fractionable_unknown",
                 "symbol": canonical,
             }
         elif bool(raw):
             result = {
-                "fractionable": True, "reason": "fractionable",
+                "fractionable": True,
+                "reason": "fractionable",
                 "symbol": canonical,
             }
         else:
             result = {
-                "fractionable": False, "reason": "not_fractionable",
+                "fractionable": False,
+                "reason": "not_fractionable",
                 "symbol": canonical,
             }
         self._fractionable_cache[canonical] = result

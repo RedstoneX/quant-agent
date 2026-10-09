@@ -19,8 +19,12 @@ from src.risk.metrics import (
 
 def _pos(symbol: str, qty: float, entry: float, price: float) -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=entry, current_price=price,
-        market_value=qty * price, unrealized_pnl=qty * (price - entry),
+        symbol=symbol,
+        qty=qty,
+        avg_entry=entry,
+        current_price=price,
+        market_value=qty * price,
+        unrealized_pnl=qty * (price - entry),
         sector="Technology",
     )
 
@@ -28,6 +32,7 @@ def _pos(symbol: str, qty: float, entry: float, price: float) -> Position:
 # --------------------------------------------------------------------------
 # R-multiple (audit §1.4)
 # --------------------------------------------------------------------------
+
 
 def test_r_multiple_is_profit_in_units_of_risk_taken():
     # Risked $10/share (100 → 90), now +$20 → 2R.
@@ -54,9 +59,12 @@ def test_r_multiple_rejects_non_finite_inputs(bad):
 def test_r_multiple_uses_the_entry_stop_not_the_trailed_one():
     """The denominator is the bet that was actually made."""
     risk = position_risk(
-        symbol="AAA", qty=10, entry=100.0, current_price=130.0,
-        stop=125.0,           # trailed up
-        initial_stop=90.0,    # the bet was $10/share
+        symbol="AAA",
+        qty=10,
+        entry=100.0,
+        current_price=130.0,
+        stop=125.0,  # trailed up
+        initial_stop=90.0,  # the bet was $10/share
     )
     assert risk.r_multiple == 3.0
 
@@ -65,10 +73,11 @@ def test_r_multiple_uses_the_entry_stop_not_the_trailed_one():
 # Per-position risk and the release rule (spec §2.3)
 # --------------------------------------------------------------------------
 
+
 def test_budget_risk_is_measured_against_entry_not_current_price():
     risk = position_risk("AAA", qty=100, entry=50.0, current_price=60.0, stop=45.0)
-    assert risk.budget_risk_dollars == pytest.approx(500.0)   # 100 × (50 − 45)
-    assert risk.open_risk_dollars == pytest.approx(1500.0)    # 100 × (60 − 45)
+    assert risk.budget_risk_dollars == pytest.approx(500.0)  # 100 × (50 − 45)
+    assert risk.open_risk_dollars == pytest.approx(1500.0)  # 100 × (60 − 45)
     assert risk.risk_released is False
 
 
@@ -123,15 +132,16 @@ def test_non_finite_broker_price_does_not_poison_the_arithmetic():
 # Portfolio heat (audit §1.3)
 # --------------------------------------------------------------------------
 
+
 def test_portfolio_heat_sums_budget_and_open_risk():
     heat = portfolio_heat(
         positions=[_pos("AAA", 100, 50.0, 60.0), _pos("BBB", 50, 20.0, 22.0)],
         equity=100_000.0,
         stops={"AAA": 45.0, "BBB": 18.0},
     )
-    assert heat.budget_risk_dollars == pytest.approx(600.0)   # 500 + 100
+    assert heat.budget_risk_dollars == pytest.approx(600.0)  # 500 + 100
     assert heat.budget_risk_pct == pytest.approx(0.6)
-    assert heat.open_risk_dollars == pytest.approx(1700.0)    # 1500 + 200
+    assert heat.open_risk_dollars == pytest.approx(1700.0)  # 1500 + 200
     assert heat.open_risk_pct == pytest.approx(1.7)
 
 
@@ -139,7 +149,7 @@ def test_portfolio_heat_headroom_against_the_ratified_ceiling():
     heat = portfolio_heat(
         positions=[_pos("AAA", 1000, 50.0, 60.0)],
         equity=100_000.0,
-        stops={"AAA": 45.0},   # $5,000 at risk = 5%
+        stops={"AAA": 45.0},  # $5,000 at risk = 5%
     )
     assert heat.budget_risk_pct == pytest.approx(5.0)
     assert heat.headroom_pct(25.0) == pytest.approx(20.0)
@@ -149,7 +159,7 @@ def test_headroom_never_goes_negative():
     heat = portfolio_heat(
         positions=[_pos("AAA", 10_000, 50.0, 60.0)],
         equity=100_000.0,
-        stops={"AAA": 45.0},   # $50,000 at risk = 50%, over the ceiling
+        stops={"AAA": 45.0},  # $50,000 at risk = 50%, over the ceiling
     )
     assert heat.budget_risk_pct == pytest.approx(50.0)
     assert heat.headroom_pct(25.0) == 0.0
@@ -160,12 +170,14 @@ def test_released_winners_free_budget_so_the_book_can_expand():
     stops = {"WIN": 45.0, "NEW": 18.0}
     before = portfolio_heat(
         positions=[_pos("WIN", 100, 50.0, 70.0), _pos("NEW", 50, 20.0, 22.0)],
-        equity=100_000.0, stops=stops,
+        equity=100_000.0,
+        stops=stops,
     )
-    stops["WIN"] = 55.0   # trail above entry
+    stops["WIN"] = 55.0  # trail above entry
     after = portfolio_heat(
         positions=[_pos("WIN", 100, 50.0, 70.0), _pos("NEW", 50, 20.0, 22.0)],
-        equity=100_000.0, stops=stops,
+        equity=100_000.0,
+        stops=stops,
     )
     assert after.budget_risk_dollars < before.budget_risk_dollars
     assert after.released == ["WIN"]
@@ -176,7 +188,7 @@ def test_positions_without_a_known_stop_are_listed_as_unprotected():
     heat = portfolio_heat(
         positions=[_pos("AAA", 100, 50.0, 60.0), _pos("BBB", 50, 20.0, 22.0)],
         equity=100_000.0,
-        stops={"AAA": 45.0},   # BBB has none
+        stops={"AAA": 45.0},  # BBB has none
     )
     assert heat.unprotected == ["BBB"]
     assert heat.budget_risk_dollars == pytest.approx(500.0 + 1100.0)
@@ -196,7 +208,9 @@ def test_cash_equivalent_sweep_is_excluded_not_counted_as_unprotected():
 
 def test_closed_and_zero_qty_positions_are_skipped():
     heat = portfolio_heat(
-        positions=[_pos("AAA", 0, 50.0, 60.0)], equity=100_000.0, stops={"AAA": 45.0},
+        positions=[_pos("AAA", 0, 50.0, 60.0)],
+        equity=100_000.0,
+        stops={"AAA": 45.0},
     )
     assert heat.per_position == []
     assert heat.budget_risk_pct == 0.0
@@ -204,7 +218,9 @@ def test_closed_and_zero_qty_positions_are_skipped():
 
 def test_zero_equity_does_not_divide_by_zero():
     heat = portfolio_heat(
-        positions=[_pos("AAA", 100, 50.0, 60.0)], equity=0.0, stops={"AAA": 45.0},
+        positions=[_pos("AAA", 100, 50.0, 60.0)],
+        equity=0.0,
+        stops={"AAA": 45.0},
     )
     assert heat.budget_risk_pct == 0.0
     assert heat.open_risk_pct == 0.0
@@ -214,6 +230,7 @@ def test_zero_equity_does_not_divide_by_zero():
 # Prompt rendering
 # --------------------------------------------------------------------------
 
+
 def test_format_heat_block_states_headroom_and_flags():
     heat = portfolio_heat(
         positions=[
@@ -222,7 +239,7 @@ def test_format_heat_block_states_headroom_and_flags():
             _pos("BBB", 50, 20.0, 22.0),
         ],
         equity=100_000.0,
-        stops={"AAA": 45.0, "WIN": 55.0},   # WIN released, BBB unprotected
+        stops={"AAA": 45.0, "WIN": 55.0},  # WIN released, BBB unprotected
     )
     block = format_heat_block(heat, ceiling_pct=25.0)
     assert "headroom" in block

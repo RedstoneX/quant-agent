@@ -72,10 +72,7 @@ def _sandbox(root: Path, *, cache_age_hours: float | None = ANCIENT_AGE_HOURS):
         # Price exactly the accepted models, read from the module rather than
         # hardcoded, so this test keeps testing staleness and not a config
         # change that added a model.
-        rates = {
-            model: dict(value)
-            for model, value in cost_table._PRICING_OPENROUTER.items()
-        }
+        rates = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
         cache = data_dir / "openrouter_pricing_cache.json"
         cache.write_text(json.dumps(rates))
         stamp = time.time() - cache_age_hours * 3600
@@ -96,9 +93,11 @@ def _write_grace_config(sandbox, grace_hours: float = GRACE_HOURS) -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "settings.yaml").write_text(
         yaml.safe_dump(
-            {"llm_cost_circuit": {
-                "openrouter_pricing_grace_period_hours": grace_hours,
-            }}
+            {
+                "llm_cost_circuit": {
+                    "openrouter_pricing_grace_period_hours": grace_hours,
+                }
+            }
         )
     )
 
@@ -107,8 +106,11 @@ def _write_grace_config(sandbox, grace_hours: float = GRACE_HOURS) -> None:
 # The load-bearing one
 # ---------------------------------------------------------------------------
 
+
 def test_an_ancient_pricing_cache_no_longer_fails_a_rehearsal_closed(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """Defect (g), closed, proved against the real cost circuit.
 
@@ -127,7 +129,8 @@ def test_an_ancient_pricing_cache_no_longer_fails_a_rehearsal_closed(
     proves nothing.
     """
     from ops.rehearsal.runner import (
-        DEFAULT_PRICING_CACHE_AGE_HOURS, apply_pricing_cache_age,
+        DEFAULT_PRICING_CACHE_AGE_HOURS,
+        apply_pricing_cache_age,
     )
     from src import cost_table
 
@@ -136,25 +139,31 @@ def test_an_ancient_pricing_cache_no_longer_fails_a_rehearsal_closed(
     # socket. Same condition, without installing the whole wall.
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
     monkeypatch.setattr(
-        cost_table, "_OPENROUTER_CACHE_PATH",
+        cost_table,
+        "_OPENROUTER_CACHE_PATH",
         sandbox.data_dir / "openrouter_pricing_cache.json",
     )
 
-    assert cost_table.refresh_openrouter_pricing(
-        grace_period_hours=GRACE_HOURS, max_stale_multiplier=1.5,
-    ) is False, (
+    assert (
+        cost_table.refresh_openrouter_pricing(
+            grace_period_hours=GRACE_HOURS,
+            max_stale_multiplier=1.5,
+        )
+        is False
+    ), (
         "the inherited-age condition this test reproduces no longer produces "
         "a fail-closed preflight, so the second half proves nothing"
     )
 
     note = apply_pricing_cache_age(sandbox, DEFAULT_PRICING_CACHE_AGE_HOURS)
 
-    assert cost_table.refresh_openrouter_pricing(
-        grace_period_hours=GRACE_HOURS, max_stale_multiplier=1.5,
-    ) is True, (
-        "a rehearsal is still inheriting the live pricing cache's real age — "
-        "defect (g) has regressed"
-    )
+    assert (
+        cost_table.refresh_openrouter_pricing(
+            grace_period_hours=GRACE_HOURS,
+            max_stale_multiplier=1.5,
+        )
+        is True
+    ), "a rehearsal is still inheriting the live pricing cache's real age — defect (g) has regressed"
     assert "set to 1h by the harness" in note
 
 
@@ -162,7 +171,8 @@ def test_the_declared_age_is_fresh_and_lands_on_the_file(tmp_path):
     """The stamped age is the one asked for, and it is inside the freshness
     window — not merely 'newer than it was'."""
     from ops.rehearsal.runner import (
-        DEFAULT_PRICING_CACHE_AGE_HOURS, apply_pricing_cache_age,
+        DEFAULT_PRICING_CACHE_AGE_HOURS,
+        apply_pricing_cache_age,
     )
     from src.cost_table import OPENROUTER_CACHE_FRESH_HOURS
 
@@ -182,8 +192,11 @@ def test_the_declared_age_is_fresh_and_lands_on_the_file(tmp_path):
 # The safety property that must NOT have been traded away
 # ---------------------------------------------------------------------------
 
+
 def test_staleness_is_still_reachable_when_a_test_asks_for_it(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """Rehearsing the fail-closed path deliberately still works.
 
@@ -198,15 +211,20 @@ def test_staleness_is_still_reachable_when_a_test_asks_for_it(
     _write_grace_config(sandbox)
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
     monkeypatch.setattr(
-        cost_table, "_OPENROUTER_CACHE_PATH",
+        cost_table,
+        "_OPENROUTER_CACHE_PATH",
         sandbox.data_dir / "openrouter_pricing_cache.json",
     )
 
     apply_pricing_cache_age(sandbox, 24 + GRACE_HOURS + 1)
 
-    assert cost_table.refresh_openrouter_pricing(
-        grace_period_hours=GRACE_HOURS, max_stale_multiplier=1.5,
-    ) is False
+    assert (
+        cost_table.refresh_openrouter_pricing(
+            grace_period_hours=GRACE_HOURS,
+            max_stale_multiplier=1.5,
+        )
+        is False
+    )
     assert "suspend paid analysis" in _pricing_cache_note(sandbox)
 
 
@@ -294,12 +312,8 @@ def test_run_rehearsal_builds_the_pricing_note_after_the_sandbox_config():
     from ops.rehearsal import runner
 
     src = inspect.getsource(runner.run_rehearsal).splitlines()
-    built_config = next(
-        i for i, line in enumerate(src) if "build_rehearsal_config(" in line
-    )
-    built_note = next(
-        i for i, line in enumerate(src) if "_pricing_cache_note(sandbox)" in line
-    )
+    built_config = next(i for i, line in enumerate(src) if "build_rehearsal_config(" in line)
+    built_note = next(i for i, line in enumerate(src) if "_pricing_cache_note(sandbox)" in line)
     assert built_note > built_config, (
         "run_rehearsal builds the pricing-cache note before writing the "
         "sandbox's settings.yaml — _pricing_grace_hours will have no file to "
@@ -310,6 +324,7 @@ def test_run_rehearsal_builds_the_pricing_note_after_the_sandbox_config():
 # ---------------------------------------------------------------------------
 # It must never be able to reach the production file
 # ---------------------------------------------------------------------------
+
 
 def test_refuses_to_stamp_a_cache_outside_the_sandbox(tmp_path):
     """The production cache's mtime IS the live circuit's freshness signal.
@@ -384,6 +399,7 @@ def test_negative_ages_are_rejected(tmp_path):
 # Wiring
 # ---------------------------------------------------------------------------
 
+
 def test_run_rehearsal_defaults_to_the_declared_fresh_age():
     """The default is what protects every existing rehearsal caller,
     `tests/test_rehearsal_reproduces_cost_ceiling.py` included — none of them
@@ -393,9 +409,7 @@ def test_run_rehearsal_defaults_to_the_declared_fresh_age():
     from ops.rehearsal.runner import DEFAULT_PRICING_CACHE_AGE_HOURS, run_rehearsal
     from src.cost_table import OPENROUTER_CACHE_FRESH_HOURS
 
-    default = inspect.signature(run_rehearsal).parameters[
-        "pricing_cache_age_hours"
-    ].default
+    default = inspect.signature(run_rehearsal).parameters["pricing_cache_age_hours"].default
     assert default == DEFAULT_PRICING_CACHE_AGE_HOURS
     assert 0 < default < OPENROUTER_CACHE_FRESH_HOURS
 
@@ -413,9 +427,7 @@ def test_cli_exposes_the_age(argv, expected):
     only from Python."""
     from ops.rehearsal.run import _parse_pricing_age, build_parser
 
-    args = build_parser().parse_args(
-        ["--source-db", "/nonexistent.db", *argv]
-    )
+    args = build_parser().parse_args(["--source-db", "/nonexistent.db", *argv])
     assert _parse_pricing_age(args.pricing_cache_age_hours) == expected
 
 

@@ -1,4 +1,5 @@
 """Read one board item's block and its DONE WHEN criteria out of the board text."""
+
 from __future__ import annotations
 
 import re
@@ -36,7 +37,7 @@ def criteria(block: str) -> list[tuple[int, bool, str]]:
         return []
     out: list[tuple[int, bool, str]] = []
     ordinal = 0
-    for line in block[match.end():].splitlines():
+    for line in block[match.end() :].splitlines():
         if not line.strip():
             continue
         bullet = CRITERION.match(line)

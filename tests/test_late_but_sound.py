@@ -2,6 +2,7 @@
 refuse a stale ticket if that budget is gone. Catch-up is a safety net
 only. Repeg stays off.
 """
+
 import inspect
 import time
 from types import SimpleNamespace
@@ -34,14 +35,19 @@ from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 
 def _rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="b",
         cash_target="c",
     )
 
 
 def test_ensure_trade_updates_does_not_open_a_throwaway_socket():
     from src.execution.broker_parts.trade_stream import TradeStreamWaits
+
     src = inspect.getsource(TradeStreamWaits.ensure_trade_updates)
     assert "TradingStream(" not in src
     assert "thread.start" not in src
@@ -55,6 +61,7 @@ def test_ensure_trade_updates_does_not_open_a_throwaway_socket():
 
 def test_pipeline_owns_the_account_lease_beside_the_db():
     from src.pipeline import TradingPipeline
+
     src = inspect.getsource(TradingPipeline.__init__)
     assert "trade_updates_lease_path" in src
     assert ".trade_updates.lock" in src
@@ -87,8 +94,12 @@ def test_approved_ceiling_is_pinned_from_live_ref_not_later_tape():
     pipeline.config.execution = ExecutionConfig(max_entry_slippage_bps=40.0)
     ctx = RunContext.start("morning")
     decision = TradeDecision(
-        symbol="AAPL", action="BUY", allocation_pct=5.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        symbol="AAPL",
+        action="BUY",
+        allocation_pct=5.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="r",
     )
     _pin_approved_entry_ceilings(pipeline, ctx, [decision])
@@ -105,9 +116,13 @@ def test_known_budget_omits_auth_when_socket_already_started():
     assert _known_entry_submit_budget_s(pipeline, will_fund=False) == 0.0
     pipeline.broker.trade_updates_started = lambda: False
     pipeline.broker.trade_updates_lease_contended = lambda: False
-    assert _known_entry_submit_budget_s(
-        pipeline, will_fund=False,
-    ) == _ALPACA_STREAM_AUTH_DEADLINE_S
+    assert (
+        _known_entry_submit_budget_s(
+            pipeline,
+            will_fund=False,
+        )
+        == _ALPACA_STREAM_AUTH_DEADLINE_S
+    )
 
 
 def test_known_budget_omits_auth_when_another_process_owns_the_lease():
@@ -146,19 +161,25 @@ def _buy_pipeline(ask, live=100.0, *, stall=False):
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = live
     pipeline.broker.get_latest_quote.return_value = {
-        "ask_price": ask, "bid_price": live - 0.1,
+        "ask_price": ask,
+        "bid_price": live - 0.1,
     }
     pipeline.broker.ensure_trade_updates.return_value = TradeStreamWarmup(
-        ready=not stall, handshake_failed=stall, retried=stall,
+        ready=not stall,
+        handshake_failed=stall,
+        retried=stall,
     )
     pipeline.broker.trade_updates_started.return_value = True
     pipeline.config.execution = ExecutionConfig(
-        max_entry_slippage_bps=40.0, repeg_enabled=False,
+        max_entry_slippage_bps=40.0,
+        repeg_enabled=False,
     )
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     pipeline._sweeper = None
@@ -177,8 +198,12 @@ def _buy_ctx(entry=100.0):
         reasoning_chain=_rc(),
         decisions=[
             TradeDecision(
-                symbol="AAPL", action="BUY", allocation_pct=5.0,
-                entry_price=entry, stop_loss=95.0, take_profit=110.0,
+                symbol="AAPL",
+                action="BUY",
+                allocation_pct=5.0,
+                entry_price=entry,
+                stop_loss=95.0,
+                take_profit=110.0,
                 reasoning="r",
             ),
         ],
@@ -233,15 +258,13 @@ def test_overrun_refuses_inside_ceiling_as_latency_window(monkeypatch):
         _ctx.entry_submit_deadline_mono = time.monotonic() - 5.0
 
     monkeypatch.setattr(
-        "src.pipeline_stages._encode_entry_submit_window", _past_deadline,
+        "src.pipeline_stages._encode_entry_submit_window",
+        _past_deadline,
     )
     ExecutionStage(pipeline=pipeline).run(ctx)
     reasons = [s["reason"] for s in ctx.execution_skips]
     assert "latency_window" in reasons
-    assert any(
-        "latency blew the window" in (s.get("detail") or "")
-        for s in ctx.execution_skips
-    )
+    assert any("latency blew the window" in (s.get("detail") or "") for s in ctx.execution_skips)
     pipeline.broker.submit_order.assert_not_called()
     assert ctx.catch_up_used.get("AAPL") is not True
 

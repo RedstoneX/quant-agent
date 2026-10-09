@@ -9,6 +9,7 @@ Each test imports the helper from its real home and calls it with plain
 collaborators. `src.pipeline` is deliberately never imported here: the point
 is that none of these needs the giant object any more.
 """
+
 import sys
 import types
 from datetime import date
@@ -32,13 +33,12 @@ def test_atr_for_symbol_needs_no_pipeline():
     class _Market:
         def __init__(self, bars):
             self.bars = bars
+
         def get_ohlcv(self, symbol, days):
             return self.bars
 
     bars = [
-        OHLCV(date=date(2026, 1, d), open=100.0, high=102.0,
-              low=98.0, close=100.0, volume=1_000)
-        for d in range(1, 31)
+        OHLCV(date=date(2026, 1, d), open=100.0, high=102.0, low=98.0, close=100.0, volume=1_000) for d in range(1, 31)
     ]
     atr = atr_for_symbol(_Market(bars), "SYN")
     assert atr is not None and atr > 0
@@ -48,6 +48,7 @@ def test_atr_for_symbol_needs_no_pipeline():
     class _Broken:
         def get_ohlcv(self, symbol, days):
             raise RuntimeError("provider down")
+
     assert atr_for_symbol(_Broken(), "SYN") is None  # never raises
 
 
@@ -63,8 +64,7 @@ def test_live_constructor_cfg_or_none_needs_no_pipeline():
 def test_parse_logged_agent_response_needs_no_pipeline():
     from src.agents.logged_response import parse_logged_agent_response
 
-    row = {"full_response": 'Here you go:\n```json\n{"action": "HOLD", "n": 2}\n```',
-           "model": "synthetic"}
+    row = {"full_response": 'Here you go:\n```json\n{"action": "HOLD", "n": 2}\n```', "model": "synthetic"}
     assert parse_logged_agent_response(row) == {"action": "HOLD", "n": 2}
     assert parse_logged_agent_response({}) is None
 
@@ -75,11 +75,13 @@ def test_sweeper_or_none_needs_no_pipeline():
 
     assert sweeper_or_none(None) is None
     assert sweeper_or_none(object()) is None
-    off = CashSweeper(pipeline=SimpleNamespace(config=SimpleNamespace(
-        cash_sweep=SimpleNamespace(enabled=False, symbol="SGOV"))))
+    off = CashSweeper(
+        pipeline=SimpleNamespace(config=SimpleNamespace(cash_sweep=SimpleNamespace(enabled=False, symbol="SGOV")))
+    )
     assert sweeper_or_none(off) is None
-    on = CashSweeper(pipeline=SimpleNamespace(config=SimpleNamespace(
-        cash_sweep=SimpleNamespace(enabled=True, symbol="SGOV"))))
+    on = CashSweeper(
+        pipeline=SimpleNamespace(config=SimpleNamespace(cash_sweep=SimpleNamespace(enabled=True, symbol="SGOV")))
+    )
     assert sweeper_or_none(on) is on
 
     # A config that cannot even be read reads as disabled AND leaves a row.
@@ -90,8 +92,10 @@ def test_sweeper_or_none_needs_no_pipeline():
 
     class _Db:
         rows = []
+
         def insert_specialist_evidence(self, **kw):
             self.rows.append(kw)
+
     db = _Db()
     broken = CashSweeper(pipeline=SimpleNamespace(config=_BrokenConfig(), db=db))
     assert sweeper_or_none(broken) is None

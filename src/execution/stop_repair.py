@@ -20,6 +20,7 @@ The watchdog has no `TradingPipeline` and must never build one — that would
 pull the agents, the LLM clients and the whole session machinery into a
 06:15 heartbeat.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,9 @@ from typing import Any, Callable
 from src.execution.pending_stop_drain import drain_safely as drain_owed_stop_levels  # the sweep's first coverage repair
 from src.execution.stop_repair_parts import _refuse, derive_protective_level
 from src.execution.stop_records import (
-    STOP_ABSENT, STOP_USABLE, classify_stop_price,
+    STOP_ABSENT,
+    STOP_USABLE,
+    classify_stop_price,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,9 +115,13 @@ def repair_stop_coverage(
     # `covered_qty` come off the caller's gap dict when it has them.
     gap = outcome if isinstance(outcome, dict) else {}
     rec = {
-        "db": db, "symbol": symbol, "uncovered_qty": uncovered_qty,
-        "is_short": is_short, "caller": caller,
-        "held_qty": gap.get("held_qty"), "covered_qty": gap.get("covered_qty"),
+        "db": db,
+        "symbol": symbol,
+        "uncovered_qty": uncovered_qty,
+        "is_short": is_short,
+        "caller": caller,
+        "held_qty": gap.get("held_qty"),
+        "covered_qty": gap.get("covered_qty"),
         "resting_stops": resting_stops,
     }
     opening = "SHORT" if is_short else "BUY"
@@ -124,12 +131,15 @@ def repair_stop_coverage(
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "coverage repair: last-%s lookup failed for %s: %s",
-            opening, symbol, exc,
+            opening,
+            symbol,
+            exc,
         )
         return _refuse(
             outcome,
             f"the archive could not be read for the recorded {opening} stop",
-            code="archive_unreadable", record=rec
+            code="archive_unreadable",
+            record=rec,
         )
     # docs/WORK.md item 88 — the two cases this used to collapse into one
     # sentence. "No stop was ever recorded" and "a stop was recorded and its
@@ -149,7 +159,10 @@ def repair_stop_coverage(
         # naked position for a review nobody performs. The archive has been
         # asked; ask the broker and derive off the name's own ATR instead.
         derived, derived_basis = derive_protective_level(
-            broker=broker, market=market, symbol=symbol, is_short=is_short,
+            broker=broker,
+            market=market,
+            symbol=symbol,
+            is_short=is_short,
         )
         if derived is None:
             return _refuse(
@@ -157,11 +170,15 @@ def repair_stop_coverage(
                 f"no stop level was ever recorded on the {opening} row and "
                 f"none could be derived from the broker's own average entry "
                 f"price and the name's ATR",
-                code="no_recorded_stop", record=rec
+                code="no_recorded_stop",
+                record=rec,
             )
         logger.warning(
-            "coverage repair: %s has no recorded %s stop_loss — placing a "
-            "protective stop at $%.2f, %s", symbol, opening, derived, derived_basis,
+            "coverage repair: %s has no recorded %s stop_loss — placing a protective stop at $%.2f, %s",
+            symbol,
+            opening,
+            derived,
+            derived_basis,
         )
         stop_state, stop_price = STOP_USABLE, derived
         if isinstance(outcome, dict):
@@ -171,13 +188,17 @@ def repair_stop_coverage(
             "coverage repair REFUSED for %s: the recorded %s stop_loss is "
             "%r, which cannot be a stop price. NOT treated as 'no stop "
             "needed' — the gap stays flagged for manual review and the "
-            "archive row needs a look.", symbol, opening, recorded,
+            "archive row needs a look.",
+            symbol,
+            opening,
+            recorded,
         )
         return _refuse(
             outcome,
             f"the recorded {opening} stop level is {recorded!r}, which "
             f"cannot be a stop price — the archive row is corrupt",
-            code="recorded_stop_unusable", record=rec
+            code="recorded_stop_unusable",
+            record=rec,
         )
     # The wrong-side test below decides whether putting this stop back would
     # fire it instantly — i.e. sell the position at market. That test is only
@@ -195,16 +216,25 @@ def repair_stop_coverage(
     from src.execution.stop_repair_price import read_repair_price
 
     stamped, price, price_error = read_repair_price(
-        broker, symbol, stop_price=stop_price, uncovered_qty=uncovered_qty,
-        is_short=is_short, caller=caller, db=db, outcome=outcome,
-        resting_stops=resting_stops, rec=rec, live_price_cls=LivePrice,
+        broker,
+        symbol,
+        stop_price=stop_price,
+        uncovered_qty=uncovered_qty,
+        is_short=is_short,
+        caller=caller,
+        db=db,
+        outcome=outcome,
+        resting_stops=resting_stops,
+        rec=rec,
+        live_price_cls=LivePrice,
     )
     blind = price is None and price_error is not None
     if not blind and not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
         return _refuse(
-            outcome, "the broker returned no usable live price, so the "
-            "recorded stop could not be checked against the tape",
-            code="price_unusable", record=rec
+            outcome,
+            "the broker returned no usable live price, so the recorded stop could not be checked against the tape",
+            code="price_unusable",
+            record=rec,
         )
     if not blind and stamped is not None and not stamped.is_today_print:
         # `get_latest_price_stamped` only ever stamps `is_today_print` for a
@@ -236,14 +266,19 @@ def repair_stop_coverage(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "coverage repair: intraday snapshot lookup failed for %s: %s",
-                symbol, exc,
+                symbol,
+                exc,
             )
         if resolved_price is not None:
             logger.info(
                 "coverage repair: %s last read ($%.2f from %s) was not a "
                 "today print, but today's %s at $%.2f satisfies the "
                 "freshness requirement — proceeding with that price.",
-                symbol, price, stamped.source, resolved_source, resolved_price,
+                symbol,
+                price,
+                stamped.source,
+                resolved_source,
+                resolved_price,
             )
             price = resolved_price
         else:
@@ -252,33 +287,38 @@ def repair_stop_coverage(
                 "came from %s, and no today minute/session bar was available "
                 "either) — a stop placed off an unconfirmed price could fire "
                 "immediately. Leaving the gap flagged for the next sweep.",
-                symbol, price, stamped.source,
+                symbol,
+                price,
+                stamped.source,
             )
             return _refuse(
-                outcome, "there is no trade print from today to check the "
-                "recorded stop against",
-                code="no_trade_print_today", record=rec
+                outcome,
+                "there is no trade print from today to check the recorded stop against",
+                code="no_trade_print_today",
+                record=rec,
             )
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
     # this janitor into an immediate marketable exit.
-    would_fire = (
-        False if blind
-        else (stop_price <= price if is_short else stop_price >= price)
-    )
+    would_fire = False if blind else (stop_price <= price if is_short else stop_price >= price)
     if would_fire:
         logger.warning(
             "coverage repair: %s recorded %s-stop $%.2f is on the live-price "
             "side of $%.2f — a repair would fire immediately. Leaving the "
             "gap flagged; the reviewer owns this exit decision.",
-            symbol, protective_side, stop_price, price,
+            symbol,
+            protective_side,
+            stop_price,
+            price,
         )
         return _refuse(
             outcome,
             f"the recorded stop ${stop_price:,.2f} is already on the live-"
             f"price side of ${price:,.2f}, so restoring it would exit the "
             f"position at market — that is the reviewer's decision",
-            code="would_fire_immediately", record=rec, stop_price=stop_price
+            code="would_fire_immediately",
+            record=rec,
+            stop_price=stop_price,
         )
     # Spec §11.1 guard 1 belongs here too. This was a single bare
     # `_submit_stop_limit_order` call with NO retry burst at all — a
@@ -290,19 +330,20 @@ def repair_stop_coverage(
     # to close on the entry side, left open on the belt that is supposed to
     # be its backstop. Route through the same retrying+fallback machinery
     # instead of a second, weaker copy of it.
-    buffer_mult = (
-        (1 + broker.STOP_LIMIT_BUFFER_PCT) if protective_side == "buy"
-        else (1 - broker.STOP_LIMIT_BUFFER_PCT)
-    )
+    buffer_mult = (1 + broker.STOP_LIMIT_BUFFER_PCT) if protective_side == "buy" else (1 - broker.STOP_LIMIT_BUFFER_PCT)
     result = broker._submit_protective_stop_retrying(
-        symbol=symbol, qty=uncovered_qty, stop_price=stop_price,
+        symbol=symbol,
+        qty=uncovered_qty,
+        stop_price=stop_price,
         limit_price=stop_price * buffer_mult,
         side=protective_side,
     )
     from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
     from src.execution.exit_path_records import (
-        is_kill_switch_block, kill_switch_blocked_text,
+        is_kill_switch_block,
+        kill_switch_blocked_text,
     )
+
     if is_kill_switch_block(result):
         # The desk's own kill switch refused the order before it reached the
         # broker. This used to fall into the branch below and tell the owner
@@ -312,23 +353,31 @@ def repair_stop_coverage(
         logger.error(
             "coverage repair BLOCKED BY KILL SWITCH for %s (%.4f uncovered, "
             "stop $%.2f) — nothing was sent to the broker",
-            symbol, uncovered_qty, stop_price,
+            symbol,
+            uncovered_qty,
+            stop_price,
         )
         return _refuse(
-            outcome, kill_switch_blocked_text(symbol),
-            code="kill_switch", record=rec, stop_price=stop_price,
+            outcome,
+            kill_switch_blocked_text(symbol),
+            code="kill_switch",
+            record=rec,
+            stop_price=stop_price,
         )
     if result is None or not accepted_stop_order(result):
         logger.error(
             "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f) — "
             "retries exhausted or broker did not accept an order id",
-            symbol, uncovered_qty, stop_price,
+            symbol,
+            uncovered_qty,
+            stop_price,
         )
         return _refuse(
             outcome,
-            f"the broker did not accept a protective stop at "
-            f"${stop_price:,.2f} after every retry",
-            code="broker_did_not_accept", record=rec, stop_price=stop_price
+            f"the broker did not accept a protective stop at ${stop_price:,.2f} after every retry",
+            code="broker_did_not_accept",
+            record=rec,
+            stop_price=stop_price,
         )
     residual = 0.0
     try:
@@ -347,18 +396,29 @@ def repair_stop_coverage(
         logger.warning(
             "coverage repair PARTIAL for %s: covered %.4f of %.4f "
             "uncovered share(s) at stop $%.2f — %.4f share(s) still "
-            "gapped; next sweep will re-check", symbol,
-            uncovered_qty - residual, uncovered_qty, stop_price, residual,
+            "gapped; next sweep will re-check",
+            symbol,
+            uncovered_qty - residual,
+            uncovered_qty,
+            stop_price,
+            residual,
         )
         return _refuse(
             outcome,
-            f"only {uncovered_qty - residual:.4f} of {uncovered_qty:.4f} "
-            f"uncovered share(s) could be covered",
-            code="partial_cover", record=rec, stop_price=stop_price,
+            f"only {uncovered_qty - residual:.4f} of {uncovered_qty:.4f} uncovered share(s) could be covered",
+            code="partial_cover",
+            record=rec,
+            stop_price=stop_price,
             placed={
-                k: result.get(k) for k in (
-                    "id", "covered_qty", "uncovered_qty", "gtc_qty",
-                    "day_qty", "gtc_stop_id", "day_stop_id",
+                k: result.get(k)
+                for k in (
+                    "id",
+                    "covered_qty",
+                    "uncovered_qty",
+                    "gtc_qty",
+                    "day_qty",
+                    "gtc_stop_id",
+                    "day_stop_id",
                 )
             },
         )
@@ -366,6 +426,10 @@ def repair_stop_coverage(
         "COVERAGE REPAIRED: %s — placed protective %s stop-MARKET coverage "
         "for %.4f uncovered share(s) at the recorded %s stop $%.2f (GTC over "
         "the whole shares, DAY over any sub-share remainder)",
-        symbol, protective_side, uncovered_qty, opening, stop_price,
+        symbol,
+        protective_side,
+        uncovered_qty,
+        opening,
+        stop_price,
     )
     return True

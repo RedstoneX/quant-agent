@@ -32,7 +32,8 @@ def test_scheduler_runs_on_trading_day(mock_pipeline_cls):
 @patch("src.scheduler.format_session_result", return_value="FAILED morning")
 @patch("src.scheduler.TradingPipeline")
 def test_scheduler_calendar_failure_is_loud_and_runs_no_session(
-    mock_pipeline_cls, mock_fmt,
+    mock_pipeline_cls,
+    mock_fmt,
 ):
     pipeline = MagicMock()
     failure = RuntimeError("calendar 503")
@@ -46,7 +47,9 @@ def test_scheduler_calendar_failure_is_loud_and_runs_no_session(
     pipeline.run_morning.assert_not_called()
     assert mock_fmt.call_args.kwargs["error"] is failure
     scheduler.notifier.send.assert_called_with(
-        "FAILED morning", symbols=[], preserve_structural_markup=True,
+        "FAILED morning",
+        symbols=[],
+        preserve_structural_markup=True,
         category="operational",
     )
 
@@ -58,6 +61,7 @@ def test_scheduler_wires_mission_control_url_from_config(mock_pipeline_cls):
     construction (unlike main.py, which builds the notifier before config
     loads), so it can wire the link straight into TelegramNotifier()."""
     from src.config import NotificationsConfig
+
     cfg = MagicMock()
     cfg.notifications = NotificationsConfig(mission_control_url="http://test.example/cockpit")
     mock_pipeline_cls.return_value = MagicMock()
@@ -137,9 +141,19 @@ def test_scheduler_intra_check_fires_every_30_min_during_market_hours(mock_pipel
         cur = nxt.replace(microsecond=1)
 
     expected = [
-        (9, 30), (10, 0), (10, 30), (11, 0), (11, 30),
-        (12, 0), (12, 30), (13, 0), (13, 30),
-        (14, 0), (14, 30), (15, 0), (15, 30),
+        (9, 30),
+        (10, 0),
+        (10, 30),
+        (11, 0),
+        (11, 30),
+        (12, 0),
+        (12, 30),
+        (13, 0),
+        (13, 30),
+        (14, 0),
+        (14, 30),
+        (15, 0),
+        (15, 30),
         (16, 0),
     ]
     assert fire_times == expected, (
@@ -153,6 +167,7 @@ def test_scheduler_intra_check_fires_every_30_min_during_market_hours(mock_pipel
 # _run_safe, not just log. Previously a comment claimed parity that didn't
 # exist — legacy/manual live ran silently.
 # ---------------------------------------------------------------------------
+
 
 @patch("src.scheduler.format_session_result", return_value="MSG")
 @patch("src.scheduler.TradingPipeline")
@@ -174,7 +189,9 @@ def test_run_safe_notifies_on_completed_session(mock_pipeline_cls, mock_fmt):
     # output, which embeds literal <b>/<blockquote expandable> tags on
     # purpose — see TelegramNotifier.send()'s docstring.
     scheduler.notifier.send.assert_called_with(
-        "MSG", symbols=[], preserve_structural_markup=True,
+        "MSG",
+        symbols=[],
+        preserve_structural_markup=True,
         category="operational",
     )
 
@@ -199,7 +216,9 @@ def test_run_safe_notifies_on_raised_session(mock_pipeline_cls, mock_fmt):
     # symbols=[] — a raised session has no `result` dict to pull a symbol
     # from (extract_alert_symbols runs for real here, not mocked).
     scheduler.notifier.send.assert_called_with(
-        "FAILED morning", symbols=[], preserve_structural_markup=True,
+        "FAILED morning",
+        symbols=[],
+        preserve_structural_markup=True,
         category="operational",
     )
 

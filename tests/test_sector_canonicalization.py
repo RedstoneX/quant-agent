@@ -123,6 +123,7 @@ def test_get_sector_caches_known_results_to_avoid_yfinance_thrash():
 # and the global _sector_lock must NOT be held across the network call.
 # ---------------------------------------------------------------------------
 
+
 class _HangingTicker:
     """yf.Ticker stand-in whose .info blocks until a bounded timeout.
 
@@ -130,6 +131,7 @@ class _HangingTicker:
     the test suite — but far longer than _SECTOR_LOOKUP_TIMEOUT_S, so a
     correctly-implemented _get_sector must return WELL before .info does.
     """
+
     _release = threading.Event()  # never set — worker self-frees via wait()
 
     def __init__(self, _sym):

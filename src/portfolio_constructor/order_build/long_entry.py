@@ -57,7 +57,10 @@ class LongEntryBuilder:
             entry_price, stop_loss = plan.entry_price, plan.stop_price
         else:
             entry_price, stop_loss = self._resolve_entry_and_stop(
-                target, analysis, market_price, regime=regime,
+                target,
+                analysis,
+                market_price,
+                regime=regime,
             )
             if entry_price is None or stop_loss is None:
                 # drop-reason: delegated — every exit from
@@ -74,7 +77,10 @@ class LongEntryBuilder:
         # survives on `analysis.reference_target` as evidence and is logged
         # against the computed level by `_derive_target`.
         derivation = self._derive_target(
-            target.symbol, analysis, entry_price, target.direction,
+            target.symbol,
+            analysis,
+            entry_price,
+            target.direction,
         )
         if derivation.price is None or derivation.price <= entry_price:
             # A data fault is already recorded/logged as UNMEASURABLE by
@@ -86,12 +92,12 @@ class LongEntryBuilder:
                 # fallback names the case where a price WAS computed and it
                 # simply does not sit above the entry.
                 self._note_refusal(
-                    target.symbol, target.direction,
+                    target.symbol,
+                    target.direction,
                     derivation.refusal or STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY,
                     f"no take-profit could be computed above the "
                     f"${entry_price:,.2f} entry for this long"
-                    + (f": {derivation.detail}" if derivation.detail else
-                       f" (computed {derivation.price})"),
+                    + (f": {derivation.detail}" if derivation.detail else f" (computed {derivation.price})"),
                 )
             return None
         take_profit = float(derivation.price)
@@ -109,6 +115,7 @@ class LongEntryBuilder:
         # delta and every downstream consumer speak the same units. No-op for
         # the ~99% of the universe with multiplier 1.0.
         from src.risk.rules import _gross_multiplier
+
         allocation_pct = (target_pct - current_pct) / _gross_multiplier(target.symbol)
         # Pull in vol-adj sizing in a uniform way: ensure qty (computed
         # downstream) doesn't put more than risk_budget_pct of equity at risk.
@@ -133,15 +140,17 @@ class LongEntryBuilder:
             # so the sector mix the PM self-corrects against is the mix this
             # constructor would actually build. The arithmetic is unchanged.
             alloc_cap_by_risk = risk_budget_allocation_pct(
-                entry_price=entry_price, stop_price=stop_loss,
+                entry_price=entry_price,
+                stop_price=stop_loss,
                 total_value=total_value,
                 risk_budget_pct=self.cfg.risk_budget_pct,
             )
             if alloc_cap_by_risk is not None and allocation_pct > alloc_cap_by_risk:
                 logger.info(
-                    "Constructor: %s alloc capped by risk budget "
-                    "(delta %.2f%% → %.2f%% at %.1f%% risk budget)",
-                    target.symbol, allocation_pct, alloc_cap_by_risk,
+                    "Constructor: %s alloc capped by risk budget (delta %.2f%% → %.2f%% at %.1f%% risk budget)",
+                    target.symbol,
+                    allocation_pct,
+                    alloc_cap_by_risk,
                     self.cfg.risk_budget_pct,
                 )
                 # Provenance for the AI Risk Manager: it audits the
@@ -180,8 +189,11 @@ class LongEntryBuilder:
             logger.info(
                 "Constructor: %s alloc capped by the single-name ceiling "
                 "(delta %.2f%% → %.2f%%; %.1f%% max position, %.2f%% already held)",
-                target.symbol, allocation_pct, max(0.0, name_headroom_pct),
-                self.cfg.max_position_pct, current_pct,
+                target.symbol,
+                allocation_pct,
+                max(0.0, name_headroom_pct),
+                self.cfg.max_position_pct,
+                current_pct,
             )
             cap_note += (
                 f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
@@ -200,8 +212,10 @@ class LongEntryBuilder:
         # the LONG budget of that sector only.
         if sector_weights is not None:
             allocation_pct, sector_note = self._apply_sector_dial(
-                target.symbol, allocation_pct,
-                sector_weights=sector_weights, total_value=total_value,
+                target.symbol,
+                allocation_pct,
+                sector_weights=sector_weights,
+                total_value=total_value,
                 action="BUY",
             )
             cap_note += sector_note
@@ -223,12 +237,17 @@ class LongEntryBuilder:
             # it is reused verbatim as the refusal detail rather than
             # re-deriving which cap fired.
             self._note_refusal(
-                target.symbol, target.direction, STOP_REFUSAL_SIZED_TO_ZERO,
-                (cap_note.strip() or (
-                    "the position sizing chain (risk budget, single-name "
-                    "ceiling, sector crowding) left nothing to round to "
-                    "above zero"
-                )),
+                target.symbol,
+                target.direction,
+                STOP_REFUSAL_SIZED_TO_ZERO,
+                (
+                    cap_note.strip()
+                    or (
+                        "the position sizing chain (risk budget, single-name "
+                        "ceiling, sector crowding) left nothing to round to "
+                        "above zero"
+                    )
+                ),
             )
             return None
 
@@ -245,16 +264,17 @@ class LongEntryBuilder:
             symbol=target.symbol,
             allocation_pct=allocation_pct,
             entry_price=entry_price,
-            stop_loss=stop_loss,   # already rounded + validated above
+            stop_loss=stop_loss,  # already rounded + validated above
             take_profit=take_profit,
             # Cap note appended AFTER the truncation so provenance never
             # gets sliced off by a long thesis. The budget note (spec §2.2)
             # rides alongside it for the same reason: a portfolio-level cut
             # the AI Risk Manager cannot see the arithmetic behind reads as
             # the PM contradicting itself.
-            reasoning=reasoning[:500] + cap_note + (
-                f" {plan.note}" if plan is not None and plan.note else ""
-            ) + self._target_note(derivation),
+            reasoning=reasoning[:500]
+            + cap_note
+            + (f" {plan.note}" if plan is not None and plan.note else "")
+            + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — pinned at entry, never
             # recomputed. `plan` is None for a legacy notional target, so
             # `allocated_risk_pct` stays None rather than a fabricated
@@ -265,22 +285,26 @@ class LongEntryBuilder:
             # Carried so the execution stage does not re-widen a stop this
             # constructor deliberately honoured at a computed level.
             stop_rule=self.shipped_stop_rule(
-                analysis, entry_price, stop_loss, target.direction,
+                analysis,
+                entry_price,
+                stop_loss,
+                target.direction,
             ),
             # Item 55 RECORDING, no behaviour: the same answer as stop_rule
             # above, with the ingredients that produced it, so the desk can
             # later ask what its levels actually did. See
             # TradeDecision.stop_level_basis.
             stop_level_basis=self.shipped_stop_level_basis(
-                analysis, entry_price, stop_loss, target.direction,
+                analysis,
+                entry_price,
+                stop_loss,
+                target.direction,
             ),
             # Carried for the SAME reason as stop_rule: so the execution
             # stage's own reward:risk belt does not kill an order that was
             # deliberately permitted below the floor. See
             # TradeDecision.subfloor_catalyst_exception.
-            subfloor_catalyst_exception=bool(
-                getattr(target, "subfloor_catalyst_verified", False)
-            ),
+            subfloor_catalyst_exception=bool(getattr(target, "subfloor_catalyst_verified", False)),
             # Carried for the SAME reason as stop_rule: how this position is
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.

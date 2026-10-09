@@ -22,6 +22,7 @@ block carries no ledgered number site. This module must not import
 stays behind in `src.pipeline_stages` on purpose: its body imports the broker
 seam, which the import-layering guard refuses in a part.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,8 +35,7 @@ from src.storage.event_journal import pipeline_event_fields
 logger = logging.getLogger(__name__)
 
 
-def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
-                           detail: str) -> None:
+def _record_execution_skip(pipeline, ctx, symbol: str, reason: str, detail: str) -> None:
     """Durable record of a deterministic BUY skip in the execution phase.
 
     Every skip path in the BUY loop used to be a log-only `continue`: the
@@ -52,9 +52,14 @@ def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
         {"symbol": symbol, "reason": reason, "detail": detail},
     )
     import json as _json
+
     _persist_evidence(
-        pipeline.db, run_id=ctx.run_id, agent_name="execution",
-        kind="execution_skip", scope="symbol", symbol=symbol,
+        pipeline.db,
+        run_id=ctx.run_id,
+        agent_name="execution",
+        kind="execution_skip",
+        scope="symbol",
+        symbol=symbol,
         decision_id=ctx.decision_id,
         evidence_json=_json.dumps(
             {"symbol": symbol, "reason": reason, "detail": detail},
@@ -62,8 +67,9 @@ def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
     )
 
 
-def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
-                           outcome: str, reason: str = "", **details) -> None:
+def _record_pipeline_event(
+    pipeline, ctx, symbol: str | None, stage: str, outcome: str, reason: str = "", **details
+) -> None:
     """Append one typed lifecycle fact to the existing evidence stream.
     Conversion step 6: shim over `EventJournal.record_pipeline_event`. Routes
     through this module's `_persist_evidence` on purpose, so a test that
@@ -72,13 +78,25 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     if stage == "order":
         # one Sentinel attempt row per order event
         record_order_attempt_from_event(
-            db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason,
-            run_id=ctx.run_id, details=details,
+            db=pipeline.db,
+            symbol=symbol,
+            outcome=outcome,
+            reason=reason,
+            run_id=ctx.run_id,
+            details=details,
         )
-    _persist_evidence(pipeline.db, **pipeline_event_fields(
-        run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
-        stage=stage, outcome=outcome, reason=reason, details=details,
-    ))
+    _persist_evidence(
+        pipeline.db,
+        **pipeline_event_fields(
+            run_id=ctx.run_id,
+            decision_id=ctx.decision_id,
+            symbol=symbol,
+            stage=stage,
+            outcome=outcome,
+            reason=reason,
+            details=details,
+        ),
+    )
 
 
 #: The seat this accounting spends its one paid retry under. Distinct from
@@ -97,14 +115,26 @@ def _record_accounted_candidate(pipeline, ctx, accounted) -> None:
     """
     payload = accounted.event_kwargs()
     _record_pipeline_event(
-        pipeline, ctx, accounted.symbol,
-        payload["stage"], payload["outcome"], payload["reason"],
-        refusal=payload["refusal"], note=payload["note"],
+        pipeline,
+        ctx,
+        accounted.symbol,
+        payload["stage"],
+        payload["outcome"],
+        payload["reason"],
+        refusal=payload["refusal"],
+        note=payload["note"],
     )
 
 
 def _account_for_pm_candidates(
-    pipeline, ctx, *, run_id, analyses, positions, decision, pm_decide_kwargs,
+    pipeline,
+    ctx,
+    *,
+    run_id,
+    analyses,
+    positions,
+    decision,
+    pm_decide_kwargs,
 ) -> None:
     """Make the portfolio manager account for every candidate it was shown.
 
@@ -125,36 +155,47 @@ def _account_for_pm_candidates(
     take a live session with it.
     """
     from src.pm_accounting import (
-        REASK_DIRECTIVE, account_for_candidates, unaccounted_row,
+        REASK_DIRECTIVE,
+        account_for_candidates,
+        unaccounted_row,
     )
     from src.seat_heal import (
-        HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_MECHANICAL,
-        HEAL_PAID_RETRY, can_paid_retry, record_paid_retry,
+        HealResult,
+        HEAL_CAP_BLOCKED,
+        HEAL_FAILED,
+        HEAL_MECHANICAL,
+        HEAL_PAID_RETRY,
+        can_paid_retry,
+        record_paid_retry,
     )
 
     result = account_for_candidates(
-        analyses=analyses, decision=decision, positions=positions,
+        analyses=analyses,
+        decision=decision,
+        positions=positions,
     )
     for accounted in result.accounted:
         _record_accounted_candidate(pipeline, ctx, accounted)
     if not result.unaccounted:
         if result.accounted:
             logger.info(
-                "PM candidate accounting: every one of the %d non-targeted "
-                "candidate(s) carries a named ground", len(result.accounted),
+                "PM candidate accounting: every one of the %d non-targeted candidate(s) carries a named ground",
+                len(result.accounted),
             )
         return
 
     pending = sorted(result.unaccounted)
     logger.warning(
-        "PM candidate accounting: the seat dropped %s without naming a "
-        "ground. Re-asking once (bookkeeping only).", ", ".join(pending),
+        "PM candidate accounting: the seat dropped %s without naming a ground. Re-asking once (bookkeeping only).",
+        ", ".join(pending),
     )
 
     def _finish(symbols, *, asked: bool) -> None:
         for symbol in sorted(symbols):
             _record_accounted_candidate(
-                pipeline, ctx, unaccounted_row(symbol, asked=asked),
+                pipeline,
+                ctx,
+                unaccounted_row(symbol, asked=asked),
             )
 
     retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
@@ -162,23 +203,27 @@ def _account_for_pm_candidates(
         logger.warning(
             "PM candidate accounting: the one re-ask for this seat is "
             "already spent this session — %s stay(s) unaccounted and "
-            "recorded", ", ".join(pending),
+            "recorded",
+            ", ".join(pending),
         )
         _finish(pending, asked=False)
         return
 
     from src.cost_circuit import PaidAnalysisSuspended
+
     try:
         pipeline._require_paid_analysis("portfolio_manager")
     except PaidAnalysisSuspended as exc:
-        _record_heal_safely(pipeline, ctx, HealResult(
-            seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_CAP_BLOCKED,
-            reason=(
-                "spend cap blocked the candidate-accounting re-ask: "
-                f"{exc}"
+        _record_heal_safely(
+            pipeline,
+            ctx,
+            HealResult(
+                seat=_PM_ACCOUNTING_SEAT,
+                outcome=HEAL_CAP_BLOCKED,
+                reason=(f"spend cap blocked the candidate-accounting re-ask: {exc}"),
+                details={"symbols": pending},
             ),
-            details={"symbols": pending},
-        ))
+        )
         _finish(pending, asked=False)
         return
 
@@ -190,11 +235,17 @@ def _account_for_pm_candidates(
         )
     except Exception as exc:  # noqa: BLE001
         record_stage(pipeline, "accounting_reask", exc)
-        _record_heal_safely(pipeline, ctx, HealResult(
-            seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_FAILED,
-            reason=f"candidate-accounting re-ask raised: {exc}",
-            paid_retry=True, details={"symbols": pending},
-        ))
+        _record_heal_safely(
+            pipeline,
+            ctx,
+            HealResult(
+                seat=_PM_ACCOUNTING_SEAT,
+                outcome=HEAL_FAILED,
+                reason=f"candidate-accounting re-ask raised: {exc}",
+                paid_retry=True,
+                details={"symbols": pending},
+            ),
+        )
         _finish(pending, asked=True)
         return
     else:
@@ -206,14 +257,11 @@ def _account_for_pm_candidates(
                 "no_valid_grounded_decision" if not reasked else None,
                 result=reask_result,
             ),
-            agent_name="portfolio_manager", run_id=run_id,
-            input_summary=(
-                f"candidate-accounting re-ask | {', '.join(pending)}"
-            ),
+            agent_name="portfolio_manager",
+            run_id=run_id,
+            input_summary=(f"candidate-accounting re-ask | {', '.join(pending)}"),
             input_message=reask_result.user_message,
-            output_summary=(
-                reasked.portfolio_view if reasked else "parse_error"
-            ),
+            output_summary=(reasked.portfolio_view if reasked else "parse_error"),
             full_response=reask_result.raw_text,
             model=reask_result.model,
             tokens_used=reask_result.tokens_used,
@@ -228,11 +276,17 @@ def _account_for_pm_candidates(
         record_stage(pipeline, "accounting_reask_log")
 
     if reasked is None:
-        _record_heal_safely(pipeline, ctx, HealResult(
-            seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_FAILED,
-            reason="candidate-accounting re-ask returned no parseable decision",
-            paid_retry=True, details={"symbols": pending},
-        ))
+        _record_heal_safely(
+            pipeline,
+            ctx,
+            HealResult(
+                seat=_PM_ACCOUNTING_SEAT,
+                outcome=HEAL_FAILED,
+                reason="candidate-accounting re-ask returned no parseable decision",
+                paid_retry=True,
+                details={"symbols": pending},
+            ),
+        )
         _finish(pending, asked=True)
         return
 
@@ -244,77 +298,97 @@ def _account_for_pm_candidates(
     # stated, nor invent an accounting for a name it was not asked about.
     challenged = set(pending)
     already = {
-        str(getattr(r, "symbol", "") or "").strip().upper()
-        for r in (getattr(decision, "rejections", None) or [])
+        str(getattr(r, "symbol", "") or "").strip().upper() for r in (getattr(decision, "rejections", None) or [])
     }
     gained = [
-        r for r in (getattr(reasked, "rejections", None) or [])
+        r
+        for r in (getattr(reasked, "rejections", None) or [])
         if str(getattr(r, "symbol", "") or "").strip().upper() in challenged
         and str(getattr(r, "symbol", "") or "").strip().upper() not in already
     ]
     if gained:
         try:
-            decision.rejections = list(
-                getattr(decision, "rejections", None) or [],
-            ) + gained
+            decision.rejections = (
+                list(
+                    getattr(decision, "rejections", None) or [],
+                )
+                + gained
+            )
         except Exception as e:  # noqa: BLE001
             record_stage(pipeline, "accounting_rejections", e)
         else:
             record_stage(pipeline, "accounting_rejections")
 
     second = account_for_candidates(
-        analyses=[a for a in analyses
-                  if str(getattr(a, "symbol", "") or "").strip().upper()
-                  in challenged],
-        decision=decision, positions=positions,
+        analyses=[a for a in analyses if str(getattr(a, "symbol", "") or "").strip().upper() in challenged],
+        decision=decision,
+        positions=positions,
     )
     for accounted in second.accounted:
         _record_accounted_candidate(pipeline, ctx, accounted)
     still = sorted(second.unaccounted)
     logger.info(
-        "PM candidate accounting: the re-ask accounted for %d of %d "
-        "challenged candidate(s); %d still unaccounted",
-        len(second.accounted), len(pending), len(still),
+        "PM candidate accounting: the re-ask accounted for %d of %d challenged candidate(s); %d still unaccounted",
+        len(second.accounted),
+        len(pending),
+        len(still),
     )
 
     if not still:
-        _record_heal_safely(pipeline, ctx, HealResult(
-            seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_PAID_RETRY,
-            reason=(
-                "the candidate-accounting re-ask named a ground for every "
-                "candidate it was asked about"
+        _record_heal_safely(
+            pipeline,
+            ctx,
+            HealResult(
+                seat=_PM_ACCOUNTING_SEAT,
+                outcome=HEAL_PAID_RETRY,
+                reason=("the candidate-accounting re-ask named a ground for every candidate it was asked about"),
+                paid_retry=True,
+                usable=True,
+                details={"symbols": pending},
             ),
-            paid_retry=True, usable=True, details={"symbols": pending},
-        ), alert=False)
+            alert=False,
+        )
         return
 
     _finish(still, asked=True)
-    _record_heal_safely(pipeline, ctx, HealResult(
-        seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_FAILED,
-        reason=(
-            "the portfolio manager would not name a ground for: "
-            + ", ".join(still) + ". Nothing was bought or sold differently "
-            "because of this — what is lost is the desk's ability to say "
-            "why these candidates were dropped. Recorded per symbol."
+    _record_heal_safely(
+        pipeline,
+        ctx,
+        HealResult(
+            seat=_PM_ACCOUNTING_SEAT,
+            outcome=HEAL_FAILED,
+            reason=(
+                "the portfolio manager would not name a ground for: "
+                + ", ".join(still)
+                + ". Nothing was bought or sold differently "
+                "because of this — what is lost is the desk's ability to say "
+                "why these candidates were dropped. Recorded per symbol."
+            ),
+            paid_retry=True,
+            details={"symbols": still},
+            owner_consequence=(
+                "NOTHING was bought, sold or held differently because of this — "
+                "the decision itself was already made and stands. What is "
+                "missing is the desk's account of why it passed on these names."
+            ),
         ),
-        paid_retry=True, details={"symbols": still},
-        owner_consequence=(
-            "NOTHING was bought, sold or held differently because of this — "
-            "the decision itself was already made and stands. What is "
-            "missing is the desk's account of why it passed on these names."
-        ),
-    ))
+    )
     # Mechanical-heal bookkeeping, so a reader can tell a session where the
     # seat answered from one where the code recovered the answer.
     if second.accounted:
-        _record_heal_safely(pipeline, ctx, HealResult(
-            seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_MECHANICAL,
-            reason=(
-                f"{len(second.accounted)} candidate(s) accounted for after "
-                "the re-ask"
+        _record_heal_safely(
+            pipeline,
+            ctx,
+            HealResult(
+                seat=_PM_ACCOUNTING_SEAT,
+                outcome=HEAL_MECHANICAL,
+                reason=(f"{len(second.accounted)} candidate(s) accounted for after the re-ask"),
+                mechanical=True,
+                paid_retry=True,
+                usable=True,
             ),
-            mechanical=True, paid_retry=True, usable=True,
-        ), alert=False)
+            alert=False,
+        )
 
 
 def _record_heal_safely(pipeline, ctx, result, alert: bool = True) -> None:

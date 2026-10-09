@@ -92,9 +92,13 @@ SCOPED_PATHS: tuple[str, ...] = (
     # defines no module-level numeric constant (see the docstring note this
     # entry used to require); scoping it adds nothing today but stops a
     # future one arriving unseen.
-    "src/execution/broker.py", "src/execution/broker_parts",
-    "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
-    "src/coverage_watchdog.py", "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
+    "src/execution/broker.py",
+    "src/execution/broker_parts",
+    "src/execution/stop_repair.py",
+    "src/execution/order_gates.py",
+    "src/execution/order_idempotency.py",
+    "src/coverage_watchdog.py",
+    "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
     "src/coverage_watchdog_parts",  # verbatim lifts out of coverage_watchdog.py
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
@@ -102,23 +106,45 @@ SCOPED_PATHS: tuple[str, ...] = (
     # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
-    "src/pipeline.py", "src/pipeline_parts",
-    "src/pipeline_delever.py", "src/delever/forced.py", "src/delever/ladder.py", "src/delever/conviction.py",
-    "src/delever/enforce.py", "src/delever/trims.py", "src/delever/risk_number.py",
+    "src/pipeline.py",
+    "src/pipeline_parts",
+    "src/pipeline_delever.py",
+    "src/delever/forced.py",
+    "src/delever/ladder.py",
+    "src/delever/conviction.py",
+    "src/delever/enforce.py",
+    "src/delever/trims.py",
+    "src/delever/risk_number.py",
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
-    "src/pipeline_exits.py", "src/exits/exit_records.py", "src/exits_parts",  # the trail cooldown lifted verbatim 2026-10-04
+    "src/pipeline_exits.py",
+    "src/exits/exit_records.py",
+    "src/exits_parts",  # the trail cooldown lifted verbatim 2026-10-04
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
     # 2026-10-04: the intraday bodies are parts under src/intraday/; the directory entry covers them all.
-    "src/pipeline_intraday.py", "src/intraday",
+    "src/pipeline_intraday.py",
+    "src/intraday",
     # 2026-10-01, board item 210 step 6: the universe-admission cluster --
     # the external-nomination gates, the screen and its admission -- moved
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py", "src/prompt_facts/decisions.py", "src/prompt_facts/projected.py", "src/prompt_facts/watchlist.py", "src/prompt_facts/heat.py", "src/prompt_facts/pm_facts.py",
+    "src/pipeline_prompt_facts.py",
+    "src/pipeline_prompt_facts_pure.py",
+    "src/pipeline_prompt_facts_review.py",
+    "src/prompt_facts/missed_ops_signals.py",
+    "src/prompt_facts/review/grading.py",
+    "src/prompt_facts/review/exits.py",
+    "src/prompt_facts/review/calibration.py",
+    "src/prompt_facts/review/blocked.py",
+    "src/prompt_facts/review/replay.py",
+    "src/prompt_facts/decisions.py",
+    "src/prompt_facts/projected.py",
+    "src/prompt_facts/watchlist.py",
+    "src/prompt_facts/heat.py",
+    "src/prompt_facts/pm_facts.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
@@ -126,7 +152,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # coverage, repair, protected sells, write-ahead restore, the fill and
     # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
     # its new address so its numbers stay under the guard.
-    "src/pipeline_protection.py", "src/protection/protected_sell.py", "src/protection/reprotect_records.py",
+    "src/pipeline_protection.py",
+    "src/protection/protected_sell.py",
+    "src/protection/reprotect_records.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
     # here is LLM plumbing (timeouts, retries, token budgets) that is
@@ -156,8 +184,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/backtest/engine.py",
     # 2026-10-05: four offline research scripts (the level sweep, its volatility-clustered control, the
     # minimum-stop sweep and the noise-band holding scan); each site is ledgered so none hides unseen.
-    "ops/research/item55_level_sweep.py", "ops/research/item55_volclustered_control.py",
-    "ops/research/min_stop_atr_sweep.py", "ops/research/noise_band_holding_scaling.py",
+    "ops/research/item55_level_sweep.py",
+    "ops/research/item55_volclustered_control.py",
+    "ops/research/min_stop_atr_sweep.py",
+    "ops/research/noise_band_holding_scaling.py",
     # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
     # sizing mirror, and the CI shard weights. Scoped so each number is
     # ledgered with the proof that it reaches no order.
@@ -166,7 +196,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "ops/model_policy/deterministic_selection.py",
     "scripts/ci_shard.py",
     # 2026-10-08: the restored trend-alignment research harness (board item 75); offline, reaches no order.
-    "scripts/trend_alignment/analysis.py", "scripts/trend_alignment/data.py",
+    "scripts/trend_alignment/analysis.py",
+    "scripts/trend_alignment/data.py",
     # 2026-10-05 numbers sweep 3: the news-verdict model and the company-profile
     # and market-data fetch modules. Scoped so each number is ledgered with the evidence
     # of whether it reaches a trade decision.

@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass, field
 from src.config import RiskConfig
 from src.models import TradeDecision, Position, AnalystVerdict
+
 # The leverage table and the two multiplier functions now live in
 # `src.quantities` — a dependency-free module OUTSIDE `src.risk`, so
 # `src/api/` (forbidden by tests/test_api_safety.py from importing the risk
@@ -20,12 +21,16 @@ from src.quantities import (
     net_exposure_pct,
     net_exposure_usd,
 )
+
 # The gross ceiling and its de-levering ladder live in `src.risk.gross_ladder`,
 # a leaf module (it imports nothing from this one). Imported here at the TOP,
 # not in the mirror block at the end, because `GrossCeiling` is used in class
 # annotations below; the other names are re-exported for existing callers.
 from src.risk.gross_ladder import (  # noqa: F401
-    GROSS_LADDER, GROSS_LADDER_ALERT_PCT, GrossCeiling, resolve_gross_ceiling,
+    GROSS_LADDER,
+    GROSS_LADDER_ALERT_PCT,
+    GrossCeiling,
+    resolve_gross_ceiling,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,15 +120,19 @@ def signed_source_score(
     composite methodology counts only agreers: a disagreeing input enters a
     composite as a negative number in a signed sum, and that is what this is.
     """
-    aligned_ignored = frozenset(ignored_sources or ()) | frozenset(
-        non_corroborating_sources or ()
-    )
+    aligned_ignored = frozenset(ignored_sources or ()) | frozenset(non_corroborating_sources or ())
     return SEAT_WEIGHT * (
         count_aligned_sources(
-            symbol, sources, direction, ignored_sources=aligned_ignored,
+            symbol,
+            sources,
+            direction,
+            ignored_sources=aligned_ignored,
         )
         - count_opposing_sources(
-            symbol, sources, direction, ignored_sources=ignored_sources,
+            symbol,
+            sources,
+            direction,
+            ignored_sources=ignored_sources,
         )
     )
 
@@ -172,7 +181,10 @@ HARD_BLOCK_RULES = {
 
 
 def distance_to_forced_liquidation_pct(
-    gross: float, equity: float, *, maintenance_margin_pct: float = 25.0,
+    gross: float,
+    equity: float,
+    *,
+    maintenance_margin_pct: float = 25.0,
 ) -> float | None:
     """How far, in percent, the book could fall before the broker liquidates.
 
@@ -228,6 +240,7 @@ DESK_INVESTED_TARGET_PCT = 100.0
 @dataclass
 class GrossCeilingOutcome:
     """What `apply_gross_ceiling` did, in the order it did it."""
+
     decisions: list = field(default_factory=list)
     #: Engine-authored SELL / COVER orders. Empty unless the HELD book alone
     #: is over the ceiling.
@@ -320,7 +333,8 @@ def apply_gross_ceiling(
     contradicting itself.
     """
     out = GrossCeilingOutcome(
-        decisions=list(decisions or []), ceiling=ceiling,
+        decisions=list(decisions or []),
+        ceiling=ceiling,
     )
     positions = list(positions or [])
     park = (cash_park_symbol or "").strip().upper()
@@ -347,27 +361,25 @@ def apply_gross_ceiling(
                     f"position opens on an unreadable account."
                 )
                 out.blocked_detail[decision.symbol] = detail
-                out.notes.append(
-                    f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}"
-                )
+                out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
         if out.notes:
             logger.warning(
-                "Gross-exposure ceiling: equity unusable (%s) — refused %d "
-                "new position(s)", equity, len(out.blocked),
+                "Gross-exposure ceiling: equity unusable (%s) — refused %d new position(s)",
+                equity,
+                len(out.blocked),
             )
         return out
 
     equity = float(equity)
     out.ceiling_usd = ceiling.ceiling_x * equity
     unmeasurable = unmeasurable_gross_symbols(
-        positions, cash_park_symbol=park or None,
+        positions,
+        cash_park_symbol=park or None,
     )
     out.measurable = not unmeasurable
     out.held_gross = gross_exposure(positions, cash_park_symbol=park or None)
 
-    positions_by_symbol = {
-        str(getattr(p, "symbol", "") or "").strip().upper(): p for p in positions
-    }
+    positions_by_symbol = {str(getattr(p, "symbol", "") or "").strip().upper(): p for p in positions}
 
     # --- STEP 1: planned exits shrink the book before anything is judged ---
     exit_relief: dict[str, float] = {}
@@ -388,18 +400,17 @@ def apply_gross_ceiling(
         position_gross = abs(float(market_value)) * _gross_multiplier(symbol)
         fraction = min(100.0, float(decision.allocation_pct)) / 100.0
         exit_relief[symbol] = max(
-            exit_relief.get(symbol, 0.0), position_gross * fraction,
+            exit_relief.get(symbol, 0.0),
+            position_gross * fraction,
         )
     out.held_gross_after_exits = max(
-        0.0, out.held_gross - sum(exit_relief.values()),
+        0.0,
+        out.held_gross - sum(exit_relief.values()),
     )
 
     # --- STEP 2: BLOCK NEW EXPOSURE FIRST ---------------------------------
     headroom = max(0.0, out.ceiling_usd - out.held_gross_after_exits)
-    entries = [
-        d for d in out.decisions
-        if d.action in ("BUY", "SHORT") and d.allocation_pct > 0
-    ]
+    entries = [d for d in out.decisions if d.action in ("BUY", "SHORT") and d.allocation_pct > 0]
     # Largest commitment first, symbol as a deterministic tie-break — the
     # same rationing order `construct_orders` already sorts its BUYs into,
     # so highest conviction gets the scarce headroom.
@@ -438,25 +449,19 @@ def apply_gross_ceiling(
         #
         # Round DOWN to 2dp so the granted size can never land back above the
         # headroom that permitted it.
-        after = math.floor(
-            (available / (equity * multiplier) * 100.0) * 100.0
-        ) / 100.0
+        after = math.floor((available / (equity * multiplier) * 100.0) * 100.0) / 100.0
         if after <= 0:
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
-            detail = (
-                f"{reason}, and no headroom is left under the ceiling. "
-                f"{ceiling.reason}"
-            )
+            detail = f"{reason}, and no headroom is left under the ceiling. {ceiling.reason}"
             out.blocked_detail[decision.symbol] = detail
             out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
             continue
         decision.allocation_pct = after
         decision.reasoning = (
-            decision.reasoning
-            + f" [risk engine: {before:.2f}% cut to {after:.2f}% — "
-              f"{GROSS_EXPOSURE_RULE} ceiling {ceiling.ceiling_x:.1f}x equity. "
-              f"Deterministic, not PM inconsistency.]"
+            decision.reasoning + f" [risk engine: {before:.2f}% cut to {after:.2f}% — "
+            f"{GROSS_EXPOSURE_RULE} ceiling {ceiling.ceiling_x:.1f}x equity. "
+            f"Deterministic, not PM inconsistency.]"
         )[:800]
         granted += equity * (after / 100.0) * multiplier
         out.notes.append(
@@ -479,7 +484,8 @@ def apply_gross_ceiling(
                 "Gross-exposure ceiling: book may be over its %.1fx ceiling but "
                 "%s returned an unusable market value — refusing to trim on a "
                 "broken snapshot (new exposure is already blocked)",
-                ceiling.ceiling_x, ", ".join(unmeasurable),
+                ceiling.ceiling_x,
+                ", ".join(unmeasurable),
             )
         return out
     if over <= 1e-6:
@@ -500,10 +506,7 @@ def apply_gross_ceiling(
         market_value = float(getattr(p, "market_value", 0.0) or 0.0)
         if not math.isfinite(market_value) or market_value == 0:
             continue
-        position_gross = (
-            abs(market_value) * _gross_multiplier(symbol)
-            - exit_relief.get(symbol, 0.0)
-        )
+        position_gross = abs(market_value) * _gross_multiplier(symbol) - exit_relief.get(symbol, 0.0)
         if position_gross <= 0:
             continue
         candidates.append((p, symbol, position_gross))
@@ -565,7 +568,9 @@ def apply_gross_ceiling(
                 "Gross-exposure ceiling: $%.0f of breach remains, less than "
                 "the minimum trim of %s ($%.0f) — stopping rather than selling "
                 "a second name to chase a rounding residue",
-                take, symbol, position_gross * 0.01,
+                take,
+                symbol,
+                position_gross * 0.01,
             )
             break
         fraction_pct = min(100.0, max(1.0, round(take / position_gross * 100, 1)))
@@ -599,8 +604,11 @@ def apply_gross_ceiling(
         logger.warning(
             "Gross-exposure ceiling: held book $%.0f over the $%.0f ceiling "
             "(%.1fx equity) — de-levering %d position(s): %s",
-            out.held_gross_after_exits, out.ceiling_usd, ceiling.ceiling_x,
-            len(out.trims), ", ".join(t.symbol for t in out.trims),
+            out.held_gross_after_exits,
+            out.ceiling_usd,
+            ceiling.ceiling_x,
+            len(out.trims),
+            ", ".join(t.symbol for t in out.trims),
         )
     return out
 
@@ -617,36 +625,40 @@ class RiskRuleEngine:
     def __init__(self, config: RiskConfig):
         self.config = config
 
-    def check(self, decision: TradeDecision, positions: list[Position],
-              total_value: float,
-              pending_investment: float = 0.0,
-              # Spec §12.2: keyed by `(sector, side)`, not by sector alone —
-              # a pending SHORT must not consume the same sector's LONG
-              # budget. A plain-`str` key here is now a bug, and raises
-              # nothing silently only because `.get()` on a tuple key simply
-              # misses it; `accumulate_pending_sector` is the writer.
-              pending_sector_investment: dict[tuple[str, str], float] | None = None,
-              pending_symbol_investment: dict[str, float] | None = None,
-              correlation_matrix: dict[str, dict[str, float]] | None = None,
-              max_correlated_cluster_pct: float = 50.0,
-              cash: float | None = None,
-              pending_cash_outflow: float = 0.0,
-              # --- Spec §11.2 ---------------------------------------------
-              # The EXECUTION half of the gross-exposure ceiling. The sizing
-              # half lives in `PortfolioConstructor`, which shrinks orders to
-              # fit; this is the hard block for anything that reaches the
-              # engine without that sizing (a legacy notional target, an
-              # agent-authored modification, any future caller) — exactly the
-              # relationship `max_position_pct` already has with its
-              # constructor clamp.
-              #
-              # `gross_ceiling` is the ladder-resolved ceiling for this
-              # session (`resolve_gross_ceiling`). None falls back to the
-              # configured cap with no drawdown applied, so a caller that
-              # forgets it still gets a ceiling rather than none.
-              gross_ceiling: "GrossCeiling | None" = None,
-              pending_gross_investment: float = 0.0,
-              cash_park_symbol: str | None = None) -> list[RiskViolation]:
+    def check(
+        self,
+        decision: TradeDecision,
+        positions: list[Position],
+        total_value: float,
+        pending_investment: float = 0.0,
+        # Spec §12.2: keyed by `(sector, side)`, not by sector alone —
+        # a pending SHORT must not consume the same sector's LONG
+        # budget. A plain-`str` key here is now a bug, and raises
+        # nothing silently only because `.get()` on a tuple key simply
+        # misses it; `accumulate_pending_sector` is the writer.
+        pending_sector_investment: dict[tuple[str, str], float] | None = None,
+        pending_symbol_investment: dict[str, float] | None = None,
+        correlation_matrix: dict[str, dict[str, float]] | None = None,
+        max_correlated_cluster_pct: float = 50.0,
+        cash: float | None = None,
+        pending_cash_outflow: float = 0.0,
+        # --- Spec §11.2 ---------------------------------------------
+        # The EXECUTION half of the gross-exposure ceiling. The sizing
+        # half lives in `PortfolioConstructor`, which shrinks orders to
+        # fit; this is the hard block for anything that reaches the
+        # engine without that sizing (a legacy notional target, an
+        # agent-authored modification, any future caller) — exactly the
+        # relationship `max_position_pct` already has with its
+        # constructor clamp.
+        #
+        # `gross_ceiling` is the ladder-resolved ceiling for this
+        # session (`resolve_gross_ceiling`). None falls back to the
+        # configured cap with no drawdown applied, so a caller that
+        # forgets it still gets a ceiling rather than none.
+        gross_ceiling: "GrossCeiling | None" = None,
+        pending_gross_investment: float = 0.0,
+        cash_park_symbol: str | None = None,
+    ) -> list[RiskViolation]:
         # D10 (Stage 3): a COVER can never be hard-blocked, mirroring the
         # deliberate asymmetry already used for exits — entries fail
         # closed, exits fail open, because being unable to close a
@@ -664,17 +676,20 @@ class RiskRuleEngine:
         # blocks the BUY instead. The empty list reserved exclusively for
         # "checked, found no violations" semantics.
         import math
+
         if not math.isfinite(total_value) or total_value <= 0:
-            return [RiskViolation(
-                rule="max_total_position_pct",   # in HARD_BLOCK_RULES
-                message=(
-                    f"total_value={total_value} is not a valid equity figure "
-                    f"(broker glitch or fresh account) — refusing to risk-check "
-                    f"BUY for {decision.symbol}; blocking until next snapshot"
-                ),
-                value=0.0,
-                limit=0.0,
-            )]
+            return [
+                RiskViolation(
+                    rule="max_total_position_pct",  # in HARD_BLOCK_RULES
+                    message=(
+                        f"total_value={total_value} is not a valid equity figure "
+                        f"(broker glitch or fresh account) — refusing to risk-check "
+                        f"BUY for {decision.symbol}; blocking until next snapshot"
+                    ),
+                    value=0.0,
+                    limit=0.0,
+                )
+            ]
 
         # A single non-finite position market_value poisons every sum below.
         # NaN comparisons are all False, so `sector_pct > cap` and
@@ -685,37 +700,41 @@ class RiskRuleEngine:
         # mirroring the total_value guard above: no risk-check, no BUY.
         bad_mv = [p.symbol for p in positions if not math.isfinite(p.market_value)]
         if bad_mv:
-            return [RiskViolation(
-                rule="max_total_position_pct",   # in HARD_BLOCK_RULES
-                message=(
-                    f"non-finite market_value for {', '.join(sorted(bad_mv))} — "
-                    f"exposure / sector caps cannot be computed; refusing to "
-                    f"risk-check BUY for {decision.symbol}; blocking until the "
-                    f"next clean snapshot"
-                ),
-                value=0.0,
-                limit=0.0,
-            )]
+            return [
+                RiskViolation(
+                    rule="max_total_position_pct",  # in HARD_BLOCK_RULES
+                    message=(
+                        f"non-finite market_value for {', '.join(sorted(bad_mv))} — "
+                        f"exposure / sector caps cannot be computed; refusing to "
+                        f"risk-check BUY for {decision.symbol}; blocking until the "
+                        f"next clean snapshot"
+                    ),
+                    value=0.0,
+                    limit=0.0,
+                )
+            ]
 
         # Non-finite cash disables the cash_only comparison the same silent
         # way a NaN market_value disabled the caps (audit round 2:
         # `NaN < 0` is False, so every BUY passed). Fail closed.
         if cash is not None and not math.isfinite(cash):
-            return [RiskViolation(
-                rule="max_total_position_pct",   # in HARD_BLOCK_RULES
-                message=(
-                    f"non-finite cash={cash} — cash_only cannot be evaluated; "
-                    f"refusing to risk-check BUY for {decision.symbol}; "
-                    f"blocking until the next clean snapshot"
-                ),
-                value=0.0,
-                limit=0.0,
-            )]
+            return [
+                RiskViolation(
+                    rule="max_total_position_pct",  # in HARD_BLOCK_RULES
+                    message=(
+                        f"non-finite cash={cash} — cash_only cannot be evaluated; "
+                        f"refusing to risk-check BUY for {decision.symbol}; "
+                        f"blocking until the next clean snapshot"
+                    ),
+                    value=0.0,
+                    limit=0.0,
+                )
+            ]
 
         violations = []
         is_short = decision.action == "SHORT"
         signed_mul = _effective_multiplier(decision.symbol)  # net direction
-        gross_mul = _gross_multiplier(decision.symbol)       # size magnitude
+        gross_mul = _gross_multiplier(decision.symbol)  # size magnitude
         new_investment = total_value * (decision.allocation_pct / 100)
         # A SHORT moves net exposure the OPPOSITE way a BUY of the same
         # symbol would (it adds negative, not positive, directional
@@ -744,15 +763,19 @@ class RiskRuleEngine:
             # function so the cap and the numbers the PM sizes against
             # cannot drift apart again.
             position_pct = weight_pct_of(
-                current_symbol_raw + new_investment, decision.symbol, total_value,
+                current_symbol_raw + new_investment,
+                decision.symbol,
+                total_value,
             )
             if position_pct > self.config.max_position_pct:
-                violations.append(RiskViolation(
-                    rule="max_position_pct",
-                    message=f"{decision.symbol} position would be {position_pct:.1f}% and exceed max {self.config.max_position_pct}%",
-                    value=position_pct,
-                    limit=self.config.max_position_pct,
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule="max_position_pct",
+                        message=f"{decision.symbol} position would be {position_pct:.1f}% and exceed max {self.config.max_position_pct}%",
+                        value=position_pct,
+                        limit=self.config.max_position_pct,
+                    )
+                )
 
         # The SAME single-position cap for a short (owner decision
         # 2026-09-17: shorts carry the same limits as longs). Same rule name
@@ -760,10 +783,7 @@ class RiskRuleEngine:
         # drift apart; only the measurement is direction-aware. Never reached
         # for a COVER (exempted at the top of this method).
         if is_short:
-            current_short_raw = sum(
-                p.market_value for p in positions
-                if p.symbol == decision.symbol and p.qty < 0
-            )
+            current_short_raw = sum(p.market_value for p in positions if p.symbol == decision.symbol and p.qty < 0)
             # `pending_symbol_investment` (like `new_investment`) is always
             # an UNSIGNED dollar magnitude — see the accumulation in
             # `TradingPipeline._filter_hard_risk_decisions`, the same
@@ -773,18 +793,21 @@ class RiskRuleEngine:
             pending_same_symbol = (pending_symbol_investment or {}).get(decision.symbol, 0.0)
             position_pct = weight_pct_of(
                 abs(current_short_raw) + pending_same_symbol + new_investment,
-                decision.symbol, total_value,
+                decision.symbol,
+                total_value,
             )
             if position_pct > self.config.max_position_pct:
-                violations.append(RiskViolation(
-                    rule="max_position_pct",
-                    message=(
-                        f"{decision.symbol} short would be {position_pct:.1f}% "
-                        f"and exceed max {self.config.max_position_pct}%"
-                    ),
-                    value=position_pct,
-                    limit=self.config.max_position_pct,
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule="max_position_pct",
+                        message=(
+                            f"{decision.symbol} short would be {position_pct:.1f}% "
+                            f"and exceed max {self.config.max_position_pct}%"
+                        ),
+                        value=position_pct,
+                        limit=self.config.max_position_pct,
+                    )
+                )
 
         # 1c. Spec §11.2 — the GROSS-exposure ceiling. HARD BLOCK (in
         # HARD_BLOCK_RULES, above in this file).
@@ -799,33 +822,32 @@ class RiskRuleEngine:
         gross_ceiling_x = (
             _positive_float(gross_ceiling.ceiling_x)
             if isinstance(gross_ceiling, GrossCeiling)
-            else _positive_float(
-                getattr(self.config, "max_gross_exposure_x", None)
-            )
+            else _positive_float(getattr(self.config, "max_gross_exposure_x", None))
         )
         if gross_ceiling_x > 0:
             held_gross = gross_exposure(
-                positions, cash_park_symbol=cash_park_symbol,
+                positions,
+                cash_park_symbol=cash_park_symbol,
             )
             projected_gross = held_gross + pending_gross_investment + gross_new
             gross_x = projected_gross / total_value
             if gross_x > gross_ceiling_x + 1e-9:
-                ladder_note = (
-                    f" {gross_ceiling.reason}" if gross_ceiling is not None else ""
+                ladder_note = f" {gross_ceiling.reason}" if gross_ceiling is not None else ""
+                violations.append(
+                    RiskViolation(
+                        rule=GROSS_EXPOSURE_RULE,
+                        message=(
+                            f"{decision.symbol} would put the book at "
+                            f"{gross_x:.2f}x equity in gross exposure "
+                            f"(${projected_gross:,.0f} owned against "
+                            f"${total_value:,.0f} of equity), over the "
+                            f"{gross_ceiling_x:.2f}x ceiling. Parked cash is not "
+                            f"counted.{ladder_note}"
+                        ),
+                        value=round(gross_x, 4),
+                        limit=round(gross_ceiling_x, 4),
+                    )
                 )
-                violations.append(RiskViolation(
-                    rule=GROSS_EXPOSURE_RULE,
-                    message=(
-                        f"{decision.symbol} would put the book at "
-                        f"{gross_x:.2f}x equity in gross exposure "
-                        f"(${projected_gross:,.0f} owned against "
-                        f"${total_value:,.0f} of equity), over the "
-                        f"{gross_ceiling_x:.2f}x ceiling. Parked cash is not "
-                        f"counted.{ladder_note}"
-                    ),
-                    value=round(gross_x, 4),
-                    limit=round(gross_ceiling_x, 4),
-                ))
 
         # 2. Total net exposure limit — signed, so long+short hedges cancel.
         #
@@ -841,7 +863,8 @@ class RiskRuleEngine:
         # whole job was to report it. Non-finite market values are already
         # hard-blocked above, so `book_exposure`'s skip cannot hide one here.
         projected_book = book_exposure(
-            positions, total_value,
+            positions,
+            total_value,
             pending_net_usd=pending_investment + signed_new,
         )
         total_pct = abs(projected_book.net_pct)
@@ -850,21 +873,25 @@ class RiskRuleEngine:
         # cannot import src.risk. A guard test asserts the two agree, so the
         # bar and the ceiling it is drawn against cannot drift apart.
         if total_pct > self.config.max_total_position_pct:
-            violations.append(RiskViolation(
-                rule="max_total_position_pct",
-                message=f"Net exposure {total_pct:.1f}% would exceed max {self.config.max_total_position_pct}%",
-                value=total_pct,
-                limit=self.config.max_total_position_pct,
-            ))
+            violations.append(
+                RiskViolation(
+                    rule="max_total_position_pct",
+                    message=f"Net exposure {total_pct:.1f}% would exceed max {self.config.max_total_position_pct}%",
+                    value=total_pct,
+                    limit=self.config.max_total_position_pct,
+                )
+            )
 
         # 4. Stop loss required
         if self.config.require_stop_loss and decision.stop_loss <= 0:
-            violations.append(RiskViolation(
-                rule="require_stop_loss",
-                message=f"{decision.symbol} has no stop loss set",
-                value=decision.stop_loss,
-                limit=0,
-            ))
+            violations.append(
+                RiskViolation(
+                    rule="require_stop_loss",
+                    message=f"{decision.symbol} has no stop loss set",
+                    value=decision.stop_loss,
+                    limit=0,
+                )
+            )
 
         # 4b. Correlation cluster (advisory) — catches the "all-AI" concentration problem
         # that sector caps miss. If the proposed BUY plus the held positions that sit in
@@ -874,6 +901,7 @@ class RiskRuleEngine:
         # cutoff any more; the old 0.7 was unsourceable and is removed, not ratified.
         if correlation_matrix:
             from src.data.correlation import cluster_peers
+
             held_symbols = [p.symbol for p in positions]
             peers = cluster_peers(decision.symbol, held_symbols, correlation_matrix)
             if peers:
@@ -892,23 +920,24 @@ class RiskRuleEngine:
                 # with itself, so it belongs in its own cluster total.
                 cluster_symbols = set(peers) | {decision.symbol}
                 peer_value = sum(
-                    p.market_value * _gross_multiplier(p.symbol)
-                    for p in positions if p.symbol in cluster_symbols
+                    p.market_value * _gross_multiplier(p.symbol) for p in positions if p.symbol in cluster_symbols
                 )
                 cluster_pct = (peer_value + gross_new) / total_value * 100
                 if cluster_pct > max_correlated_cluster_pct:
-                    violations.append(RiskViolation(
-                        rule="correlation_cluster",
-                        message=(
-                            f"{decision.symbol} + correlated holdings [{', '.join(peers)}] "
-                            f"would total {cluster_pct:.0f}% of book, exceeding "
-                            f"{max_correlated_cluster_pct:.0f}% cluster cap (advisory). "
-                            f"One correlation cluster by the book's own structure "
-                            f"(correlation-distance tree, cut at its widest gap)."
-                        ),
-                        value=cluster_pct,
-                        limit=max_correlated_cluster_pct,
-                    ))
+                    violations.append(
+                        RiskViolation(
+                            rule="correlation_cluster",
+                            message=(
+                                f"{decision.symbol} + correlated holdings [{', '.join(peers)}] "
+                                f"would total {cluster_pct:.0f}% of book, exceeding "
+                                f"{max_correlated_cluster_pct:.0f}% cluster cap (advisory). "
+                                f"One correlation cluster by the book's own structure "
+                                f"(correlation-distance tree, cut at its widest gap)."
+                            ),
+                            value=cluster_pct,
+                            limit=max_correlated_cluster_pct,
+                        )
+                    )
 
         # 4c. Cash-only policy — when allow_margin is False, no BUY may spend more
         # than the cash remaining after prior BUYs in this session. `cash` is the
@@ -925,16 +954,18 @@ class RiskRuleEngine:
         if not self.config.allow_margin and cash is not None and not is_short:
             projected_cash = cash - pending_cash_outflow - new_investment
             if projected_cash < 0:
-                violations.append(RiskViolation(
-                    rule="cash_only",
-                    message=(
-                        f"{decision.symbol} BUY for ${new_investment:,.0f} would "
-                        f"spend beyond available cash (cash=${cash:,.0f}, pending "
-                        f"BUYs=${pending_cash_outflow:,.0f}); margin is disabled"
-                    ),
-                    value=abs(projected_cash),
-                    limit=max(cash - pending_cash_outflow, 0.0),
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule="cash_only",
+                        message=(
+                            f"{decision.symbol} BUY for ${new_investment:,.0f} would "
+                            f"spend beyond available cash (cash=${cash:,.0f}, pending "
+                            f"BUYs=${pending_cash_outflow:,.0f}); margin is disabled"
+                        ),
+                        value=abs(projected_cash),
+                        limit=max(cash - pending_cash_outflow, 0.0),
+                    )
+                )
 
         # 5. Sector concentration — GROSS (unsigned) and SIDE-SPLIT (spec §12.2).
         #
@@ -969,13 +1000,15 @@ class RiskRuleEngine:
         # pre-shrunk, not about whether the gate can be silently switched
         # off) — only this call site, the deterministic gate, is changed.
         from src.sector_reference import _get_sector, _sector_resolution_status_for
+
         new_sector = _get_sector(decision.symbol)
         if new_sector:
             side = decision_side(decision.action)
             held_by_side = sector_side_gross(positions, include_unknown=True)
             sector_value = held_by_side.get((new_sector, side), 0.0)
             sector_value += (pending_sector_investment or {}).get(
-                (new_sector, side), 0.0,
+                (new_sector, side),
+                0.0,
             )
             sector_value += gross_new
             sector_pct = sector_value / total_value * 100
@@ -990,20 +1023,22 @@ class RiskRuleEngine:
             # (`sector_size_scale`); a sector over its target is information
             # about the book, not a verdict on this idea.
             if sector_pct > self.config.max_sector_pct:
-                violations.append(RiskViolation(
-                    rule="max_sector_pct",
-                    message=(
-                        f"Sector '{sector_display}' {side_label} exposure would be "
-                        f"{sector_pct:.1f}%, over the "
-                        f"{self.config.max_sector_pct}% concentration target "
-                        f"(advisory — size was scaled for crowding, not refused; "
-                        f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%). "
-                        f"Long and short budgets are separate (§12.2) — the "
-                        f"other side of this sector is not netted against it"
-                    ),
-                    value=sector_pct,
-                    limit=self.config.max_sector_pct,
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule="max_sector_pct",
+                        message=(
+                            f"Sector '{sector_display}' {side_label} exposure would be "
+                            f"{sector_pct:.1f}%, over the "
+                            f"{self.config.max_sector_pct}% concentration target "
+                            f"(advisory — size was scaled for crowding, not refused; "
+                            f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%). "
+                            f"Long and short budgets are separate (§12.2) — the "
+                            f"other side of this sector is not netted against it"
+                        ),
+                        value=sector_pct,
+                        limit=self.config.max_sector_pct,
+                    )
+                )
             # The HARD BLOCK. Same allowance function the constructor sized
             # against, so an order built by the constructor never trips this
             # — exactly the relationship `max_position_pct` already has with
@@ -1028,18 +1063,20 @@ class RiskRuleEngine:
             # here. Blocking on float dust would resurrect the veto this
             # section exists to remove.
             if gross_new_pct > allowance_pct + 1e-6:
-                violations.append(RiskViolation(
-                    rule="max_sector_hard_pct",
-                    message=(
-                        f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
-                        f"the {side_label} side of sector '{sector_display}', already at "
-                        f"{prior_sector_pct:.1f}%. Crowding permits at most "
-                        f"{allowance_pct:.2f}% more "
-                        f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
-                    ),
-                    value=gross_new_pct,
-                    limit=allowance_pct,
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule="max_sector_hard_pct",
+                        message=(
+                            f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
+                            f"the {side_label} side of sector '{sector_display}', already at "
+                            f"{prior_sector_pct:.1f}%. Crowding permits at most "
+                            f"{allowance_pct:.2f}% more "
+                            f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
+                        ),
+                        value=gross_new_pct,
+                        limit=allowance_pct,
+                    )
+                )
 
             # Loud-failure requirement (2026-09-01): a symbol resolving to
             # "Unknown" must never pass silently. Advisory (never in
@@ -1074,18 +1111,20 @@ class RiskRuleEngine:
                 else:
                     alert_rule = "sector_unresolved"
                     reason = f"{decision.symbol}: sector did not resolve."
-                violations.append(RiskViolation(
-                    rule=alert_rule,
-                    message=(
-                        f"{reason} Treated as constrained in the pooled 'Unknown' "
-                        f"sector bucket ({sector_pct:.1f}% {side_label} of book) and "
-                        f"checked against both max_sector_pct and "
-                        f"max_sector_hard_pct — NOT exempt. This is the failure "
-                        f"mode that used to switch the sector cap off silently."
-                    ),
-                    value=sector_pct,
-                    limit=self.config.max_sector_pct,
-                ))
+                violations.append(
+                    RiskViolation(
+                        rule=alert_rule,
+                        message=(
+                            f"{reason} Treated as constrained in the pooled 'Unknown' "
+                            f"sector bucket ({sector_pct:.1f}% {side_label} of book) and "
+                            f"checked against both max_sector_pct and "
+                            f"max_sector_hard_pct — NOT exempt. This is the failure "
+                            f"mode that used to switch the sector cap off silently."
+                        ),
+                        value=sector_pct,
+                        limit=self.config.max_sector_pct,
+                    )
+                )
 
         return violations
 
@@ -1101,23 +1140,44 @@ class RiskRuleEngine:
 # that the engine above finds the names it calls. No part imports this module,
 # so there is no cycle. ONE mirror block, never two.
 from src.risk.sector_budget import (  # noqa: E402,F401
-    SECTOR_SIDE_LONG, SECTOR_SIDE_SHORT, position_side, decision_side,
-    sector_side_gross, accumulate_pending_sector, sector_side_weights,
-    sector_size_scale, sector_allowance_pct,
+    SECTOR_SIDE_LONG,
+    SECTOR_SIDE_SHORT,
+    position_side,
+    decision_side,
+    sector_side_gross,
+    accumulate_pending_sector,
+    sector_side_weights,
+    sector_size_scale,
+    sector_allowance_pct,
 )
 from src.risk.seat_agreement import (  # noqa: E402,F401
-    _BULLISH_STANCES, _BEARISH_STANCES, stance_is_aligned, _count_sources,
-    count_aligned_sources, count_opposing_sources, agreement_refuses_trade,
+    _BULLISH_STANCES,
+    _BEARISH_STANCES,
+    stance_is_aligned,
+    _count_sources,
+    count_aligned_sources,
+    count_opposing_sources,
+    agreement_refuses_trade,
 )
 from src.risk.unread_filing import (  # noqa: E402,F401
-    UNREAD_FILING_REASON_PREFIX, unread_filing_block_reason,
+    UNREAD_FILING_REASON_PREFIX,
+    unread_filing_block_reason,
 )
 from src.risk.conviction_bar import (  # noqa: E402,F401
-    OWN_BAR_REASON_PREFIX, _has_supported_directional_thesis,
-    _is_broadcast_macro_verdict, own_bar_block_reason, own_bar_opposition_reason,
+    OWN_BAR_REASON_PREFIX,
+    _has_supported_directional_thesis,
+    _is_broadcast_macro_verdict,
+    own_bar_block_reason,
+    own_bar_opposition_reason,
 )
 from src.risk.book_exposure import (  # noqa: E402,F401
-    _positive_float, peak_to_trough_pct, unmeasurable_gross_symbols,
-    gross_exposure, deployment_gap_band_pct, BookExposure, book_exposure,
-    weight_pct_of, position_weight_pct,
+    _positive_float,
+    peak_to_trough_pct,
+    unmeasurable_gross_symbols,
+    gross_exposure,
+    deployment_gap_band_pct,
+    BookExposure,
+    book_exposure,
+    weight_pct_of,
+    position_weight_pct,
 )

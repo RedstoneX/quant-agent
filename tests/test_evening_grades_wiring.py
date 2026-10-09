@@ -23,30 +23,54 @@ from tests.pipeline_factory import build_pipeline
 # DB persistence of grades
 # ---------------------------------------------------------------------------
 
+
 def test_save_evening_snapshot_persists_sell_and_buy_grades(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
     sell_grades = [
-        {"symbol": "GOOGL", "sell_date": "2026-04-18", "sell_price": 320.0,
-         "current_price": 327.0, "pct_move_since_sell": 2.2,
-         "grade": "premature", "reason": "uptrend intact"},
-        {"symbol": "XOM", "sell_date": "2026-04-18", "sell_price": 108.0,
-         "current_price": 106.0, "pct_move_since_sell": -1.8,
-         "grade": "correct", "reason": "ceasefire held"},
+        {
+            "symbol": "GOOGL",
+            "sell_date": "2026-04-18",
+            "sell_price": 320.0,
+            "current_price": 327.0,
+            "pct_move_since_sell": 2.2,
+            "grade": "premature",
+            "reason": "uptrend intact",
+        },
+        {
+            "symbol": "XOM",
+            "sell_date": "2026-04-18",
+            "sell_price": 108.0,
+            "current_price": 106.0,
+            "pct_move_since_sell": -1.8,
+            "grade": "correct",
+            "reason": "ceasefire held",
+        },
     ]
     buy_grades = [
-        {"symbol": "NVDA", "buy_date": "2026-04-17", "buy_price": 196.0,
-         "current_price": 210.0, "pct_move_since_buy": 7.1,
-         "grade": "correct", "reason": "capex thesis confirmed"},
+        {
+            "symbol": "NVDA",
+            "buy_date": "2026-04-17",
+            "buy_price": 196.0,
+            "current_price": 210.0,
+            "pct_move_since_buy": 7.1,
+            "grade": "correct",
+            "reason": "capex thesis confirmed",
+        },
     ]
 
     db.save_evening_snapshot(
-        date="2026-04-18", total_value=100_000, daily_pnl=800,
+        date="2026-04-18",
+        total_value=100_000,
+        daily_pnl=800,
         daily_return_pct=0.8,
-        tomorrow_outlook="bullish continuation", lessons="don't trim winners",
-        suggested_actions=["hold NVDA"], risk_rating="moderate",
-        tomorrow_bias="bullish", tomorrow_conviction="medium",
+        tomorrow_outlook="bullish continuation",
+        lessons="don't trim winners",
+        suggested_actions=["hold NVDA"],
+        risk_rating="moderate",
+        tomorrow_bias="bullish",
+        tomorrow_conviction="medium",
         tomorrow_key_risks=["FOMC"],
         sell_decisions_assessment="GOOGL premature; XOM correct",
         sell_grades=sell_grades,
@@ -57,6 +81,7 @@ def test_save_evening_snapshot_persists_sell_and_buy_grades(tmp_path):
     assert row is not None
     assert row["date"] == "2026-04-18"
     import json
+
     persisted_sell = json.loads(row["sell_grades_json"])
     persisted_buy = json.loads(row["buy_grades_json"])
     assert len(persisted_sell) == 2
@@ -73,22 +98,33 @@ def test_save_evening_snapshot_handles_pydantic_grades(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pyd_grade = SellGrade(
-        symbol="AAPL", sell_date="2026-04-18",
-        sell_price=180.0, current_price=185.0, pct_move_since_sell=2.8,
-        grade="premature", reason="uptrend still intact",
+        symbol="AAPL",
+        sell_date="2026-04-18",
+        sell_price=180.0,
+        current_price=185.0,
+        pct_move_since_sell=2.8,
+        grade="premature",
+        reason="uptrend still intact",
     )
 
     db.save_evening_snapshot(
-        date="2026-04-18", total_value=100_000, daily_pnl=0,
+        date="2026-04-18",
+        total_value=100_000,
+        daily_pnl=0,
         daily_return_pct=0.0,
-        tomorrow_outlook="x", lessons="x", suggested_actions=[],
-        risk_rating="low", tomorrow_bias="neutral",
-        tomorrow_conviction="medium", tomorrow_key_risks=[],
+        tomorrow_outlook="x",
+        lessons="x",
+        suggested_actions=[],
+        risk_rating="low",
+        tomorrow_bias="neutral",
+        tomorrow_conviction="medium",
+        tomorrow_key_risks=[],
         sell_decisions_assessment="",
         sell_grades=[pyd_grade],
     )
     row = db.get_latest_insights(before_date="2026-04-19")
     import json
+
     persisted = json.loads(row["sell_grades_json"])
     assert persisted[0]["symbol"] == "AAPL"
     assert persisted[0]["grade"] == "premature"
@@ -118,6 +154,7 @@ def test_legacy_insights_row_returns_empty_grades_when_column_missing(tmp_path):
 # Pipeline aggregation
 # ---------------------------------------------------------------------------
 
+
 def _pipeline_with_insights(rows: list[dict]):
     """Helper: a pipeline whose db.get_recent_insights returns the given rows."""
     pipeline = build_pipeline(db=MagicMock())
@@ -136,26 +173,35 @@ def test_trade_grade_summary_empty_when_no_insights():
 
 def test_trade_grade_summary_aggregates_counts():
     import json
-    pipeline = _pipeline_with_insights([
-        {
-            "date": "2026-04-18",
-            "sell_grades_json": json.dumps([
-                {"symbol": "GOOGL", "grade": "premature"},
-                {"symbol": "XOM", "grade": "correct"},
-            ]),
-            "buy_grades_json": json.dumps([
-                {"symbol": "NVDA", "grade": "correct"},
-            ]),
-        },
-        {
-            "date": "2026-04-17",
-            "sell_grades_json": json.dumps([
-                {"symbol": "GOOGL", "grade": "premature"},  # repeat offender
-                {"symbol": "AAPL", "grade": "wrong"},
-            ]),
-            "buy_grades_json": "[]",
-        },
-    ])
+
+    pipeline = _pipeline_with_insights(
+        [
+            {
+                "date": "2026-04-18",
+                "sell_grades_json": json.dumps(
+                    [
+                        {"symbol": "GOOGL", "grade": "premature"},
+                        {"symbol": "XOM", "grade": "correct"},
+                    ]
+                ),
+                "buy_grades_json": json.dumps(
+                    [
+                        {"symbol": "NVDA", "grade": "correct"},
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "sell_grades_json": json.dumps(
+                    [
+                        {"symbol": "GOOGL", "grade": "premature"},  # repeat offender
+                        {"symbol": "AAPL", "grade": "wrong"},
+                    ]
+                ),
+                "buy_grades_json": "[]",
+            },
+        ]
+    )
     summary = pipeline._build_trade_grade_summary(lookback_days=14)
     assert summary["n_sells"] == 4
     assert summary["sell_counts"]["premature"] == 2
@@ -170,10 +216,11 @@ def test_trade_grade_summary_aggregates_counts():
 def test_trade_grade_summary_ignores_malformed_json():
     """Defensive: a row with garbage in the JSON column doesn't crash the
     summary — it just contributes zero."""
-    pipeline = _pipeline_with_insights([
-        {"date": "2026-04-18", "sell_grades_json": "not valid json",
-         "buy_grades_json": None},
-    ])
+    pipeline = _pipeline_with_insights(
+        [
+            {"date": "2026-04-18", "sell_grades_json": "not valid json", "buy_grades_json": None},
+        ]
+    )
     summary = pipeline._build_trade_grade_summary(lookback_days=14)
     assert summary["n_sells"] == 0
 
@@ -186,16 +233,15 @@ def test_trade_grade_summary_warns_on_malformed_json(caplog):
     """
     import logging
 
-    pipeline = _pipeline_with_insights([
-        {"date": "2026-04-18",
-         "sell_grades_json": "{ this isn't json",
-         "buy_grades_json": None},
-    ])
+    pipeline = _pipeline_with_insights(
+        [
+            {"date": "2026-04-18", "sell_grades_json": "{ this isn't json", "buy_grades_json": None},
+        ]
+    )
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
         pipeline._build_trade_grade_summary(lookback_days=14)
     assert any(
-        "failed to parse insights" in rec.message and "sell_grades_json" in rec.message
-        for rec in caplog.records
+        "failed to parse insights" in rec.message and "sell_grades_json" in rec.message for rec in caplog.records
     ), "expected a WARNING naming the column that failed to parse"
 
 
@@ -206,28 +252,33 @@ def test_trade_grade_summary_warns_when_json_is_not_a_list(caplog):
     import json
     import logging
 
-    pipeline = _pipeline_with_insights([
-        {"date": "2026-04-18",
-         "sell_grades_json": json.dumps({"not": "a list"}),
-         "buy_grades_json": None},
-    ])
+    pipeline = _pipeline_with_insights(
+        [
+            {"date": "2026-04-18", "sell_grades_json": json.dumps({"not": "a list"}), "buy_grades_json": None},
+        ]
+    )
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
         pipeline._build_trade_grade_summary(lookback_days=14)
-    assert any(
-        "expected list" in rec.message and "sell_grades_json" in rec.message
-        for rec in caplog.records
-    )
+    assert any("expected list" in rec.message and "sell_grades_json" in rec.message for rec in caplog.records)
 
 
 def test_trade_grade_summary_flags_repeat_wrong_separately():
     import json
-    pipeline = _pipeline_with_insights([
-        {"date": f"2026-04-{17 + i:02d}",
-         "sell_grades_json": json.dumps([
-             {"symbol": "TSLA", "grade": "wrong"},
-         ]),
-         "buy_grades_json": "[]"} for i in range(3)
-    ])
+
+    pipeline = _pipeline_with_insights(
+        [
+            {
+                "date": f"2026-04-{17 + i:02d}",
+                "sell_grades_json": json.dumps(
+                    [
+                        {"symbol": "TSLA", "grade": "wrong"},
+                    ]
+                ),
+                "buy_grades_json": "[]",
+            }
+            for i in range(3)
+        ]
+    )
     summary = pipeline._build_trade_grade_summary(lookback_days=14)
     assert "TSLA" in summary["repeat_wrong_symbols"]
 
@@ -236,8 +287,10 @@ def test_trade_grade_summary_flags_repeat_wrong_separately():
 # Prompt surfacing
 # ---------------------------------------------------------------------------
 
+
 def _make_reviewer():
     from src.agents.position_reviewer import PositionReviewerAgent
+
     with patch("anthropic.Anthropic"):
         return PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
 
@@ -247,13 +300,16 @@ def test_prompt_renders_grade_counts_from_summary():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         trade_grade_summary={
-            "n_sells": 7, "n_buys": 4,
+            "n_sells": 7,
+            "n_buys": 4,
             "sell_counts": {"correct": 2, "premature": 4, "wrong": 1},
             "buy_counts": {"correct": 3, "premature": 0, "wrong": 1},
-            "repeat_premature_symbols": [], "repeat_wrong_symbols": [],
+            "repeat_premature_symbols": [],
+            "repeat_wrong_symbols": [],
         },
     )
     assert "Recent Trade Calibration from Evening" in msg
@@ -268,10 +324,12 @@ def test_prompt_flags_repeat_premature_symbols():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         trade_grade_summary={
-            "n_sells": 5, "n_buys": 0,
+            "n_sells": 5,
+            "n_buys": 0,
             "sell_counts": {"correct": 1, "premature": 4, "wrong": 0},
             "buy_counts": {"correct": 0, "premature": 0, "wrong": 0},
             "repeat_premature_symbols": ["GOOGL", "META"],
@@ -290,13 +348,16 @@ def test_prompt_no_grade_section_when_no_history():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         trade_grade_summary={
-            "n_sells": 0, "n_buys": 0,
+            "n_sells": 0,
+            "n_buys": 0,
             "sell_counts": {"correct": 0, "premature": 0, "wrong": 0},
             "buy_counts": {"correct": 0, "premature": 0, "wrong": 0},
-            "repeat_premature_symbols": [], "repeat_wrong_symbols": [],
+            "repeat_premature_symbols": [],
+            "repeat_wrong_symbols": [],
         },
     )
     assert "Recent Trade Calibration from Evening" not in msg
@@ -311,19 +372,35 @@ def test_prompt_surfaces_force_delever_and_emergency_sell_from_morning_trades():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         morning_trades=[
-            {"symbol": "NVDA", "action": "FORCE_DELEVER", "qty": 20,
-             "fill_status": "filled", "fill_qty": 20,
-             "reasoning": "cash-only auto de-lever: cash $-900 deficit"},
-            {"symbol": "MSFT", "action": "EMERGENCY_SELL", "qty": 10,
-             "fill_status": "filled", "fill_qty": 10,
-             "reasoning": "daily loss -3.2% breached circuit breaker"},
+            {
+                "symbol": "NVDA",
+                "action": "FORCE_DELEVER",
+                "qty": 20,
+                "fill_status": "filled",
+                "fill_qty": 20,
+                "reasoning": "cash-only auto de-lever: cash $-900 deficit",
+            },
+            {
+                "symbol": "MSFT",
+                "action": "EMERGENCY_SELL",
+                "qty": 10,
+                "fill_status": "filled",
+                "fill_qty": 10,
+                "reasoning": "daily loss -3.2% breached circuit breaker",
+            },
             # Regular morning BUY — should NOT be in the system-actions section.
-            {"symbol": "GOOGL", "action": "BUY", "qty": 5,
-             "fill_status": "filled", "fill_qty": 5,
-             "reasoning": "tech buy"},
+            {
+                "symbol": "GOOGL",
+                "action": "BUY",
+                "qty": 5,
+                "fill_status": "filled",
+                "fill_qty": 5,
+                "reasoning": "tech buy",
+            },
         ],
     )
     assert "Non-LLM System Actions Earlier Today" in msg
@@ -340,11 +417,11 @@ def test_prompt_omits_system_actions_section_when_nothing_happened():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         morning_trades=[
-            {"symbol": "GOOGL", "action": "BUY", "qty": 5,
-             "fill_status": "filled", "fill_qty": 5, "reasoning": "ok"},
+            {"symbol": "GOOGL", "action": "BUY", "qty": 5, "fill_status": "filled", "fill_qty": 5, "reasoning": "ok"},
         ],
     )
     assert "Non-LLM System Actions Earlier Today" not in msg
@@ -358,11 +435,13 @@ def test_prompt_surfaces_lessons_and_sell_prose_from_yesterday():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         yesterday_insights={
             "tomorrow_outlook": "bullish continuation likely",
-            "tomorrow_bias": "bullish", "tomorrow_conviction": "medium",
+            "tomorrow_bias": "bullish",
+            "tomorrow_conviction": "medium",
             "risk_rating": "moderate",
             "lessons": "don't trim winners on +5% wobble",
             "sell_decisions_assessment": "GOOGL sell premature; XOM correct",
@@ -383,6 +462,7 @@ def test_prompt_surfaces_lessons_and_sell_prose_from_yesterday():
 # the analogous new-position-selection counterpart).
 # ---------------------------------------------------------------------------
 
+
 def test_save_evening_snapshot_persists_lesson_fields_and_outlook_assessment(tmp_path):
     """DB round trip: produced by the model -> written -> read back."""
     import json
@@ -391,10 +471,14 @@ def test_save_evening_snapshot_persists_lesson_fields_and_outlook_assessment(tmp
     db.initialize()
 
     db.save_evening_snapshot(
-        date="2026-04-18", total_value=100_000, daily_pnl=800,
+        date="2026-04-18",
+        total_value=100_000,
+        daily_pnl=800,
         daily_return_pct=0.8,
-        tomorrow_outlook="bullish continuation", lessons="don't trim winners",
-        suggested_actions=["hold NVDA"], risk_rating="moderate",
+        tomorrow_outlook="bullish continuation",
+        lessons="don't trim winners",
+        suggested_actions=["hold NVDA"],
+        risk_rating="moderate",
         thesis_updates=[
             "NVDA thesis strengthening: capex guide +18% QoQ",
             "XOM thesis weakening: 3rd straight inventory build",
@@ -405,9 +489,7 @@ def test_save_evening_snapshot_persists_lesson_fields_and_outlook_assessment(tmp
         discipline_notes=[
             "3 of last 5 sells premature — stop cutting on single-day -2% noise",
         ],
-        previous_outlook_assessment=(
-            "Yesterday's bullish/medium call matched today's +0.8% outcome."
-        ),
+        previous_outlook_assessment=("Yesterday's bullish/medium call matched today's +0.8% outcome."),
     )
 
     row = db.get_latest_insights(before_date="2026-04-19")
@@ -426,9 +508,7 @@ def test_save_evening_snapshot_persists_lesson_fields_and_outlook_assessment(tmp
     assert discipline == [
         "3 of last 5 sells premature — stop cutting on single-day -2% noise",
     ]
-    assert row["previous_outlook_assessment"] == (
-        "Yesterday's bullish/medium call matched today's +0.8% outcome."
-    )
+    assert row["previous_outlook_assessment"] == ("Yesterday's bullish/medium call matched today's +0.8% outcome.")
 
     # Also visible via get_recent_insights (SELECT * — same columns).
     recent = db.get_recent_insights(limit=1)
@@ -444,9 +524,13 @@ def test_save_evening_snapshot_defaults_lesson_fields_to_empty(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.save_evening_snapshot(
-        date="2026-04-18", total_value=100_000, daily_pnl=0,
+        date="2026-04-18",
+        total_value=100_000,
+        daily_pnl=0,
         daily_return_pct=0.0,
-        tomorrow_outlook="x", lessons="x", suggested_actions=[],
+        tomorrow_outlook="x",
+        lessons="x",
+        suggested_actions=[],
         risk_rating="low",
     )
     row = db.get_latest_insights(before_date="2026-04-19")
@@ -497,15 +581,20 @@ def test_evening_report_model_round_trips_through_db_to_pm_prompt():
     from src.models import EveningReport, EveningReasoningChain
 
     rc = EveningReasoningChain(
-        performance_attribution="x", outlook_retrospection="x",
-        thesis_health_review="x", decision_quality_review="x",
-        calibration_meta="x", market_regime_read="x",
+        performance_attribution="x",
+        outlook_retrospection="x",
+        thesis_health_review="x",
+        decision_quality_review="x",
+        calibration_meta="x",
+        market_regime_read="x",
         tomorrow_preparation="x",
     )
     report = EveningReport(
         reasoning_chain=rc,
-        daily_summary="ok day", lessons="don't chase",
-        tomorrow_outlook="cautiously bullish", risk_rating="moderate",
+        daily_summary="ok day",
+        lessons="don't chase",
+        tomorrow_outlook="cautiously bullish",
+        risk_rating="moderate",
         thesis_updates=["NVDA thesis strengthening on capex guide"],
         selection_rules=["Require 2 confirming prints before sizing >5%"],
         discipline_notes=["Stop cutting GOOGL on single-day wobbles"],
@@ -516,9 +605,12 @@ def test_evening_report_model_round_trips_through_db_to_pm_prompt():
         db = Database(f"{td}/t.db")
         db.initialize()
         db.save_evening_snapshot(
-            date="2026-04-18", total_value=100_000, daily_pnl=500,
+            date="2026-04-18",
+            total_value=100_000,
+            daily_pnl=500,
             daily_return_pct=0.5,
-            tomorrow_outlook=report.tomorrow_outlook, lessons=report.lessons,
+            tomorrow_outlook=report.tomorrow_outlook,
+            lessons=report.lessons,
             suggested_actions=report.suggested_actions,
             risk_rating=report.risk_rating,
             thesis_updates=report.thesis_updates,
@@ -531,8 +623,11 @@ def test_evening_report_model_round_trips_through_db_to_pm_prompt():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             yesterday_insights=yesterday_insights,
         )
 
@@ -550,10 +645,14 @@ def test_pm_labels_absent_lesson_fields_not_silence():
     invented stand-in."""
     with patch("anthropic.Anthropic"):
         from src.agents.portfolio_manager import PortfolioManagerAgent
+
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             yesterday_insights={
                 "date": "2026-04-17",
                 "tomorrow_outlook": "neutral chop expected",
@@ -574,10 +673,14 @@ def test_pm_no_prior_insights_shows_labelled_absence_not_silence():
     silently omitting the section."""
     with patch("anthropic.Anthropic"):
         from src.agents.portfolio_manager import PortfolioManagerAgent
+
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             yesterday_insights=None,
         )
     assert "No prior session insights available" in msg

@@ -157,7 +157,8 @@ def _qamc_reachable() -> bool:
     try:
         result = subprocess.run(
             ["sudo", "-n", "-u", SUDO_USER, "test", "-f", PRODUCTION_DB],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
     except Exception:
         return False
@@ -185,8 +186,8 @@ def _settled_session_spend(db_path, run_id: str) -> float:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         row = conn.execute(
-            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
-            "WHERE run_id = ?", (run_id,),
+            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions WHERE run_id = ?",
+            (run_id,),
         ).fetchone()
     finally:
         conn.close()
@@ -195,8 +196,7 @@ def _settled_session_spend(db_path, run_id: str) -> float:
         "nothing was accounted, so there is no measured ceiling to re-run with"
     )
     assert row[1], (
-        "the rehearsal's own spend is not exactly accounted (costs_exact=0), "
-        "so it cannot be used as a ceiling"
+        "the rehearsal's own spend is not exactly accounted (costs_exact=0), so it cannot be used as a ceiling"
     )
     return float(row[0] or 0.0)
 
@@ -206,8 +206,7 @@ def _paid_for_agent(db_path, run_id: str, agent_prefix: str) -> float:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         rows = conn.execute(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs "
-            "WHERE run_id = ? AND agent_name LIKE ?",
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs WHERE run_id = ? AND agent_name LIKE ?",
             (run_id, agent_prefix + "%"),
         ).fetchone()
     finally:
@@ -229,12 +228,11 @@ def _settled_before_agent(db_path, run_id: str, agent_prefix: str) -> float:
             (run_id, agent_prefix + "%"),
         ).fetchone()
         assert first is not None and first[0] is not None, (
-            f"{run_id} logged no {agent_prefix} call at all, so there is no "
-            "boundary to measure the ceiling at"
+            f"{run_id} logged no {agent_prefix} call at all, so there is no boundary to measure the ceiling at"
         )
         row = conn.execute(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs "
-            "WHERE run_id = ? AND id < ?", (run_id, first[0]),
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs WHERE run_id = ? AND id < ?",
+            (run_id, first[0]),
         ).fetchone()
     finally:
         conn.close()
@@ -250,10 +248,10 @@ def _reached_provider(report, agent: str) -> bool:
     permitted the call; its absence, for an agent the session definitely
     reaches, is proof the circuit stopped it first.
     """
-    return any(
-        f["kind"] == "missing_recorded_response" and f["agent"] == agent
-        for f in report.findings
-    ) or any(a["agent"] == agent for a in report.agents_ran)
+    return any(f["kind"] == "missing_recorded_response" and f["agent"] == agent for f in report.findings) or any(
+        a["agent"] == agent for a in report.agents_ran
+    )
+
 
 @pytest.mark.xfail(
     reason=(
@@ -300,15 +298,15 @@ def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
         f"the selected recording {choice.run_id} has no timestamp to rehearse "
         "at, so the frozen clock would be arbitrary"
     )
-    recorded_date = (
-        datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
-        .replace(tzinfo=timezone.utc).astimezone(ET).date()
-    )
+    recorded_date = datetime.strptime(started, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).astimezone(ET).date()
     # Its own date — a day the desk demonstrably traded, because it recorded a
     # whole morning on it — at the incident's own mid-morning hour.
     now_et = datetime(
-        recorded_date.year, recorded_date.month, recorded_date.day,
-        *REHEARSED_TIME_ET, tzinfo=ET,
+        recorded_date.year,
+        recorded_date.month,
+        recorded_date.day,
+        *REHEARSED_TIME_ET,
+        tzinfo=ET,
     )
 
     # Fork BEFORE the first session writes to it, so phase 2 reads the same
@@ -364,10 +362,7 @@ def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
         f"agents_ran={[a['agent'] for a in baseline.agents_ran]} "
         f"status={baseline.status!r} error={baseline.error!r}"
     )
-    assert not any(
-        b["trigger_code"] == SETTLED_SESSION_CEILING_CODE
-        for b in baseline.blocked_agents
-    ), (
+    assert not any(b["trigger_code"] == SETTLED_SESSION_CEILING_CODE for b in baseline.blocked_agents), (
         "production's configured ceiling stopped this session on its own, so "
         "phase 2 would prove nothing. "
         f"blocked_agents={baseline.blocked_agents}"
@@ -375,10 +370,7 @@ def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
 
     baseline_run_id = f"rehearsal-morning-{now_et.strftime('%Y%m%d')}"
     settled_total = _settled_session_spend(prepared.db_path, baseline_run_id)
-    assert settled_total > 0, (
-        "the rehearsal settled no spend at all, so there is no measured "
-        "ceiling to re-run against"
-    )
+    assert settled_total > 0, "the rehearsal settled no spend at all, so there is no measured ceiling to re-run against"
 
     # It really did get an answer and really was billed for it, so the session
     # total below is a decision that was actually paid for.
@@ -388,7 +380,9 @@ def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
     # pre-empts the Portfolio Manager — see the docstring section of the same
     # name. What had settled by the moment the Portfolio Manager was reached:
     pre_decision_usd = _settled_before_agent(
-        prepared.db_path, baseline_run_id, "portfolio_manager",
+        prepared.db_path,
+        baseline_run_id,
+        "portfolio_manager",
     )
     assert pre_decision_usd < settled_total, (
         "the spend settled before the decision is not below the session "
@@ -415,10 +409,7 @@ def test_the_settled_cost_ceiling_still_suspends_paid_analysis(tmp_path):
 
     assert any("byte-identical" in c for c in blocked.isolation_checks)
 
-    ceiling_trips = [
-        b for b in blocked.blocked_agents
-        if b["trigger_code"] == SETTLED_SESSION_CEILING_CODE
-    ]
+    ceiling_trips = [b for b in blocked.blocked_agents if b["trigger_code"] == SETTLED_SESSION_CEILING_CODE]
     assert ceiling_trips, (
         "the settled-cost ceiling did not fire even though the session spent "
         f"${ceiling_usd:.7f} against a ${ceiling_usd:.7f} limit — the "

@@ -15,15 +15,23 @@ from src.agents.portfolio_manager.evidence_prompting import (  # noqa: F401 — 
 
 #: Every name the agent exposes for the prompt-evidence rows, delegated to the held part.
 DELEGATED = (
-    '_collapse_stances', '_sector_guidance_rows', '_macro_sectors', '_macro_stance_rows',
-    '_earnings_stance_rows', '_render_earnings_verdict', '_render_earnings_no_call_rollup',
-    'stale_evidence_sources', 'broadcast_macro_sources', 'build_evidence_registry',
+    "_collapse_stances",
+    "_sector_guidance_rows",
+    "_macro_sectors",
+    "_macro_stance_rows",
+    "_earnings_stance_rows",
+    "_render_earnings_verdict",
+    "_render_earnings_no_call_rollup",
+    "stale_evidence_sources",
+    "broadcast_macro_sources",
+    "build_evidence_registry",
 )
 
 
 def _delegate(name: str):
     def shim(cls, *args, **kwargs):
         return getattr(cls._prompt_evidence, name)(*args, **kwargs)
+
     shim.__name__ = name
     shim.__qualname__ = f"hold_prompt_evidence.<locals>.{name}"
     shim.__doc__ = "Thin delegate: body lives in src/agents/portfolio_manager/evidence_prompting.py."

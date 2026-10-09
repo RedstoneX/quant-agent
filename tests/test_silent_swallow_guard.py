@@ -6,6 +6,7 @@ it scans the working tree and compares with the committed allow-list
 ``config/check_allowlists/code_silent_swallow.txt`` by site IDENTITY (never a
 total): a swallow not listed fails, and a listed entry that no longer occurs fails.
 """
+
 from __future__ import annotations
 
 import ast
@@ -19,9 +20,7 @@ from scripts.guard_reference import ReferenceUnavailable
 
 def test_money_path_swallows_match_the_fixed_allow_list():
     unlisted, stale = g.check()
-    assert not unlisted and not stale, (
-        g.delta_report(unlisted, stale) + "\n" + g.FIX_ADVICE
-    )
+    assert not unlisted and not stale, g.delta_report(unlisted, stale) + "\n" + g.FIX_ADVICE
 
 
 def _listed(tmp_path, sites):
@@ -79,6 +78,7 @@ def test_the_guard_reads_no_git_trunk():
 
 
 # --- self-tests: the guard fires on the pattern and stays quiet on a durable record ---
+
 
 def _hits(src: str) -> list[str]:
     return [f"{rel}::{scope}" for (rel, scope, _), _ in g.scan_text("x.py", src)]
@@ -143,9 +143,9 @@ def test_scope_is_derived_not_stored():
     mods = g.money_modules()
     assert "src/execution/broker.py" in mods
     for hand_list_never_named in (
-        "src/protection/protected_sell.py",   # calls the SDK's close_position
-        "src/stage_execution.py",             # submits orders
-        "src/execution/order_idempotency.py", # submits orders
+        "src/protection/protected_sell.py",  # calls the SDK's close_position
+        "src/stage_execution.py",  # submits orders
+        "src/execution/order_idempotency.py",  # submits orders
     ):
         assert hand_list_never_named in mods, hand_list_never_named
     assert all((g.ROOT / m).exists() for m in mods)
@@ -157,8 +157,7 @@ def test_guard_bites_in_a_module_the_hand_list_never_named(tmp_path, monkeypatch
     assert rel in g.money_modules()
     before = (g.ROOT / rel).read_text()
     planted = before + (
-        "\n\ndef _planted(b):\n    try:\n        return b.stop()\n"
-        "    except Exception:\n        return None\n"
+        "\n\ndef _planted(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
     )
     listed = _listed(tmp_path, _sites(before))
     monkeypatch.setattr(g, "scan", lambda r: g.scan_text(r, planted))
@@ -171,6 +170,7 @@ def test_guard_bites_in_a_module_the_hand_list_never_named(tmp_path, monkeypatch
 def test_guard_refuses_when_the_sdk_cannot_be_read(monkeypatch):
     def _no_sdk():
         raise ReferenceUnavailable("exchange SDK missing in this test")
+
     monkeypatch.setattr(mm, "sdk_write_methods", _no_sdk)
     assert g.main() == 2
 
@@ -190,11 +190,19 @@ BYSTANDER = "def run():\n    return 1\n"
 
 
 def test_moving_renaming_or_adding_a_money_module_keeps_it_covered(tmp_path):
-    base = {"src/exec/desk.py": WRITER, "src/sell.py": CALLER.format(w="desk"),
-            "src/sizing.py": SIZER, "src/news.py": BYSTANDER}
+    base = {
+        "src/exec/desk.py": WRITER,
+        "src/sell.py": CALLER.format(w="desk"),
+        "src/sizing.py": SIZER,
+        "src/news.py": BYSTANDER,
+    }
     assert _tree(tmp_path, base) == ("src/exec/desk.py", "src/sell.py", "src/sizing.py")
-    renamed = {"src/exec/orders.py": WRITER, "src/sell.py": CALLER.format(w="orders"),
-               "src/sizing.py": SIZER, "src/news.py": BYSTANDER}
+    renamed = {
+        "src/exec/orders.py": WRITER,
+        "src/sell.py": CALLER.format(w="orders"),
+        "src/sizing.py": SIZER,
+        "src/news.py": BYSTANDER,
+    }
     assert "src/exec/orders.py" in _tree(tmp_path / "r", renamed)
     moved = dict(base)
     moved["src/deep/new/sell2.py"] = moved.pop("src/sell.py")
@@ -206,15 +214,18 @@ def test_moving_renaming_or_adding_a_money_module_keeps_it_covered(tmp_path):
 
 def test_generic_names_do_not_leak_money_status(tmp_path):
     """`run` defined by a writer and by a bystander: a call to `.run()` is ambiguous, not money."""
-    files = {"src/exec/desk.py": "def run(client):\n    return client.submit_order(1)\n",
-             "src/other.py": "def run():\n    return 1\n",
-             "src/driver.py": "def go(x):\n    return x.run()\n"}
+    files = {
+        "src/exec/desk.py": "def run(client):\n    return client.submit_order(1)\n",
+        "src/other.py": "def run():\n    return 1\n",
+        "src/driver.py": "def go(x):\n    return x.run()\n",
+    }
     assert _tree(tmp_path, files) == ("src/exec/desk.py",)
 
 
 def test_money_modules_are_derived_from_every_tracked_production_file(monkeypatch):
     from pathlib import Path
     from scripts.guard_reference import ROOT
+
     paths = {p.relative_to(ROOT).as_posix() for p in mm._source_paths(Path(ROOT), None)}
     assert "main.py" in paths and any(p.startswith("ops/") for p in paths)
     assert not any(p.startswith("tests/") for p in paths)
@@ -230,7 +241,7 @@ def test_a_root_module_calling_a_writer_is_a_money_module(tmp_path):
     assert "main.py" in mm.derive(tmp_path, frozenset({"submit_order"}), None)
 
 
-_ALIAS_SRC = '''
+_ALIAS_SRC = """
 from {mod} import {orig} as {alias}
 
 def f(x):
@@ -239,7 +250,7 @@ def f(x):
     except Exception as exc:
         {alias}("site", exc)
         return None
-'''
+"""
 
 
 def _alias_hits(mod: str, orig: str, alias: str) -> int:
@@ -265,8 +276,7 @@ def test_recorder_lookalike_name_bound_to_stdlib_does_not_satisfy_the_guard():
 # -- identity, not spelling: the three evasions a name match lets through ----
 
 _HANDLER = (
-    "def f(x):\n    try:\n        return x.get()\n"
-    "    except Exception as exc:\n        {call}\n        return None\n"
+    "def f(x):\n    try:\n        return x.get()\n    except Exception as exc:\n        {call}\n        return None\n"
 )
 
 
@@ -287,10 +297,7 @@ def test_module_alias_to_a_foreign_module_is_not_a_recorder():
 def test_local_def_of_a_recorder_name_is_judged_by_its_body_not_its_name():
     shadow = "def record_site(site, exc):\n    return None\n"
     assert _evasion_hits(shadow, "record_site('s', exc)") == 1
-    wrapper = (
-        "from src.storage.events import record_site as _rs\n\n"
-        "def record_site(site, exc):\n    _rs(site, exc)\n"
-    )
+    wrapper = "from src.storage.events import record_site as _rs\n\ndef record_site(site, exc):\n    _rs(site, exc)\n"
     assert _evasion_hits(wrapper, "record_site('s', exc)") == 0
     # A local wrapper that only logs is a shadow however it is spelled.
     logs = "import logging\n\ndef record_site(site, exc):\n    logging.warning('x')\n"

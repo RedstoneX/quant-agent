@@ -68,7 +68,10 @@ from src.agents.portfolio_manager import (
     PortfolioManagerAgent,
 )
 from src.models import (
-    PortfolioDecision, Position, TechAnalysisResult, TechReasoningChain,
+    PortfolioDecision,
+    Position,
+    TechAnalysisResult,
+    TechReasoningChain,
 )
 from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 
@@ -120,13 +123,19 @@ LIVE_NVDA_CATALYST = (
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
 
 def _analysis(
-    symbol: str, *, rating: str = "buy", target: float | None = 112.0,
+    symbol: str,
+    *,
+    rating: str = "buy",
+    target: float | None = 112.0,
 ) -> TechAnalysisResult:
     """Entry 100 / stop 95 for a long, 100 / 105 for a short.
 
@@ -136,11 +145,16 @@ def _analysis(
     """
     buy = rating in {"buy", "strong_buy"}
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, conviction="medium", entry_price=100,
-        stop_loss=95 if buy else 105, reference_target=target,
+        symbol=symbol,
+        rating=rating,
+        conviction="medium",
+        entry_price=100,
+        stop_loss=95 if buy else 105,
+        reference_target=target,
         support_levels=[95] if buy else [88],
         resistance_levels=[112] if buy else [105],
-        setup_type="range", expected_horizon_sessions=10,
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
@@ -148,31 +162,45 @@ def _analysis(
 
 
 def _decision(targets: list[dict]) -> PortfolioDecision:
-    return PortfolioDecision.model_validate({
-        "reasoning_chain": {
-            "macro_filter": "Macro checked.", "news_check": "News checked.",
-            "earnings_check": "Earnings checked.",
-            "signal_conflicts": "None material.",
-            "sizing_logic": "Sizing checked.",
-            "portfolio_balance": "Book checked.",
-            "cash_target": "Cash checked.",
-        },
-        "targets": targets, "portfolio_view": "Test decision.",
-    })
+    return PortfolioDecision.model_validate(
+        {
+            "reasoning_chain": {
+                "macro_filter": "Macro checked.",
+                "news_check": "News checked.",
+                "earnings_check": "Earnings checked.",
+                "signal_conflicts": "None material.",
+                "sizing_logic": "Sizing checked.",
+                "portfolio_balance": "Book checked.",
+                "cash_target": "Cash checked.",
+            },
+            "targets": targets,
+            "portfolio_view": "Test decision.",
+        }
+    )
 
 
 def _target(
-    symbol: str, *, risk: float | None = 3.0, catalyst: str = "",
-    direction: str = "long", weight: float | None = None,
+    symbol: str,
+    *,
+    risk: float | None = 3.0,
+    catalyst: str = "",
+    direction: str = "long",
+    weight: float | None = None,
 ) -> dict:
     row: dict = {
-        "symbol": symbol, "conviction": "medium", "direction": direction,
-        "thesis": f"{symbol} setup.", "catalyst": catalyst,
-        "provenance": [{
-            "source": "technical",
-            "observed_stance": "buy" if direction == "long" else "sell",
-            "relationship": "supports", "evidence": "current-run rating",
-        }],
+        "symbol": symbol,
+        "conviction": "medium",
+        "direction": direction,
+        "thesis": f"{symbol} setup.",
+        "catalyst": catalyst,
+        "provenance": [
+            {
+                "source": "technical",
+                "observed_stance": "buy" if direction == "long" else "sell",
+                "relationship": "supports",
+                "evidence": "current-run rating",
+            }
+        ],
     }
     if risk is not None:
         row["risk_allocation_pct"] = risk
@@ -196,12 +224,19 @@ def _unmeasurable(*symbols: str) -> dict[str, float | None]:
 
 
 def _apply(
-    decision, analyses, *, positions=None, asc=ACTIVE_STATE_CHANGES,
+    decision,
+    analyses,
+    *,
+    positions=None,
+    asc=ACTIVE_STATE_CHANGES,
     real_reward_risk_by_symbol=None,
 ):
     return PortfolioManagerAgent._apply_subfloor_catalyst_rule(
-        decision, analyses=analyses, positions=positions or [],
-        total_value=100_000, active_state_changes=asc,
+        decision,
+        analyses=analyses,
+        positions=positions or [],
+        total_value=100_000,
+        active_state_changes=asc,
         rr_floor=REWARD_RISK_FLOOR,
         starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol=real_reward_risk_by_symbol,
@@ -210,8 +245,13 @@ def _apply(
 
 def _held(symbol: str, qty: float = 10.0) -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=100.0, current_price=105.0,
-        market_value=qty * 105.0, unrealized_pnl=50.0, sector="Technology",
+        symbol=symbol,
+        qty=qty,
+        avg_entry=100.0,
+        current_price=105.0,
+        market_value=qty * 105.0,
+        unrealized_pnl=50.0,
+        sector="Technology",
     )
 
 
@@ -219,27 +259,42 @@ def _held(symbol: str, qty: float = 10.0) -> Position:
 # The rendered-block parser
 # --------------------------------------------------------------------------
 
+
 def test_parser_maps_each_row_date_to_symbols_and_their_directions():
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
         ACTIVE_STATE_CHANGES,
     )
     assert by_date["2026-09-01"] == {
-        "SPY": {"bearish"}, "QQQ": {"bearish"}, "DIA": {"bearish"},
-        "SMH": {"bearish"}, "SOXX": {"bearish"}, "NVDA": {"bearish"},
+        "SPY": {"bearish"},
+        "QQQ": {"bearish"},
+        "DIA": {"bearish"},
+        "SMH": {"bearish"},
+        "SOXX": {"bearish"},
+        "NVDA": {"bearish"},
     }
     # Two rows share 2026-08-31, and two share 2026-08-27. Same-date rows are
     # UNIONED per symbol: a citation proves "a HIGH-conviction state change
     # affecting this symbol in this direction was recorded on this date",
     # which is the checkable claim.
     assert by_date["2026-08-31"] == {
-        "XOM": {"bullish"}, "CVX": {"bullish"}, "XLE": {"bullish"},
+        "XOM": {"bullish"},
+        "CVX": {"bullish"},
+        "XLE": {"bullish"},
         "NVDA": {"bullish"},
     }
     assert by_date["2026-08-27"] == {
-        "NVDA": {"bullish"}, "SMH": {"bullish"}, "SOXX": {"bullish"},
-        "AMD": {"bullish"}, "AVGO": {"bullish"}, "TSM": {"bullish"},
-        "CRM": {"bullish"}, "MSFT": {"bullish"}, "GOOGL": {"bullish"},
-        "AMZN": {"bullish"}, "ORCL": {"bullish"}, "ZS": {"bullish"},
+        "NVDA": {"bullish"},
+        "SMH": {"bullish"},
+        "SOXX": {"bullish"},
+        "AMD": {"bullish"},
+        "AVGO": {"bullish"},
+        "TSM": {"bullish"},
+        "CRM": {"bullish"},
+        "MSFT": {"bullish"},
+        "GOOGL": {"bullish"},
+        "AMZN": {"bullish"},
+        "ORCL": {"bullish"},
+        "ZS": {"bullish"},
     }
 
 
@@ -262,8 +317,7 @@ def test_parser_skips_rows_with_no_affected_symbols_and_unparseable_lines():
 
 def test_parser_splits_on_the_last_arrow_so_event_prose_may_contain_one():
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
-        "- [2026-08-31] Regime moved risk-off → risk-on overnight → "
-        "SPY(bullish), QQQ(bullish)",
+        "- [2026-08-31] Regime moved risk-off → risk-on overnight → SPY(bullish), QQQ(bullish)",
     )
     assert by_date == {"2026-08-31": {"SPY": {"bullish"}, "QQQ": {"bullish"}}}
 
@@ -288,35 +342,45 @@ def test_parser_treats_unrecognized_direction_tokens_as_no_direction():
 # The citation check — existence AND direction
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("catalyst,symbol,required_direction,expected", [
-    # Right row, right symbol, right (bullish) direction for a long.
-    ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bullish", True),
-    # Same row, but a short would need bearish — this row is bullish only.
-    ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bearish", False),
-    # Same date, a symbol that row does not name.
-    ("2026-08-31: Anthropic/Lambda cloud deal", "GEV", "bullish", False),
-    # Right symbol, a date with no row.
-    ("2026-08-26: something happened", "NVDA", "bullish", False),
-    # Concrete, specific, and citing nothing — the whole failure mode.
-    (LIVE_NVDA_CATALYST, "NVDA", "bullish", False),
-    ("", "NVDA", "bullish", False),
-    ("   ", "NVDA", "bullish", False),
-    # A row whose symbols include the target, cited among other prose.
-    ("Energy takeover per the 2026-08-31 state change", "XLE", "bullish", True),
-    # Same row for a short — XLE is recorded bullish, not bearish.
-    ("Energy takeover per the 2026-08-31 state change", "XLE", "bearish", False),
-    # NVDA is recorded BEARISH on 2026-09-01 (broad selloff) — a short can
-    # cite it, a long cannot.
-    ("2026-09-01: bond selloff pressure", "NVDA", "bearish", True),
-    ("2026-09-01: bond selloff pressure", "NVDA", "bullish", False),
-])
+
+@pytest.mark.parametrize(
+    "catalyst,symbol,required_direction,expected",
+    [
+        # Right row, right symbol, right (bullish) direction for a long.
+        ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bullish", True),
+        # Same row, but a short would need bearish — this row is bullish only.
+        ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bearish", False),
+        # Same date, a symbol that row does not name.
+        ("2026-08-31: Anthropic/Lambda cloud deal", "GEV", "bullish", False),
+        # Right symbol, a date with no row.
+        ("2026-08-26: something happened", "NVDA", "bullish", False),
+        # Concrete, specific, and citing nothing — the whole failure mode.
+        (LIVE_NVDA_CATALYST, "NVDA", "bullish", False),
+        ("", "NVDA", "bullish", False),
+        ("   ", "NVDA", "bullish", False),
+        # A row whose symbols include the target, cited among other prose.
+        ("Energy takeover per the 2026-08-31 state change", "XLE", "bullish", True),
+        # Same row for a short — XLE is recorded bullish, not bearish.
+        ("Energy takeover per the 2026-08-31 state change", "XLE", "bearish", False),
+        # NVDA is recorded BEARISH on 2026-09-01 (broad selloff) — a short can
+        # cite it, a long cannot.
+        ("2026-09-01: bond selloff pressure", "NVDA", "bearish", True),
+        ("2026-09-01: bond selloff pressure", "NVDA", "bullish", False),
+    ],
+)
 def test_catalyst_resolution(catalyst, symbol, required_direction, expected):
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
         ACTIVE_STATE_CHANGES,
     )
-    assert PortfolioManagerAgent._catalyst_cites_state_change(
-        catalyst, symbol, required_direction, by_date,
-    ) is expected
+    assert (
+        PortfolioManagerAgent._catalyst_cites_state_change(
+            catalyst,
+            symbol,
+            required_direction,
+            by_date,
+        )
+        is expected
+    )
 
 
 def test_a_neutral_direction_does_not_qualify_either_side():
@@ -324,10 +388,16 @@ def test_a_neutral_direction_does_not_qualify_either_side():
         "- [2026-08-20] Mixed signals, no clear read → FOO(neutral)",
     )
     assert not PortfolioManagerAgent._catalyst_cites_state_change(
-        "2026-08-20: mixed signals", "FOO", "bullish", by_date,
+        "2026-08-20: mixed signals",
+        "FOO",
+        "bullish",
+        by_date,
     )
     assert not PortfolioManagerAgent._catalyst_cites_state_change(
-        "2026-08-20: mixed signals", "FOO", "bearish", by_date,
+        "2026-08-20: mixed signals",
+        "FOO",
+        "bearish",
+        by_date,
     )
 
 
@@ -341,10 +411,16 @@ def test_a_row_missing_direction_data_entirely_fails_closed():
     )
     assert by_date["2026-08-20"]["FOO"] == set()
     assert not PortfolioManagerAgent._catalyst_cites_state_change(
-        "2026-08-20: old format", "FOO", "bullish", by_date,
+        "2026-08-20: old format",
+        "FOO",
+        "bullish",
+        by_date,
     )
     assert not PortfolioManagerAgent._catalyst_cites_state_change(
-        "2026-08-20: old format", "FOO", "bearish", by_date,
+        "2026-08-20: old format",
+        "FOO",
+        "bearish",
+        by_date,
     )
 
 
@@ -354,7 +430,8 @@ def test_the_live_2026_09_01_nvda_catalyst_does_not_resolve():
     NVDA is kept at the asked size."""
     decision = _decision([_target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST)])
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -366,13 +443,16 @@ def test_the_live_2026_09_01_nvda_catalyst_does_not_resolve():
 # The gate is dead — unmeasurable is kept, not dropped or starter-capped
 # --------------------------------------------------------------------------
 
+
 def test_subfloor_pick_with_unverifiable_catalyst_is_kept_with_the_book():
     """Catalyst theater is gone. Unmeasurable NVDA stays at the asked size
     next to a measurable GEV."""
-    decision = _decision([
-        _target("NVDA", catalyst=LIVE_NVDA_CATALYST),
-        _target("GEV", risk=2.0),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", catalyst=LIVE_NVDA_CATALYST),
+            _target("GEV", risk=2.0),
+        ]
+    )
     result = _apply(
         decision,
         [_analysis("NVDA", target=104.0), _analysis("GEV", target=112.0)],
@@ -387,7 +467,8 @@ def test_subfloor_pick_with_unverifiable_catalyst_is_kept_with_the_book():
 def test_subfloor_pick_with_no_catalyst_at_all_is_kept():
     decision = _decision([_target("NVDA", catalyst="")])
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -396,11 +477,14 @@ def test_subfloor_pick_with_no_catalyst_at_all_is_kept():
 
 def test_subfloor_long_citing_a_genuinely_bullish_catalyst_is_not_capped():
     """A resolving citation is not a size door. Asked size stands."""
-    decision = _decision([
-        _target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -410,11 +494,14 @@ def test_subfloor_long_citing_a_genuinely_bullish_catalyst_is_not_capped():
 
 def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_kept():
     """Wrong-direction news is not a refuse. R/R theater is gone."""
-    decision = _decision([
-        _target("NVDA", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -422,11 +509,14 @@ def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_kept():
 
 
 def test_subfloor_long_citing_a_neutral_catalyst_is_kept():
-    decision = _decision([
-        _target("ZZZZ", risk=3.0, catalyst="2026-08-20 mixed signals"),
-    ])
+    decision = _decision(
+        [
+            _target("ZZZZ", risk=3.0, catalyst="2026-08-20 mixed signals"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("ZZZZ", target=104.0)],
+        decision,
+        [_analysis("ZZZZ", target=104.0)],
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
         real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
@@ -435,12 +525,14 @@ def test_subfloor_long_citing_a_neutral_catalyst_is_kept():
 
 
 def test_subfloor_short_citing_a_genuinely_bearish_catalyst_is_not_capped():
-    decision = _decision([
-        _target("NVDA", direction="short", risk=3.0,
-                catalyst="2026-09-01 bond selloff pressure"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", direction="short", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", rating="sell", target=96.0)],
+        decision,
+        [_analysis("NVDA", rating="sell", target=96.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -448,12 +540,14 @@ def test_subfloor_short_citing_a_genuinely_bearish_catalyst_is_not_capped():
 
 
 def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_kept():
-    decision = _decision([
-        _target("NVDA", direction="short", risk=3.0,
-                catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", direction="short", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", rating="sell", target=96.0)],
+        decision,
+        [_analysis("NVDA", rating="sell", target=96.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -461,12 +555,14 @@ def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_kept():
 
 
 def test_subfloor_short_citing_a_neutral_catalyst_is_kept():
-    decision = _decision([
-        _target("ZZZZ", direction="short", risk=3.0,
-                catalyst="2026-08-20 mixed signals"),
-    ])
+    decision = _decision(
+        [
+            _target("ZZZZ", direction="short", risk=3.0, catalyst="2026-08-20 mixed signals"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("ZZZZ", rating="sell", target=96.0)],
+        decision,
+        [_analysis("ZZZZ", rating="sell", target=96.0)],
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
         real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
@@ -476,11 +572,14 @@ def test_subfloor_short_citing_a_neutral_catalyst_is_kept():
 
 def test_the_retired_cap_does_not_resize_a_small_unmeasurable():
     """Starter size is not assigned here. A 0.25% ask stays 0.25%."""
-    decision = _decision([
-        _target("NVDA", risk=0.25, catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=0.25, catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert result.targets[0].risk_allocation_pct == 0.25
@@ -514,9 +613,11 @@ def test_missing_reward_risk_is_kept_at_asked_size():
     kept = _apply(decision, [neutral]).targets
     assert [t.symbol for t in kept] == ["NVDA"]
     assert kept[0].risk_allocation_pct == 3.0
-    cited = _decision([
-        _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    cited = _decision(
+        [
+            _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     cited_kept = _apply(cited, [neutral]).targets
     assert [t.symbol for t in cited_kept] == ["NVDA"]
     assert cited_kept[0].risk_allocation_pct == 3.0
@@ -537,7 +638,8 @@ def test_real_reward_risk_by_symbol_overrides_the_self_reported_figure():
     # so each call needs its own fresh decision object.
     # OLD behaviour (no real map): self-reported 10.0 clears the floor.
     old = _apply(
-        _decision([_target("NVDA", risk=4.0, catalyst="")]), [analysis],
+        _decision([_target("NVDA", risk=4.0, catalyst="")]),
+        [analysis],
     )
     assert [t.symbol for t in old.targets] == ["NVDA"]
     assert old.targets[0].risk_allocation_pct == 4.0
@@ -545,7 +647,8 @@ def test_real_reward_risk_by_symbol_overrides_the_self_reported_figure():
     # Owner 2026-09-17: the real map says 0.4 — thin but measurable. That
     # is ranking information, not a size-cap and not a drop.
     new = _apply(
-        _decision([_target("NVDA", risk=4.0, catalyst="")]), [analysis],
+        _decision([_target("NVDA", risk=4.0, catalyst="")]),
+        [analysis],
         real_reward_risk_by_symbol={"NVDA": 0.4},
     )
     assert [t.symbol for t in new.targets] == ["NVDA"]
@@ -567,13 +670,15 @@ def test_real_reward_risk_by_symbol_rescues_an_understated_candidate():
     # so each call needs its own fresh decision object.
     # Self-reported 0.8 is thin but measurable: kept at the asked size.
     old = _apply(
-        _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
+        _decision([_target("GEV", risk=4.0, catalyst="")]),
+        [analysis],
     )
     assert [t.symbol for t in old.targets] == ["GEV"]
     assert old.targets[0].risk_allocation_pct == 4.0
 
     new = _apply(
-        _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
+        _decision([_target("GEV", risk=4.0, catalyst="")]),
+        [analysis],
         real_reward_risk_by_symbol={"GEV": 1.6},
     )
     assert [t.symbol for t in new.targets] == ["GEV"]
@@ -609,14 +714,22 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
 
     def _structured(symbol, *, model_target, computed_levels):
         return TechAnalysisResult(
-            symbol=symbol, rating="buy", conviction="medium",
-            entry_price=100.0, stop_loss=95.0, reference_target=model_target,
-            support_levels=[95.0], resistance_levels=[model_target],
-            computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
-            setup_type="range", expected_horizon_sessions=60,
-            reasoning="test", reasoning_chain=_tech_rc(),
-        thesis_invalid_if="closes below support",
-    )
+            symbol=symbol,
+            rating="buy",
+            conviction="medium",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=model_target,
+            support_levels=[95.0],
+            resistance_levels=[model_target],
+            computed_levels=computed_levels,
+            atr_14=(100.0 - 95.0) / 3.5,
+            setup_type="range",
+            expected_horizon_sessions=60,
+            reasoning="test",
+            reasoning_chain=_tech_rc(),
+            thesis_invalid_if="closes below support",
+        )
 
     overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
     understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])
@@ -630,12 +743,15 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
     }
     assert real_map == {"NVDA": 0.6, "GEV": 1.6}
 
-    decision = _decision([
-        _target("NVDA", risk=4.0, catalyst=""),
-        _target("GEV", risk=4.0, catalyst=""),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=4.0, catalyst=""),
+            _target("GEV", risk=4.0, catalyst=""),
+        ]
+    )
     result = _apply(
-        decision, [overstated, understated],
+        decision,
+        [overstated, understated],
         real_reward_risk_by_symbol=real_map,
     )
     # Both survive at the size asked. A thin-but-real ratio is not a cap.
@@ -647,19 +763,20 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
 
 def test_shorts_are_kept_on_the_same_terms_as_longs():
     """Unmeasurable shorts keep asked size. Catalyst is not a door."""
-    decision = _decision([
-        _target("MSFT", direction="short", catalyst="no citation here"),
-        _target("CRM", direction="short",
-                catalyst="2026-08-27 Salesforce guidance cut"),
-    ])
+    decision = _decision(
+        [
+            _target("MSFT", direction="short", catalyst="no citation here"),
+            _target("CRM", direction="short", catalyst="2026-08-27 Salesforce guidance cut"),
+        ]
+    )
     analyses = [
         _analysis("MSFT", rating="sell", target=96.0),
         _analysis("CRM", rating="sell", target=96.0),
     ]
     result = _apply(
-        decision, analyses,
-        asc="- [2026-08-27] Salesforce cuts cloud spending guidance on "
-            "slowdown → CRM(bearish)",
+        decision,
+        analyses,
+        asc="- [2026-08-27] Salesforce cuts cloud spending guidance on slowdown → CRM(bearish)",
         real_reward_risk_by_symbol=_unmeasurable("MSFT", "CRM"),
     )
     by_symbol = {t.symbol: t for t in result.targets}
@@ -669,12 +786,14 @@ def test_shorts_are_kept_on_the_same_terms_as_longs():
 
 
 def test_a_short_citing_the_fixtures_bullish_crm_row_is_kept():
-    decision = _decision([
-        _target("CRM", direction="short", risk=3.0,
-                catalyst="2026-08-27 Salesforce Q2 beat"),
-    ])
+    decision = _decision(
+        [
+            _target("CRM", direction="short", risk=3.0, catalyst="2026-08-27 Salesforce Q2 beat"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("CRM", rating="sell", target=96.0)],
+        decision,
+        [_analysis("CRM", rating="sell", target=96.0)],
         real_reward_risk_by_symbol=_unmeasurable("CRM"),
     )
     assert [t.symbol for t in result.targets] == ["CRM"]
@@ -687,18 +806,24 @@ def test_exits_and_closes_are_exempt():
     R/R is irrelevant."""
     decision = _decision([_target("NVDA", risk=0.0, catalyst="")])
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)], positions=[_held("NVDA")],
+        decision,
+        [_analysis("NVDA", target=104.0)],
+        positions=[_held("NVDA")],
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == 0.0
 
 
 def test_an_empty_state_change_block_does_not_drop_an_unmeasurable():
-    decision = _decision([
-        _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)], asc="",
+        decision,
+        [_analysis("NVDA", target=104.0)],
+        asc="",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -708,12 +833,14 @@ def test_an_empty_state_change_block_does_not_drop_an_unmeasurable():
 def test_legacy_notional_target_is_not_converted_onto_a_starter_cap():
     """A risk-unsized unmeasurable pick is kept as-is. Python does not
     assign starter size."""
-    decision = _decision([
-        _target("NVDA", risk=None, weight=8.0,
-                catalyst="2026-08-31 Anthropic/Lambda deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=None, weight=8.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -732,17 +859,23 @@ def test_a_symbol_with_no_analysis_at_all_is_kept():
 # End to end through `decide()`
 # --------------------------------------------------------------------------
 
+
 def _pm_response(targets: list[dict]) -> str:
-    return json.dumps({
-        "reasoning_chain": {
-            "macro_filter": "checked", "news_check": "checked",
-            "earnings_check": "checked", "signal_conflicts": "none material",
-            "sizing_logic": "checked", "portfolio_balance": "checked",
-            "cash_target": "checked",
-        },
-        "targets": targets,
-        "portfolio_view": "One sub-floor pick, one qualifying pick.",
-    })
+    return json.dumps(
+        {
+            "reasoning_chain": {
+                "macro_filter": "checked",
+                "news_check": "checked",
+                "earnings_check": "checked",
+                "signal_conflicts": "none material",
+                "sizing_logic": "checked",
+                "portfolio_balance": "checked",
+                "cash_target": "checked",
+            },
+            "targets": targets,
+            "portfolio_view": "One sub-floor pick, one qualifying pick.",
+        }
+    )
 
 
 def _mock_agent(mock_cls, response_text: str) -> PortfolioManagerAgent:
@@ -759,14 +892,20 @@ def _mock_agent(mock_cls, response_text: str) -> PortfolioManagerAgent:
 @patch("anthropic.Anthropic")
 def test_decide_keeps_an_unmeasurable_pick_next_to_a_measurable_one(mock_cls):
     """Unmeasurable NVDA is not dropped to rescue GEV."""
-    agent = _mock_agent(mock_cls, _pm_response([
-        _target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST),
-        _target("GEV", risk=2.0),
-    ]))
+    agent = _mock_agent(
+        mock_cls,
+        _pm_response(
+            [
+                _target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST),
+                _target("GEV", risk=2.0),
+            ]
+        ),
+    )
     decision, result = agent.decide(
-        analyses=[_analysis("NVDA", target=float("nan")),
-                  _analysis("GEV", target=112.0)],
-        positions=[], macro_analysis=None, cash_balance=50_000,
+        analyses=[_analysis("NVDA", target=float("nan")), _analysis("GEV", target=112.0)],
+        positions=[],
+        macro_analysis=None,
+        cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
         allowed_buy_symbols={"NVDA", "GEV"},
@@ -781,13 +920,19 @@ def test_decide_keeps_an_unmeasurable_pick_next_to_a_measurable_one(mock_cls):
 
 @patch("anthropic.Anthropic")
 def test_decide_does_not_starter_cap_an_unmeasurable_pick(mock_cls):
-    agent = _mock_agent(mock_cls, _pm_response([
-        _target("NVDA", risk=3.0,
-                catalyst="2026-08-31: Anthropic/Lambda $35bn cloud deal"),
-    ]))
+    agent = _mock_agent(
+        mock_cls,
+        _pm_response(
+            [
+                _target("NVDA", risk=3.0, catalyst="2026-08-31: Anthropic/Lambda $35bn cloud deal"),
+            ]
+        ),
+    )
     decision, _ = agent.decide(
         analyses=[_analysis("NVDA", target=float("nan"))],
-        positions=[], macro_analysis=None, cash_balance=50_000,
+        positions=[],
+        macro_analysis=None,
+        cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
         allowed_buy_symbols={"NVDA"},
@@ -799,12 +944,19 @@ def test_decide_does_not_starter_cap_an_unmeasurable_pick(mock_cls):
 
 @patch("anthropic.Anthropic")
 def test_decide_keeps_an_unmeasurable_pick_with_the_wrong_direction_news(mock_cls):
-    agent = _mock_agent(mock_cls, _pm_response([
-        _target("NVDA", risk=3.0, catalyst="2026-09-01: bond selloff pressure"),
-    ]))
+    agent = _mock_agent(
+        mock_cls,
+        _pm_response(
+            [
+                _target("NVDA", risk=3.0, catalyst="2026-09-01: bond selloff pressure"),
+            ]
+        ),
+    )
     decision, _ = agent.decide(
         analyses=[_analysis("NVDA", target=float("nan"))],
-        positions=[], macro_analysis=None, cash_balance=50_000,
+        positions=[],
+        macro_analysis=None,
+        cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
         allowed_buy_symbols={"NVDA"},
@@ -816,12 +968,19 @@ def test_decide_keeps_an_unmeasurable_pick_with_the_wrong_direction_news(mock_cl
 
 @patch("anthropic.Anthropic")
 def test_decide_does_not_drop_on_the_retired_production_thresholds(mock_cls):
-    agent = _mock_agent(mock_cls, _pm_response([
-        _target("NVDA", risk=3.0, catalyst=LIVE_NVDA_CATALYST),
-    ]))
+    agent = _mock_agent(
+        mock_cls,
+        _pm_response(
+            [
+                _target("NVDA", risk=3.0, catalyst=LIVE_NVDA_CATALYST),
+            ]
+        ),
+    )
     decision, _ = agent.decide(
         analyses=[_analysis("NVDA", target=float("nan"))],
-        positions=[], macro_analysis=None, cash_balance=50_000,
+        positions=[],
+        macro_analysis=None,
+        cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
         allowed_buy_symbols={"NVDA"},
@@ -834,6 +993,7 @@ def test_decide_does_not_drop_on_the_retired_production_thresholds(mock_cls):
 # --------------------------------------------------------------------------
 # Single-definition guards
 # --------------------------------------------------------------------------
+
 
 def test_status_keys_are_stable_greppable_constants():
     assert SUBFLOOR_CATALYST_UNVERIFIED_STATUS == "pm_subfloor_catalyst_unverified"
@@ -854,6 +1014,7 @@ def test_the_gate_reuses_the_risk_configs_own_numbers():
 # Recency, and every way the inputs can be absent or unreadable
 # --------------------------------------------------------------------------
 
+
 def test_a_row_older_than_the_producers_own_window_cannot_be_cited():
     """The producer scans `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, so it cannot
     render an older row today. The gate re-checks anyway: the age bound lives
@@ -871,9 +1032,7 @@ def test_a_row_older_than_the_producers_own_window_cannot_be_cited():
     )
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(block)
     assert str(stale) not in by_date, "a stale row must not be citable"
-    assert by_date[str(fresh)] == {"GEV": {"bullish"}}, (
-        "the window edge is inclusive"
-    )
+    assert by_date[str(fresh)] == {"GEV": {"bullish"}}, "the window edge is inclusive"
 
 
 def test_a_subfloor_pick_citing_a_stale_row_is_kept():
@@ -882,7 +1041,8 @@ def test_a_subfloor_pick_citing_a_stale_row_is_kept():
     )
     decision = _decision([_target("NVDA", catalyst=f"{stale}: the old deal")])
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         asc=f"- [{stale}] The old deal → NVDA(bullish)",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
@@ -897,7 +1057,8 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
     ahead = FIXTURE_SESSION_DATE + timedelta(days=1)
     decision = _decision([_target("NVDA", catalyst=f"{ahead}: tomorrow's news")])
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         asc=f"- [{ahead}] Tomorrow's news → NVDA(bullish)",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
@@ -908,13 +1069,17 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
 def test_an_unreadable_clock_makes_the_exception_unavailable(monkeypatch):
     """Fail closed. A missing value must never be the thing that grants
     permission — the recent buying-power near-miss was exactly this shape."""
+
     def _boom():
         raise RuntimeError("tz database unavailable")
 
     monkeypatch.setattr(pm_module, "et_today", _boom)
-    assert PortfolioManagerAgent._state_change_symbols_by_date(
-        ACTIVE_STATE_CHANGES,
-    ) == {}
+    assert (
+        PortfolioManagerAgent._state_change_symbols_by_date(
+            ACTIVE_STATE_CHANGES,
+        )
+        == {}
+    )
 
 
 def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
@@ -945,19 +1110,18 @@ def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
     analysis = _analysis("NVDA", target=float("nan"))
     rr = analysis.risk_reward
     assert rr is None or rr != rr, (
-        "this test is worthless unless a NaN target really does make "
-        f"risk_reward unusable; got {rr!r}"
+        f"this test is worthless unless a NaN target really does make risk_reward unusable; got {rr!r}"
     )
 
     dropped = _apply(
-        _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)]), [analysis],
+        _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)]),
+        [analysis],
     )
     assert [t.symbol for t in dropped.targets] == ["NVDA"]
     assert dropped.targets[0].risk_allocation_pct == 3.0
 
     kept = _apply(
-        _decision([_target("NVDA", risk=3.0,
-                           catalyst="2026-08-31 Anthropic/Lambda deal")]),
+        _decision([_target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal")]),
         [analysis],
     )
     assert kept.targets[0].risk_allocation_pct == 3.0
@@ -967,26 +1131,28 @@ def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
 # The refusal must DROP, never zero
 # --------------------------------------------------------------------------
 
+
 def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
     """THE non-obvious hazard. `risk_allocation_pct=0` on a held symbol is
     read downstream as CLOSE IT, so expressing this refusal as a zero would
     silently LIQUIDATE a position we already own rather than declining to add
     to it. It does not error — it just sells. Omitting the symbol is HOLD,
     which is the only correct way to say no here."""
-    decision = _decision([
-        _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST),
+        ]
+    )
     result = _apply(
-        decision, [_analysis("NVDA", target=104.0)],
+        decision,
+        [_analysis("NVDA", target=104.0)],
         positions=[_held("NVDA", qty=10.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == 4.0
     assert not any(
-        t.symbol.upper() == "NVDA" and (t.risk_allocation_pct == 0
-                                        or t.target_weight_pct == 0)
-        for t in result.targets
+        t.symbol.upper() == "NVDA" and (t.risk_allocation_pct == 0 or t.target_weight_pct == 0) for t in result.targets
     ), "a zeroed target would read as a SELL of a position we still want held"
 
 
@@ -1006,6 +1172,7 @@ def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
 # model-settable, and it never rescues unmeasurable geometry.
 # --------------------------------------------------------------------------
 
+
 def _subfloor_analysis(symbol: str = "AAA") -> TechAnalysisResult:
     """A MEASURABLE sub-floor long: entry 100, level-backed stop at 95,
     computed resistance at 106 → real reward:risk 1.2, under the 1.5 floor
@@ -1015,11 +1182,19 @@ def _subfloor_analysis(symbol: str = "AAA") -> TechAnalysisResult:
     thin, which is precisely the case a verified catalyst is meant to permit.
     """
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", conviction="medium", entry_price=100.0,
-        stop_loss=95.0, reference_target=106.0, support_levels=[95.0],
-        resistance_levels=[106.0], computed_levels=[95.0, 106.0],
-        atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
-        expected_horizon_sessions=60, reasoning="test",
+        symbol=symbol,
+        rating="buy",
+        conviction="medium",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=106.0,
+        support_levels=[95.0],
+        resistance_levels=[106.0],
+        computed_levels=[95.0, 106.0],
+        atr_14=(100.0 - 95.0) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning="test",
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -1031,15 +1206,18 @@ def _verified_nvda_decision():
     `_apply_subfloor_catalyst_rule` so the flag under test can only be set
     the way production sets it."""
     analysis = _subfloor_analysis("NVDA")
-    decision = _decision([
-        _target("NVDA", risk=4.0, catalyst="2026-08-31: Lambda cloud deal"),
-    ])
+    decision = _decision(
+        [
+            _target("NVDA", risk=4.0, catalyst="2026-08-31: Lambda cloud deal"),
+        ]
+    )
     # Unmeasurable is the only state that still routes through the catalyst
     # check after item 1(d) — a measurable-but-thin payoff is now kept and
     # capped without one, and marking THAT verified would record a check
     # that never ran.
     return _apply(
-        decision, [analysis],
+        decision,
+        [analysis],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     ), analysis
 
@@ -1081,7 +1259,8 @@ def test_the_flag_cannot_be_asserted_by_the_model():
     row["subfloor_catalyst_verified"] = True
 
     result = _apply(
-        _decision([row]), [_subfloor_analysis("NVDA")],
+        _decision([row]),
+        [_subfloor_analysis("NVDA")],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
@@ -1116,12 +1295,16 @@ def test_an_unflagged_subfloor_range_target_is_no_longer_refused():
     constructor = PortfolioConstructor()
     assert analysis.risk_reward == 1.2, "fixture must be measurably sub-floor"
     target = TargetPosition(
-        symbol="AAA", conviction="medium", direction="long", thesis="t",
+        symbol="AAA",
+        conviction="medium",
+        direction="long",
+        thesis="t",
         risk_allocation_pct=0.5,
     )
     assert target.subfloor_catalyst_verified is False
     assert constructor._resolve_entry_and_stop(target, analysis, 100.0) == (
-        100.0, 95.0,
+        100.0,
+        95.0,
     )
 
 
@@ -1137,8 +1320,7 @@ def test_a_verified_exception_actually_reaches_a_buildable_entry_and_stop():
     entry, stop = constructor._resolve_entry_and_stop(target, analysis, 100.0)
     assert entry == 100.0
     assert stop == 95.0, (
-        "the level-backed stop must ship as-is — the exception lifts the "
-        "reward:risk refusal, it does not move the stop"
+        "the level-backed stop must ship as-is — the exception lifts the reward:risk refusal, it does not move the stop"
     )
 
 
@@ -1150,10 +1332,18 @@ def test_the_exception_lifts_only_the_floor_never_unmeasurable_geometry():
 
     constructor = PortfolioConstructor()
     analysis = _subfloor_analysis()
-    assert constructor._widen_stop_past_noise(
-        "AAA", analysis, 100.0, 95.0, direction="long",
-        target_price=float("nan"), subfloor_catalyst_exception=True,
-    ) == 95.0
+    assert (
+        constructor._widen_stop_past_noise(
+            "AAA",
+            analysis,
+            100.0,
+            95.0,
+            direction="long",
+            target_price=float("nan"),
+            subfloor_catalyst_exception=True,
+        )
+        == 95.0
+    )
 
 
 def test_the_exception_does_not_rescue_a_stop_on_the_wrong_side_of_entry():
@@ -1161,10 +1351,18 @@ def test_the_exception_does_not_rescue_a_stop_on_the_wrong_side_of_entry():
 
     constructor = PortfolioConstructor()
     analysis = _subfloor_analysis()
-    assert constructor._widen_stop_past_noise(
-        "AAA", analysis, 100.0, 105.0, direction="long",
-        target_price=106.0, subfloor_catalyst_exception=True,
-    ) is None
+    assert (
+        constructor._widen_stop_past_noise(
+            "AAA",
+            analysis,
+            100.0,
+            105.0,
+            direction="long",
+            target_price=106.0,
+            subfloor_catalyst_exception=True,
+        )
+        is None
+    )
 
 
 def test_the_built_order_carries_the_exception_to_the_execution_stage():
@@ -1178,8 +1376,11 @@ def test_the_built_order_carries_the_exception_to_the_execution_stage():
     target = result.targets[0]
     constructor = PortfolioConstructor()
     orders = constructor.construct_orders(
-        targets=[target], analyses=[analysis], positions=[],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
+        targets=[target],
+        analyses=[analysis],
+        positions=[],
+        total_value=100_000.0,
+        price_map={"NVDA": 100.0},
     )
     buys = [o for o in orders if o.action == "BUY" and o.symbol == "NVDA"]
     assert buys, f"the verified exception produced no BUY: {orders!r}"
@@ -1195,22 +1396,36 @@ def test_an_ordinary_built_order_does_not_carry_the_exception():
     # far enough out to clear the floor honestly (real R/R 2.4), so this
     # control isolates the flag and nothing else.
     analysis = TechAnalysisResult(
-        symbol="GEV", rating="buy", conviction="medium", entry_price=100.0,
-        stop_loss=95.0, reference_target=112.0, support_levels=[95.0],
-        resistance_levels=[112.0], computed_levels=[95.0, 112.0],
-        atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
-        expected_horizon_sessions=60, reasoning="test",
+        symbol="GEV",
+        rating="buy",
+        conviction="medium",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=112.0,
+        support_levels=[95.0],
+        resistance_levels=[112.0],
+        computed_levels=[95.0, 112.0],
+        atr_14=(100.0 - 95.0) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
+        reasoning="test",
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
     target = TargetPosition(
-        symbol="GEV", conviction="medium", direction="long", thesis="t",
+        symbol="GEV",
+        conviction="medium",
+        direction="long",
+        thesis="t",
         risk_allocation_pct=2.0,
     )
     constructor = PortfolioConstructor()
     orders = constructor.construct_orders(
-        targets=[target], analyses=[analysis], positions=[],
-        total_value=100_000.0, price_map={"GEV": 100.0},
+        targets=[target],
+        analyses=[analysis],
+        positions=[],
+        total_value=100_000.0,
+        price_map={"GEV": 100.0},
     )
     buys = [o for o in orders if o.action == "BUY"]
     assert buys, f"the control trade must still build: {orders!r}"
@@ -1225,12 +1440,18 @@ def test_an_ordinary_built_order_does_not_carry_the_exception():
 # refused, with reason geometry_unmeasurable — not geometry_rr.
 # --------------------------------------------------------------------------
 
+
 def _order(*, entry, stop, target, exception: bool, action="BUY"):
     from src.models import TradeDecision
 
     return TradeDecision(
-        action=action, symbol="NVDA", allocation_pct=1.0, entry_price=entry,
-        stop_loss=stop, take_profit=target, reasoning="r",
+        action=action,
+        symbol="NVDA",
+        allocation_pct=1.0,
+        entry_price=entry,
+        stop_loss=stop,
+        take_profit=target,
+        reasoning="r",
         subfloor_catalyst_exception=exception,
     )
 
@@ -1240,20 +1461,32 @@ def test_a_thin_but_measurable_executed_ratio_does_not_skip():
 
     order = _order(entry=100.0, stop=95.0, target=104.0, exception=False)
     assert order.reward_risk is not None and order.reward_risk < 1.2
-    assert _execution_payoff_skip_reason(
-        order, sizing_price=101.0, stop_price=95.0,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            order,
+            sizing_price=101.0,
+            stop_price=95.0,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_an_exception_flag_does_not_reinstate_a_numeric_belt():
     from src.pipeline_stages import _execution_payoff_skip_reason
 
     order = _order(entry=100.0, stop=95.0, target=104.0, exception=True)
-    assert _execution_payoff_skip_reason(
-        order, sizing_price=101.0, stop_price=95.0,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            order,
+            sizing_price=101.0,
+            stop_price=95.0,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_unmeasurable_executed_range_payoff_does_not_skip():
@@ -1261,14 +1494,22 @@ def test_unmeasurable_executed_range_payoff_does_not_skip():
     from src.pipeline_stages import _execution_payoff_skip_reason
 
     order = TradeDecision.model_construct(
-        action="BUY", symbol="NVDA", allocation_pct=1.0, entry_price=100.0,
-        stop_loss=95.0, take_profit=float("nan"), reasoning="r",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=1.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=float("nan"),
+        reasoning="r",
         setup_type="range",
         subfloor_catalyst_exception=True,
     )
     reason = _execution_payoff_skip_reason(
-        order, sizing_price=100.0, stop_price=95.0,
-        geometry_changed=True, is_short=False,
+        order,
+        sizing_price=100.0,
+        stop_price=95.0,
+        geometry_changed=True,
+        is_short=False,
     )
     assert reason is None
 
@@ -1277,12 +1518,22 @@ def test_a_short_is_not_skipped_on_the_reward_side():
     from src.pipeline_stages import _execution_payoff_skip_reason
 
     order = _order(
-        entry=100.0, stop=105.0, target=96.0, exception=True, action="SHORT",
+        entry=100.0,
+        stop=105.0,
+        target=96.0,
+        exception=True,
+        action="SHORT",
     )
-    assert _execution_payoff_skip_reason(
-        order, sizing_price=99.0, stop_price=105.0,
-        geometry_changed=True, is_short=True,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            order,
+            sizing_price=99.0,
+            stop_price=105.0,
+            geometry_changed=True,
+            is_short=True,
+        )
+        is None
+    )
 
 
 def test_the_execution_flag_survives_a_risk_manager_modification_rebuild():
@@ -1301,6 +1552,7 @@ def test_the_execution_flag_survives_a_risk_manager_modification_rebuild():
 # Pre-existing latent defect this fix unmasked (2026-09-11).
 # --------------------------------------------------------------------------
 
+
 def test_capping_a_target_does_not_unset_its_other_defaulted_fields():
     """`LLMOutputModel._explicit_null_means_absent` deletes a key so the
     declared default applies — correct on construction, DESTRUCTIVE on the
@@ -1317,7 +1569,10 @@ def test_capping_a_target_does_not_unset_its_other_defaulted_fields():
     from src.models import TargetPosition
 
     target = TargetPosition(
-        symbol="AAA", conviction="medium", direction="long", thesis="t",
+        symbol="AAA",
+        conviction="medium",
+        direction="long",
+        thesis="t",
         risk_allocation_pct=4.0,
     )
     target.risk_allocation_pct = STARTER_POSITION_RISK_PCT

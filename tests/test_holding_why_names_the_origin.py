@@ -73,45 +73,94 @@ def _seed(path) -> None:
     conn.execute(_TRADES_DDL)
     conn.execute(_EVIDENCE_DDL)
     _insert_trade(
-        conn, symbol="ZZT", action="BUY", qty=10.0, price=50.0,
+        conn,
+        symbol="ZZT",
+        action="BUY",
+        qty=10.0,
+        price=50.0,
         reasoning="Open ZZT on a confirmed range breakout with volume behind it.",
-        run_id=OPENING_RUN, timestamp="2026-09-24 15:19:17",
-        position_id="pos-zzt", stop_loss=45.0, take_profit=62.0,
-        initial_take_profit=62.0, expected_horizon_sessions=12,
-        setup_type="range", conviction="high", fill_price=50.0,
+        run_id=OPENING_RUN,
+        timestamp="2026-09-24 15:19:17",
+        position_id="pos-zzt",
+        stop_loss=45.0,
+        take_profit=62.0,
+        initial_take_profit=62.0,
+        expected_horizon_sessions=12,
+        setup_type="range",
+        conviction="high",
+        fill_price=50.0,
         thesis_invalid_if="Price closes below 45.00 on heavy volume.",
     )
     _insert_trade(
-        conn, symbol="ZZT", action="BUY", qty=4.0, price=55.0,
+        conn,
+        symbol="ZZT",
+        action="BUY",
+        qty=4.0,
+        price=55.0,
         reasoning="Adding to ZZT; the breakout held and the thesis is intact.",
-        run_id=ADD_RUN, timestamp="2026-10-01 13:49:54",
-        position_id="pos-zzt", stop_loss=49.0, take_profit=62.0,
-        initial_take_profit=62.0, expected_horizon_sessions=12,
-        setup_type="range", conviction="high", fill_price=55.0,
+        run_id=ADD_RUN,
+        timestamp="2026-10-01 13:49:54",
+        position_id="pos-zzt",
+        stop_loss=49.0,
+        take_profit=62.0,
+        initial_take_profit=62.0,
+        expected_horizon_sessions=12,
+        setup_type="range",
+        conviction="high",
+        fill_price=55.0,
         thesis_invalid_if="Price closes below 49.00 on heavy volume.",
     )
     # The opening run is the ONLY place the discovery is written.
     _insert_evidence(
-        conn, OPENING_RUN, "pipeline", "pipeline_event",
-        {"stage": "opportunity", "outcome": "discovered",
-         "reason": "intraday_move_threshold", "move_pct": 3.5393168759310507},
+        conn,
+        OPENING_RUN,
+        "pipeline",
+        "pipeline_event",
+        {
+            "stage": "opportunity",
+            "outcome": "discovered",
+            "reason": "intraday_move_threshold",
+            "move_pct": 3.5393168759310507,
+        },
         "2026-09-24 15:10:00",
     )
     _insert_evidence(
-        conn, OPENING_RUN, "portfolio_manager", "target",
-        {"symbol": "ZZT", "thesis": "Range breakout with volume confirmation.",
-         "provenance": [{"source": "technical", "observed_stance": "buy",
-                         "relationship": "supports",
-                         "evidence": "Breakout above the range on accumulation volume."}]},
+        conn,
+        OPENING_RUN,
+        "portfolio_manager",
+        "target",
+        {
+            "symbol": "ZZT",
+            "thesis": "Range breakout with volume confirmation.",
+            "provenance": [
+                {
+                    "source": "technical",
+                    "observed_stance": "buy",
+                    "relationship": "supports",
+                    "evidence": "Breakout above the range on accumulation volume.",
+                }
+            ],
+        },
         "2026-09-24 15:12:00",
     )
     # The add's run carries a current thesis and nothing about origin.
     _insert_evidence(
-        conn, ADD_RUN, "portfolio_manager", "target",
-        {"symbol": "ZZT", "thesis": "Breakout held; adding into continuation.",
-         "provenance": [{"source": "technical", "observed_stance": "buy",
-                         "relationship": "supports",
-                         "evidence": "Trend continuity intact above the breakout."}]},
+        conn,
+        ADD_RUN,
+        "portfolio_manager",
+        "target",
+        {
+            "symbol": "ZZT",
+            "thesis": "Breakout held; adding into continuation.",
+            "provenance": [
+                {
+                    "source": "technical",
+                    "observed_stance": "buy",
+                    "relationship": "supports",
+                    "evidence": "Trend continuity intact above the breakout.",
+                }
+            ],
+        },
         "2026-10-01 13:45:00",
     )
     conn.commit()
@@ -152,14 +201,28 @@ def test_a_position_with_no_add_is_unchanged(client, tmp_path, monkeypatch):
     conn.execute(_TRADES_DDL)
     conn.execute(_EVIDENCE_DDL)
     _insert_trade(
-        conn, symbol="ZZT", action="BUY", qty=10.0, price=50.0,
-        reasoning="Open ZZT on a confirmed range breakout.", run_id=OPENING_RUN,
-        timestamp="2026-09-24 15:19:17", position_id="pos-zzt", stop_loss=45.0,
+        conn,
+        symbol="ZZT",
+        action="BUY",
+        qty=10.0,
+        price=50.0,
+        reasoning="Open ZZT on a confirmed range breakout.",
+        run_id=OPENING_RUN,
+        timestamp="2026-09-24 15:19:17",
+        position_id="pos-zzt",
+        stop_loss=45.0,
     )
     _insert_evidence(
-        conn, OPENING_RUN, "pipeline", "pipeline_event",
-        {"stage": "opportunity", "outcome": "discovered",
-         "reason": "intraday_move_threshold", "move_pct": 7.951993805652329},
+        conn,
+        OPENING_RUN,
+        "pipeline",
+        "pipeline_event",
+        {
+            "stage": "opportunity",
+            "outcome": "discovered",
+            "reason": "intraday_move_threshold",
+            "move_pct": 7.951993805652329,
+        },
         "2026-09-24 15:10:00",
     )
     conn.commit()
@@ -177,9 +240,15 @@ def test_an_unrecorded_origin_still_says_so(client, tmp_path, monkeypatch):
     conn.execute(_TRADES_DDL)
     conn.execute(_EVIDENCE_DDL)
     _insert_trade(
-        conn, symbol="ZZT", action="BUY", qty=1.0, price=10.0,
-        reasoning="Bought.", run_id="run-quiet",
-        timestamp="2026-09-24 15:19:17", position_id="pos-quiet",
+        conn,
+        symbol="ZZT",
+        action="BUY",
+        qty=1.0,
+        price=10.0,
+        reasoning="Bought.",
+        run_id="run-quiet",
+        timestamp="2026-09-24 15:19:17",
+        position_id="pos-quiet",
     )
     conn.commit()
     conn.close()

@@ -7,6 +7,7 @@ hold the bodies, moved verbatim. Clause 5 of tests/boundary_harness.py: each
 part has a test that imports it and never names the pipeline. Follows
 tests/test_entry_stop_boundary.py.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,8 +37,21 @@ def test_part_passes_boundary_check(module):
 
 
 def test_structure_leg_runs_from_a_stub_bar_alone():
-    rising = _bars([(101, 99), (102, 98), (103, 97), (104, 96), (105, 101), (106, 102), (107, 103),
-                    (108, 100), (109, 104), (110, 105), (111, 106)])
+    rising = _bars(
+        [
+            (101, 99),
+            (102, 98),
+            (103, 97),
+            (104, 96),
+            (105, 101),
+            (106, 102),
+            (107, 103),
+            (108, 100),
+            (109, 104),
+            (110, 105),
+            (111, 106),
+        ]
+    )
     lows = trail_structure._swing_lows(rising)
     assert lows == [96.0, 100.0]
     assert trail_structure._structural_pivot(lows, is_short=False) == 100.0
@@ -46,8 +60,7 @@ def test_structure_leg_runs_from_a_stub_bar_alone():
 
 
 def test_range_ratchets_run_alone_and_never_loosen():
-    kw = dict(symbol="aaa", ent=100.0, cur=112.0, stop=90.0, initial_stop=90.0,
-              is_short=False, setup_type="range")
+    kw = dict(symbol="aaa", ent=100.0, cur=112.0, stop=90.0, initial_stop=90.0, is_short=False, setup_type="range")
     first = trail_range_ratchet._range_breakeven_ratchet(**kw)
     assert first.code == trailing.TRAIL_CODE_TRAILED
     assert first.proposal.new_stop == 100.0 and first.proposal.previous_stop == 90.0
@@ -60,8 +73,12 @@ def test_range_ratchets_run_alone_and_never_loosen():
 
 def test_evaluator_runs_alone_and_the_facade_resolves_to_the_same_objects():
     ev = trail_evaluate.evaluate_trailing_stop(
-        symbol="AAA", setup_type="breakout", entry=100.0, current_price=105.0,
-        current_stop=None, reference_target=None,
+        symbol="AAA",
+        setup_type="breakout",
+        entry=100.0,
+        current_price=105.0,
+        current_stop=None,
+        reference_target=None,
     )
     assert ev.proposal is None and ev.code == trailing.TRAIL_CODE_NO_LIVE_STOP
     assert trailing.evaluate_trailing_stop is trail_evaluate.evaluate_trailing_stop
@@ -74,6 +91,7 @@ def test_evaluator_runs_alone_and_the_facade_resolves_to_the_same_objects():
 
 def test_facade_keeps_exactly_one_mirror_block():
     import ast
+
     tree = ast.parse(open(trailing.__file__, encoding="utf-8").read())
     getattrs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "__getattr__"]
     assert len(getattrs) == 1

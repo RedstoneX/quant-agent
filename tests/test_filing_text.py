@@ -22,8 +22,7 @@ def _statement_rows(n: int = 60) -> str:
     "financial statements" is what the auditor's opinion letter looks like.
     """
     return " ".join(
-        f"Line item {i}: ${1000 + i * 137:,} versus ${900 + i * 131:,} "
-        f"({100 + i:,}) change {i * 3:,}."
+        f"Line item {i}: ${1000 + i * 137:,} versus ${900 + i * 131:,} ({100 + i:,}) change {i * 3:,}."
         for i in range(n)
     )
 
@@ -69,7 +68,9 @@ def test_extract_text_handles_smart_apostrophe(tmp_path):
         "<html><body>"
         + ("x " * 8000)  # push past TOC threshold
         + "\nItem 2.\nManagement\u2019s Discussion and Analysis\n"
-        + "<p>Revenue up 10%. " + ("Lorem ipsum. " * 200) + "</p>"
+        + "<p>Revenue up 10%. "
+        + ("Lorem ipsum. " * 200)
+        + "</p>"
         + "\nItem 3. Quantitative disclosures\n"
         + "</body></html>"
     )
@@ -122,8 +123,10 @@ def test_extract_text_skips_toc_for_financial_statements(tmp_path):
         + ("Lorem cover-page boilerplate text padding the front. " * 350)
         # Real financial statement past the 15K threshold
         + "\nCONSOLIDATED STATEMENTS OF OPERATIONS\n"
-        + ("Net sales $21,737 Cost of products sold $10,392 "
-           "Operating income $5,148 Net earnings $4,103 Diluted EPS $1.66. " * 30)
+        + (
+            "Net sales $21,737 Cost of products sold $10,392 "
+            "Operating income $5,148 Net earnings $4,103 Diluted EPS $1.66. " * 30
+        )
         + "\nItem 2. Management's Discussion and Analysis\n"
         + ("Sales growth was driven by Beauty +6% and Health +8%. " * 30)
         + "\nItem 3. Quantitative disclosures\n"
@@ -227,9 +230,8 @@ def test_auditors_letter_is_not_mistaken_for_financial_statements(tmp_path):
     # Whatever path it takes, the analyst must end up holding actual numbers.
     import re
     from src.data.filing_text import FINANCIAL_FIGURE_RE as _FINANCIAL_FIGURE_RE
-    assert len(_FINANCIAL_FIGURE_RE.findall(out)) >= 40, (
-        "extraction returned narrative with no financial figures"
-    )
+
+    assert len(_FINANCIAL_FIGURE_RE.findall(out)) >= 40, "extraction returned narrative with no financial figures"
     assert "245,122" in out or "88,136" in out
 
 

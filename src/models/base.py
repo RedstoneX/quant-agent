@@ -27,7 +27,6 @@ from src.soft_exit_vocab import (  # noqa: F401 — re-exported through `src.mod
 logger = logging.getLogger(__name__)
 
 
-
 def reward_to_risk(
     entry_price: float | None,
     stop_price: float | None,
@@ -74,8 +73,8 @@ def reward_to_risk(
     if any(v is None for v in values):
         return None
     try:
-        entry = float(entry_price)   # type: ignore[arg-type]
-        stop = float(stop_price)     # type: ignore[arg-type]
+        entry = float(entry_price)  # type: ignore[arg-type]
+        stop = float(stop_price)  # type: ignore[arg-type]
         target = float(target_price)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
@@ -220,11 +219,13 @@ DROP_CODE_MALFORMED_ROW = "malformed_row"
 DROP_CODE_SCHEMA_INVALID = "schema_invalid"
 DROP_CODE_UNSPECIFIED = "unspecified"
 
-ANALYSIS_DROP_CODES = frozenset({
-    DROP_CODE_MALFORMED_ROW,
-    DROP_CODE_SCHEMA_INVALID,
-    DROP_CODE_UNSPECIFIED,
-})
+ANALYSIS_DROP_CODES = frozenset(
+    {
+        DROP_CODE_MALFORMED_ROW,
+        DROP_CODE_SCHEMA_INVALID,
+        DROP_CODE_UNSPECIFIED,
+    }
+)
 
 
 class AnalysisParseTelemetry:
@@ -301,7 +302,10 @@ class AnalysisParseTelemetry:
             self._counts[(model_name, field_name)] += 1
 
     def record_dropped_item(
-        self, model_name: str, key: str, reason: str | None = None,
+        self,
+        model_name: str,
+        key: str,
+        reason: str | None = None,
         reason_code: str | None = None,
     ) -> None:
         """A whole parsed item was discarded — `key` is the symbol where known.
@@ -342,7 +346,8 @@ class AnalysisParseTelemetry:
                 # half-updated against each other.
                 code = str(reason_code or DROP_CODE_UNSPECIFIED)
                 self._drop_reasons.setdefault(
-                    (model_name, str(key)), (code, str(reason or "")),
+                    (model_name, str(key)),
+                    (code, str(reason or "")),
                 )
 
     def record_hygiene_violation(self, model_name: str, kind: str) -> None:
@@ -391,9 +396,7 @@ class AnalysisParseTelemetry:
         snap = self.hygiene_observed_snapshot()
         if not snap:
             return ""
-        return ", ".join(
-            f"{model}x{n}" for model, n in sorted(snap.items(), key=lambda kv: -kv[1])
-        )
+        return ", ".join(f"{model}x{n}" for model, n in sorted(snap.items(), key=lambda kv: -kv[1]))
 
     def snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
@@ -414,10 +417,7 @@ class AnalysisParseTelemetry:
         sentence has nothing to show a person here.
         """
         with self._lock:
-            return {
-                key: reason for key, (_code, reason) in self._drop_reasons.items()
-                if reason
-            }
+            return {key: reason for key, (_code, reason) in self._drop_reasons.items() if reason}
 
     def dropped_reason_codes_snapshot(self) -> dict[tuple[str, str], str]:
         """The STABLE code for each dropped item, keyed (model, symbol).
@@ -453,10 +453,7 @@ class AnalysisParseTelemetry:
         snap = self.snapshot()
         if not snap:
             return ""
-        return ", ".join(
-            f"{model}.{field}x{n}"
-            for (model, field), n in sorted(snap.items(), key=lambda kv: -kv[1])
-        )
+        return ", ".join(f"{model}.{field}x{n}" for (model, field), n in sorted(snap.items(), key=lambda kv: -kv[1]))
 
     def describe_dropped(self) -> str:
         snap = self.dropped_snapshot()
@@ -472,10 +469,7 @@ class AnalysisParseTelemetry:
         snap = self.hygiene_snapshot()
         if not snap:
             return ""
-        return ", ".join(
-            f"{model}.{kind}x{n}"
-            for (model, kind), n in sorted(snap.items(), key=lambda kv: -kv[1])
-        )
+        return ", ".join(f"{model}.{kind}x{n}" for (model, kind), n in sorted(snap.items(), key=lambda kv: -kv[1]))
 
 
 parse_telemetry = AnalysisParseTelemetry()
@@ -535,10 +529,12 @@ def open_target_missing_falsifier(target, *, intent: str | None = None) -> bool:
 # Both belong to objects that are dropped per-item by their callers, so the
 # blast radius of keeping them strict is one target / one verdict, not a
 # whole session.
-_NULL_MUST_FAIL: frozenset[tuple[str, str]] = frozenset({
-    ("TargetPosition", "direction"),
-    ("RiskVerdict", "scale_all_buys"),
-})
+_NULL_MUST_FAIL: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("TargetPosition", "direction"),
+        ("RiskVerdict", "scale_all_buys"),
+    }
+)
 
 
 _NULL_TOLERANT_FIELDS_CACHE: dict[str, frozenset[str]] = {}
@@ -566,9 +562,9 @@ def _null_droppable_fields(cls: type[BaseModel]) -> frozenset[str]:
         try:
             TypeAdapter(field.annotation).validate_python(None)
         except Exception:
-            names.add(field_name)   # rejects None *and* has a default
+            names.add(field_name)  # rejects None *and* has a default
         else:
-            continue                # already Optional — nothing to do
+            continue  # already Optional — nothing to do
     result = frozenset(names)
     with _NULL_TOLERANT_CACHE_LOCK:
         _NULL_TOLERANT_FIELDS_CACHE[key] = result
@@ -598,11 +594,7 @@ def _list_typed_fields(cls: type[BaseModel]) -> frozenset[str]:
     cached = _LIST_TYPED_FIELDS_CACHE.get(key)
     if cached is not None:
         return cached
-    names = {
-        field_name
-        for field_name, field in cls.model_fields.items()
-        if get_origin(field.annotation) is list
-    }
+    names = {field_name for field_name, field in cls.model_fields.items() if get_origin(field.annotation) is list}
     result = frozenset(names)
     with _LIST_TYPED_FIELDS_CACHE_LOCK:
         _LIST_TYPED_FIELDS_CACHE[key] = result
@@ -728,9 +720,7 @@ class LLMOutputModel(BaseModel):
             # so "don't know" is distinct from omitted empty. Neutral Tech
             # still lands on empty — the prompt says leave it empty.
             if field_name in _SOFT_EXIT_FIELDS and incoming is None:
-                actionable = cls.__name__ == "TargetPosition" or (
-                    rating not in ("", "neutral")
-                )
+                actionable = cls.__name__ == "TargetPosition" or (rating not in ("", "neutral"))
                 if actionable:
                     values[field_name] = SOFT_EXIT_UNKNOWN
                     parse_telemetry.record_null_coercion(cls.__name__, field_name)
@@ -748,7 +738,8 @@ class LLMOutputModel(BaseModel):
                 "%s: dropped explicit null/empty on defaulted field(s) %s — the "
                 "object is kept and the declared default applies, but the model "
                 "said nothing where the prompt asked for something",
-                cls.__name__, ", ".join(sorted(set(tallied))),
+                cls.__name__,
+                ", ".join(sorted(set(tallied))),
             )
         # Mechanical heal (owner 2026-09-16): if a stated non-empty
         # thesis_invalid_if / catalyst survived on the original dict and a
@@ -793,6 +784,7 @@ class LLMOutputModel(BaseModel):
             "%s: coerced [UNSOURCED:...] token on list field(s) %s to [] — "
             "the model wrote the missing-data token into a field declared "
             "as a list; the object is kept, the gap is logged",
-            cls.__name__, ", ".join(sorted(hits)),
+            cls.__name__,
+            ", ".join(sorted(hits)),
         )
         return values

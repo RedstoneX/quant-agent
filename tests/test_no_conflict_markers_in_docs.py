@@ -10,6 +10,7 @@ A marker in a source-of-truth document is worse than untidy: it means two
 versions of a fact are sitting side by side with nothing saying which one is
 true, in the files the whole desk reads to decide what is real.
 """
+
 from pathlib import Path
 
 import pytest
@@ -32,10 +33,7 @@ MARKERS = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
 
 
 #: The board notes are one file per item; every one of them is guarded.
-GUARDED += tuple(
-    f"docs/board_notes/{p.name}"
-    for p in sorted((REPO_ROOT / "docs" / "board_notes").glob("*.md"))
-)
+GUARDED += tuple(f"docs/board_notes/{p.name}" for p in sorted((REPO_ROOT / "docs" / "board_notes").glob("*.md")))
 
 
 @pytest.mark.parametrize("rel", GUARDED)
@@ -44,7 +42,8 @@ def test_no_merge_conflict_markers(rel: str):
     if not path.exists():
         pytest.skip(f"{rel} is not present in this checkout")
     offenders = [
-        (n, line) for n, line in enumerate(path.read_text().splitlines(), 1)
+        (n, line)
+        for n, line in enumerate(path.read_text().splitlines(), 1)
         if line.startswith(MARKERS) or line.rstrip() == "======="
     ]
     assert not offenders, (

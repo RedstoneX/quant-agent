@@ -111,9 +111,7 @@ _SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml
 #: it says about the data it is handed. The adversary review of board item 168
 #: caught this one being typed by hand INSIDE the fix for the other two.
 _LONGEST_INDICATOR_PLACEHOLDER = "{{tech.longest_indicator_window}}"
-_LONGEST_INDICATOR_PLACEHOLDER_RE = re.compile(
-    r"\{\{\s*tech\.longest_indicator_window\s*\}\}"
-)
+_LONGEST_INDICATOR_PLACEHOLDER_RE = re.compile(r"\{\{\s*tech\.longest_indicator_window\s*\}\}")
 
 _FROM_SETTINGS = object()
 
@@ -145,6 +143,7 @@ def settings_lookback_days() -> int | None:
     """
     try:
         import yaml
+
         raw = yaml.safe_load(_SETTINGS_PATH.read_text()) or {}
         value = (raw.get("trading") or {}).get("lookback_days")
     except Exception as exc:  # pragma: no cover - defensive
@@ -152,8 +151,8 @@ def settings_lookback_days() -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         logger.error(
-            "tech_analyst: trading.lookback_days is %r; the standing sheet will "
-            "state no history depth to the seat", value,
+            "tech_analyst: trading.lookback_days is %r; the standing sheet will state no history depth to the seat",
+            value,
         )
         return None
     return value
@@ -168,11 +167,13 @@ def render_tech_placeholders(
     if lookback_days is _FROM_SETTINGS:
         lookback_days = settings_lookback_days()
     from src.data.technical import LONGEST_INDICATOR_WINDOW
+
     window = format_history_window(lookback_days)
     rendered = render_bars_per_symbol(text, bars)
     rendered = _HISTORY_PLACEHOLDER_RE.sub(lambda _m: window, rendered)
     return _LONGEST_INDICATOR_PLACEHOLDER_RE.sub(
-        lambda _m: str(LONGEST_INDICATOR_WINDOW), rendered,
+        lambda _m: str(LONGEST_INDICATOR_WINDOW),
+        rendered,
     )
 
 
@@ -212,6 +213,7 @@ def _px(value) -> str:
     if "e" in out or "E" in out:
         return f"{value:.6f}".rstrip("0").rstrip(".") or "0"
     return out
+
 
 # Auto-chunk the batch when a single LLM call would carry too many symbols.
 # 25 picked so chunks stay comfortably within typical LLM context.
@@ -314,9 +316,7 @@ class TechAnalystAgent(BaseAgent):
             configured = getattr(self, "_lookback_days", None)
             return render_tech_placeholders(
                 PROMPT_PATH.read_text(),
-                lookback_days=(
-                    configured if configured is not None else _FROM_SETTINGS
-                ),
+                lookback_days=(configured if configured is not None else _FROM_SETTINGS),
             )
         return "You are a technical analyst. Respond with JSON."
 
@@ -342,6 +342,7 @@ class TechAnalystAgent(BaseAgent):
         # How many days ago did the cached rating first appear?
         from datetime import date as _date
         from src.util.time import et_today
+
         today = et_today()
 
         def _prior_line(symbol: str) -> str:
@@ -373,9 +374,7 @@ class TechAnalystAgent(BaseAgent):
             # All three missing (typical for ETFs) → skip the line entirely.
             if t is None and f is None and ps is None:
                 return ""
-            return (
-                f"\nValuation: trailing PE {t} | forward PE {f} | P/S {ps}"
-            )
+            return f"\nValuation: trailing PE {t} | forward PE {f} | P/S {ps}"
 
         def _intraday_block(symbol: str, last_completed_close) -> str:
             ic = intraday_context.get(symbol)
@@ -437,8 +436,8 @@ class TechAnalystAgent(BaseAgent):
                 f"\n  Session so far: O={_fmt('session_open')} "
                 f"H={_fmt('session_high')} L={_fmt('session_low')} "
                 f"V={_fmt('session_volume', prefix='')} (partial-day volume)"
-                if has_session_bar else
-                "\n  Session so far: NOT AVAILABLE — this name has no "
+                if has_session_bar
+                else "\n  Session so far: NOT AVAILABLE — this name has no "
                 "today session bar; do not infer a range for today."
             )
             return (
@@ -471,9 +470,7 @@ class TechAnalystAgent(BaseAgent):
         bars_by_symbol = dict(kwargs.get("benchmark_pool") or {})
         for i in symbols_data:
             bars_by_symbol.setdefault(i["symbol"], i["bars"])
-        benchmark_symbol = next(
-            (s for s in ("SPY", "QQQ", "IWM") if bars_by_symbol.get(s)), None
-        )
+        benchmark_symbol = next((s for s in ("SPY", "QQQ", "IWM") if bars_by_symbol.get(s)), None)
         benchmark_bars = bars_by_symbol.get(benchmark_symbol) if benchmark_symbol else None
         days_to_earnings: dict[str, int] = kwargs.get("days_to_earnings") or {}
 
@@ -484,8 +481,7 @@ class TechAnalystAgent(BaseAgent):
             indicators = item["indicators"]
             recent_bars = bars[-_BARS_PER_SYMBOL:] if len(bars) > _BARS_PER_SYMBOL else bars
             bars_text = "\n".join(
-                f"  {b.date}: O={_px(b.open)} H={_px(b.high)} "
-                f"L={_px(b.low)} C={_px(b.close)} V={_px(b.volume)}"
+                f"  {b.date}: O={_px(b.open)} H={_px(b.high)} L={_px(b.low)} C={_px(b.close)} V={_px(b.volume)}"
                 for b in recent_bars
             )
             last_close = recent_bars[-1].close if recent_bars else "N/A"
@@ -503,14 +499,11 @@ class TechAnalystAgent(BaseAgent):
             # `last_price` — classifying support/resistance against a prior
             # session's print is exactly the defect this replaced.
             live_price = ic.get("live_price")
-            if (
-                ic.get("live_unavailable")
-                or not isinstance(live_price, (int, float))
-                or live_price <= 0
-            ):
+            if ic.get("live_unavailable") or not isinstance(live_price, (int, float)) or live_price <= 0:
                 live_price = None
             supports, resistances = find_structural_levels(
-                bars, reference_price=live_price,
+                bars,
+                reference_price=live_price,
             )
             levels_text = format_levels_block(
                 supports,
@@ -554,8 +547,8 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             + "\n\n"
             + "\n\n".join(sections)
             + "\n\nRespond with a single JSON object of the shape "
-              '{"results": [ ... ]} — one element of "results" per symbol, '
-              "in any order."
+            '{"results": [ ... ]} — one element of "results" per symbol, '
+            "in any order."
         )
 
     def _analyze_batch_uncached(
@@ -614,25 +607,29 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
 
         benchmark_pool = {i["symbol"]: i["bars"] for i in symbols_data}
         chunks = self._split_to_budget(
-            symbols_data, prior_ratings, valuations,
-            prior_macro_regime, prior_macro_outlook, intraday_context,
+            symbols_data,
+            prior_ratings,
+            valuations,
+            prior_macro_regime,
+            prior_macro_outlook,
+            intraday_context,
             benchmark_pool,
         )
         if len(chunks) <= 1:
             single_unusable: dict[str, str] = {}
             single_out, single_result = self._analyze_chunk(
-                symbols_data, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook, intraday_context,
+                symbols_data,
+                prior_ratings,
+                valuations,
+                prior_macro_regime,
+                prior_macro_outlook,
+                intraday_context,
                 benchmark_pool=benchmark_pool,
                 _malformed_sink=single_unusable,
             )
-            self.last_unreadable = {
-                sym: why for sym, why in single_unusable.items()
-                if single_out.get(sym) is None
-            }
+            self.last_unreadable = {sym: why for sym, why in single_unusable.items() if single_out.get(sym) is None}
             self.last_unanswered = {
-                sym for sym, a in single_out.items()
-                if a is None and sym not in self.last_unreadable
+                sym for sym, a in single_out.items() if a is None and sym not in self.last_unreadable
             }
             return single_out, single_result
 
@@ -646,9 +643,14 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # repair allowance before the later chunks were even analyzed.
         for i, chunk in enumerate(chunks, 1):
             chunk_analyses, chunk_result = self._analyze_chunk(
-                chunk, prior_ratings, valuations,
-                prior_macro_regime, prior_macro_outlook, intraday_context,
-                _retries_left=0, benchmark_pool=benchmark_pool,
+                chunk,
+                prior_ratings,
+                valuations,
+                prior_macro_regime,
+                prior_macro_outlook,
+                intraday_context,
+                _retries_left=0,
+                benchmark_pool=benchmark_pool,
                 _malformed_sink=unusable,
             )
             merged.update(chunk_analyses)
@@ -660,70 +662,64 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # placed first by MorningResearchStage, so fresh external evidence is
         # not stranded behind the configured universe.  Anything beyond one
         # safe chunk remains explicit None and therefore cannot reach PM.
-        missing_data = [
-            item for item in symbols_data
-            if merged.get(item.get("symbol")) is None
-        ]
+        missing_data = [item for item in symbols_data if merged.get(item.get("symbol")) is None]
         if missing_data:
             recovery_data = missing_data[:_CHUNK_SIZE]
             logger.warning(
                 "Tech batch incomplete across %d primary chunk(s): %d symbol(s) "
                 "unresolved — one consolidated recovery for %d symbol(s); "
                 "%d remain explicit failures without another paid retry",
-                len(chunks), len(missing_data), len(recovery_data),
+                len(chunks),
+                len(missing_data),
+                len(recovery_data),
                 len(missing_data) - len(recovery_data),
             )
             try:
                 recovered, recovery_result = self._analyze_chunk(
-                    recovery_data, prior_ratings, valuations,
-                    prior_macro_regime, prior_macro_outlook, intraday_context,
-                    _retries_left=0, _is_logical_retry=True,
+                    recovery_data,
+                    prior_ratings,
+                    valuations,
+                    prior_macro_regime,
+                    prior_macro_outlook,
+                    intraday_context,
+                    _retries_left=0,
+                    _is_logical_retry=True,
                     _malformed_sink=unusable,
                 )
             except OptionalPaidAnalysisRetrySkipped as exc:
                 recovered, recovery_result = {}, None
                 logger.warning(
                     "Tech batch recovery skipped without provider I/O; shared "
-                    "session retry allowance is already spent: %s", exc.trigger,
+                    "session retry allowance is already spent: %s",
+                    exc.trigger,
                 )
             except PaidAnalysisSuspended:
                 raise
             except Exception as exc:
                 recovered, recovery_result = {}, None
                 logger.error(
-                    "Tech batch optional recovery failed; retaining completed "
-                    "primary analyses: %s", exc,
+                    "Tech batch optional recovery failed; retaining completed primary analyses: %s",
+                    exc,
                 )
-            merged.update({
-                symbol: analysis
-                for symbol, analysis in recovered.items()
-                if analysis is not None
-            })
+            merged.update({symbol: analysis for symbol, analysis in recovered.items() if analysis is not None})
             if recovery_result is not None:
                 result_parts.append(("missing-symbol recovery", recovery_result))
 
-        final_missing = [
-            item.get("symbol") for item in symbols_data
-            if merged.get(item.get("symbol")) is None
-        ]
-        self.last_unreadable = {
-            sym: why for sym, why in unusable.items()
-            if merged.get(sym) is None
-        }
+        final_missing = [item.get("symbol") for item in symbols_data if merged.get(item.get("symbol")) is None]
+        self.last_unreadable = {sym: why for sym, why in unusable.items() if merged.get(sym) is None}
         self.last_unanswered = {
-            str(item.get("symbol")) for item in symbols_data
-            if merged.get(item.get("symbol")) is None
-            and item.get("symbol") not in self.last_unreadable
+            str(item.get("symbol"))
+            for item in symbols_data
+            if merged.get(item.get("symbol")) is None and item.get("symbol") not in self.last_unreadable
         }
         if final_missing:
             logger.error(
                 "Tech batch: %d symbol(s) unresolved after the single shared "
                 "recovery — explicit failed outcomes: %s (returned but "
                 "unusable: %s; absent from every answer: %s)",
-                len(final_missing), final_missing,
-                "; ".join(
-                    f"{s} {unusable[s]}" for s in final_missing if s in unusable
-                ) or "none",
+                len(final_missing),
+                final_missing,
+                "; ".join(f"{s} {unusable[s]}" for s in final_missing if s in unusable) or "none",
                 [s for s in final_missing if s not in unusable],
             )
 
@@ -802,8 +798,13 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         return merged, merged_result
 
     def _split_to_budget(
-        self, symbols_data, prior_ratings, valuations,
-        prior_macro_regime, prior_macro_outlook, intraday_context,
+        self,
+        symbols_data,
+        prior_ratings,
+        valuations,
+        prior_macro_regime,
+        prior_macro_outlook,
+        intraday_context,
         benchmark_pool,
     ) -> list[list[dict]]:
         """Split the batch so no request exceeds the per-request token budget.
@@ -826,6 +827,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         if len(symbols_data) <= 1:
             return [list(symbols_data)]
         try:
+
             def render(item):
                 return self.build_user_message(
                     symbols_data=[item],
@@ -839,15 +841,14 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
 
             # The framing that every request carries regardless of content;
             # subtracting it leaves each symbol's own contribution.
-            envelope = len(self.build_user_message(
-                symbols_data=[],
-                prior_macro_regime=prior_macro_regime,
-                prior_macro_outlook=prior_macro_outlook,
-            ))
-            sizes = {
-                id(item): max(0, len(render(item)) - envelope)
-                for item in symbols_data
-            }
+            envelope = len(
+                self.build_user_message(
+                    symbols_data=[],
+                    prior_macro_regime=prior_macro_regime,
+                    prior_macro_outlook=prior_macro_outlook,
+                )
+            )
+            sizes = {id(item): max(0, len(render(item)) - envelope) for item in symbols_data}
             model = size_model_for_agent(self)
             chunks = pack_to_budget(
                 list(symbols_data),
@@ -859,17 +860,19 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             if not chunks or sum(len(c) for c in chunks) != len(symbols_data):
                 raise ValueError("packing lost or duplicated symbols")
             if len(chunks) > 1:
-                peak = max(
-                    model.predict(sum(sizes[id(i)] for i in c)) for c in chunks
-                )
+                peak = max(model.predict(sum(sizes[id(i)] for i in c)) for c in chunks)
                 logger.info(
                     "Tech batch: %d symbols packed into %d requests of up to "
                     "%s symbols, peak ~%d tokens against a %d budget (%s size "
                     "model: %.0f fixed + %.3f/byte).",
-                    len(symbols_data), len(chunks),
-                    max(len(c) for c in chunks), peak, _REQUEST_TOKEN_BUDGET,
+                    len(symbols_data),
+                    len(chunks),
+                    max(len(c) for c in chunks),
+                    peak,
+                    _REQUEST_TOKEN_BUDGET,
                     "measured" if model.measured else "fallback",
-                    model.fixed_tokens, model.tokens_per_byte,
+                    model.fixed_tokens,
+                    model.tokens_per_byte,
                 )
             return chunks
         except Exception:
@@ -877,14 +880,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 "Tech batch: could not size the request set; falling back to "
                 "fixed %d-symbol chunks. Analysis is unaffected — this only "
                 "changes how the batch is divided.",
-                _CHUNK_SIZE, exc_info=True,
+                _CHUNK_SIZE,
+                exc_info=True,
             )
             if len(symbols_data) <= _MAX_SYMBOLS_PER_CALL:
                 return [list(symbols_data)]
-            return [
-                symbols_data[i : i + _CHUNK_SIZE]
-                for i in range(0, len(symbols_data), _CHUNK_SIZE)
-            ]
+            return [symbols_data[i : i + _CHUNK_SIZE] for i in range(0, len(symbols_data), _CHUNK_SIZE)]
 
     def _analyze_chunk(
         self,
@@ -963,9 +964,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
-        computed_level_bars_by_sym: dict[
-            str, dict[float, list[tuple[float, float]]]
-        ] = {}
+        computed_level_bars_by_sym: dict[str, dict[float, list[tuple[float, float]]]] = {}
         # What the bar history WAS, recorded beside the levels it did or did
         # not produce (2026-09-12). Without it an empty `computed_levels`
         # from a dead feed and one from a chart with no repeated turning
@@ -990,15 +989,13 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 supports, resistances = find_structural_levels(bars)
                 all_levels = (*supports, *resistances)
                 computed_levels_by_sym[sym] = sorted(lv.price for lv in all_levels)
-                computed_level_touches_by_sym[sym] = {
-                    lv.price: lv.touches for lv in all_levels
-                }
-                computed_level_bars_by_sym[sym] = {
-                    lv.price: list(lv.pivot_bars) for lv in all_levels
-                }
+                computed_level_touches_by_sym[sym] = {lv.price: lv.touches for lv in all_levels}
+                computed_level_bars_by_sym[sym] = {lv.price: list(lv.pivot_bars) for lv in all_levels}
                 last = bars[-1]
                 signal_bar_by_sym[sym] = (
-                    getattr(last, "low", None), getattr(last, "high", None), len(bars),
+                    getattr(last, "low", None),
+                    getattr(last, "high", None),
+                    len(bars),
                 )
 
         analyses: dict[str, TechAnalysisResult] = {}
@@ -1015,21 +1012,25 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 malformed[sym] = row.reason
                 _malformed_sink[sym] = reason
             parse_telemetry.record_dropped_item(
-                "TechAnalysisResult", sym, reason=reason,
+                "TechAnalysisResult",
+                sym,
+                reason=reason,
                 reason_code=DROP_CODE_MALFORMED_ROW,
             )
         if malformed_rows:
             logger.warning(
                 "Tech answer carried %d malformed row(s) — dropped individually, "
                 "the %d well-formed row(s) beside them kept: %s",
-                len(malformed_rows), len(parsed or []),
+                len(malformed_rows),
+                len(parsed or []),
                 "; ".join(f"{row.key or '?'}: {row.reason}" for row in malformed_rows),
             )
 
         if parsed is None:
             logger.error(
-                "Tech analyst returned non-JSON for batch analysis (%d symbols "
-                "submitted: %s)", len(submitted), sorted(submitted),
+                "Tech analyst returned non-JSON for batch analysis (%d symbols submitted: %s)",
+                len(submitted),
+                sorted(submitted),
             )
         else:
             items = parsed if isinstance(parsed, list) else [parsed]
@@ -1051,21 +1052,20 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # Same treatment for the structural levels: computed in
                     # Python, carried on the result, never asked of the model.
                     analysis.computed_levels = computed_levels_by_sym.get(
-                        analysis.symbol, [],
+                        analysis.symbol,
+                        [],
                     )
-                    analysis.computed_level_touches = (
-                        computed_level_touches_by_sym.get(analysis.symbol, {})
-                    )
-                    analysis.computed_level_bars = (
-                        computed_level_bars_by_sym.get(analysis.symbol, {})
-                    )
+                    analysis.computed_level_touches = computed_level_touches_by_sym.get(analysis.symbol, {})
+                    analysis.computed_level_bars = computed_level_bars_by_sym.get(analysis.symbol, {})
                     # A submitted symbol with no entry here had no bars dict
                     # at all; that is the no-bars fault, not "unknown".
                     analysis.levels_coverage = levels_coverage_by_sym.get(
-                        analysis.symbol, structure_coverage(None),
+                        analysis.symbol,
+                        structure_coverage(None),
                     )
                     bar_low, bar_high, bar_count = signal_bar_by_sym.get(
-                        analysis.symbol, (None, None, None),
+                        analysis.symbol,
+                        (None, None, None),
                     )
                     analysis.signal_bar_low = bar_low
                     analysis.signal_bar_high = bar_high
@@ -1089,15 +1089,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # stage decides which of the two it is, because it is the
                     # only place that holds the book.
                     fields = (
-                        ", ".join(
-                            ".".join(str(part) for part in err.get("loc", ()))
-                            for err in e.errors()
-                        )
-                        if hasattr(e, "errors") else type(e).__name__
+                        ", ".join(".".join(str(part) for part in err.get("loc", ())) for err in e.errors())
+                        if hasattr(e, "errors")
+                        else type(e).__name__
                     )
                     reason = f"failed validation on {fields}"
                     parse_telemetry.record_dropped_item(
-                        "TechAnalysisResult", bad_symbol, reason=reason,
+                        "TechAnalysisResult",
+                        bad_symbol,
+                        reason=reason,
                         reason_code=DROP_CODE_SCHEMA_INVALID,
                     )
                     if bad_symbol in submitted:
@@ -1105,18 +1105,16 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     logger.error("Failed to parse tech analysis item for %s: %s", bad_symbol, e)
             if unsubmitted_symbols:
                 logger.warning(
-                    "Tech analyst emitted %d row(s) for symbols not in the submitted "
-                    "chunk — dropped: %s", len(unsubmitted_symbols), unsubmitted_symbols,
+                    "Tech analyst emitted %d row(s) for symbols not in the submitted chunk — dropped: %s",
+                    len(unsubmitted_symbols),
+                    unsubmitted_symbols,
                 )
 
         missing = submitted - set(analyses.keys())
         retry_attempted = False
         if missing and _retries_left > 0:
             retry_attempted = True
-            retry_data = [
-                s for s in symbols_data
-                if isinstance(s, dict) and s.get("symbol") in missing
-            ]
+            retry_data = [s for s in symbols_data if isinstance(s, dict) and s.get("symbol") in missing]
             # Three distinct causes, named apart: schema-invalid rows, rows in
             # broken JSON, and symbols the answer genuinely did not contain.
             omitted = sorted(missing - set(failed_symbols) - set(malformed))
@@ -1124,14 +1122,22 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 "Tech batch incomplete: submitted=%d, parsed=%d, validation-failed=%s, "
                 "malformed-in-response=%s, missing-from-response=%s — retrying "
                 "only those %d symbol(s) (%d retry attempt(s) left)",
-                len(submitted), len(analyses), failed_symbols,
-                sorted(malformed), omitted,
-                len(retry_data), _retries_left,
+                len(submitted),
+                len(analyses),
+                failed_symbols,
+                sorted(malformed),
+                omitted,
+                len(retry_data),
+                _retries_left,
             )
             try:
                 retry_analyses, retry_result = self._analyze_chunk(
-                    retry_data, prior_ratings, valuations,
-                    prior_macro_regime, prior_macro_outlook, intraday_context,
+                    retry_data,
+                    prior_ratings,
+                    valuations,
+                    prior_macro_regime,
+                    prior_macro_outlook,
+                    intraday_context,
                     _retries_left=_retries_left - 1,
                     _is_logical_retry=True,
                     _malformed_sink=_malformed_sink,
@@ -1139,20 +1145,18 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             except OptionalPaidAnalysisRetrySkipped as exc:
                 retry_analyses, retry_result = {}, None
                 logger.warning(
-                    "Tech recovery skipped without provider I/O; shared session "
-                    "retry allowance is already spent: %s", exc.trigger,
+                    "Tech recovery skipped without provider I/O; shared session retry allowance is already spent: %s",
+                    exc.trigger,
                 )
             except PaidAnalysisSuspended:
                 raise
             except Exception as exc:
                 retry_analyses, retry_result = {}, None
                 logger.error(
-                    "Tech optional recovery failed; retaining completed primary "
-                    "analysis: %s", exc,
+                    "Tech optional recovery failed; retaining completed primary analysis: %s",
+                    exc,
                 )
-            analyses.update({
-                sym: a for sym, a in retry_analyses.items() if a is not None
-            })
+            analyses.update({sym: a for sym, a in retry_analyses.items() if a is not None})
             if retry_result is not None:
                 result = _merge_agent_results(result, retry_result)
             missing = submitted - set(analyses.keys())
@@ -1168,27 +1172,20 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     "explicit failed outcome (never silently dropped): %s "
                     "(returned but unusable: %s; absent from every answer: %s)",
                     len(missing),
-                    (
-                        " retry" if retry_attempted else
-                        " parsing (shared retry budget exhausted)"
-                    ),
+                    (" retry" if retry_attempted else " parsing (shared retry budget exhausted)"),
                     sorted(missing),
-                    "; ".join(
-                        f"{s} {_malformed_sink[s]}" for s in sorted(missing)
-                        if s in _malformed_sink
-                    ) or "none",
+                    "; ".join(f"{s} {_malformed_sink[s]}" for s in sorted(missing) if s in _malformed_sink) or "none",
                     sorted(s for s in missing if s not in _malformed_sink),
                 )
             elif failed_symbols:
                 logger.info(
-                    "Tech batch: all %d initially-missing/invalid symbol(s) resolved "
-                    "on retry: %s", len(failed_symbols), failed_symbols,
+                    "Tech batch: all %d initially-missing/invalid symbol(s) resolved on retry: %s",
+                    len(failed_symbols),
+                    failed_symbols,
                 )
 
         # Every submitted symbol is a key: TechAnalysisResult on success,
         # None for an explicit, visible, terminal failure — no key is ever
         # simply absent.
-        out: dict[str, TechAnalysisResult | None] = {
-            sym: analyses.get(sym) for sym in submitted
-        }
+        out: dict[str, TechAnalysisResult | None] = {sym: analyses.get(sym) for sym in submitted}
         return out, result

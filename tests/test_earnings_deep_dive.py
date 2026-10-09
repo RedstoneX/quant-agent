@@ -31,6 +31,7 @@ from tests.pipeline_factory import build_pipeline
 # _truncate
 # ---------------------------------------------------------------------------
 
+
 def test_truncate_empty_string():
     assert _truncate("", 100) == ""
     assert _truncate(None, 100) == ""  # type: ignore[arg-type]
@@ -53,8 +54,9 @@ def test_truncate_over_limit_adds_ellipsis():
 # _extract_json_block
 # ---------------------------------------------------------------------------
 
+
 def test_extract_json_block_happy_path():
-    md = "# Header\n\n```json\n{\"foo\": 1, \"bar\": [1, 2, 3]}\n```\n"
+    md = '# Header\n\n```json\n{"foo": 1, "bar": [1, 2, 3]}\n```\n'
     out = _extract_json_block(md)
     assert out == {"foo": 1, "bar": [1, 2, 3]}
 
@@ -67,6 +69,7 @@ def test_extract_json_block_no_block_returns_none():
 def test_extract_json_block_malformed_json_returns_none(caplog):
     md = "```json\n{not valid json\n```"
     import logging
+
     with caplog.at_level(logging.WARNING):
         out = _extract_json_block(md)
     assert out is None
@@ -76,16 +79,14 @@ def test_extract_json_block_malformed_json_returns_none(caplog):
 def test_extract_json_block_first_block_wins():
     """Writer emits one block, but defense-in-depth: if there are two,
     we take the first (which is what a human reader sees first too)."""
-    md = (
-        "```json\n{\"first\": true}\n```\n\n"
-        "```json\n{\"second\": true}\n```"
-    )
+    md = '```json\n{"first": true}\n```\n\n```json\n{"second": true}\n```'
     assert _extract_json_block(md) == {"first": True}
 
 
 # ---------------------------------------------------------------------------
 # _latest_filing_key_for_symbol
 # ---------------------------------------------------------------------------
+
 
 def test_latest_filing_picks_newest_by_filing_date():
     manifest = {
@@ -166,15 +167,14 @@ def test_latest_filing_non_dict_entries_skipped():
 # load_earnings_deep_dive — end-to-end
 # ---------------------------------------------------------------------------
 
+
 def _write_analysis_file(
     path: Path,
     payload: dict,
     preamble: str = "# AAPL 10-Q Analysis\n\n## Full Analysis\n\n",
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        preamble + "```json\n" + json.dumps(payload, indent=2) + "\n```\n"
-    )
+    path.write_text(preamble + "```json\n" + json.dumps(payload, indent=2) + "\n```\n")
 
 
 def _full_analysis_payload() -> dict:
@@ -322,6 +322,7 @@ def test_load_deep_dive_missing_file_returns_none(tmp_path, caplog):
         },
     }
     import logging
+
     with caplog.at_level(logging.WARNING):
         out = load_earnings_deep_dive("AAPL", manifest)
     assert out is None
@@ -433,6 +434,7 @@ def test_load_deep_dive_picks_latest_when_multiple_filings(tmp_path):
 # Integration: pipeline injects deep_dive into thesis_health_context
 # ---------------------------------------------------------------------------
 
+
 def test_thesis_health_context_includes_earnings_deep_dive(tmp_path):
     """Held position with a corresponding analysis_*.md file → the
     thesis_health entry has a non-None `earnings_deep_dive` dict."""
@@ -455,14 +457,15 @@ def test_thesis_health_context_includes_earnings_deep_dive(tmp_path):
         "INSERT INTO trades (symbol, action, qty, price, reasoning, "
         "run_id, fill_status, fill_qty, fill_price, timestamp) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("AAPL", "BUY", 10, 190.0, "iPhone supercycle", "r1",
-         "filled", 10, 190.0, f"{entry_d.isoformat()} 09:35:00"),
+        ("AAPL", "BUY", 10, 190.0, "iPhone supercycle", "r1", "filled", 10, 190.0, f"{entry_d.isoformat()} 09:35:00"),
     )
     p.db.conn.commit()
 
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+        "trailing_pe": 30,
+        "forward_pe": 28,
+        "ps_ratio": 7,
     }
     p.news_store = MagicMock()
     p.news_store.data_dir = None
@@ -478,8 +481,13 @@ def test_thesis_health_context_includes_earnings_deep_dive(tmp_path):
     p.macro_store.load_last_state.return_value = None
 
     aapl = Position(
-        symbol="AAPL", qty=10, avg_entry=190.0, current_price=200.0,
-        market_value=2000, unrealized_pnl=100, sector="Technology",
+        symbol="AAPL",
+        qty=10,
+        avg_entry=190.0,
+        current_price=200.0,
+        market_value=2000,
+        unrealized_pnl=100,
+        sector="Technology",
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([aapl], lookback_weeks=8)
@@ -506,7 +514,9 @@ def test_thesis_health_context_deep_dive_none_when_no_analysis(tmp_path):
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+        "trailing_pe": 30,
+        "forward_pe": 28,
+        "ps_ratio": 7,
     }
     p.news_store = MagicMock()
     p.news_store.data_dir = None
@@ -516,8 +526,13 @@ def test_thesis_health_context_deep_dive_none_when_no_analysis(tmp_path):
     p.macro_store.load_last_state.return_value = None
 
     pos = Position(
-        symbol="XYZ", qty=1, avg_entry=10, current_price=11,
-        market_value=11, unrealized_pnl=1, sector="Technology",
+        symbol="XYZ",
+        qty=1,
+        avg_entry=10,
+        current_price=11,
+        market_value=11,
+        unrealized_pnl=1,
+        sector="Technology",
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([pos], lookback_weeks=8)
@@ -539,7 +554,9 @@ def test_thesis_health_context_deep_dive_exception_does_not_raise(tmp_path):
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+        "trailing_pe": 30,
+        "forward_pe": 28,
+        "ps_ratio": 7,
     }
     p.news_store = MagicMock()
     p.news_store.data_dir = None
@@ -555,8 +572,13 @@ def test_thesis_health_context_deep_dive_exception_does_not_raise(tmp_path):
     p.macro_store.load_last_state.return_value = None
 
     pos = Position(
-        symbol="XYZ", qty=1, avg_entry=10, current_price=11,
-        market_value=11, unrealized_pnl=1, sector="Technology",
+        symbol="XYZ",
+        qty=1,
+        avg_entry=10,
+        current_price=11,
+        market_value=11,
+        unrealized_pnl=1,
+        sector="Technology",
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([pos], lookback_weeks=8)
@@ -581,8 +603,8 @@ def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
     from src.storage.db import Database
     from src.trading_calendar import trading_sessions_held
 
-    fri = date(2026, 9, 18)   # Friday entry
-    mon = date(2026, 9, 21)   # Monday review
+    fri = date(2026, 9, 18)  # Friday entry
+    mon = date(2026, 9, 21)  # Monday review
 
     p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
@@ -590,14 +612,15 @@ def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
         "INSERT INTO trades (symbol, action, qty, price, reasoning, "
         "run_id, fill_status, fill_qty, fill_price, timestamp) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("AAPL", "BUY", 10, 190.0, "iPhone supercycle", "r1",
-         "filled", 10, 190.0, f"{fri.isoformat()} 09:35:00"),
+        ("AAPL", "BUY", 10, 190.0, "iPhone supercycle", "r1", "filled", 10, 190.0, f"{fri.isoformat()} 09:35:00"),
     )
     p.db.conn.commit()
 
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+        "trailing_pe": 30,
+        "forward_pe": 28,
+        "ps_ratio": 7,
     }
     p.news_store = MagicMock()
     p.news_store.data_dir = None
@@ -610,16 +633,21 @@ def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
     # counter here so the test is deterministic and never calls Alpaca. The
     # pipeline must call THIS method rather than recompute sessions itself.
     p.broker = MagicMock()
-    p.broker.trading_sessions_held.side_effect = (
-        lambda start, end: trading_sessions_held(start, end)
-    )
+    p.broker.trading_sessions_held.side_effect = lambda start, end: trading_sessions_held(start, end)
 
     aapl = Position(
-        symbol="AAPL", qty=10, avg_entry=190.0, current_price=200.0,
-        market_value=2000, unrealized_pnl=100, sector="Technology",
+        symbol="AAPL",
+        qty=10,
+        avg_entry=190.0,
+        current_price=200.0,
+        market_value=2000,
+        unrealized_pnl=100,
+        sector="Technology",
     )
-    with patch("src.prompt_facts.missed_ops_signals.et_today", return_value=mon), \
-            patch("src.execution.broker._get_sector", return_value="Technology"):
+    with (
+        patch("src.prompt_facts.missed_ops_signals.et_today", return_value=mon),
+        patch("src.execution.broker._get_sector", return_value="Technology"),
+    ):
         out = p._build_thesis_health_context([aapl], lookback_weeks=8)
 
     row = out["AAPL"]
@@ -662,15 +690,20 @@ def test_evening_prompt_renders_holding_time_in_sessions_not_calendar_days():
             "recent_earnings_signal": None,
             "macro_sector_stance": "bullish",
             "valuation": {
-                "trailing_pe": 30, "forward_pe": 28,
-                "ps_ratio": 7, "signal": "fair",
+                "trailing_pe": 30,
+                "forward_pe": 28,
+                "ps_ratio": 7,
+                "signal": "fair",
             },
             "earnings_deep_dive": None,
         },
     }
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context=ctx,
     )
     assert "1 session held" in msg
@@ -681,6 +714,7 @@ def test_evening_prompt_renders_holding_time_in_sessions_not_calendar_days():
 # ---------------------------------------------------------------------------
 # Integration: evening prompt renders the deep-dive section
 # ---------------------------------------------------------------------------
+
 
 def test_evening_prompt_renders_earnings_deep_dive_section():
     """When earnings_deep_dive is populated, the prompt shows form_type /
@@ -709,8 +743,10 @@ def test_evening_prompt_renders_earnings_deep_dive_section():
             "recent_earnings_signal": None,
             "macro_sector_stance": "bullish",
             "valuation": {
-                "trailing_pe": 30, "forward_pe": 28,
-                "ps_ratio": 7, "signal": "fair",
+                "trailing_pe": 30,
+                "forward_pe": 28,
+                "ps_ratio": 7,
+                "signal": "fair",
             },
             "earnings_deep_dive": {
                 "symbol": "AAPL",
@@ -729,8 +765,11 @@ def test_evening_prompt_renders_earnings_deep_dive_section():
         },
     }
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context=ctx,
     )
     # Section header + all primary fields rendered
@@ -771,15 +810,20 @@ def test_evening_prompt_no_deep_dive_section_when_none():
             "recent_earnings_signal": None,
             "macro_sector_stance": "neutral",
             "valuation": {
-                "trailing_pe": None, "forward_pe": None,
-                "ps_ratio": None, "signal": "no_data",
+                "trailing_pe": None,
+                "forward_pe": None,
+                "ps_ratio": None,
+                "signal": "no_data",
             },
             "earnings_deep_dive": None,
         },
     }
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context=ctx,
     )
     assert "XYZ" in msg
@@ -803,33 +847,43 @@ def test_evening_prompt_deep_dive_skips_empty_optional_steps():
             "entry_date": "2026-03-26",
             "entry_reasoning": "x",
             "days_held": 24,
-            "entry_price": 190.0, "current_price": 200.0, "pnl_pct": 5.3,
+            "entry_price": 190.0,
+            "current_price": 200.0,
+            "pnl_pct": 5.3,
             "sector": "Technology",
             "tech_trajectory": ["buy"],
-            "news_count_8w": 0, "latest_news_headlines": [],
+            "news_count_8w": 0,
+            "latest_news_headlines": [],
             "recent_earnings_signal": None,
             "macro_sector_stance": "bullish",
             "valuation": {
-                "trailing_pe": 30, "forward_pe": 28, "ps_ratio": 7,
+                "trailing_pe": 30,
+                "forward_pe": 28,
+                "ps_ratio": 7,
                 "signal": "fair",
             },
             "earnings_deep_dive": {
-                "symbol": "AAPL", "form_type": "10-Q",
+                "symbol": "AAPL",
+                "form_type": "10-Q",
                 "filing_date": "2026-01-30",
-                "sentiment": "bullish", "conviction": "high",
+                "sentiment": "bullish",
+                "conviction": "high",
                 "key_thesis": "healthy",
                 "headline": "Revenue $10B",
                 "fundamental_quality": "Strong.",
                 "growth_trajectory": "+20%.",
                 "valuation_context": "Fair.",
-                "strategic_risks": "",        # skipped
-                "management_execution": "",   # skipped
+                "strategic_risks": "",  # skipped
+                "management_execution": "",  # skipped
             },
         },
     }
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context=ctx,
     )
     assert "Earnings deep-dive" in msg

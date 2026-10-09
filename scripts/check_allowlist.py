@@ -10,6 +10,7 @@ The check fails on (a) any violation not in the list and (b) any list entry that
 no longer occurs (a stale entry), so the list can only shrink without a visible,
 justified diff. Nothing here reads git or the trunk.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,9 +50,7 @@ def compare(found: Iterable[Iterable[object]], path: Path) -> tuple[list[str], l
 
 def render(check: str, found: Iterable[Iterable[object]]) -> str:
     """The file text for ``found`` (used once to generate a list from today's tree)."""
-    return HEADER.format(check=check) + "".join(
-        line + "\n" for line in sorted(encode(identity) for identity in found)
-    )
+    return HEADER.format(check=check) + "".join(line + "\n" for line in sorted(encode(identity) for identity in found))
 
 
 def report(unlisted: list[str], stale: list[str], path: Path) -> str:

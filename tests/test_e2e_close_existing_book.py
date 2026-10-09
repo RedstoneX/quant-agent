@@ -35,6 +35,7 @@ whole, so the WAL restore is driven only as far as "stop cleared before
 the sell"); shorts; fractional legs; the structural / chandelier trail and
 the SMA200 mark; anything a model seat says — every seat is scripted.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,26 +44,37 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.models import (
-    MacroNarrative, NewsIntelligenceReport, OHLCV, RiskReasoningChain,
+    MacroNarrative,
+    NewsIntelligenceReport,
+    OHLCV,
+    RiskReasoningChain,
     RiskVerdict,
 )
 from src.models.positions import (
-    PositionAction, PositionReasoningChain, PositionReview,
+    PositionAction,
+    PositionReasoningChain,
+    PositionReview,
 )
 import tests.test_e2e_morning_session as morning
 from tests.test_e2e_morning_session import (
-    SESSION_AT, SYMBOL, _build_config, _earnings_feed_stub,
-    _macro_feed_stub, _market_stub, _news_feed_stub, _scripted_model_seats,
+    SESSION_AT,
+    SYMBOL,
+    _build_config,
+    _earnings_feed_stub,
+    _macro_feed_stub,
+    _market_stub,
+    _news_feed_stub,
+    _scripted_model_seats,
 )
 from tests.test_e2e_morning_protection import _seed_company_profile_cache
 
-CLOSE_AT = SESSION_AT.replace(hour=15, minute=30)   # the close session
-ENTRY_AT = CLOSE_AT - timedelta(days=14)            # position opened 2 weeks ago
+CLOSE_AT = SESSION_AT.replace(hour=15, minute=30)  # the close session
+ENTRY_AT = CLOSE_AT - timedelta(days=14)  # position opened 2 weeks ago
 QTY = 10.0
 ENTRY = 95.0
-INITIAL_STOP = 92.0                 # R = 3.00 of initial risk
-TARGET = 105.0                      # the range high the entry was measured on
-ONE_R_PRICE = ENTRY + (ENTRY - INITIAL_STOP)       # 98.00: the breakeven trigger
+INITIAL_STOP = 92.0  # R = 3.00 of initial risk
+TARGET = 105.0  # the range high the entry was measured on
+ONE_R_PRICE = ENTRY + (ENTRY - INITIAL_STOP)  # 98.00: the breakeven trigger
 CASH = 9_050.0
 N_BARS = 160
 
@@ -90,10 +102,16 @@ def _bars(*, end: float, crash: bool = False) -> list[OHLCV]:
             close = top - 15.0 * (climb - 1 - i) / (climb - 1)
         else:
             close = top - 12.0 * (i - climb + 1) / 10.0
-        bars.append(OHLCV(
-            date=d, open=round(close - 0.1, 2), high=round(close + 0.4, 2),
-            low=round(close - 0.4, 2), close=round(close, 2), volume=1_000_000,
-        ))
+        bars.append(
+            OHLCV(
+                date=d,
+                open=round(close - 0.1, 2),
+                high=round(close + 0.4, 2),
+                low=round(close - 0.4, 2),
+                close=round(close, 2),
+                volume=1_000_000,
+            )
+        )
         i += 1
     assert abs(bars[-1].close - end) < 1e-9 and bars[-1].date < CLOSE_AT.date()
     return bars
@@ -102,22 +120,32 @@ def _bars(*, end: float, crash: bool = False) -> list[OHLCV]:
 def _reviewer_says(actions: list[dict]) -> dict:
     review = PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="x", thesis_progress_check="x",
-            thesis_integrity_check="x", winners_discipline_check="x",
-            session_disposition_check="x", execution_rationale="x",
+            macro_continuity_check="x",
+            thesis_progress_check="x",
+            thesis_integrity_check="x",
+            winners_discipline_check="x",
+            session_disposition_check="x",
+            execution_rationale="x",
         ),
         actions=[PositionAction(**a) for a in actions],
-        overall_assessment="scripted", risk_level="low",
+        overall_assessment="scripted",
+        risk_level="low",
     )
     return json.loads(review.model_dump_json())
 
 
 def _risk_says_yes() -> dict:
     rm = RiskVerdict(
-        approved=True, modifications=[], reasoning="approved",
+        approved=True,
+        modifications=[],
+        reasoning="approved",
         reasoning_chain=RiskReasoningChain(
-            rr_audit="x", signal_fidelity="x", correlation_check="x",
-            event_risk="x", sizing_sanity="x", overall="x",
+            rr_audit="x",
+            signal_fidelity="x",
+            correlation_check="x",
+            event_risk="x",
+            sizing_sanity="x",
+            overall="x",
         ),
     )
     return json.loads(rm.model_dump_json())
@@ -126,11 +154,15 @@ def _risk_says_yes() -> dict:
 def _news_says_nothing() -> dict:
     news = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=str(CLOSE_AT.date()), era_themes=["synthetic"],
+            last_updated=str(CLOSE_AT.date()),
+            era_themes=["synthetic"],
             current_regime="risk-on",
         ),
-        state_changes=[], stock_news={}, pm_briefing="stub",
-        market_sentiment="neutral", confidence="medium",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="stub",
+        market_sentiment="neutral",
+        confidence="medium",
     )
     return json.loads(news.model_dump_json())
 
@@ -140,9 +172,7 @@ def _market(bars: list[OHLCV]):
     book makes: no dividend is pending and no valuation is wanted."""
     m = _market_stub()
     m.get_ohlcv.side_effect = lambda symbol, lookback_days=120: list(bars)
-    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {
-        s: list(bars) for s in symbols
-    }
+    m.get_ohlcv_batch.side_effect = lambda symbols, lookback_days=120: {s: list(bars) for s in symbols}
     m.get_upcoming_ex_dividend.return_value = None
     m.get_valuation_metrics.return_value = None
     return m
@@ -151,9 +181,17 @@ def _market(bars: list[OHLCV]):
 def _seed_open_position(db) -> None:
     """The opening row the desk wrote when it bought, two weeks ago."""
     row_id = db.insert_trade(
-        SYMBOL, "BUY", QTY, ENTRY, "synthetic range entry", "seed-entry",
-        stop_loss=INITIAL_STOP, take_profit=TARGET, fill_status="filled",
-        setup_type="range", expected_horizon_sessions=60,
+        SYMBOL,
+        "BUY",
+        QTY,
+        ENTRY,
+        "synthetic range entry",
+        "seed-entry",
+        stop_loss=INITIAL_STOP,
+        take_profit=TARGET,
+        fill_status="filled",
+        setup_type="range",
+        expected_horizon_sessions=60,
         thesis_invalid_if=f"closes below {INITIAL_STOP}",
     )
     db.conn.execute(
@@ -166,8 +204,9 @@ def _seed_open_position(db) -> None:
 HOLD = [{"action": "HOLD", "symbol": SYMBOL, "reason": "thesis intact"}]
 
 
-def _run_close(tmp_path: Path, monkeypatch, *, bars: list[OHLCV],
-               standing_stop: float = INITIAL_STOP, actions: list[dict] = HOLD):
+def _run_close(
+    tmp_path: Path, monkeypatch, *, bars: list[OHLCV], standing_stop: float = INITIAL_STOP, actions: list[dict] = HOLD
+):
     from ops.rehearsal.broker import BrokerSnapshot, install_rehearsal_broker
     from ops.rehearsal.broker_amend import give_amend_endpoint
     from ops.rehearsal.clock import frozen_clock
@@ -192,25 +231,36 @@ def _run_close(tmp_path: Path, monkeypatch, *, bars: list[OHLCV],
     # `BaseAgent`), answering from THIS session's script.
     monkeypatch.setattr(morning, "_scripted_answers", lambda: answers)
     attempts: list[str] = []
-    with no_network(attempts), _sentinel_credentials(), \
-         patch("src.pipeline.MarketDataProvider", return_value=_market(bars)), \
-         patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()), \
-         patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()), \
-         patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()), \
-         frozen_clock(now, run_id="e2e-close"), \
-         _scripted_model_seats(trace):
+    with (
+        no_network(attempts),
+        _sentinel_credentials(),
+        patch("src.pipeline.MarketDataProvider", return_value=_market(bars)),
+        patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()),
+        patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()),
+        patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()),
+        frozen_clock(now, run_id="e2e-close"),
+        _scripted_model_seats(trace),
+    ):
         from src.pipeline import TradingPipeline
 
         pipeline = TradingPipeline(config)
         _seed_open_position(pipeline.db)
         snapshot = BrokerSnapshot(
-            as_of=now.date(), cash=CASH,
-            portfolio_value=CASH + QTY * price, last_equity=CASH + QTY * price,
-            positions=[{
-                "symbol": SYMBOL, "qty": QTY, "avg_entry": ENTRY,
-                "current_price": price, "market_value": QTY * price,
-                "unrealized_pnl": QTY * (price - ENTRY), "sector": "ETF",
-            }],
+            as_of=now.date(),
+            cash=CASH,
+            portfolio_value=CASH + QTY * price,
+            last_equity=CASH + QTY * price,
+            positions=[
+                {
+                    "symbol": SYMBOL,
+                    "qty": QTY,
+                    "avg_entry": ENTRY,
+                    "current_price": price,
+                    "market_value": QTY * price,
+                    "unrealized_pnl": QTY * (price - ENTRY),
+                    "sector": "ETF",
+                }
+            ],
             prices={SYMBOL: price},
             standing_stops={SYMBOL: standing_stop},
         )
@@ -223,8 +273,7 @@ def _run_close(tmp_path: Path, monkeypatch, *, bars: list[OHLCV],
 
         symbols_of = pipeline.broker._data_client._symbols
         pipeline.broker._data_client.get_stock_latest_trade = lambda request: {
-            sym: SimpleNamespace(price=price, timestamp=now)
-            for sym in symbols_of(request)
+            sym: SimpleNamespace(price=price, timestamp=now) for sym in symbols_of(request)
         }
         pipeline.broker.get_intraday_snapshots = lambda symbols, *a, **k: {
             s: {"last_price": price, "last_trade_at": now} for s in symbols
@@ -235,22 +284,22 @@ def _run_close(tmp_path: Path, monkeypatch, *, bars: list[OHLCV],
 
 def _resting_sell_stops(trading) -> list:
     return [
-        o for o in trading._orders.values()
-        if o.symbol == SYMBOL and o.side == "sell" and "stop" in o.order_type
+        o
+        for o in trading._orders.values()
+        if o.symbol == SYMBOL
+        and o.side == "sell"
+        and "stop" in o.order_type
         and o.status in ("pre_existing", "new", "accepted")
     ]
 
 
 def _closing_sells(trading) -> list:
-    return [o for o in trading.submitted
-            if o.side == "sell" and "stop" not in o.order_type]
+    return [o for o in trading.submitted if o.side == "sell" and "stop" not in o.order_type]
 
 
 def _assert_hermetic(result: dict, trace: list, trading, attempts: list) -> None:
     assert attempts == [], f"the session tried to leave the box: {attempts}"
-    assert result["status"] == "reviewed", {
-        k: v for k, v in result.items() if k in ("status", "error", "orders")
-    }
+    assert result["status"] == "reviewed", {k: v for k, v in result.items() if k in ("status", "error", "orders")}
     assert result.get("positions") == 1, result.get("positions")
     assert [k for _, k in trace].count("position") >= 1, trace
     assert result["stop_coverage_gaps"] == [], result["stop_coverage_gaps"]
@@ -259,12 +308,11 @@ def _assert_hermetic(result: dict, trace: list, trading, attempts: list) -> None
 def _assert_untouched(trading, stop: float) -> None:
     assert trading.submitted == [], [o.as_plain() for o in trading.submitted]
     assert trading.cancelled == [] and trading.amended == [], (
-        trading.cancelled, trading.amended,
+        trading.cancelled,
+        trading.amended,
     )
     stops = _resting_sell_stops(trading)
-    assert [(s.stop_price, s.qty) for s in stops] == [(stop, QTY)], (
-        [s.as_plain() for s in stops]
-    )
+    assert [(s.stop_price, s.qty) for s in stops] == [(stop, QTY)], [s.as_plain() for s in stops]
 
 
 def _alignment_gap_in_atr(bars: list[OHLCV]) -> float:
@@ -274,8 +322,7 @@ def _alignment_gap_in_atr(bars: list[OHLCV]) -> float:
     from src.risk.alignment_exit import CHART_MA_PERIODS, simple_moving_average
 
     closes = [b.close for b in bars]
-    marks = [m for m in (simple_moving_average(closes, p) for p in CHART_MA_PERIODS)
-             if m is not None]
+    marks = [m for m in (simple_moving_average(closes, p) for p in CHART_MA_PERIODS) if m is not None]
     atr = compute_indicators(SYMBOL, bars).atr_14
     assert marks and atr and atr > 0, (marks, atr)
     return (min(marks) - closes[-1]) / atr
@@ -284,7 +331,7 @@ def _alignment_gap_in_atr(bars: list[OHLCV]) -> float:
 def test_trend_intact_short_of_one_r_leaves_the_book_and_its_stop_alone(tmp_path, monkeypatch):
     from src.risk.alignment_exit import ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
 
-    bars = _bars(end=ONE_R_PRICE - 1.0)          # 97.00: below the breakeven trigger
+    bars = _bars(end=ONE_R_PRICE - 1.0)  # 97.00: below the breakeven trigger
     assert _alignment_gap_in_atr(bars) < 0 < ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
     result, trace, trading, attempts = _run_close(tmp_path, monkeypatch, bars=bars)
     _assert_hermetic(result, trace, trading, attempts)
@@ -292,7 +339,7 @@ def test_trend_intact_short_of_one_r_leaves_the_book_and_its_stop_alone(tmp_path
 
 
 def test_trend_intact_at_one_r_ratchets_the_stop_up_to_breakeven(tmp_path, monkeypatch):
-    bars = _bars(end=ONE_R_PRICE + 1.0)          # 99.00: past the breakeven trigger
+    bars = _bars(end=ONE_R_PRICE + 1.0)  # 99.00: past the breakeven trigger
     assert _alignment_gap_in_atr(bars) < 0
     result, trace, trading, attempts = _run_close(tmp_path, monkeypatch, bars=bars)
     _assert_hermetic(result, trace, trading, attempts)
@@ -308,7 +355,8 @@ def test_trend_intact_at_one_r_ratchets_the_stop_up_to_breakeven(tmp_path, monke
     # Amended in place: nothing cancelled, nothing re-submitted, the old
     # order marked replaced — one open stop covered the position throughout.
     assert trading.cancelled == [] and trading.submitted == [], (
-        trading.cancelled, [o.as_plain() for o in trading.submitted],
+        trading.cancelled,
+        [o.as_plain() for o in trading.submitted],
     )
     old_id = f"pre-existing-stop-{SYMBOL}"
     assert [(a, b, f["stop_price"]) for a, b, f in trading.amended] == [
@@ -318,10 +366,13 @@ def test_trend_intact_at_one_r_ratchets_the_stop_up_to_breakeven(tmp_path, monke
 
 
 def test_a_stop_already_above_breakeven_is_never_lowered_to_it(tmp_path, monkeypatch):
-    above = ENTRY + 1.0                          # 96.00 rests; ratchet would say 95.00
+    above = ENTRY + 1.0  # 96.00 rests; ratchet would say 95.00
     bars = _bars(end=ONE_R_PRICE + 1.0)
     result, trace, trading, attempts = _run_close(
-        tmp_path, monkeypatch, bars=bars, standing_stop=above,
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        standing_stop=above,
     )
     _assert_hermetic(result, trace, trading, attempts)
     _assert_untouched(trading, above)
@@ -331,10 +382,17 @@ def test_a_reviewer_trail_stop_below_the_resting_stop_is_refused(tmp_path, monke
     bars = _bars(end=ONE_R_PRICE - 1.0)
     lower = INITIAL_STOP - 2.0
     result, trace, trading, attempts = _run_close(
-        tmp_path, monkeypatch, bars=bars, actions=[{
-            "action": "TRAIL_STOP", "symbol": SYMBOL,
-            "reason": "give it more room", "new_stop_price": lower,
-        }],
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        actions=[
+            {
+                "action": "TRAIL_STOP",
+                "symbol": SYMBOL,
+                "reason": "give it more room",
+                "new_stop_price": lower,
+            }
+        ],
     )
     _assert_hermetic(result, trace, trading, attempts)
     _assert_untouched(trading, INITIAL_STOP)
@@ -350,8 +408,7 @@ def _assert_whole_position_sold_after_clearing_its_stop(trading) -> None:
         f"the resting stop must be cleared before the sell: {trading.cancelled}"
     )
     assert trading.submitted.index(sell) == 0, (
-        f"nothing may be submitted before the exit: "
-        f"{[o.as_plain() for o in trading.submitted]}"
+        f"nothing may be submitted before the exit: {[o.as_plain() for o in trading.submitted]}"
     )
 
 
@@ -375,15 +432,20 @@ def test_a_close_below_the_last_chart_mark_exits_the_whole_position(tmp_path, mo
 def test_a_substantiated_reviewer_sell_exits_the_whole_position(tmp_path, monkeypatch):
     bars = _bars(end=ONE_R_PRICE - 1.0)
     result, trace, trading, attempts = _run_close(
-        tmp_path, monkeypatch, bars=bars, actions=[{
-            "action": "SELL", "symbol": SYMBOL,
-            "reason": "thesis invalidated: closed below the support the "
-                      "entry was measured on",
-            "exit_trigger": "thesis_invalid",
-            "trigger_evidence": f"thesis_invalid_if was 'closes below "
-                                f"{INITIAL_STOP}'; the structure that held "
-                                f"the range is gone",
-        }],
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        actions=[
+            {
+                "action": "SELL",
+                "symbol": SYMBOL,
+                "reason": "thesis invalidated: closed below the support the entry was measured on",
+                "exit_trigger": "thesis_invalid",
+                "trigger_evidence": f"thesis_invalid_if was 'closes below "
+                f"{INITIAL_STOP}'; the structure that held "
+                f"the range is gone",
+            }
+        ],
     )
     _assert_hermetic(result, trace, trading, attempts)
     _assert_whole_position_sold_after_clearing_its_stop(trading)

@@ -9,6 +9,7 @@ live-capital pre-flight gate is called; the gate no longer imports config
 back, the audit check's probe is injected), RiskConfig (one 516-line class, above the 400-line floor for
 a new file), and AppConfig with its loaders (needs both).
 """
+
 from __future__ import annotations
 
 import ast
@@ -23,8 +24,15 @@ from src.config.smart_money import SmartMoneyConfig
 
 ROOT = Path(__file__).resolve().parent.parent
 SECTIONS = ("llm", "execution", "risk_adjuncts", "research", "smart_money", "operations", "llm_cost")
-ROOT_BODIES = {"ApiKeysConfig", "AlpacaConfig", "RiskConfig", "AppConfig",
-               "_substitute_env_vars", "_walk_and_substitute", "load_config"}
+ROOT_BODIES = {
+    "ApiKeysConfig",
+    "AlpacaConfig",
+    "RiskConfig",
+    "AppConfig",
+    "_substitute_env_vars",
+    "_walk_and_substitute",
+    "load_config",
+}
 
 
 def _tree(module: str) -> ast.Module:

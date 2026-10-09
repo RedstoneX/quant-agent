@@ -84,11 +84,13 @@ class FOMCCalendarProvider:
         self.max_retries = max(0, int(max_retries))
         self.retry_backoff_base_s = max(0.0, float(retry_backoff_base_s))
         self.retry_backoff_max_s = max(
-            self.retry_backoff_base_s, float(retry_backoff_max_s),
+            self.retry_backoff_base_s,
+            float(retry_backoff_max_s),
         )
         self.retry_backoff_jitter_s = max(0.0, float(retry_backoff_jitter_s))
         self.total_fetch_deadline_s = max(
-            self.request_timeout_s, float(total_fetch_deadline_s),
+            self.request_timeout_s,
+            float(total_fetch_deadline_s),
         )
         self.cache_path = Path(cache_path)
         self.cache_ttl_days = max(0.0, float(cache_ttl_days))
@@ -115,7 +117,8 @@ class FOMCCalendarProvider:
         clipped the same way, so a retry sleep can never itself blow the
         wall-clock ceiling `get_meetings()` promises."""
         base = min(
-            self.retry_backoff_base_s * (2 ** attempt), self.retry_backoff_max_s,
+            self.retry_backoff_base_s * (2**attempt),
+            self.retry_backoff_max_s,
         )
         backoff = base + random.uniform(0, self.retry_backoff_jitter_s)
         if self._deadline is not None:
@@ -140,22 +143,28 @@ class FOMCCalendarProvider:
             remaining = self._remaining()
             if remaining <= 0:
                 logger.warning(
-                    "FOMC calendar deadline exceeded before attempt %d/%d for "
-                    "%s — degrading now", attempt + 1, self.max_retries + 1, url,
+                    "FOMC calendar deadline exceeded before attempt %d/%d for %s — degrading now",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    url,
                 )
                 return None, "fetch_deadline_exceeded"
             try:
                 return self._http_get_bytes(
-                    url, timeout=min(self.request_timeout_s, remaining),
+                    url,
+                    timeout=min(self.request_timeout_s, remaining),
                 ), ""
             except Exception as e:  # noqa: BLE001 — any transport shape degrades
                 reason = (str(e) or type(e).__name__)[:_FAILURE_REASON_MAX_LEN]
                 if attempt < self.max_retries:
                     backoff = self._next_backoff(attempt)
                     logger.warning(
-                        "FOMC calendar error for %s (attempt %d/%d): %s — "
-                        "retrying in %.1fs",
-                        url, attempt + 1, self.max_retries + 1, e, backoff,
+                        "FOMC calendar error for %s (attempt %d/%d): %s — retrying in %.1fs",
+                        url,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        e,
+                        backoff,
                     )
                     if backoff > 0:
                         time.sleep(backoff)
@@ -218,9 +227,13 @@ class FOMCCalendarProvider:
                 continue
             if end < start or (end - start).days + 1 > _FOMC_MAX_MEETING_DAYS:
                 continue
-            meetings.append(FOMCMeeting(
-                start, end, bool(row.get("duration_stated", True)),
-            ))
+            meetings.append(
+                FOMCMeeting(
+                    start,
+                    end,
+                    bool(row.get("duration_stated", True)),
+                )
+            )
         if not meetings:
             return [], None
         return _fomc_sorted(meetings), fetched_on
@@ -229,18 +242,23 @@ class FOMCCalendarProvider:
         """Never raises: an unwritable cache costs a refetch, not a session."""
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps({
-                "fetched_on": today.isoformat(),
-                "source": source,
-                "meetings": [
+            self.cache_path.write_text(
+                json.dumps(
                     {
-                        "start_date": m.start_date.isoformat(),
-                        "end_date": m.end_date.isoformat(),
-                        "duration_stated": m.duration_stated,
-                    }
-                    for m in meetings
-                ],
-            }, indent=1))
+                        "fetched_on": today.isoformat(),
+                        "source": source,
+                        "meetings": [
+                            {
+                                "start_date": m.start_date.isoformat(),
+                                "end_date": m.end_date.isoformat(),
+                                "duration_stated": m.duration_stated,
+                            }
+                            for m in meetings
+                        ],
+                    },
+                    indent=1,
+                )
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("FOMC calendar cache unwritable: %s", e)
 
@@ -289,8 +307,10 @@ class FOMCCalendarProvider:
             # being asked, so the sources are consulted instead.
             self.last_schedule = cached
             self.last_coverage = FOMCCoverage(
-                status=FOMC_MEASURED, source=FOMC_SOURCE_CACHE,
-                schedule_through=cache_through, horizon_end=horizon_end,
+                status=FOMC_MEASURED,
+                source=FOMC_SOURCE_CACHE,
+                schedule_through=cache_through,
+                horizon_end=horizon_end,
                 cache_age_days=cache_age,
             )
             return _forward(cached)
@@ -322,10 +342,7 @@ class FOMCCalendarProvider:
                 failures.append("html:fetch_deadline_exceeded")
 
         if meetings:
-            keep = [
-                m for m in meetings
-                if m.end_date >= today - timedelta(days=_FOMC_CACHE_BACKFILL_DAYS)
-            ]
+            keep = [m for m in meetings if m.end_date >= today - timedelta(days=_FOMC_CACHE_BACKFILL_DAYS)]
             new_through = _through(keep)
             # Never overwrite a longer cached schedule with a shorter fetched
             # one. The JSON feed alone reaches only to the end of the calendar
@@ -335,21 +352,21 @@ class FOMCCalendarProvider:
             # fallback answering again. Keeping the longer copy costs nothing:
             # it is only ever SERVED subject to the same freshness and span
             # checks as any other cache.
-            if (
-                cache_through is None
-                or (new_through is not None and new_through >= cache_through)
-            ):
+            if cache_through is None or (new_through is not None and new_through >= cache_through):
                 self._save_cache(keep, today, " + ".join(sources))
             else:
                 logger.info(
-                    "FOMC calendar: keeping cached schedule through %s; this "
-                    "run's sources only reached %s", cache_through, new_through,
+                    "FOMC calendar: keeping cached schedule through %s; this run's sources only reached %s",
+                    cache_through,
+                    new_through,
                 )
             self.last_schedule = meetings
             self.last_coverage = FOMCCoverage(
-                status=FOMC_MEASURED, source=" + ".join(sources),
+                status=FOMC_MEASURED,
+                source=" + ".join(sources),
                 reason="; ".join(failures)[:_FAILURE_REASON_MAX_LEN],
-                schedule_through=_through(meetings), horizon_end=horizon_end,
+                schedule_through=_through(meetings),
+                horizon_end=horizon_end,
             )
             return _forward(meetings)
 
@@ -358,9 +375,11 @@ class FOMCCalendarProvider:
         if cached:
             self.last_schedule = cached
             self.last_coverage = FOMCCoverage(
-                status=FOMC_MEASURED_STALE_CACHE, source=FOMC_SOURCE_CACHE,
+                status=FOMC_MEASURED_STALE_CACHE,
+                source=FOMC_SOURCE_CACHE,
                 reason="; ".join(failures)[:_FAILURE_REASON_MAX_LEN],
-                schedule_through=cache_through, horizon_end=horizon_end,
+                schedule_through=cache_through,
+                horizon_end=horizon_end,
                 cache_age_days=cache_age,
             )
             return _forward(cached)
@@ -373,7 +392,8 @@ class FOMCCalendarProvider:
         )
         self.last_schedule = []
         self.last_coverage = FOMCCoverage(
-            status=status, reason=joined[:_FAILURE_REASON_MAX_LEN],
+            status=status,
+            reason=joined[:_FAILURE_REASON_MAX_LEN],
             horizon_end=horizon_end,
         )
         return []

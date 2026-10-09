@@ -60,6 +60,7 @@ REPORT_WIDTH = 145
 # bootstrap
 # ---------------------------------------------------------------------------
 
+
 def _load_env_file() -> None:
     """Best-effort .env loader so the script works without `set -a; source .env`.
 
@@ -80,7 +81,7 @@ def _load_env_file() -> None:
             # `export ` the key would land as "export ALPACA_API_KEY" and
             # os.environ.get("ALPACA_API_KEY") would still miss it.
             if line.startswith("export "):
-                line = line[len("export "):].lstrip()
+                line = line[len("export ") :].lstrip()
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip().strip('"').strip("'")
@@ -95,6 +96,7 @@ def _read_paper_default() -> bool:
     isn't given. Paper is the safer default on any load failure."""
     try:
         from src.config import load_config
+
         cfg = load_config(PROJECT_ROOT / "config" / "settings.yaml")
         return bool(cfg.alpaca.paper)
     except Exception:
@@ -104,6 +106,7 @@ def _read_paper_default() -> bool:
 # ---------------------------------------------------------------------------
 # field extraction
 # ---------------------------------------------------------------------------
+
 
 def _normalize_for_json(v):
     """Recursively coerce SDK model values into JSON-safe forms WITHOUT
@@ -251,6 +254,7 @@ def _order_to_dict(o) -> dict:
 # pagination
 # ---------------------------------------------------------------------------
 
+
 def fetch_all_orders(
     client,
     *,
@@ -330,10 +334,12 @@ def fetch_all_orders(
         prev_oldest = oldest_in_page
         cursor_until = next_until
 
-    out.sort(key=lambda r: (
-        r.get("submitted_at") or datetime(1970, 1, 1, tzinfo=timezone.utc),
-        r.get("id") or "",
-    ))
+    out.sort(
+        key=lambda r: (
+            r.get("submitted_at") or datetime(1970, 1, 1, tzinfo=timezone.utc),
+            r.get("id") or "",
+        )
+    )
     return out
 
 
@@ -344,7 +350,9 @@ def fetch_account_dump(client) -> dict:
 
 
 def fetch_portfolio_history_daily(
-    client, *, since=None,
+    client,
+    *,
+    since=None,
 ) -> dict:
     """Pull /v2/account/portfolio_history at 1D timeframe.
 
@@ -379,6 +387,7 @@ def fetch_portfolio_history_daily(
     """
     try:
         from alpaca.trading.requests import GetPortfolioHistoryRequest
+
         kwargs: dict = {"timeframe": "1D", "extended_hours": False}
         if since is not None:
             if isinstance(since, datetime):
@@ -489,6 +498,7 @@ def fetch_all_activities(
 # report
 # ---------------------------------------------------------------------------
 
+
 def render_report(
     orders: list[dict],
     *,
@@ -546,10 +556,7 @@ def render_report(
     lines.append("")
 
     # --- side totals (fills only — partial fills count toward shares/notional) ---
-    fills = [
-        o for o in orders
-        if o.get("status") == "filled" or (o.get("filled_qty") or 0)
-    ]
+    fills = [o for o in orders if o.get("status") == "filled" or (o.get("filled_qty") or 0)]
     side_count: Counter = Counter(o.get("side") for o in fills)
     side_shares: dict[str, float] = defaultdict(float)
     side_notional: dict[str, float] = defaultdict(float)
@@ -562,18 +569,14 @@ def render_report(
 
     lines.append("SIDE TOTALS (filled / partially-filled orders)")
     lines.append("-" * 44)
-    lines.append(
-        f"  {'side':<6} {'count':>8} {'shares':>14} {'gross notional':>22}"
-    )
+    lines.append(f"  {'side':<6} {'count':>8} {'shares':>14} {'gross notional':>22}")
     for side in ("buy", "sell"):
         cnt = side_count.get(side, 0)
         sh = side_shares.get(side, 0.0)
         nt = side_notional.get(side, 0.0)
         lines.append(f"  {side.upper():<6} {cnt:>8} {sh:>14,.4f} {nt:>22,.2f}")
     net_cash = side_notional.get("sell", 0.0) - side_notional.get("buy", 0.0)
-    lines.append(
-        f"  {'net realized cashflow (sell − buy):':<30}{net_cash:>22,.2f}"
-    )
+    lines.append(f"  {'net realized cashflow (sell − buy):':<30}{net_cash:>22,.2f}")
     lines.append("")
 
     # --- per-symbol activity ---
@@ -595,17 +598,11 @@ def render_report(
     if top_syms:
         lines.append("TOP 20 SYMBOLS BY FILL COUNT")
         lines.append("-" * 28)
-        lines.append(
-            f"  {'#':>3} {'sym':<6} {'fills':>6}  {'buy':>4} {'sell':>4}  "
-            f"{'gross notional':>16}"
-        )
+        lines.append(f"  {'#':>3} {'sym':<6} {'fills':>6}  {'buy':>4} {'sell':>4}  {'gross notional':>16}")
         for i, sym in enumerate(top_syms, 1):
             b = sym_buys[sym]
             s = sym_sells[sym]
-            lines.append(
-                f"  {i:>3} {sym:<6} {b + s:>6}  {b:>4} {s:>4}  "
-                f"{sym_notional[sym]:>16,.2f}"
-            )
+            lines.append(f"  {i:>3} {sym:<6} {b + s:>6}  {b:>4} {s:>4}  {sym_notional[sym]:>16,.2f}")
         lines.append("")
 
     # --- detail table ---
@@ -613,13 +610,8 @@ def render_report(
     lines.append("ORDER DETAIL (oldest first, all statuses)")
     lines.append(bar)
     lines.append("")
-    lines.append(
-        "# Times in ET. limit / stop are SUBMITTED prices (— if N/A)."
-    )
-    lines.append(
-        "# order_id shows the leading 8 chars; full ids + client_order_id "
-        "live in --jsonl output."
-    )
+    lines.append("# Times in ET. limit / stop are SUBMITTED prices (— if N/A).")
+    lines.append("# order_id shows the leading 8 chars; full ids + client_order_id live in --jsonl output.")
     lines.append("")
 
     header = (
@@ -679,9 +671,7 @@ def render_jsonl(rows: list[dict]) -> str:
     list-of-records the exporter produces — shared serializer keeps
     field encoding consistent across companion files.
     """
-    return "\n".join(
-        json.dumps(o, default=_json_default, sort_keys=True) for o in rows
-    ) + ("\n" if rows else "")
+    return "\n".join(json.dumps(o, default=_json_default, sort_keys=True) for o in rows) + ("\n" if rows else "")
 
 
 def _csv_cell(v):
@@ -716,7 +706,9 @@ def render_orders_csv(rows: list[dict]) -> str:
     fields = sorted({k for r in rows for k in r.keys()})
     buf = io.StringIO()
     writer = csv.DictWriter(
-        buf, fieldnames=fields, lineterminator="\n",
+        buf,
+        fieldnames=fields,
+        lineterminator="\n",
         extrasaction="ignore",  # never raise on a missing key — pad ""
     )
     writer.writeheader()
@@ -774,7 +766,9 @@ def render_daily_pnl_csv(history: dict) -> str:
 
     buf = io.StringIO()
     writer = csv.DictWriter(
-        buf, fieldnames=_DAILY_PNL_FIELDS, lineterminator="\n",
+        buf,
+        fieldnames=_DAILY_PNL_FIELDS,
+        lineterminator="\n",
     )
     writer.writeheader()
 
@@ -804,16 +798,18 @@ def render_daily_pnl_csv(history: dict) -> str:
             cum_pnl = None
             cum_pct = None
 
-        writer.writerow({
-            "date_et": date_et,
-            "timestamp_utc": dt_utc.isoformat() if dt_utc else "",
-            "equity": _csv_cell(eq),
-            "daily_pnl": _csv_cell(daily_pnl),
-            "daily_return_pct": _csv_cell(daily_pct),
-            "cumulative_pnl_vs_base": _csv_cell(cum_pnl),
-            "cumulative_return_pct_vs_base": _csv_cell(cum_pct),
-            "base_value": _csv_cell(base_value),
-        })
+        writer.writerow(
+            {
+                "date_et": date_et,
+                "timestamp_utc": dt_utc.isoformat() if dt_utc else "",
+                "equity": _csv_cell(eq),
+                "daily_pnl": _csv_cell(daily_pnl),
+                "daily_return_pct": _csv_cell(daily_pct),
+                "cumulative_pnl_vs_base": _csv_cell(cum_pnl),
+                "cumulative_return_pct_vs_base": _csv_cell(cum_pct),
+                "base_value": _csv_cell(base_value),
+            }
+        )
         prev_equity = eq if eq is not None else prev_equity
 
     return buf.getvalue()
@@ -836,51 +832,60 @@ def _safe_float(arr, i):
 # entrypoint
 # ---------------------------------------------------------------------------
 
+
 def _parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Export Alpaca order history.")
     p.add_argument(
-        "--output", type=Path,
+        "--output",
+        type=Path,
         default=PROJECT_ROOT / "data" / "alpaca" / "trades.txt",
         help="Text report path (default: data/alpaca/trades.txt). "
-              "Companion JSONL/JSON files derive their paths from this stem.",
+        "Companion JSONL/JSON files derive their paths from this stem.",
     )
     p.add_argument(
-        "--jsonl", type=Path, default=None,
+        "--jsonl",
+        type=Path,
+        default=None,
         help="Override the orders.jsonl companion path. By default it is "
-              "auto-derived from --output (e.g. data/alpaca_trades.orders.jsonl).",
+        "auto-derived from --output (e.g. data/alpaca_trades.orders.jsonl).",
     )
     p.add_argument(
-        "--no-companions", action="store_true",
+        "--no-companions",
+        action="store_true",
         help="Emit only the .txt report. By default the orders.jsonl + "
-              "activities.jsonl + account.json companions are also written.",
+        "activities.jsonl + account.json companions are also written.",
     )
     p.add_argument(
-        "--skip-activities", action="store_true",
+        "--skip-activities",
+        action="store_true",
         help="Skip the /account/activities pull. Activities can be slow "
-              "on long-lived accounts; orders + account snapshot still emit.",
+        "on long-lived accounts; orders + account snapshot still emit.",
     )
     p.add_argument(
-        "--activity-types", default=None,
-        help="Comma-separated activity types to fetch (e.g. 'FILL,DIV'). "
-              "Default: ALL types (FILL + DIV + JNLC + ...).",
+        "--activity-types",
+        default=None,
+        help="Comma-separated activity types to fetch (e.g. 'FILL,DIV'). Default: ALL types (FILL + DIV + JNLC + ...).",
     )
     env_group = p.add_mutually_exclusive_group()
     env_group.add_argument(
-        "--paper", dest="paper", action="store_true", default=None,
+        "--paper",
+        dest="paper",
+        action="store_true",
+        default=None,
         help="Force the paper endpoint.",
     )
     env_group.add_argument(
-        "--live", dest="paper", action="store_false",
+        "--live",
+        dest="paper",
+        action="store_false",
         help="Force the live endpoint (REAL MONEY).",
     )
-    p.add_argument("--since", default=None,
-                   help="ISO date (YYYY-MM-DD) inclusive lower bound.")
-    p.add_argument("--until", default=None,
-                   help="ISO date (YYYY-MM-DD) inclusive upper bound.")
-    p.add_argument("--page-limit", type=int, default=500,
-                   help="Per-page fetch size for orders (Alpaca max 500).")
-    p.add_argument("--activity-page-size", type=int, default=100,
-                   help="Per-page fetch size for activities (Alpaca max 100).")
+    p.add_argument("--since", default=None, help="ISO date (YYYY-MM-DD) inclusive lower bound.")
+    p.add_argument("--until", default=None, help="ISO date (YYYY-MM-DD) inclusive upper bound.")
+    p.add_argument("--page-limit", type=int, default=500, help="Per-page fetch size for orders (Alpaca max 500).")
+    p.add_argument(
+        "--activity-page-size", type=int, default=100, help="Per-page fetch size for activities (Alpaca max 100)."
+    )
     return p.parse_args(argv)
 
 
@@ -918,22 +923,14 @@ def main(argv=None) -> int:
         return 2
 
     paper = args.paper if args.paper is not None else _read_paper_default()
-    api_url = (
-        "https://paper-api.alpaca.markets/v2" if paper
-        else "https://api.alpaca.markets/v2"
-    )
+    api_url = "https://paper-api.alpaca.markets/v2" if paper else "https://api.alpaca.markets/v2"
     env_label = "PAPER" if paper else "LIVE"
 
-    since = (
-        datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
-        if args.since else None
-    )
-    until = (
-        datetime.fromisoformat(args.until).replace(tzinfo=timezone.utc)
-        if args.until else None
-    )
+    since = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc) if args.since else None
+    until = datetime.fromisoformat(args.until).replace(tzinfo=timezone.utc) if args.until else None
 
     from alpaca.trading.client import TradingClient
+
     client = TradingClient(api_key, api_sec, paper=paper)
 
     # 1) Account snapshot (full field set).
@@ -952,7 +949,10 @@ def main(argv=None) -> int:
     fetch_warning: str | None = None
     try:
         orders = fetch_all_orders(
-            client, since=since, until=until, page_limit=args.page_limit,
+            client,
+            since=since,
+            until=until,
+            page_limit=args.page_limit,
         )
     except Exception as exc:
         fetch_warning = f"orders fetch aborted: {exc} — report may be incomplete"
@@ -961,7 +961,8 @@ def main(argv=None) -> int:
     # 3) Daily P&L (portfolio_history 1D since account inception).
     try:
         daily_pnl_history = fetch_portfolio_history_daily(
-            client, since=account_full.get("created_at"),
+            client,
+            since=account_full.get("created_at"),
         )
     except Exception as exc:
         # fetch_portfolio_history_daily already swallows; belt-and-braces.
@@ -976,18 +977,18 @@ def main(argv=None) -> int:
     activities_warning: str | None = None
     if not args.skip_activities and not args.no_companions:
         types = (
-            [t.strip().upper() for t in args.activity_types.split(",") if t.strip()]
-            if args.activity_types else None
+            [t.strip().upper() for t in args.activity_types.split(",") if t.strip()] if args.activity_types else None
         )
         try:
             activities = fetch_all_activities(
-                client, activity_types=types, since=since, until=until,
+                client,
+                activity_types=types,
+                since=since,
+                until=until,
                 page_size=args.activity_page_size,
             )
         except Exception as exc:
-            activities_warning = (
-                f"activities fetch aborted: {exc} — companion file may be empty"
-            )
+            activities_warning = f"activities fetch aborted: {exc} — companion file may be empty"
 
     companions = _companion_paths(args.output)
     if args.jsonl is not None:
@@ -1009,12 +1010,18 @@ def main(argv=None) -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     combined_warning = " | ".join(w for w in (fetch_warning, activities_warning) if w)
-    args.output.write_text(render_report(
-        orders, account=account, env_label=env_label, api_url=api_url,
-        since=since, until=until,
-        fetch_warning=combined_warning or None,
-        companion_note=companion_note,
-    ))
+    args.output.write_text(
+        render_report(
+            orders,
+            account=account,
+            env_label=env_label,
+            api_url=api_url,
+            since=since,
+            until=until,
+            fetch_warning=combined_warning or None,
+            companion_note=companion_note,
+        )
+    )
     print(f"Wrote {args.output}  ({len(orders):,} order(s))")
 
     if args.no_companions:
@@ -1036,8 +1043,7 @@ def main(argv=None) -> int:
 
     _emit(
         companions["account"],
-        json.dumps(account_full, default=_json_default, sort_keys=True, indent=2)
-        + "\n",
+        json.dumps(account_full, default=_json_default, sort_keys=True, indent=2) + "\n",
     )
 
     return 0

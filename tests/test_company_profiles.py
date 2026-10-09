@@ -47,6 +47,7 @@ UIPATH = CompanyProfile(
 
 # === format_profiles_block / PMFacts render ===
 
+
 def test_pm_block_renders_both_profiles_with_identity_and_summary():
     f = PMFacts(company_profiles=[UIPATH, CAMECO])
     out = f.render()
@@ -77,9 +78,12 @@ def test_pm_block_absent_rather_than_empty_heading_when_all_unknown():
     Rendering a heading over a list of "no company profile available" is
     worse than rendering nothing — it teaches PM the section is noise.
     """
-    f = PMFacts(company_profiles=[
-        CompanyProfile(symbol="CCJ"), CompanyProfile(symbol="PATH"),
-    ])
+    f = PMFacts(
+        company_profiles=[
+            CompanyProfile(symbol="CCJ"),
+            CompanyProfile(symbol="PATH"),
+        ]
+    )
     out = f.render()
     assert "Who These Companies Are" not in out
     assert "no company profile available" not in out
@@ -94,6 +98,7 @@ def test_pm_block_keeps_the_known_profiles_when_some_are_unknown():
 
 def test_pm_facts_render_survives_a_broken_profile_object():
     """A junk entry must cost the section, never the whole facts block."""
+
     class Exploding:
         name = "boom"
 
@@ -112,11 +117,19 @@ def test_format_profiles_block_returns_empty_string_for_nothing():
 
 # === CompanyProfileStore ===
 
+
 def test_store_reads_a_fresh_cache_without_fetching(tmp_path):
     cache = tmp_path / "profiles.json"
-    cache.write_text(json.dumps({"CCJ": {
-        **CAMECO.as_dict(), "_fetched_at": time.time(),
-    }}))
+    cache.write_text(
+        json.dumps(
+            {
+                "CCJ": {
+                    **CAMECO.as_dict(),
+                    "_fetched_at": time.time(),
+                }
+            }
+        )
+    )
     store = CompanyProfileStore(cache_path=str(cache))
 
     with patch.object(CompanyProfileStore, "_fetch") as fetch:
@@ -144,9 +157,16 @@ def test_peek_cached_returns_a_stale_name_without_fetching(tmp_path):
     showing a bare ticker.
     """
     cache = tmp_path / "profiles.json"
-    cache.write_text(json.dumps({"CCJ": {
-        **CAMECO.as_dict(), "_fetched_at": time.time() - 40 * 86400,
-    }}))
+    cache.write_text(
+        json.dumps(
+            {
+                "CCJ": {
+                    **CAMECO.as_dict(),
+                    "_fetched_at": time.time() - 40 * 86400,
+                }
+            }
+        )
+    )
     store = CompanyProfileStore(cache_path=str(cache))
 
     with patch.object(CompanyProfileStore, "_fetch") as fetch:
@@ -169,11 +189,13 @@ def test_store_degrades_silently_when_yfinance_raises(tmp_path):
     """The documented contract: every path degrades to None, nothing raises."""
     store = CompanyProfileStore(cache_path=str(tmp_path / "profiles.json"))
 
-    fake_yf = type("Mod", (), {
-        "Ticker": staticmethod(
-            lambda s: (_ for _ in ()).throw(RuntimeError("network down"))
-        ),
-    })
+    fake_yf = type(
+        "Mod",
+        (),
+        {
+            "Ticker": staticmethod(lambda s: (_ for _ in ()).throw(RuntimeError("network down"))),
+        },
+    )
     with patch.dict("sys.modules", {"yfinance": fake_yf}):
         profile = store.get("CCJ")
 
@@ -181,9 +203,12 @@ def test_store_degrades_silently_when_yfinance_raises(tmp_path):
     assert profile.name is None
     assert profile.summary is None
     # And the empty result still renders as nothing in PM's facts.
-    assert "Who These Companies Are" not in PMFacts(
-        company_profiles=[profile],
-    ).render()
+    assert (
+        "Who These Companies Are"
+        not in PMFacts(
+            company_profiles=[profile],
+        ).render()
+    )
 
 
 def test_store_maps_yfinance_info_onto_the_dataclass(tmp_path):
@@ -214,10 +239,12 @@ def test_store_maps_yfinance_info_onto_the_dataclass(tmp_path):
 
 # === Telegram trade alerts ===
 
+
 def _trade_body(orders, profiles):
     lines: list[str] = []
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: profiles,
     ):
         _append_trade_session_body(lines, {"orders": orders})
@@ -226,8 +253,7 @@ def _trade_body(orders, profiles):
 
 def test_telegram_alert_names_the_companies_it_traded():
     lines = _trade_body(
-        [{"symbol": "CCJ", "action": "BUY", "qty": 40},
-         {"symbol": "PATH", "action": "SELL", "qty": 12}],
+        [{"symbol": "CCJ", "action": "BUY", "qty": 40}, {"symbol": "PATH", "action": "SELL", "qty": 12}],
         {"CCJ": CAMECO, "PATH": UIPATH},
     )
     body = "\n".join(lines)
@@ -238,7 +264,8 @@ def test_telegram_alert_names_the_companies_it_traded():
 def test_telegram_identity_line_stays_compact():
     """One line per symbol, no business summary, no paragraph wrap."""
     lines = _trade_body(
-        [{"symbol": "CCJ", "action": "BUY", "qty": 40}], {"CCJ": CAMECO},
+        [{"symbol": "CCJ", "action": "BUY", "qty": 40}],
+        {"CCJ": CAMECO},
     )
     identity = [ln for ln in lines if "Cameco" in ln]
     assert len(identity) == 1
@@ -257,10 +284,10 @@ def test_telegram_alert_never_fetches_over_the_network():
         return {}
 
     lines: list[str] = []
-    with patch.object(CompanyProfileStore, "get_many", _capture), \
-            patch.object(CompanyProfileStore, "_fetch") as fetch:
+    with patch.object(CompanyProfileStore, "get_many", _capture), patch.object(CompanyProfileStore, "_fetch") as fetch:
         _append_trade_session_body(
-            lines, {"orders": [{"symbol": "CCJ", "action": "BUY"}]},
+            lines,
+            {"orders": [{"symbol": "CCJ", "action": "BUY"}]},
         )
 
     assert seen["allow_fetch"] is False
@@ -271,13 +298,15 @@ def test_telegram_body_intact_when_the_profile_lookup_fails():
     """The order list is the point of the alert; identity is a garnish."""
     lines: list[str] = []
     with patch.object(
-        CompanyProfileStore, "get_many",
+        CompanyProfileStore,
+        "get_many",
         lambda self, symbols, allow_fetch=True: (_ for _ in ()).throw(
             RuntimeError("cache exploded"),
         ),
     ):
         _append_trade_session_body(
-            lines, {"orders": [{"symbol": "CCJ", "action": "BUY", "qty": 40}]},
+            lines,
+            {"orders": [{"symbol": "CCJ", "action": "BUY", "qty": 40}]},
         )
 
     body = "\n".join(lines)
@@ -305,13 +334,15 @@ def test_telegram_adds_no_identity_section_on_a_no_trade_day():
 
 # === PM facts assembly ===
 
+
 def test_build_pm_facts_degrades_silently_when_the_store_explodes():
     """A profile failure must not cost the session its facts block."""
     from src.pipeline import TradingPipeline
 
     pipeline = build_pipeline()
     with patch.object(
-        CompanyProfileStore, "__init__",
+        CompanyProfileStore,
+        "__init__",
         lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("no disk")),
     ):
         facts = _pm_facts_with_stubs(pipeline)
@@ -333,8 +364,13 @@ def test_build_pm_facts_only_looks_up_symbols_in_scope():
         return {s: CompanyProfile(symbol=s) for s in symbols}
 
     position = Position(
-        symbol="CCJ", qty=40, avg_entry=50, current_price=58,
-        market_value=2320, unrealized_pnl=320, sector="Energy",
+        symbol="CCJ",
+        qty=40,
+        avg_entry=50,
+        current_price=58,
+        market_value=2320,
+        unrealized_pnl=320,
+        sector="Energy",
     )
     with patch.object(CompanyProfileStore, "get_many", _get_many):
         _pm_facts_with_stubs(pipeline, positions=[position])
@@ -349,13 +385,22 @@ def _pm_facts_with_stubs(pipeline, positions=None):
     pipeline.db = MagicMock()
     pipeline.db.compute_trade_calibration.return_value = {}
     pipeline.db.get_recent_agent_outputs.return_value = []
-    with patch.object(
-        type(pipeline), "_build_position_history", lambda self, p: {},
-    ), patch.object(
-        type(pipeline), "_build_portfolio_heat", lambda self, p, tv: None,
+    with (
+        patch.object(
+            type(pipeline),
+            "_build_position_history",
+            lambda self, p: {},
+        ),
+        patch.object(
+            type(pipeline),
+            "_build_portfolio_heat",
+            lambda self, p, tv: None,
+        ),
     ):
         return pipeline._build_pm_facts(
-            positions=positions or [], analyses=[],
-            total_value=100000.0, cash=40000.0,
+            positions=positions or [],
+            analyses=[],
+            total_value=100000.0,
+            cash=40000.0,
             recent_performance={},
         )

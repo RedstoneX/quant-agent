@@ -58,6 +58,7 @@ Exit codes:
     3  the repo unit directory or the systemd user directory is missing —
        an operator problem, not a drift finding
 """
+
 from __future__ import annotations
 
 import argparse
@@ -79,8 +80,17 @@ REPO_UNIT_SUBDIR = "scripts/systemd"
 # extensions in scripts/systemd/ can ever be a unit at all (so a stray
 # non-unit file, e.g. paused_units.yaml, is never mistaken for one).
 ALL_SYSTEMD_UNIT_SUFFIXES = (
-    ".service", ".socket", ".device", ".mount", ".automount",
-    ".swap", ".target", ".path", ".timer", ".slice", ".scope",
+    ".service",
+    ".socket",
+    ".device",
+    ".mount",
+    ".automount",
+    ".swap",
+    ".target",
+    ".path",
+    ".timer",
+    ".slice",
+    ".scope",
 )
 # Sanity backstop only, item 123: the set of unit types this repo is
 # EXPECTED to have today (2026-09-24). It no longer decides what
@@ -126,8 +136,12 @@ class UnitDriftReport:
     @property
     def has_drift(self) -> bool:
         return self.checked and bool(
-            self.untracked or self.modified or self.undeployed or self.not_enabled
-            or self.paused_but_enabled or self.paused_unknown
+            self.untracked
+            or self.modified
+            or self.undeployed
+            or self.not_enabled
+            or self.paused_but_enabled
+            or self.paused_unknown
         )
 
 
@@ -238,7 +252,8 @@ def load_paused_units(repo_dir: Path) -> tuple[list[str], str | None]:
 
 
 def build_report(
-    repo_path: str = DEFAULT_REPO_PATH, units_path: str = DEFAULT_UNITS_PATH,
+    repo_path: str = DEFAULT_REPO_PATH,
+    units_path: str = DEFAULT_UNITS_PATH,
 ) -> UnitDriftReport:
     repo_dir = Path(repo_path).expanduser() / REPO_UNIT_SUBDIR
     units_dir = Path(units_path).expanduser()
@@ -297,8 +312,7 @@ def build_report(
 
 
 def format_alert(report: UnitDriftReport) -> str:
-    lines = ["⚠️ QAMC systemd unit drift", f"box: {report.units_dir}",
-             f"repo: {report.repo_dir}", ""]
+    lines = ["⚠️ QAMC systemd unit drift", f"box: {report.units_dir}", f"repo: {report.repo_dir}", ""]
     if report.untracked:
         lines.append("Installed on the box but NOT in the repository:")
         lines.extend(f"  {n}" for n in report.untracked)
@@ -316,24 +330,17 @@ def format_alert(report: UnitDriftReport) -> str:
         lines.extend(f"  {n} -> {t}" for n, t in report.not_enabled)
         lines.append("")
     if report.paused_but_enabled:
-        lines.append(
-            "On the paused list but enabled on the box — the list and the "
-            "box disagree:"
-        )
+        lines.append("On the paused list but enabled on the box — the list and the box disagree:")
         lines.extend(f"  {n} -> {t}" for n, t in report.paused_but_enabled)
         lines.append("")
     if report.paused_unknown:
         lines.append(
-            f"Named in {PAUSED_UNITS_FILENAME} but not tracked in "
-            f"{REPO_UNIT_SUBDIR}/ — error in the paused list:"
+            f"Named in {PAUSED_UNITS_FILENAME} but not tracked in {REPO_UNIT_SUBDIR}/ — error in the paused list:"
         )
         lines.extend(f"  {n}" for n in report.paused_unknown)
         lines.append("")
     lines.extend(_paused_section_lines(report))
-    lines.append(
-        "Deploy is: cp scripts/systemd/* ~/.config/systemd/user/ && "
-        "systemctl --user daemon-reload"
-    )
+    lines.append("Deploy is: cp scripts/systemd/* ~/.config/systemd/user/ && systemctl --user daemon-reload")
     return "\n".join(lines).rstrip()
 
 
@@ -365,7 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-path", default=DEFAULT_REPO_PATH)
     parser.add_argument("--units-path", default=DEFAULT_UNITS_PATH)
     parser.add_argument(
-        "--no-telegram", action="store_true",
+        "--no-telegram",
+        action="store_true",
         help="Print findings but don't push a Telegram alert.",
     )
     args = parser.parse_args(argv)

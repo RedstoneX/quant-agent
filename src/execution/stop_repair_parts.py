@@ -4,6 +4,7 @@ protective level comes from when the desk holds no opening row.
 Split out of `src/execution/stop_repair.py` on 2026-10-02 to keep that
 module inside its size baseline; both names are reached only from there.
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,8 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 def _refuse(
-    outcome: dict | None, reason: str, *, code: str = "",
-    record: dict | None = None, **extra,
+    outcome: dict | None,
+    reason: str,
+    *,
+    code: str = "",
+    record: dict | None = None,
+    **extra,
 ) -> bool:
     """Record WHY this repair did not happen, then report it as not repaired.
 
@@ -48,15 +53,23 @@ def _refuse(
         outcome["repair_refusal_code"] = code
     if record is not None:
         from src.execution.exit_path_records import record_stop_repair_refusal
+
         record_stop_repair_refusal(
-            record.get("db"), code=code, reason=reason,
-            **{k: v for k, v in record.items() if k != "db"}, **extra,
+            record.get("db"),
+            code=code,
+            reason=reason,
+            **{k: v for k, v in record.items() if k != "db"},
+            **extra,
         )
     return False
 
 
 def derive_protective_level(
-    *, broker: Any, market: Any, symbol: str, is_short: bool,
+    *,
+    broker: Any,
+    market: Any,
+    symbol: str,
+    is_short: bool,
 ) -> tuple[float | None, str]:
     """A protective level for a position the desk has NO opening row for.
 
@@ -88,7 +101,9 @@ def derive_protective_level(
             break
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "coverage repair: broker position read failed for %s: %s", symbol, exc,
+            "coverage repair: broker position read failed for %s: %s",
+            symbol,
+            exc,
         )
     if anchor is None:
         return None, ""
@@ -106,7 +121,9 @@ def derive_protective_level(
         multiple = float(stop_atr_multiple(ConstructorConfig(), None, None))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "coverage repair: could not derive a stop width for %s: %s", symbol, exc,
+            "coverage repair: could not derive a stop width for %s: %s",
+            symbol,
+            exc,
         )
         return None, ""
     level = anchor + multiple * atr if is_short else anchor - multiple * atr

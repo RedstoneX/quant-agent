@@ -41,9 +41,9 @@ WORK_MD_GROWTH_SHARE = 0.5
 WORK_MD_GROWTH_CAP_BYTES = 100_000
 
 
-def work_md_growth_budget(before_size: int,
-                           cap: int = WORK_MD_GROWTH_CAP_BYTES,
-                           share: float = WORK_MD_GROWTH_SHARE) -> int:
+def work_md_growth_budget(
+    before_size: int, cap: int = WORK_MD_GROWTH_CAP_BYTES, share: float = WORK_MD_GROWTH_SHARE
+) -> int:
     """How many bytes `docs/WORK.md` may grow in a single change, given its
     size before that change.
 
@@ -91,9 +91,9 @@ def work_md_growth_budget(before_size: int,
 WORK_MD_WARN_SHARE = 0.8
 
 
-def work_md_cap_warning(size: int,
-                        cap: int = WORK_MD_GROWTH_CAP_BYTES,
-                        share: float = WORK_MD_WARN_SHARE) -> str | None:
+def work_md_cap_warning(
+    size: int, cap: int = WORK_MD_GROWTH_CAP_BYTES, share: float = WORK_MD_WARN_SHARE
+) -> str | None:
     """A loud, early notice that `docs/WORK.md` is filling up, or None.
 
     Board item 200: the first signal that the cap was binding used to be a
@@ -115,9 +115,7 @@ def work_md_cap_warning(size: int,
     )
 
 
-def work_md_cap_blocker(before_size: int,
-                        after_size: int,
-                        cap: int = WORK_MD_GROWTH_CAP_BYTES) -> str | None:
+def work_md_cap_blocker(before_size: int, after_size: int, cap: int = WORK_MD_GROWTH_CAP_BYTES) -> str | None:
     """Whether the hard cap should REFUSE this change, as a message, or None.
 
     Board item 200: the cap used to be a bare `size <= cap` on the file as

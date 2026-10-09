@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 #: Seat attribute -> part keyword: the ONLY place the seat's names meet the part's.
 HOST_COLLABORATORS = {
-    "db": "db", "broker": "broker", "market": "market", "_sweeper": "sweeper",
+    "db": "db",
+    "broker": "broker",
+    "market": "market",
+    "_sweeper": "sweeper",
     "_build_post_exit_reality": "build_post_exit_reality",
     "_EXIT_AUDIT_ACTIONS": "exit_audit_actions",
     "_log_conviction_outcome_for_operator": "log_conviction_outcome_for_operator",
@@ -33,28 +36,40 @@ HOST_COLLABORATORS = {
 #: is a COLLABORATOR of the grading part, so the part reads it off the host live; the host's
 #: own delegate for it goes straight to the exits part.
 DELEGATED = (
-    "_review_grading", "_review_exits", "_review_calibration", "_review_blocked", "_review_replay",
-    "_build_recent_sells_for_grading", "_build_recent_buys_for_grading", "_build_trade_grade_summary",
-    "_build_post_exit_reality", "_build_recent_missed_lessons", "_build_recent_loss_pits",
-    "_build_recent_outlook_calibration", "_build_calibration_note", "_compute_recent_performance",
-    "_build_blocked_proposals", "_persist_evening_replay_inputs",
+    "_review_grading",
+    "_review_exits",
+    "_review_calibration",
+    "_review_blocked",
+    "_review_replay",
+    "_build_recent_sells_for_grading",
+    "_build_recent_buys_for_grading",
+    "_build_trade_grade_summary",
+    "_build_post_exit_reality",
+    "_build_recent_missed_lessons",
+    "_build_recent_loss_pits",
+    "_build_recent_outlook_calibration",
+    "_build_calibration_note",
+    "_compute_recent_performance",
+    "_build_blocked_proposals",
+    "_persist_evening_replay_inputs",
 )
 
 
 def review_of(host) -> PromptFactsReview:
     """A fresh part built from the seat's collaborators AS THEY ARE NOW; the part is not handed the seat."""
-    return PromptFactsReview(
-        **{keyword: getattr(host, attr, None) for attr, keyword in HOST_COLLABORATORS.items()}
-    )
+    return PromptFactsReview(**{keyword: getattr(host, attr, None) for attr, keyword in HOST_COLLABORATORS.items()})
 
 
 def _delegate(name: str):
     if name == "_build_post_exit_reality":
+
         def shim(self, *args, **kwargs):
             return review_of(self)._review_exits()._build_post_exit_reality(*args, **kwargs)
     else:
+
         def shim(self, *args, **kwargs):
             return getattr(review_of(self), name)(*args, **kwargs)
+
     shim.__name__ = name
     shim.__qualname__ = f"hold_prompt_facts_review.<locals>.{name}"
     shim.__doc__ = "Thin delegate: body lives in src/prompt_facts/review/held.py."

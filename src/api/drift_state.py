@@ -1,4 +1,5 @@
 """The deploy-drift snapshot read behind /health (moved out of routes_live)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

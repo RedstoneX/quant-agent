@@ -80,9 +80,7 @@ def test_capture_staging_path_is_gitignored():
     assert "/ops/rehearsal/captures.local/" in ignored
 
 
-def test_promotion_writes_ignored_staging_first_then_atomically_moves(
-    monkeypatch, tmp_path
-):
+def test_promotion_writes_ignored_staging_first_then_atomically_moves(monkeypatch, tmp_path):
     root = tmp_path / "repo"
     staging = root / "ops" / "rehearsal" / "captures.local"
     destination = root / "ops" / "rehearsal" / "recordings" / "broker.json"

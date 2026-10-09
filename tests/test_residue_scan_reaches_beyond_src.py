@@ -1,4 +1,5 @@
 """The residue scan must bite in scripts, ops and the repo root."""
+
 from __future__ import annotations
 
 import pytest

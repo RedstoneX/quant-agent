@@ -1,4 +1,5 @@
 """The locator can be pointed at a root, so tests serve it a fake board without a path constant."""
+
 from __future__ import annotations
 
 import pytest

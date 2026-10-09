@@ -86,6 +86,7 @@ Exit codes:
     3  the database could not be read at all — an operator problem, not a
        finding about any position
 """
+
 from __future__ import annotations
 
 import argparse
@@ -120,9 +121,12 @@ def _open_positions(conn, wanted: set[str] | None) -> list[dict]:
     """Held symbols with the broker's own entry, from the `positions`
     table — broker truth, and the same source the live revision path reads
     direction and entry from."""
-    rows = [dict(r) for r in conn.execute(
-        "SELECT symbol, qty, avg_entry FROM positions ORDER BY symbol",
-    )]
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT symbol, qty, avg_entry FROM positions ORDER BY symbol",
+        )
+    ]
     if wanted:
         rows = [r for r in rows if str(r["symbol"]).upper() in wanted]
     return rows
@@ -132,10 +136,7 @@ def _opening_row(conn, symbol: str, action: str) -> dict | None:
     """The row carrying this position's live take_profit — the same
     `get_symbol_last_buy` predicate and ordering the desk itself uses, so
     this check and the pipeline can never read different rows."""
-    predicate = (
-        "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' "
-        "OR COALESCE(fill_qty, 0) > 0)"
-    )
+    predicate = "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' OR COALESCE(fill_qty, 0) > 0)"
     row = conn.execute(
         "SELECT * FROM trades WHERE symbol = ? AND action = ? "
         f"AND {predicate} ORDER BY timestamp DESC, id DESC LIMIT 1",
@@ -184,21 +185,31 @@ def assess_position(*, symbol, is_short, entry_price, row, bars):
     levels = sorted(lv.price for lv in (*supports, *resistances))
     coverage = structure_coverage(bars)
     surviving = levels_still_in_the_way(
-        computed_levels=levels, close_price=close, atr=atr, is_short=is_short,
+        computed_levels=levels,
+        close_price=close,
+        atr=atr,
+        is_short=is_short,
     )
     out.update({"close": close, "bar_date": bar_date, "atr": atr})
 
     walls = walls_between(
-        stored_target=stored, reference_price=entry_price,
-        surviving_levels=surviving, is_short=is_short,
+        stored_target=stored,
+        reference_price=entry_price,
+        surviving_levels=surviving,
+        is_short=is_short,
     )
 
     outcome = assess_bugfix_backfill(
-        symbol=symbol, direction="short" if is_short else "long",
-        entry_price=entry_price, stored_target=stored,
+        symbol=symbol,
+        direction="short" if is_short else "long",
+        entry_price=entry_price,
+        stored_target=stored,
         pinned_horizon_sessions=row.get("expected_horizon_sessions"),
         setup_type=row.get("setup_type") or None,
-        levels=levels, atr=atr, close_price=close, levels_coverage=coverage,
+        levels=levels,
+        atr=atr,
+        close_price=close,
+        levels_coverage=coverage,
     )
     out["derivation_code"] = outcome.code
     out["derived_target"] = outcome.new_price
@@ -224,10 +235,7 @@ def assess_position(*, symbol, is_short, entry_price, row, bars):
 
     if round(outcome.new_price, 2) == round(stored or 0.0, 2):
         out["finding"] = FINDING_AGREES
-        out["detail"] = (
-            f"today's derivation returns the stored ${stored:,.2f} from this "
-            f"position's own pinned inputs"
-        )
+        out["detail"] = f"today's derivation returns the stored ${stored:,.2f} from this position's own pinned inputs"
         return out
 
     out["finding"] = FINDING_DRIFT
@@ -258,27 +266,32 @@ def run(*, db_path: str, symbols: set[str] | None, lookback_days: int) -> list[d
             is_short = float(pos["qty"] or 0) < 0
             row = _opening_row(conn, symbol, "SHORT" if is_short else "BUY")
             if row is None:
-                results.append({
-                    "symbol": symbol,
-                    "finding": FINDING_REFUSED,
-                    "detail": (
-                        "no executed opening row was found for a symbol the "
-                        "broker shows as held, so there is no stored target "
-                        "to compare"
-                    ),
-                })
+                results.append(
+                    {
+                        "symbol": symbol,
+                        "finding": FINDING_REFUSED,
+                        "detail": (
+                            "no executed opening row was found for a symbol the "
+                            "broker shows as held, so there is no stored target "
+                            "to compare"
+                        ),
+                    }
+                )
                 continue
             try:
                 bars = market.get_ohlcv(symbol, lookback_days) or []
             except Exception as exc:  # noqa: BLE001
                 bars = []
-                print(f"check_stored_targets: bars failed for {symbol}: {exc}",
-                      file=sys.stderr)
-            results.append(assess_position(
-                symbol=symbol, is_short=is_short,
-                entry_price=float(pos["avg_entry"] or 0) or None,
-                row=row, bars=bars,
-            ))
+                print(f"check_stored_targets: bars failed for {symbol}: {exc}", file=sys.stderr)
+            results.append(
+                assess_position(
+                    symbol=symbol,
+                    is_short=is_short,
+                    entry_price=float(pos["avg_entry"] or 0) or None,
+                    row=row,
+                    bars=bars,
+                )
+            )
         return results
     finally:
         conn.close()
@@ -328,10 +341,7 @@ def format_message(results: list[dict]) -> str:
             f"{lines}."
         )
     if stuck:
-        lines = "; ".join(
-            f"{r['symbol']} (quoted ${r['stored_target']:,.2f})"
-            for r in stuck
-        )
+        lines = "; ".join(f"{r['symbol']} (quoted ${r['stored_target']:,.2f})" for r in stuck)
         parts.append(
             f"{len(stuck)} held position(s) are quoting a target with a "
             f"level still in front of it that the desk CANNOT recompute: "
@@ -348,36 +358,36 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--symbol", action="append", default=[])
-    parser.add_argument("--lookback-days", type=int, default=1800,
-                        help="bar history for the level scan; matches "
-                             "config/settings.yaml trading.lookback_days")
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=1800,
+        help="bar history for the level scan; matches config/settings.yaml trading.lookback_days",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
-        "--no-telegram", action="store_true",
+        "--no-telegram",
+        action="store_true",
         help="Print findings but don't push a Telegram alert.",
     )
     args = parser.parse_args(argv)
 
     wanted = {s.strip().upper() for s in args.symbol if s.strip()} or None
     try:
-        results = run(db_path=args.db, symbols=wanted,
-                      lookback_days=args.lookback_days)
+        results = run(db_path=args.db, symbols=wanted, lookback_days=args.lookback_days)
     except Exception as exc:  # noqa: BLE001
-        print(f"check_stored_targets: could not read {args.db}: {exc}",
-              file=sys.stderr)
+        print(f"check_stored_targets: could not read {args.db}: {exc}", file=sys.stderr)
         return 3
 
     if args.json:
         print(json.dumps(results, indent=2, default=str))
     else:
         for r in results:
-            print(f"{r['symbol']:<6} {r.get('finding', '?'):<38} "
-                  f"{r.get('detail', '')}")
+            print(f"{r['symbol']:<6} {r.get('finding', '?'):<38} {r.get('detail', '')}")
 
     bad = [r for r in results if r.get("finding") == FINDING_AIMS_PAST_WALL]
     if not args.json:
-        print(f"\nchecked {len(results)} held position(s); "
-              f"{len(bad)} aiming past a standing wall")
+        print(f"\nchecked {len(results)} held position(s); {len(bad)} aiming past a standing wall")
 
     # The scheduled run's whole point: a false target on screen becomes
     # something the desk SAYS, not something someone has to remember to

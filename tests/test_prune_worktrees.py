@@ -11,6 +11,7 @@ Two layers:
      ones and touches nothing else. Real git, because the whole point of the
      script is shelling out to `git worktree` correctly.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -42,6 +43,7 @@ mod = _load_module()
 # porcelain parsing
 # ---------------------------------------------------------------------------
 
+
 def test_parse_porcelain_fields():
     text = (
         "worktree /home/u/repo\n"
@@ -69,6 +71,7 @@ def test_parse_porcelain_fields():
 # ---------------------------------------------------------------------------
 # pure classifier
 # ---------------------------------------------------------------------------
+
 
 def _wt(path, head="h", branch="refs/heads/x", **kw):
     return mod.Worktree(path=path, head=head, branch=branch, **kw)
@@ -155,6 +158,7 @@ def test_other_users_worktree_never_removed():
 # ---------------------------------------------------------------------------
 # real-git integration
 # ---------------------------------------------------------------------------
+
 
 def _git(args, cwd):
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
@@ -250,7 +254,8 @@ def test_integration_report_and_prune(repo, tmp_path):
 
     lst = subprocess.run(
         ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     ).stdout
     # gone + stale cleared; everything else survives.
     assert "/gone" not in lst

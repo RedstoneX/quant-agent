@@ -52,6 +52,7 @@ agent runs to pick a number wants the best guess available, open-PR claims
 included, because being wrong there just means a wasted re-run of the
 script, not a false pass on a required check.
 """
+
 from __future__ import annotations
 
 import re
@@ -62,6 +63,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
 
 #: The exact heading shape `scripts/status_board.py` parses EVERY numbered
 #: item with (`_ITEM_OPEN_RE`, the parser behind `_parse_numbered_items` —
@@ -75,6 +77,7 @@ if str(PROJECT_ROOT) not in sys.path:
 #: line, which is the actual, universal convention.
 def _load_queue_item_re():
     from scripts.status_board import _ITEM_OPEN_RE
+
     return _ITEM_OPEN_RE
 
 
@@ -89,6 +92,7 @@ def _load_queue_item_re():
 #: driver at all).
 def _load_parse_retired():
     from scripts.resolve_doc_conflict import parse_retired_lines, Refusal
+
     return parse_retired_lines, Refusal
 
 
@@ -102,6 +106,7 @@ def _load_pm_gate_markers():
     collision. The gate is empty as of 2026-09-14, but this stays correct if
     it is ever reopened."""
     from scripts.status_board import _PM_GATE_HEADING, _PM_GATE_STOP
+
     return _PM_GATE_HEADING, _PM_GATE_STOP
 
 
@@ -162,17 +167,16 @@ def retired_item_numbers(work_md_text: str) -> RetiredNumbers:
     looks like a bullet cannot be parsed — a caller must treat that as
     "unknown", never as "nothing is retired".
     """
-    has_header = any(l.startswith(_RETIRED_LINE_PREFIX)
-                      for l in work_md_text.splitlines())
+    has_header = any(l.startswith(_RETIRED_LINE_PREFIX) for l in work_md_text.splitlines())
     if not has_header:
         return RetiredNumbers(error=f"no '{_RETIRED_LINE_PREFIX}' line found")
-    bullet_lines = [l for l in work_md_text.splitlines()
-                    if _RETIRED_BULLET_PREFIX_RE.match(l.strip())]
+    bullet_lines = [l for l in work_md_text.splitlines() if _RETIRED_BULLET_PREFIX_RE.match(l.strip())]
     if not bullet_lines:
         return RetiredNumbers(
             error="the retired-numbers header is present but no "
-                  "'- retired queue: ...' / '- retired gate: ...' line "
-                  "follows it")
+            "'- retired queue: ...' / '- retired gate: ...' line "
+            "follows it"
+        )
     parse_retired_lines, Refusal = _load_parse_retired()
     try:
         queue, gate = parse_retired_lines(bullet_lines)
@@ -221,8 +225,7 @@ def claims_from_patch(patch: str) -> set[int]:
     """Item numbers a unified diff patch of `docs/WORK.md` ADDS. Only `+`
     lines count: a PR that merely touches an existing item's body without
     adding a new heading claims nothing."""
-    return {int(m.group(1)) for line in patch.splitlines()
-            if (m := _PATCH_ADDED_ITEM_RE.match(line))}
+    return {int(m.group(1)) for line in patch.splitlines() if (m := _PATCH_ADDED_ITEM_RE.match(line))}
 
 
 @dataclass
@@ -276,6 +279,7 @@ def read_open_pr_claims(fetch=None, repo: str | None = None) -> OpenPrClaims:
 # The positive half: the next genuinely free number
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class NextNumberResult:
     next_number: int
@@ -312,13 +316,13 @@ class RefBoard:
     which is a worse outcome than the local read the tool already did
     before this existed. The reason is always stated out loud.
     """
+
     text: str | None = None
     ref: str = "origin/main"
     problem: str | None = None
 
 
-def read_ref_work_md(work_md: Path, ref: str = "origin/main",
-                      run=None) -> RefBoard:
+def read_ref_work_md(work_md: Path, ref: str = "origin/main", run=None) -> RefBoard:
     """Read `work_md` as `ref` has it. Never raises, never fetches.
 
     `work_md` is resolved to its path INSIDE its own repository, so a
@@ -328,9 +332,9 @@ def read_ref_work_md(work_md: Path, ref: str = "origin/main",
     import subprocess
 
     if run is None:
+
         def run(args):
-            return subprocess.run(args, capture_output=True, text=True,
-                                  timeout=30)
+            return subprocess.run(args, capture_output=True, text=True, timeout=30)
 
     work_md = Path(work_md)
     directory = str(work_md.resolve().parent)
@@ -340,8 +344,7 @@ def read_ref_work_md(work_md: Path, ref: str = "origin/main",
         return RefBoard(ref=ref, problem=f"could not run git: {exc}")
     if prefix.returncode != 0:
         detail = (prefix.stderr or "").strip().splitlines()
-        return RefBoard(ref=ref, problem=(
-            detail[0] if detail else f"{work_md} is not inside a git repository"))
+        return RefBoard(ref=ref, problem=(detail[0] if detail else f"{work_md} is not inside a git repository"))
 
     relpath = prefix.stdout.strip() + work_md.name
     try:
@@ -350,14 +353,15 @@ def read_ref_work_md(work_md: Path, ref: str = "origin/main",
         return RefBoard(ref=ref, problem=f"could not run git: {exc}")
     if shown.returncode != 0:
         detail = (shown.stderr or "").strip().splitlines()
-        return RefBoard(ref=ref, problem=(
-            detail[0] if detail else f"could not read {ref}:{relpath}"))
+        return RefBoard(ref=ref, problem=(detail[0] if detail else f"could not read {ref}:{relpath}"))
     return RefBoard(text=shown.stdout, ref=ref)
 
 
-def next_free_number(work_md_text: str, pr_claims: OpenPrClaims | None = None,
-                      extra_texts: list[str] | None = None,
-                      ) -> NextNumberResult:
+def next_free_number(
+    work_md_text: str,
+    pr_claims: OpenPrClaims | None = None,
+    extra_texts: list[str] | None = None,
+) -> NextNumberResult:
     """The lowest number that is higher than every number this module knows
     about anywhere: live on the board, retired (either scheme — a number
     retired in the PM test gate is not reused either), or claimed by an open

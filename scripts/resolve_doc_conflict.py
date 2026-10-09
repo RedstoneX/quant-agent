@@ -44,6 +44,7 @@ Usage::
     scripts/resolve_doc_conflict.py --kind work \
         --base BASE --ours OURS --theirs THEIRS --out MERGED
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,10 +83,10 @@ def kind_for_path(path: str) -> str | None:
     """The resolver kind for a repository path, or None if it has none."""
     if path in KIND_BY_PATH:
         return KIND_BY_PATH[path]
-    if path.startswith(BOARD_NOTES_DIR + "/") and path.endswith(".md") \
-            and not path.endswith("/README.md"):
+    if path.startswith(BOARD_NOTES_DIR + "/") and path.endswith(".md") and not path.endswith("/README.md"):
         return "notes"
     return None
+
 
 #: Git writes these only at the start of a line.
 CONFLICT_MARKERS = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
@@ -384,10 +385,15 @@ def _precise_difference(ours: str, theirs: str) -> str:
     answers "is this a real collision or did I rebase badly"; the full texts
     stay because the human also has to rewrite one of them.
     """
-    diff = list(difflib.unified_diff(
-        ours.splitlines(keepends=True), theirs.splitlines(keepends=True),
-        fromfile="ours", tofile="theirs", n=1,
-    ))
+    diff = list(
+        difflib.unified_diff(
+            ours.splitlines(keepends=True),
+            theirs.splitlines(keepends=True),
+            fromfile="ours",
+            tofile="theirs",
+            n=1,
+        )
+    )
     parts = ["--- what actually differs (ours -> theirs) ---"]
     parts.append("".join(diff).rstrip() or "(nothing but whitespace)")
     parts.append(f"--- ours, in full ---\n{ours}")
@@ -423,9 +429,7 @@ def merge_text(base: str, ours: str, theirs: str, what: str) -> str:
     )
 
 
-def _git_merge_file(base: str, ours: str, theirs: str,
-                    labels: tuple[str, str, str] | None = None
-                    ) -> tuple[str, bool]:
+def _git_merge_file(base: str, ours: str, theirs: str, labels: tuple[str, str, str] | None = None) -> tuple[str, bool]:
     """git's own line-level three-way merge. Returns (text, was_clean).
 
     `labels` names the three sides in any conflict markers produced. Without
@@ -525,8 +529,7 @@ def merge_block(base: str, ours: str, theirs: str) -> str | None:
                 rebuilt.append("\n")
             rebuilt.append(t)
         merged = "".join(rebuilt)
-    if any(merged.startswith(m) or ("\n" + m) in merged
-           for m in CONFLICT_MARKERS) or "\n=======\n" in merged:
+    if any(merged.startswith(m) or ("\n" + m) in merged for m in CONFLICT_MARKERS) or "\n=======\n" in merged:
         return None
     for side in (ours, theirs):
         for ln in _unique_lines(side, base):
@@ -535,9 +538,16 @@ def merge_block(base: str, ours: str, theirs: str) -> str | None:
     return merged
 
 
-def merge_keyed(base: dict, ours: dict, theirs: dict,
-                base_order: list, ours_order: list, theirs_order: list,
-                what: str, append_only: bool = False):
+def merge_keyed(
+    base: dict,
+    ours: dict,
+    theirs: dict,
+    base_order: list,
+    ours_order: list,
+    theirs_order: list,
+    what: str,
+    append_only: bool = False,
+):
     """Merge two versions of a keyed, ordered collection — board items, board
     notes, incident entries — by KEY, using the merge base to tell a deliberate
     deletion from an addition on the other side.
@@ -643,8 +653,11 @@ def parse_retired_lines(lines: list[str]) -> tuple[list[int], list[int]]:
     return queue, gate
 
 
-def merge_retired(base: list[str], ours: list[str], theirs: list[str],
-                  ) -> list[str]:
+def merge_retired(
+    base: list[str],
+    ours: list[str],
+    theirs: list[str],
+) -> list[str]:
     """The retired-numbers block as the UNION OF LINES from both sides —
     never a re-parse-and-rebuild of one shared line's two number lists.
 
@@ -706,19 +719,22 @@ def resolve_work(base: str, ours: str, theirs: str) -> str:
         s_t = tk[s_o.key]
         s_b = bk.get(s_o.key, Section(heading=s_o.heading))
         merged_items, order = merge_keyed(
-            s_b.items, s_o.items, s_t.items,
-            s_b.order, s_o.order, s_t.order,
+            s_b.items,
+            s_o.items,
+            s_t.items,
+            s_b.order,
+            s_o.order,
+            s_t.order,
             what=f"item under {_scheme_label(s_o.heading)!r}",
         )
         sec = Section(
             heading=s_o.heading,
-            pre=merge_text(s_b.pre, s_o.pre, s_t.pre,
-                           f"the prose under {_scheme_label(s_o.heading)!r}"),
+            pre=merge_text(s_b.pre, s_o.pre, s_t.pre, f"the prose under {_scheme_label(s_o.heading)!r}"),
             items=merged_items,
             order=order,
-            post=merge_text(s_b.post, s_o.post, s_t.post,
-                            f"the prose after the items under "
-                            f"{_scheme_label(s_o.heading)!r}"),
+            post=merge_text(
+                s_b.post, s_o.post, s_t.post, f"the prose after the items under {_scheme_label(s_o.heading)!r}"
+            ),
             retired=merge_retired(s_b.retired, s_o.retired, s_t.retired),
         )
         if sec.retired and "\x00RETIRED\x00" not in sec.post:
@@ -758,8 +774,7 @@ def _expected_survivors(base: str, ours: str, theirs: str) -> dict[str, set[int]
     return out
 
 
-def _assert_work_postconditions(text: str, base: str, ours: str, theirs: str,
-                                expected: dict[str, set[int]]) -> None:
+def _assert_work_postconditions(text: str, base: str, ours: str, theirs: str, expected: dict[str, set[int]]) -> None:
     """Everything that must be true of the merged `docs/WORK.md`. A failure
     here refuses the write. This is the half the old resolver did not have:
     it wrote a plausible file and nothing ever looked at it again."""
@@ -792,8 +807,7 @@ def _assert_work_postconditions(text: str, base: str, ours: str, theirs: str,
         if len(present) != len(set(present)):
             dupes = sorted({n for n in present if present.count(n) > 1})
             raise Refusal(
-                f"Under {_scheme_label(key)!r} these numbers appear more than "
-                f"once: {dupes}. One number is one item."
+                f"Under {_scheme_label(key)!r} these numbers appear more than once: {dupes}. One number is one item."
             )
 
     # Post-condition 3: the repo's OWN parsers must read the same numbers, so
@@ -819,17 +833,13 @@ def _assert_status_board_agrees(text: str, want: dict[str, set[int]]) -> None:
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "WORK.md"
         p.write_text(text)
-        for loader, prefix in ((sb.load_funnel_queue, _QUEUE_HEADING_PREFIX),
-                               (sb.load_pm_gate, _GATE_HEADING_PREFIX)):
+        for loader, prefix in ((sb.load_funnel_queue, _QUEUE_HEADING_PREFIX), (sb.load_pm_gate, _GATE_HEADING_PREFIX)):
             keys = [k for k in want if k.startswith(prefix)]
             if not keys:
                 continue
             items, problem = loader(p)
             if problem:
-                raise Refusal(
-                    "The merged file cannot be read by the board's own "
-                    f"parser: {problem}"
-                )
+                raise Refusal(f"The merged file cannot be read by the board's own parser: {problem}")
             got = sorted(i.rank for i in items)
             if got != sorted(want[keys[0]]):
                 raise Refusal(
@@ -864,8 +874,11 @@ def _assert_retired_disjoint(text: str, want: dict[str, set[int]]) -> None:
 
 
 def _assert_no_conflict_markers(text: str, what: str) -> None:
-    bad = [n for n, line in enumerate(text.splitlines(), 1)
-           if line.startswith(CONFLICT_MARKERS) or line.rstrip() == "======="]
+    bad = [
+        n
+        for n, line in enumerate(text.splitlines(), 1)
+        if line.startswith(CONFLICT_MARKERS) or line.rstrip() == "======="
+    ]
     if bad:
         raise Refusal(
             f"The merge of {what} left conflict markers at lines {bad}. Two "
@@ -895,8 +908,7 @@ def parse_notes(text: str) -> tuple[str, dict[str, str], list[str]]:
         else:
             if key in blocks:
                 raise Refusal(
-                    f"BOARD_NOTES carries two {key!r} blocks in one of the "
-                    "versions being merged. One item, one note."
+                    f"BOARD_NOTES carries two {key!r} blocks in one of the versions being merged. One item, one note."
                 )
             blocks[key] = "".join(buf)
             order.append(key)
@@ -919,9 +931,7 @@ def resolve_notes(base: str, ours: str, theirs: str) -> str:
     o_pre, o_blocks, o_order = parse_notes(ours)
     t_pre, t_blocks, t_order = parse_notes(theirs)
     pre = merge_text(b_pre, o_pre, t_pre, "the BOARD_NOTES preamble")
-    blocks, order = merge_keyed(b_blocks, o_blocks, t_blocks,
-                                b_order, o_order, t_order,
-                                what="board note")
+    blocks, order = merge_keyed(b_blocks, o_blocks, t_blocks, b_order, o_order, t_order, what="board note")
     text = pre + "".join(blocks[k] for k in order)
     _assert_no_conflict_markers(text, "a docs/board_notes/ file")
 
@@ -953,8 +963,7 @@ def assert_notes_agree_with_work(work_text: str, notes_text: str) -> None:
         gate, _ = sb.load_pm_gate(w, notes)
         decisions = sb.load_pending_decisions(w, notes=notes)
         real = {x.ref for x in (*queue, *gate, *decisions)}
-    orphans = sorted(k for k in notes
-                     if k not in real and not k.lower().startswith("item n"))
+    orphans = sorted(k for k in notes if k not in real and not k.lower().startswith("item n"))
     if orphans:
         raise Refusal(
             f"The merge would leave these board notes explaining items that "
@@ -989,10 +998,7 @@ def parse_history(text: str) -> tuple[str, dict[str, str], list[str]]:
             preamble.extend(buf)
         else:
             if key in entries:
-                raise Refusal(
-                    "Two incident entries share the heading "
-                    f"{key!r} in one of the versions being merged."
-                )
+                raise Refusal(f"Two incident entries share the heading {key!r} in one of the versions being merged.")
             entries[key] = "".join(buf)
             order.append(key)
         buf = []
@@ -1048,10 +1054,8 @@ def _new_miswritten_entries(base: str, side: str) -> list[str]:
     branch inventing a thirteenth is a fresh mistake that this merge would
     silently misfile, and that is worth stopping for.
     """
-    base_lines = {ln for ln in base.splitlines()
-                  if _MISWRITTEN_ENTRY_RE.match(ln)}
-    return [ln for ln in side.splitlines()
-            if _MISWRITTEN_ENTRY_RE.match(ln) and ln not in base_lines]
+    base_lines = {ln for ln in base.splitlines() if _MISWRITTEN_ENTRY_RE.match(ln)}
+    return [ln for ln in side.splitlines() if _MISWRITTEN_ENTRY_RE.match(ln) and ln not in base_lines]
 
 
 def resolve_history(base: str, ours: str, theirs: str) -> str:
@@ -1075,8 +1079,7 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
     o_pre, o_e, o_order = parse_history(ours)
     t_pre, t_e, t_order = parse_history(theirs)
     pre = merge_text(b_pre, o_pre, t_pre, "the incident log's preamble")
-    entries, _order = merge_keyed(b_e, o_e, t_e, b_order, o_order, t_order,
-                                  what="incident entry", append_only=True)
+    entries, _order = merge_keyed(b_e, o_e, t_e, b_order, o_order, t_order, what="incident entry", append_only=True)
 
     # Newest first, and NOTHING already in the log moves. The committed file
     # is not perfectly date-sorted (21 adjacent pairs are out of order as of
@@ -1099,8 +1102,7 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
     # and which still never moves an entry that was already there.
     retained = [k for k in b_order if k in entries]
     new_ours = [k for k in o_order if k in entries and k not in b_e]
-    new_theirs = [k for k in t_order if k in entries and k not in b_e
-                  and k not in new_ours]
+    new_theirs = [k for k in t_order if k in entries and k not in b_e and k not in new_ours]
     fresh = sorted(new_ours + new_theirs, key=_entry_date, reverse=True)
     #
     # Placed oldest-first so that same-date entries end up in `fresh`'s own
@@ -1115,10 +1117,7 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
 
     got_pre, got_entries, got_order = parse_history(text)
     if set(got_entries) != set(entries):
-        raise Refusal(
-            "The merged incident log lost entries the merge kept: "
-            f"{sorted(set(entries) - set(got_entries))}"
-        )
+        raise Refusal(f"The merged incident log lost entries the merge kept: {sorted(set(entries) - set(got_entries))}")
     for k, span in got_entries.items():
         if span != entries[k]:
             raise Refusal(f"Incident entry {k!r} was not preserved verbatim.")
@@ -1153,8 +1152,7 @@ def resolve_history(base: str, ours: str, theirs: str) -> str:
         for k in side_entries:
             if k not in got_entries:
                 raise Refusal(
-                    f"Incident entry {k!r} was on one side and is not in the "
-                    "merged file. This log is append-only."
+                    f"Incident entry {k!r} was on one side and is not in the merged file. This log is append-only."
                 )
     return text
 
@@ -1216,15 +1214,15 @@ _REFUSAL_BANNER = (
 )
 
 
-def build_refusal_artefact(base: str, ours: str, theirs: str,
-                           sidecar_name: str, doc_name: str = "this document"
-                           ) -> str:
+def build_refusal_artefact(
+    base: str, ours: str, theirs: str, sidecar_name: str, doc_name: str = "this document"
+) -> str:
     """The text a refusal leaves in the document. See the section comment."""
     merged, _clean = _git_merge_file(
-        base, ours, theirs,
-        labels=(f"ours (this branch's {doc_name})",
-                f"merge base ({doc_name})",
-                f"theirs (the incoming {doc_name})"),
+        base,
+        ours,
+        theirs,
+        labels=(f"ours (this branch's {doc_name})", f"merge base ({doc_name})", f"theirs (the incoming {doc_name})"),
     )
     text = _REFUSAL_BANNER.format(sidecar=sidecar_name) + merged
 
@@ -1258,16 +1256,23 @@ def build_refusal_artefact(base: str, ours: str, theirs: str,
 # `_lines_lost` lives in scripts/docmerge/lines_lost.py; loaded by path like
 # `status_board` above, so every import spelling of this script still works.
 _LINES_LOST_SPEC = importlib.util.spec_from_file_location(
-    "docmerge_lines_lost", Path(__file__).resolve().parent / "docmerge" / "lines_lost.py")
+    "docmerge_lines_lost", Path(__file__).resolve().parent / "docmerge" / "lines_lost.py"
+)
 _lines_lost_mod = importlib.util.module_from_spec(_LINES_LOST_SPEC)
 _LINES_LOST_SPEC.loader.exec_module(_lines_lost_mod)  # type: ignore[union-attr]
 _lines_lost = _lines_lost_mod._lines_lost
 
 
-def write_refusal_artefact(out: Path, base: str, ours: str, theirs: str,
-                           reason: str, merged_text: str | None,
-                           tree_path: str | None = None,
-                           root: Path | None = None) -> None:
+def write_refusal_artefact(
+    out: Path,
+    base: str,
+    ours: str,
+    theirs: str,
+    reason: str,
+    merged_text: str | None,
+    tree_path: str | None = None,
+    root: Path | None = None,
+) -> None:
     """Leave an obviously-unresolved document at `out`, and the reason beside
     it. Never called on a success path.
 
@@ -1284,13 +1289,16 @@ def write_refusal_artefact(out: Path, base: str, ours: str, theirs: str,
     # that worktree is not necessarily the one this script was loaded from
     # (the desk runs several worktrees off one clone at once). Getting this
     # wrong writes the reason into a directory nobody is looking at.
-    sidecar = ((root or Path.cwd()) / (tree_path + REFUSAL_SIDECAR_SUFFIX)
-               if tree_path
-               else out.with_name(out.name + REFUSAL_SIDECAR_SUFFIX))
-    out.write_text(build_refusal_artefact(
-        base, ours, theirs,
-        (tree_path + REFUSAL_SIDECAR_SUFFIX) if tree_path else sidecar.name,
-        name))
+    sidecar = (
+        (root or Path.cwd()) / (tree_path + REFUSAL_SIDECAR_SUFFIX)
+        if tree_path
+        else out.with_name(out.name + REFUSAL_SIDECAR_SUFFIX)
+    )
+    out.write_text(
+        build_refusal_artefact(
+            base, ours, theirs, (tree_path + REFUSAL_SIDECAR_SUFFIX) if tree_path else sidecar.name, name
+        )
+    )
     note = [
         "MERGE REFUSED — scripts/resolve_doc_conflict.py could not resolve",
         f"{name} and has left it with conflict markers on purpose.",
@@ -1327,15 +1335,14 @@ RESOLVERS = {
 
 
 def _stage(path: str, n: int) -> str | None:
-    proc = subprocess.run(["git", "show", f":{n}:{path}"],
-                          capture_output=True, text=True, cwd=REPO_ROOT)
+    proc = subprocess.run(["git", "show", f":{n}:{path}"], capture_output=True, text=True, cwd=REPO_ROOT)
     return proc.stdout if proc.returncode == 0 else None
 
 
 def _conflicted_paths() -> list[str]:
-    proc = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
-                          capture_output=True, text=True, cwd=REPO_ROOT,
-                          check=True)
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=U"], capture_output=True, text=True, cwd=REPO_ROOT, check=True
+    )
     return [p for p in proc.stdout.split() if kind_for_path(p)]
 
 
@@ -1366,11 +1373,10 @@ def _from_index(apply: bool) -> int:
             # a markerless file missing the other side's content. `--dry-run`
             # is the one exception — it promises to write nothing at all.
             if apply:
-                write_refusal_artefact(REPO_ROOT / path, base, ours, theirs,
-                                       str(exc), exc.merged_text,
-                                       tree_path=path, root=REPO_ROOT)
-                print(f"left {path} UNRESOLVED, with conflict markers",
-                      file=sys.stderr)
+                write_refusal_artefact(
+                    REPO_ROOT / path, base, ours, theirs, str(exc), exc.merged_text, tree_path=path, root=REPO_ROOT
+                )
+                print(f"left {path} UNRESOLVED, with conflict markers", file=sys.stderr)
             raise
 
     work = merged.get("docs/WORK.md")
@@ -1407,48 +1413,55 @@ def _from_index(apply: bool) -> int:
             if apply:
                 for path in merged:
                     b, o, t = (_stage(path, 1), _stage(path, 2), _stage(path, 3))
-                    write_refusal_artefact(REPO_ROOT / path, b or "", o or "",
-                                           t or "", str(exc), merged[path],
-                                           tree_path=path, root=REPO_ROOT)
-                    print(f"left {path} UNRESOLVED, with conflict markers",
-                          file=sys.stderr)
+                    write_refusal_artefact(
+                        REPO_ROOT / path,
+                        b or "",
+                        o or "",
+                        t or "",
+                        str(exc),
+                        merged[path],
+                        tree_path=path,
+                        root=REPO_ROOT,
+                    )
+                    print(f"left {path} UNRESOLVED, with conflict markers", file=sys.stderr)
             raise
 
     for path, text in merged.items():
         if apply:
             (REPO_ROOT / path).write_text(text)
             subprocess.run(["git", "add", "--", path], cwd=REPO_ROOT, check=True)
-        print(f"{'resolved' if apply else 'would resolve'} {path} "
-              f"({len(text.encode()):,} bytes)")
+        print(f"{'resolved' if apply else 'would resolve'} {path} ({len(text.encode()):,} bytes)")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--from-index", action="store_true",
-                    help="resolve every conflicted board document off the "
-                         "git index of an in-progress merge")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="with --from-index, check but write nothing")
+    ap.add_argument(
+        "--from-index",
+        action="store_true",
+        help="resolve every conflicted board document off the git index of an in-progress merge",
+    )
+    ap.add_argument("--dry-run", action="store_true", help="with --from-index, check but write nothing")
     ap.add_argument("--kind", choices=sorted(RESOLVERS))
     ap.add_argument("--base")
     ap.add_argument("--ours")
     ap.add_argument("--theirs")
     ap.add_argument("--out")
-    ap.add_argument("--tree-path",
-                    help="what the document is CALLED in the tree (git's %P). "
-                         "Only used when a refusal has to name the document "
-                         "and place its reason file, because --out under a "
-                         "real merge is a private temp file whose name means "
-                         "nothing to the human reading the banner.")
+    ap.add_argument(
+        "--tree-path",
+        help="what the document is CALLED in the tree (git's %P). "
+        "Only used when a refusal has to name the document "
+        "and place its reason file, because --out under a "
+        "real merge is a private temp file whose name means "
+        "nothing to the human reading the banner.",
+    )
     args = ap.parse_args(argv)
 
     try:
         if args.from_index:
             return _from_index(apply=not args.dry_run)
         if not (args.kind and args.base and args.ours and args.theirs):
-            ap.error("--kind, --base, --ours and --theirs are all required "
-                     "without --from-index")
+            ap.error("--kind, --base, --ours and --theirs are all required without --from-index")
         base = Path(args.base).read_text()
         ours = Path(args.ours).read_text()
         theirs = Path(args.theirs).read_text()
@@ -1460,13 +1473,15 @@ def main(argv: list[str] | None = None) -> int:
                 # which it has already filled with the OURS copy, so refusing
                 # without writing here is what silently reverted the other
                 # side. See "What a refusal leaves on disk" above.
-                write_refusal_artefact(Path(args.out), base, ours, theirs,
-                                       str(exc), exc.merged_text,
-                                       tree_path=args.tree_path)
+                write_refusal_artefact(
+                    Path(args.out), base, ours, theirs, str(exc), exc.merged_text, tree_path=args.tree_path
+                )
                 named = args.tree_path or args.out
-                print(f"left {named} UNRESOLVED, with conflict markers, and "
-                      f"the reason in {named}{REFUSAL_SIDECAR_SUFFIX}",
-                      file=sys.stderr)
+                print(
+                    f"left {named} UNRESOLVED, with conflict markers, and "
+                    f"the reason in {named}{REFUSAL_SIDECAR_SUFFIX}",
+                    file=sys.stderr,
+                )
             raise
         if args.out:
             Path(args.out).write_text(text)

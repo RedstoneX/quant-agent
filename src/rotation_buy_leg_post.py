@@ -1,4 +1,5 @@
 """Rotation buy-leg post-processing: alerts, drops and outcome records (lifted VERBATIM from pipeline_rotation_exec)."""
+
 from __future__ import annotations
 
 from src.pipeline_stages import (
@@ -8,8 +9,7 @@ from src.pipeline_stages import (
 )
 
 
-def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float,
-                             order_id: str | None) -> None:
+def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float, order_id: str | None) -> None:
     """Standalone owner alert: the desk closed a position ON ITS OWN.
 
     Same path and shape as the naked-position, re-peg-exhausted and
@@ -63,10 +63,12 @@ def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float,
         from src import notifier as _notifier
 
         _notifier.send_owner_alert(
-            body, symbols=[str(held)] + ([str(new)] if new else []),
+            body,
+            symbols=[str(held)] + ([str(new)] if new else []),
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("rotation owner alert failed: %s", exc)
+
 
 def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
     """The BUY-side mirror of the `held_symbol_bought_today` anti-churn rule.
@@ -93,15 +95,19 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
     rotation = getattr(ctx, "rotation", None)
     sold_this_session = ""
     if isinstance(rotation, dict) and rotation.get("sell_order_id"):
-        sold_this_session = str(
-            rotation.get("held_symbol") or "",
-        ).strip().upper()
+        sold_this_session = (
+            str(
+                rotation.get("held_symbol") or "",
+            )
+            .strip()
+            .upper()
+        )
     try:
         sold_today = pipeline.db.get_rotation_sell_symbols_today()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "rotation re-buy guard could not read its own record (%s) — "
-            "buys proceed through their ordinary gates", exc,
+            "rotation re-buy guard could not read its own record (%s) — buys proceed through their ordinary gates",
+            exc,
         )
         # Fail-open is the ruling (a bookkeeping hiccup must never block an
         # independently approved buy), but a SILENT fail-open is invisible.
@@ -109,7 +115,10 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
         # round trip leaves something countable afterwards.
         for d in buy_decisions:
             _record_pipeline_event(
-                pipeline, ctx, getattr(d, "symbol", None), "rotation",
+                pipeline,
+                ctx,
+                getattr(d, "symbol", None),
+                "rotation",
                 "rebuy_guard_failed_open",
                 "the buy-side anti-churn guard could not read the desk's "
                 f"own rotation sell record ({exc}), so this buy was checked "
@@ -131,7 +140,10 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
         # session instead of from disk.
         blocked.add(sold_this_session)
         _record_pipeline_event(
-            pipeline, ctx, sold_this_session, "rotation",
+            pipeline,
+            ctx,
+            sold_this_session,
+            "rotation",
             "rebuy_guard_closed_from_session_fact",
             "the rotation closed this name this session but no durable "
             "sell record for it could be read back, so the buy-side "
@@ -146,7 +158,10 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
         sym = str(getattr(d, "symbol", "") or "").strip().upper()
         if sym and sym in blocked:
             _record_execution_skip(
-                pipeline, ctx, d.symbol, "sold_today_below_entry_bar",
+                pipeline,
+                ctx,
+                d.symbol,
+                "sold_today_below_entry_bar",
                 "the desk closed this name earlier today because it no "
                 "longer cleared the desk's own entry bar; buying it back in "
                 "the same session would crystallise that loss and pay two "
@@ -157,8 +172,8 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
         kept.append(d)
     return kept
 
-def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list,
-                                         sell_status_by_id: dict) -> list:
+
+def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list, sell_status_by_id: dict) -> list:
     """Phase 14b — the rotation's BUY leg may only proceed on room that is
     REAL. Returns the BUY list with the new candidate removed when it is not.
 
@@ -195,11 +210,16 @@ def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list,
     for d in buy_decisions:
         if d.symbol.upper() == new_symbol:
             _record_execution_skip(
-                pipeline, ctx, d.symbol, "rotation_room_not_freed", block_detail,
+                pipeline,
+                ctx,
+                d.symbol,
+                "rotation_room_not_freed",
+                block_detail,
             )
             continue
         kept.append(d)
     return kept
+
 
 def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
     """Phase 14b — record both legs' outcome durably once the buy phase has
@@ -217,42 +237,53 @@ def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
         # WAS NOT BOUGHT" would be a false alarm about a trade that was
         # never planned. Recorded, not paged.
         _record_pipeline_event(
-            pipeline, ctx, rotation.get("held_symbol"), "rotation",
+            pipeline,
+            ctx,
+            rotation.get("held_symbol"),
+            "rotation",
             "no_replacement_leg",
             "the holding was closed on its own merits; nothing un-held "
             "ranked well enough to buy, so there was no replacement leg",
         )
         return
     buy_submitted = any(
-        str(o.get("symbol") or "").upper() == new_symbol
-        and str(o.get("action") or "").upper() in ("BUY", "SHORT")
-        for o in orders if isinstance(o, dict)
+        str(o.get("symbol") or "").upper() == new_symbol and str(o.get("action") or "").upper() in ("BUY", "SHORT")
+        for o in orders
+        if isinstance(o, dict)
     )
     if buy_submitted:
         _record_pipeline_event(
-            pipeline, ctx, new_symbol, "rotation", "buy_submitted",
-            "replacement_entry_submitted", held_symbol=rotation.get("held_symbol"),
+            pipeline,
+            ctx,
+            new_symbol,
+            "rotation",
+            "buy_submitted",
+            "replacement_entry_submitted",
+            held_symbol=rotation.get("held_symbol"),
         )
         return
     skip = next(
-        (
-            s for s in reversed(ctx.execution_skips or [])
-            if str(s.get("symbol") or "").upper() == new_symbol
-        ),
+        (s for s in reversed(ctx.execution_skips or []) if str(s.get("symbol") or "").upper() == new_symbol),
         None,
     )
     detail = (
         f"{skip.get('reason')}: {skip.get('detail')}"
-        if skip else
-        "no BUY order for it reached the broker this session (dropped "
+        if skip
+        else "no BUY order for it reached the broker this session (dropped "
         "before execution — see its risk / deterministic_gate / "
         "execution_skip events)"
     )
     _record_pipeline_event(
-        pipeline, ctx, new_symbol, "rotation", "buy_not_submitted", detail,
+        pipeline,
+        ctx,
+        new_symbol,
+        "rotation",
+        "buy_not_submitted",
+        detail,
         held_symbol=rotation.get("held_symbol"),
     )
     _alert_rotation_buy_leg_missing(rotation=rotation, detail=detail)
+
 
 def _alert_rotation_buy_leg_missing(*, rotation: dict, detail: str) -> None:
     """Standalone owner alert: the rotation SOLD but did not BUY.
@@ -276,7 +307,8 @@ def _alert_rotation_buy_leg_missing(*, rotation: dict, detail: str) -> None:
         from src import notifier as _notifier
 
         _notifier.send_owner_alert(
-            body, symbols=[str(held)] + ([str(new)] if new else []),
+            body,
+            symbols=[str(held)] + ([str(new)] if new else []),
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("rotation buy-leg owner alert failed: %s", exc)

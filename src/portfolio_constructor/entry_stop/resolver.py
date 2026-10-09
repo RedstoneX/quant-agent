@@ -1,6 +1,7 @@
 """Entry price + stop resolution for the position builder (bodies moved verbatim
 from src/portfolio_constructor/stops.py). Standalone: every collaborator is an
 explicit keyword-only argument, no TradingPipeline and no host object behind it."""
+
 from __future__ import annotations
 
 import math
@@ -10,7 +11,20 @@ from src.models import TargetPosition, TechAnalysisResult, TradeDecision
 from src.risk.constants import REWARD_RISK_PARITY, reward_risk_floor_applies
 import src.portfolio_constructor.absolute_floor_record as absolute_floor_record
 from src.portfolio_constructor.config import logger
-from src.portfolio_constructor.config import STOP_RULE_LEVEL_HONOURED, STOP_RULE_ABSOLUTE_FLOOR, STOP_RULE_ATR_BAND, STOP_RULE_OUTSIDE_BAND, STOP_REFUSAL_WRONG_SIDE, STOP_RULE_SIGNAL_BAR, STOP_REFUSAL_STOP_NOT_FINITE, STOP_REFUSAL_ENTRY_NOT_FINITE, STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY, STOP_REFUSAL_NO_VALID_STOP, STOP_REFUSAL_NO_STRUCTURAL_TARGET, STOP_REFUSAL_REWARD_BELOW_RISK
+from src.portfolio_constructor.config import (
+    STOP_RULE_LEVEL_HONOURED,
+    STOP_RULE_ABSOLUTE_FLOOR,
+    STOP_RULE_ATR_BAND,
+    STOP_RULE_OUTSIDE_BAND,
+    STOP_REFUSAL_WRONG_SIDE,
+    STOP_RULE_SIGNAL_BAR,
+    STOP_REFUSAL_STOP_NOT_FINITE,
+    STOP_REFUSAL_ENTRY_NOT_FINITE,
+    STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
+    STOP_REFUSAL_NO_VALID_STOP,
+    STOP_REFUSAL_NO_STRUCTURAL_TARGET,
+    STOP_REFUSAL_REWARD_BELOW_RISK,
+)
 
 
 class EntryStopResolver:
@@ -86,7 +100,9 @@ class EntryStopResolver:
         fault_code = self._unpriceable_symbols.get(target.symbol.strip().upper())
         if fault_code is not None:
             self._note_data_fault(
-                target.symbol, target.direction, fault_code,
+                target.symbol,
+                target.direction,
+                fault_code,
                 "DATA FAULT: no fresh today print to size this new name this "
                 "session (a quote mid or a prior-session price is not a "
                 "sizing reference) — the buy cannot be sized without "
@@ -102,7 +118,8 @@ class EntryStopResolver:
             entry_price = float(analysis.entry_price)
             logger.info(
                 "Constructor: no live market_price for %s, using TA entry $%.2f",
-                target.symbol, entry_price,
+                target.symbol,
+                entry_price,
             )
         if entry_price <= 0:
             # A listed instrument always has a price. No live quote AND no
@@ -111,7 +128,9 @@ class EntryStopResolver:
             # (FAULT_NO_ENTRY) — recorded and alerted as such, never as a
             # trade the constructor judged. Still no trade.
             self._note_data_fault(
-                target.symbol, target.direction, FAULT_NO_ENTRY,
+                target.symbol,
+                target.direction,
+                FAULT_NO_ENTRY,
                 "DATA FAULT: no live market price and no analyst entry "
                 "price — the symbol cannot be priced, let alone measured",
             )
@@ -137,7 +156,10 @@ class EntryStopResolver:
         # target to measure against. It depends only on entry, direction and
         # the chart — never on the stop — so there is no circularity.
         derivation = self._derive_target(
-            target.symbol, analysis, entry_price, target.direction,
+            target.symbol,
+            analysis,
+            entry_price,
+            target.direction,
         )
         if derivation.price is None:
             # A data fault has already been recorded and logged as
@@ -153,7 +175,8 @@ class EntryStopResolver:
                 # (`src/data/levels.py`), so file that one rather than mint
                 # a synonym for it.
                 self._note_refusal(
-                    target.symbol, target.direction,
+                    target.symbol,
+                    target.direction,
                     derivation.refusal or STOP_REFUSAL_NO_STRUCTURAL_TARGET,
                     f"no take-profit could be computed from structure at the "
                     f"${entry_price:,.2f} entry: {derivation.detail}",
@@ -162,16 +185,19 @@ class EntryStopResolver:
 
         stop_loss = self._resolve_stop(target, analysis, entry_price)
         stop_loss = self._widen_stop_past_noise(
-            target.symbol, analysis, entry_price, stop_loss, regime=regime,
-            direction=target.direction, target_price=derivation.price,
+            target.symbol,
+            analysis,
+            entry_price,
+            stop_loss,
+            regime=regime,
+            direction=target.direction,
+            target_price=derivation.price,
             # The PM's sub-floor catalyst gate has already run by the time a
             # target reaches here; this is where its verdict is honoured
             # rather than silently re-litigated. `getattr` because
             # `_resolve_entry_and_stop` is also called with hand-built
             # targets from the backtest shim and older tests.
-            subfloor_catalyst_exception=bool(
-                getattr(target, "subfloor_catalyst_verified", False)
-            ),
+            subfloor_catalyst_exception=bool(getattr(target, "subfloor_catalyst_verified", False)),
             # The MEASURED half of the trend-trade test (2026-09-11, funnel
             # item 6 + item 1(d)): `_derive_target` has just run the desk's
             # own level computation for this exact trade, and
@@ -232,21 +258,32 @@ class EntryStopResolver:
             # for the three stand-downs and why each one is a number the
             # code does not believe.
             refuse_rr, rr_ratio, standdown = self._parity_verdict(
-                entry_price, stop_loss, derivation, is_short,
+                entry_price,
+                stop_loss,
+                derivation,
+                is_short,
             )
             if standdown is not None:
                 self._note_parity_standdown(
-                    target.symbol, target.direction, standdown, derivation,
+                    target.symbol,
+                    target.direction,
+                    standdown,
+                    derivation,
                 )
             if refuse_rr:
                 level = float(derivation.level_used)
                 # Durable, per-symbol, numbers in their OWN fields.
                 self._record_parity_refusal(
-                    target.symbol, target.direction, entry_price, stop_loss,
-                    level, rr_ratio,
+                    target.symbol,
+                    target.direction,
+                    entry_price,
+                    stop_loss,
+                    level,
+                    rr_ratio,
                 )
                 self._note_refusal(
-                    target.symbol, target.direction,
+                    target.symbol,
+                    target.direction,
                     STOP_REFUSAL_REWARD_BELOW_RISK,
                     f"reward:risk {rr_ratio:.2f} is below parity "
                     f"({REWARD_RISK_PARITY:.2f}): entry ${entry_price:,.2f}, "
@@ -266,8 +303,12 @@ class EntryStopResolver:
                 logger.warning(
                     "Constructor: %s %s refused — reward:risk %.2f below "
                     "parity (entry=$%.2f, final stop=$%.2f, level=$%.2f)",
-                    "SHORT" if is_short else "BUY", target.symbol,
-                    rr_ratio, entry_price, stop_loss, level,
+                    "SHORT" if is_short else "BUY",
+                    target.symbol,
+                    rr_ratio,
+                    entry_price,
+                    stop_loss,
+                    level,
                 )
                 return (None, None)
         if invalid:
@@ -281,7 +322,9 @@ class EntryStopResolver:
             # nothing already recorded is a stop that is genuinely just on
             # the wrong side of, or equal to, the entry.
             self._note_refusal(
-                target.symbol, target.direction, STOP_REFUSAL_NO_VALID_STOP,
+                target.symbol,
+                target.direction,
+                STOP_REFUSAL_NO_VALID_STOP,
                 f"no valid stop {'above' if is_short else 'below'} the "
                 f"${entry_price:,.2f} entry (stop={stop_loss}). A stop that "
                 f"does not sit on the protective side of the entry protects "
@@ -289,10 +332,12 @@ class EntryStopResolver:
                 only_if_unrecorded=True,
             )
             logger.warning(
-                "Constructor: %s %s rejected — no valid stop %s entry "
-                "(entry=$%.2f, stop=%s)",
-                "SHORT" if is_short else "BUY", target.symbol,
-                "above" if is_short else "below", entry_price, stop_loss,
+                "Constructor: %s %s rejected — no valid stop %s entry (entry=$%.2f, stop=%s)",
+                "SHORT" if is_short else "BUY",
+                target.symbol,
+                "above" if is_short else "below",
+                entry_price,
+                stop_loss,
             )
             return (None, None)
         return (entry_price, stop_loss)
@@ -365,7 +410,10 @@ class EntryStopResolver:
         # a stop, so the PM is not shown a candidate the constructor would drop.
 
         derivation = self._derive_target(
-            analysis.symbol, analysis, entry_price, direction,
+            analysis.symbol,
+            analysis,
+            entry_price,
+            direction,
         )
         if derivation.price is None:
             return None
@@ -391,8 +439,13 @@ class EntryStopResolver:
                 return None
 
         honoured_stop = self._widen_stop_past_noise(
-            analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
-            direction=direction, target_price=derivation.price,
+            analysis.symbol,
+            analysis,
+            entry_price,
+            raw_stop,
+            regime=regime,
+            direction=direction,
+            target_price=derivation.price,
             structural_ceiling=(derivation.level_used is not None),
         )
         if honoured_stop is None:
@@ -413,20 +466,33 @@ class EntryStopResolver:
         # `last_refusals` snapshot DecisionStage already reads) instead of
         # as a number it may rank.
         refuse_rr, rr_ratio, standdown = self._parity_verdict(
-            entry_price, honoured_stop, derivation, is_short,
+            entry_price,
+            honoured_stop,
+            derivation,
+            is_short,
         )
         if standdown is not None:
             self._note_parity_standdown(
-                analysis.symbol, direction, standdown, derivation,
+                analysis.symbol,
+                direction,
+                standdown,
+                derivation,
             )
         if refuse_rr:
             level = float(derivation.level_used)
             self._record_parity_refusal(
-                analysis.symbol, direction, entry_price, honoured_stop,
-                level, rr_ratio, stage="preview",
+                analysis.symbol,
+                direction,
+                entry_price,
+                honoured_stop,
+                level,
+                rr_ratio,
+                stage="preview",
             )
             self._note_refusal(
-                analysis.symbol, direction, STOP_REFUSAL_REWARD_BELOW_RISK,
+                analysis.symbol,
+                direction,
+                STOP_REFUSAL_REWARD_BELOW_RISK,
                 f"reward:risk {rr_ratio:.2f} is below parity "
                 f"({REWARD_RISK_PARITY:.2f}) at PM-eligibility preview: "
                 f"entry ${entry_price:,.2f}, final stop "
@@ -446,7 +512,10 @@ class EntryStopResolver:
             # the verdict, used by both stages; the ranking number stays a
             # ranking number.
         ratio = self._reward_risk_at(
-            entry_price, honoured_stop, derivation.price, is_short,
+            entry_price,
+            honoured_stop,
+            derivation.price,
+            is_short,
         )
         return None if ratio is None else round(ratio, 2)
 
@@ -610,7 +679,9 @@ class EntryStopResolver:
         # and not a passthrough.
         if stop_loss is not None and not math.isfinite(stop_loss):
             self._note_refusal(
-                symbol, direction, STOP_REFUSAL_STOP_NOT_FINITE,
+                symbol,
+                direction,
+                STOP_REFUSAL_STOP_NOT_FINITE,
                 f"the stop price supplied for this trade is not a finite "
                 f"number ({stop_loss!r}), so no distance can be measured "
                 f"from it. Refused rather than let through comparisons a "
@@ -619,7 +690,9 @@ class EntryStopResolver:
             return None
         if not math.isfinite(entry_price):
             self._note_refusal(
-                symbol, direction, STOP_REFUSAL_ENTRY_NOT_FINITE,
+                symbol,
+                direction,
+                STOP_REFUSAL_ENTRY_NOT_FINITE,
                 f"the entry price is not a finite number ({entry_price!r}), "
                 f"so no stop distance can be measured from it.",
             )
@@ -647,7 +720,9 @@ class EntryStopResolver:
             pass  # nothing typed: derived from the instrument below
         elif is_short and stop_loss <= entry_price:
             self._note_refusal(
-                symbol, direction, STOP_REFUSAL_WRONG_SIDE,
+                symbol,
+                direction,
+                STOP_REFUSAL_WRONG_SIDE,
                 f"the stop ${stop_loss:,.2f} is at or below the "
                 f"${entry_price:,.2f} entry on a SHORT, so it protects "
                 f"nothing. Refused rather than widened into validity.",
@@ -655,7 +730,9 @@ class EntryStopResolver:
             return None
         elif not is_short and stop_loss >= entry_price:
             self._note_refusal(
-                symbol, direction, STOP_REFUSAL_WRONG_SIDE,
+                symbol,
+                direction,
+                STOP_REFUSAL_WRONG_SIDE,
                 f"the stop ${stop_loss:,.2f} is at or above the "
                 f"${entry_price:,.2f} entry on a BUY, so it protects "
                 f"nothing. Refused rather than widened into validity.",
@@ -732,7 +809,9 @@ class EntryStopResolver:
             # conflicts with desk doctrine (no arbitrary numbers) -- SKIP is
             # preferred over an invented stop when no level can be read.
             derived = self._derive_structural_stop_no_atr(
-                analysis, entry_price, is_short,
+                analysis,
+                entry_price,
+                is_short,
             )
             if derived is None:
                 # No verified structural level on the protective side of entry,
@@ -742,13 +821,18 @@ class EntryStopResolver:
                 # with, so refuse THIS one name -- the ruling's genuine
                 # skip-correct case, not a view on the idea. Per-symbol,
                 # durable, never a halt.
-                typed = "" if stop_loss is None else (
-                    f" A stop was typed at ${stop_loss:,.2f}, but with no ATR "
-                    f"and no readable structural level there is nothing to "
-                    f"verify or place a stop from."
+                typed = (
+                    ""
+                    if stop_loss is None
+                    else (
+                        f" A stop was typed at ${stop_loss:,.2f}, but with no ATR "
+                        f"and no readable structural level there is nothing to "
+                        f"verify or place a stop from."
+                    )
                 )
                 self._note_refusal(
-                    symbol, direction,
+                    symbol,
+                    direction,
                     STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
                     f"there is no ATR reading for this name and no structural "
                     f"level (a computed level with enough touches, or the "
@@ -812,7 +896,10 @@ class EntryStopResolver:
                 "derived from price structure at $%.2f [%s]%s and HELD -- a "
                 "missing volatility reading is not a reason to skip protection "
                 "(owner 2026-09-25, board item 80).",
-                side_label, symbol, honoured, rule,
+                side_label,
+                symbol,
+                honoured,
+                rule,
                 f" (structural level ${level:.2f})" if level is not None else "",
             )
             # honoured/rule set above; falls through to the single
@@ -822,10 +909,7 @@ class EntryStopResolver:
             # trade -- see the note where the branches are introduced.
         else:
             multiple = self._stop_atr_multiple(analysis, regime)
-            band_edge = (
-                entry_price + multiple * atr if is_short
-                else entry_price - multiple * atr
-            )
+            band_edge = entry_price + multiple * atr if is_short else entry_price - multiple * atr
             # The instrument's own fallback (item 54): the WIDER of the
             # noise band and the signal bar's far edge — Kullamägi's
             # "low of the day" placement, read from the last completed bar
@@ -833,20 +917,21 @@ class EntryStopResolver:
             # older row or a hand-built object, in which case the band
             # alone decides, as it did before.
             bar_edge = getattr(
-                analysis, "signal_bar_high" if is_short else "signal_bar_low", None,
+                analysis,
+                "signal_bar_high" if is_short else "signal_bar_low",
+                None,
             )
             try:
                 bar_edge = float(bar_edge) if bar_edge is not None else None
             except (TypeError, ValueError):
                 bar_edge = None
             if bar_edge is not None and (
-                not math.isfinite(bar_edge) or bar_edge <= 0
+                not math.isfinite(bar_edge)
+                or bar_edge <= 0
                 or (bar_edge <= entry_price if is_short else bar_edge >= entry_price)
             ):
                 bar_edge = None
-            bar_wins = bar_edge is not None and (
-                bar_edge > band_edge if is_short else bar_edge < band_edge
-            )
+            bar_wins = bar_edge is not None and (bar_edge > band_edge if is_short else bar_edge < band_edge)
             fallback_edge = bar_edge if bar_wins else band_edge
             fallback_rule = STOP_RULE_SIGNAL_BAR if bar_wins else STOP_RULE_ATR_BAND
             level = None
@@ -861,17 +946,19 @@ class EntryStopResolver:
                     "Constructor: %s %s had no stop from the PM or the "
                     "analyst; placed at $%.2f from the instrument [%s] "
                     "(%.2f x ATR band $%.2f%s).",
-                    side_label, symbol, honoured, rule, multiple, band_edge,
+                    side_label,
+                    symbol,
+                    honoured,
+                    rule,
+                    multiple,
+                    band_edge,
                     f", signal bar edge ${bar_edge:.2f}" if bar_edge is not None else "",
                 )
                 placed = True
                 stop_loss = honoured
             else:
                 placed = False
-                outside_band = (
-                    stop_loss >= band_edge if is_short
-                    else (band_edge <= 0 or stop_loss <= band_edge)
-                )
+                outside_band = stop_loss >= band_edge if is_short else (band_edge <= 0 or stop_loss <= band_edge)
             if placed:
                 pass  # read from the instrument above; nothing to widen
             elif outside_band:
@@ -884,30 +971,33 @@ class EntryStopResolver:
                 # §12.1 — is this stop sitting on something we COMPUTED?
                 # ---------------------------------------------------------
                 level = self._level_backing_stop(
-                    analysis, entry_price, stop_loss, is_short,
+                    analysis,
+                    entry_price,
+                    stop_loss,
+                    is_short,
                 )
                 if level is not None:
                     honoured, rule = stop_loss, STOP_RULE_LEVEL_HONOURED
                     floor_multiple = self.cfg.absolute_min_stop_atr_multiple
-                    hard_floor = (
-                        entry_price + floor_multiple * atr if is_short
-                        else entry_price - floor_multiple * atr
-                    )
+                    hard_floor = entry_price + floor_multiple * atr if is_short else entry_price - floor_multiple * atr
                     inside_hard_floor = (
                         floor_multiple > 0
                         and hard_floor > 0
-                        and (
-                            stop_loss < hard_floor if is_short
-                            else stop_loss > hard_floor
-                        )
+                        and (stop_loss < hard_floor if is_short else stop_loss > hard_floor)
                     )
                     honoured, rule = absolute_floor_record.noted(
                         inside_hard_floor=inside_hard_floor,
-                        symbol=symbol, side_label=side_label,
-                        side_word=side_word, entry_price=entry_price,
-                        stop_loss=stop_loss, atr=atr, level=level,
-                        hard_floor=hard_floor, floor_multiple=floor_multiple,
-                        multiple=multiple, band_edge=band_edge,
+                        symbol=symbol,
+                        side_label=side_label,
+                        side_word=side_word,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        atr=atr,
+                        level=level,
+                        hard_floor=hard_floor,
+                        floor_multiple=floor_multiple,
+                        multiple=multiple,
+                        band_edge=band_edge,
                     )
                 else:
                     # Nothing computed backs this stop — widen it to the
@@ -921,14 +1011,24 @@ class EntryStopResolver:
                         "level sits at it, and it was placed inside %.2f x "
                         "ATR of $%.2f (%s setup, %s tape). A stop nothing on "
                         "the chart defends does not earn the §12.1 exemption.%s",
-                        side_label, symbol, stop_loss, honoured,
+                        side_label,
+                        symbol,
+                        stop_loss,
+                        honoured,
                         100 * abs(entry_price - honoured) / entry_price,
-                        side_word, rule, multiple, atr,
+                        side_word,
+                        rule,
+                        multiple,
+                        atr,
                         getattr(analysis, "setup_type", None) or "unknown",
                         regime or "unknown",
-                        (f" The signal bar's {'high' if is_short else 'low'} "
-                         f"${bar_edge:.2f} sits past the band's ${band_edge:.2f}, "
-                         f"so the bar decides.") if bar_wins else "",
+                        (
+                            f" The signal bar's {'high' if is_short else 'low'} "
+                            f"${bar_edge:.2f} sits past the band's ${band_edge:.2f}, "
+                            f"so the bar decides."
+                        )
+                        if bar_wins
+                        else "",
                     )
 
         # -------------------------------------------------------------
@@ -956,7 +1056,9 @@ class EntryStopResolver:
         # would answer it.
         if atr is not None:
             stated_horizon = getattr(
-                analysis, "expected_horizon_sessions", None,
+                analysis,
+                "expected_horizon_sessions",
+                None,
             )
             width = abs(entry_price - honoured)
             p_touch = touch_probability(
@@ -972,7 +1074,10 @@ class EntryStopResolver:
                     "%s-session horizon — touch probability %.1f%% "
                     "(item 56 reading; no width refusal exists — a wide "
                     "stop is answered by a smaller position).",
-                    symbol, width / atr, stated_horizon, 100 * p_touch,
+                    symbol,
+                    width / atr,
+                    stated_horizon,
+                    100 * p_touch,
                 )
 
         # -------------------------------------------------------------
@@ -985,7 +1090,8 @@ class EntryStopResolver:
         # a model having guessed a poor target.
         setup_type = getattr(analysis, "setup_type", None) if analysis else None
         if not reward_risk_floor_applies(
-            setup_type, structural_ceiling=structural_ceiling,
+            setup_type,
+            structural_ceiling=structural_ceiling,
         ):
             # TYPE B / BREAKOUT — no reward-side refusal here at all
             # (owner 2026-09-11, restated 2026-09-17). Nothing overhead is
@@ -1022,10 +1128,7 @@ class EntryStopResolver:
                     "that level"
                 )
             elif structural_ceiling is False:
-                why = (
-                    "the desk's own level scan found nothing overhead to "
-                    "measure a reward against"
-                )
+                why = "the desk's own level scan found nothing overhead to measure a reward against"
             else:
                 why = (
                     "whether anything stands overhead was not measured at "
@@ -1036,11 +1139,18 @@ class EntryStopResolver:
                 "Constructor: %s %s stop $%.2f [%s] shipped with NO "
                 "reward:risk check — breakout setup: %s, so approval rests "
                 "on the risk side alone.",
-                side_label, symbol, honoured, rule, why,
+                side_label,
+                symbol,
+                honoured,
+                rule,
+                why,
             )
             return honoured
         reward_risk = self._reward_risk_at(
-            entry_price, honoured, target_price, is_short,
+            entry_price,
+            honoured,
+            target_price,
+            is_short,
         )
         if reward_risk is None and had_target:
             # Recorded fact, not a refuse. Owner 2026-09-17: unmeasurable
@@ -1051,6 +1161,11 @@ class EntryStopResolver:
                 "unmeasurable reward:risk — a target was supplied "
                 "(%r) but payoff against this stop at $%.2f cannot be "
                 "computed. Honesty about unknown geometry, not a floor.",
-                side_label, symbol, honoured, rule, target_price, entry_price,
+                side_label,
+                symbol,
+                honoured,
+                rule,
+                target_price,
+                entry_price,
             )
         return honoured

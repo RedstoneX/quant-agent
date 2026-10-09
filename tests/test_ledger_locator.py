@@ -1,4 +1,5 @@
 """The ledger is found by shape; anything but exactly one match refuses."""
+
 import pytest
 
 from scripts import ledger_locator as ll

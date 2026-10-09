@@ -45,6 +45,7 @@ USAGE
     python scripts/measure_trend_alignment.py --positions p.json --cache-only
     python scripts/measure_trend_alignment.py --self-test
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,10 +74,8 @@ def main(argv=None) -> int:
     ap.add_argument("--positions", help="JSON file: {SYM: {entry, entry_px, side, ...}}")
     ap.add_argument("--positions-json", help="the same content inline")
     ap.add_argument("--cache", default=DEFAULT_CACHE)
-    ap.add_argument("--cache-only", action="store_true",
-                    help="read the cache and refuse to fall back to a live fetch")
-    ap.add_argument("--self-test", action="store_true",
-                    help="prove the failure guards fire; no network")
+    ap.add_argument("--cache-only", action="store_true", help="read the cache and refuse to fall back to a live fetch")
+    ap.add_argument("--self-test", action="store_true", help="prove the failure guards fire; no network")
     args = ap.parse_args(argv)
 
     if args.self_test:
@@ -93,8 +92,7 @@ def main(argv=None) -> int:
         return run(positions, args.cache, args.cache_only)
     except MeasurementDataError as exc:
         print(f"\nFATAL: {exc}", file=sys.stderr)
-        print("FATAL: exiting 2 with NO numbers. Do not quote anything from this run.",
-              file=sys.stderr)
+        print("FATAL: exiting 2 with NO numbers. Do not quote anything from this run.", file=sys.stderr)
         return 2
 
 

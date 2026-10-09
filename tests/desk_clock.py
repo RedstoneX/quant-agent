@@ -16,6 +16,7 @@ Noon ET is deliberate: the far side of a day boundary in both directions,
 so neither a backdated stamp nor a forward-dated one silently lands on a
 different exchange day than the test's own "today".
 """
+
 from __future__ import annotations
 
 from datetime import datetime, time as dt_time, timezone
@@ -31,9 +32,7 @@ def freeze_desk_day(monkeypatch, *modules, on: datetime | None = None) -> dateti
     today's real exchange day -- only the time within it is pinned.
     """
     reference = (on or datetime.now(timezone.utc)).astimezone(ET).date()
-    pinned = datetime.combine(reference, dt_time(12, 0), tzinfo=ET).astimezone(
-        timezone.utc
-    )
+    pinned = datetime.combine(reference, dt_time(12, 0), tzinfo=ET).astimezone(timezone.utc)
     for module in modules:
         assert hasattr(module, "_now_utc"), (
             f"{module.__name__} has no _now_utc() to freeze; a module that is "

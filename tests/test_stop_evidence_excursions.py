@@ -7,6 +7,7 @@ level or on the ATR band, the worst and best excursion while open, the
 realised outcome and whether the stop was hit. They assert nothing about
 what the floor SHOULD be and nothing here may be optimised against.
 """
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,19 +15,27 @@ from types import SimpleNamespace
 import pytest
 
 from src.portfolio_constructor import (
-    LEVEL_BACKED_STOP_RULES, STOP_RULE_ATR_BAND, STOP_RULE_LEVEL_HONOURED,
+    LEVEL_BACKED_STOP_RULES,
+    STOP_RULE_ATR_BAND,
+    STOP_RULE_LEVEL_HONOURED,
 )
 from src.data.levels import (
-    PIVOT_WINDOW, describe_stop_level_basis, level_zone_halfwidth,
+    PIVOT_WINDOW,
+    describe_stop_level_basis,
+    level_zone_halfwidth,
 )
 from src.storage.db import Database, _categorize_exit_reason
 
 
 def _snapshot(symbol, qty, avg_entry, current_price):
     return SimpleNamespace(
-        symbol=symbol, qty=qty, avg_entry=avg_entry,
-        current_price=current_price, market_value=qty * current_price,
-        unrealized_pnl=(current_price - avg_entry) * qty, sector="Tech",
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
+        market_value=qty * current_price,
+        unrealized_pnl=(current_price - avg_entry) * qty,
+        sector="Tech",
     )
 
 
@@ -39,17 +48,21 @@ def db(tmp_path):
 
 
 def _row(db, trade_id):
-    return dict(
-        db.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
-    )
+    return dict(db.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone())
 
 
 def test_closed_long_keeps_its_adverse_excursion(db):
     """The load-bearing one: a position that OPENS, runs against the desk
     and then CLOSES still has the worst excursion it reached stored."""
     trade_id = db.insert_trade(
-        symbol="AAA", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="r1", stop_loss=94.0, entry_atr=2.0,
+        symbol="AAA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=94.0,
+        entry_atr=2.0,
         stop_basis=STOP_RULE_ATR_BAND,
     )
     # Two sessions open: 96 then a recovery to 99. Monotonic — the recovery
@@ -74,13 +87,19 @@ def test_closed_long_keeps_its_adverse_excursion(db):
 
 def test_favourable_excursion_is_recorded_alongside_the_adverse_one(db):
     trade_id = db.insert_trade(
-        symbol="BBB", action="BUY", qty=5, price=50.0, reasoning="entry",
-        run_id="r1", stop_loss=47.0, entry_atr=1.5,
+        symbol="BBB",
+        action="BUY",
+        qty=5,
+        price=50.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=47.0,
+        entry_atr=1.5,
         stop_basis=STOP_RULE_LEVEL_HONOURED,
     )
-    db.sync_positions([_snapshot("BBB", 5, 50.0, 58.0)])   # +8 in favour
-    db.sync_positions([_snapshot("BBB", 5, 50.0, 48.0)])   # -2 against
-    db.sync_positions([_snapshot("BBB", 5, 50.0, 55.0)])   # back up, no widen
+    db.sync_positions([_snapshot("BBB", 5, 50.0, 58.0)])  # +8 in favour
+    db.sync_positions([_snapshot("BBB", 5, 50.0, 48.0)])  # -2 against
+    db.sync_positions([_snapshot("BBB", 5, 50.0, 55.0)])  # back up, no widen
 
     row = _row(db, trade_id)
     assert row["max_favourable_excursion"] == pytest.approx(8.0)
@@ -90,8 +109,14 @@ def test_favourable_excursion_is_recorded_alongside_the_adverse_one(db):
 
 def test_short_excursions_use_the_other_side(db):
     trade_id = db.insert_trade(
-        symbol="CCC", action="SHORT", qty=-4, price=20.0, reasoning="entry",
-        run_id="r1", stop_loss=23.0, entry_atr=1.0,
+        symbol="CCC",
+        action="SHORT",
+        qty=-4,
+        price=20.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=23.0,
+        entry_atr=1.0,
         stop_basis=STOP_RULE_ATR_BAND,
     )
     db.sync_positions([_snapshot("CCC", -4, 20.0, 22.5)])  # against a short
@@ -107,13 +132,24 @@ def test_stop_hit_is_readable_from_the_exit_row(db):
     deterministic `exit_reason_category` already says so, and the realised
     outcome sits on the same row."""
     db.insert_trade(
-        symbol="DDD", action="BUY", qty=3, price=10.0, reasoning="entry",
-        run_id="r1", stop_loss=8.0, entry_atr=0.8,
+        symbol="DDD",
+        action="BUY",
+        qty=3,
+        price=10.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=8.0,
+        entry_atr=0.8,
         stop_basis=STOP_RULE_ATR_BAND,
     )
     exit_id = db.insert_trade(
-        symbol="DDD", action="STOP_OUT", qty=3, price=8.0,
-        reasoning="broker stop filled", run_id="r2", fill_status="filled",
+        symbol="DDD",
+        action="STOP_OUT",
+        qty=3,
+        price=8.0,
+        reasoning="broker stop filled",
+        run_id="r2",
+        fill_status="filled",
     )
     # A confirmed broker stop fill categorises as a stop, and nothing else
     # does — this is the fact a later pass joins to the entry evidence.
@@ -122,7 +158,8 @@ def test_stop_hit_is_readable_from_the_exit_row(db):
     assert "exit_reason_category" in _row(db, exit_id)
     with db._lock:
         db.conn.execute(
-            "UPDATE trades SET realized_pnl = ? WHERE id = ?", (-6.0, exit_id),
+            "UPDATE trades SET realized_pnl = ? WHERE id = ?",
+            (-6.0, exit_id),
         )
         db.conn.commit()
     assert _row(db, exit_id)["realized_pnl"] == pytest.approx(-6.0)
@@ -131,8 +168,15 @@ def test_stop_hit_is_readable_from_the_exit_row(db):
 def test_missing_values_are_stored_null_never_guessed(db):
     """An entry whose ATR was unavailable stores NULL, not a substitute."""
     trade_id = db.insert_trade(
-        symbol="EEE", action="BUY", qty=1, price=5.0, reasoning="entry",
-        run_id="r1", stop_loss=4.0, entry_atr=None, stop_basis=None,
+        symbol="EEE",
+        action="BUY",
+        qty=1,
+        price=5.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=4.0,
+        entry_atr=None,
+        stop_basis=None,
     )
     row = _row(db, trade_id)
     assert row["entry_atr"] is None
@@ -155,8 +199,11 @@ def test_missing_values_are_stored_null_never_guessed(db):
 
 def _basis(**over):
     record = describe_stop_level_basis(
-        level_price=95.0, stop_loss=94.5, entry_price=100.0,
-        computed_levels=[95.0, 110.0], computed_level_touches={95.0: 3},
+        level_price=95.0,
+        stop_loss=94.5,
+        entry_price=100.0,
+        computed_levels=[95.0, 110.0],
+        computed_level_touches={95.0: 3},
     )
     record.update(over)
     return json.dumps(record, sort_keys=True)
@@ -164,8 +211,11 @@ def _basis(**over):
 
 def test_stop_level_basis_records_the_level_identity_not_a_verdict():
     record = describe_stop_level_basis(
-        level_price=95.0, stop_loss=94.5, entry_price=100.0,
-        computed_levels=[95.0, 110.0], computed_level_touches={95.0: 3},
+        level_price=95.0,
+        stop_loss=94.5,
+        entry_price=100.0,
+        computed_levels=[95.0, 110.0],
+        computed_level_touches={95.0: 3},
     )
     assert record["level_backed"] is True
     assert record["level_price"] == pytest.approx(95.0)
@@ -189,21 +239,34 @@ def test_stop_level_basis_records_the_level_identity_not_a_verdict():
 
 def test_a_stop_with_no_level_behind_it_is_still_recorded_as_the_control():
     record = describe_stop_level_basis(
-        level_price=None, stop_loss=94.5, entry_price=100.0,
-        computed_levels=[], computed_level_touches={},
+        level_price=None,
+        stop_loss=94.5,
+        entry_price=100.0,
+        computed_levels=[],
+        computed_level_touches={},
     )
     assert record["level_backed"] is False
     assert record["level_price"] is None
     # Unavailable is NULL, never substituted.
-    for field in ("level_kind", "level_touches", "zone_low", "zone_high",
-                  "zone_width", "stop_to_level", "stop_inside_zone"):
+    for field in (
+        "level_kind",
+        "level_touches",
+        "zone_low",
+        "zone_high",
+        "zone_width",
+        "stop_to_level",
+        "stop_inside_zone",
+    ):
         assert record[field] is None
 
 
 def test_short_side_records_resistance_and_flips_the_distance_sign():
     record = describe_stop_level_basis(
-        level_price=105.0, stop_loss=105.5, entry_price=100.0,
-        computed_levels=[105.0], computed_level_touches={105.0: 2},
+        level_price=105.0,
+        stop_loss=105.5,
+        entry_price=100.0,
+        computed_levels=[105.0],
+        computed_level_touches={105.0: 2},
         is_short=True,
     )
     assert record["level_kind"] == "resistance"
@@ -213,8 +276,11 @@ def test_short_side_records_resistance_and_flips_the_distance_sign():
 
 def test_an_unmatched_touch_count_is_null_rather_than_guessed():
     record = describe_stop_level_basis(
-        level_price=95.0, stop_loss=94.5, entry_price=100.0,
-        computed_levels=[95.0], computed_level_touches={110.0: 4},
+        level_price=95.0,
+        stop_loss=94.5,
+        entry_price=100.0,
+        computed_levels=[95.0],
+        computed_level_touches={110.0: 4},
     )
     assert record["level_backed"] is True
     assert record["level_touches"] is None
@@ -229,9 +295,16 @@ def test_what_price_did_to_the_level_is_stored_as_raw_distances(db):
     """
     half = level_zone_halfwidth(95.0)
     trade_id = db.insert_trade(
-        symbol="BBB", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="r1", stop_loss=94.5, entry_atr=2.0,
-        stop_basis=STOP_RULE_LEVEL_HONOURED, stop_level_basis=_basis(),
+        symbol="BBB",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=94.5,
+        entry_atr=2.0,
+        stop_basis=STOP_RULE_LEVEL_HONOURED,
+        stop_level_basis=_basis(),
     )
     # Above the zone, then inside it, then clean through the far edge, then
     # a recovery that must NOT erase what came before.
@@ -252,23 +325,34 @@ def test_what_price_did_to_the_level_is_stored_as_raw_distances(db):
 
 def test_a_level_never_reached_records_no_penetration(db):
     trade_id = db.insert_trade(
-        symbol="CCC", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="r1", stop_loss=94.5, entry_atr=2.0,
-        stop_basis=STOP_RULE_LEVEL_HONOURED, stop_level_basis=_basis(),
+        symbol="CCC",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=94.5,
+        entry_atr=2.0,
+        stop_basis=STOP_RULE_LEVEL_HONOURED,
+        stop_level_basis=_basis(),
     )
     db.sync_positions([_snapshot("CCC", 10, 100.0, 104.0)])
     db.sync_positions([])
     row = _row(db, trade_id)
     assert row["level_max_penetration"] is None
-    assert row["level_closest_approach"] == pytest.approx(
-        104.0 - (95.0 + level_zone_halfwidth(95.0))
-    )
+    assert row["level_closest_approach"] == pytest.approx(104.0 - (95.0 + level_zone_halfwidth(95.0)))
 
 
 def test_a_trade_with_no_level_record_keeps_both_distances_null(db):
     trade_id = db.insert_trade(
-        symbol="DDD", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="r1", stop_loss=94.0, entry_atr=2.0,
+        symbol="DDD",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="r1",
+        stop_loss=94.0,
+        entry_atr=2.0,
         stop_basis=STOP_RULE_ATR_BAND,
     )
     db.sync_positions([_snapshot("DDD", 10, 100.0, 90.0)])

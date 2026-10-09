@@ -19,6 +19,7 @@ with the same honest pass-through harness `test_risk_verdict_per_symbol.py`
 uses: the hard-risk filter returns whatever it is handed, so a decision
 missing at the end was dropped by the code under test, not by a mock.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,10 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 from src.models import (
-    PortfolioDecision, ReasoningChain, RiskReasoningChain, RiskVerdict,
+    PortfolioDecision,
+    ReasoningChain,
+    RiskReasoningChain,
+    RiskVerdict,
     TradeDecision,
 )
 from src.pipeline_context import RunContext
@@ -48,6 +52,7 @@ def _asc(date_str: str, event: str, symbols: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 # Unit level — the three-valued verdict
 # ---------------------------------------------------------------------------
+
 
 def test_contradicted_regime_claim_is_verdict_false_and_blocks():
     """Real, trusted macro read says risk-ON; the reasoning asserts a flip to
@@ -140,13 +145,12 @@ def test_a_contradiction_outranks_a_co_occurring_unverifiable_clause():
     same sentence. One provable contradiction is enough to block."""
     check = holding_discipline_claim_check(
         action="SELL",
-        reason="Regime flipped to risk-off and there is a high-conviction "
-               "bearish state change on ACME today.",
+        reason="Regime flipped to risk-off and there is a high-conviction bearish state change on ACME today.",
         symbol="ACME",
         protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
-        active_state_changes="",      # state-change claim unverifiable
+        active_state_changes="",  # state-change claim unverifiable
         asof=date.fromisoformat(TODAY),
     )
     assert check.verdict == "false"
@@ -158,35 +162,54 @@ def test_legacy_wrapper_still_returns_only_proven_false_findings():
     """`holding_discipline_false_claim` keeps its old contract exactly: a
     string for a proven-false claim, None for everything else INCLUDING the
     unverifiable case it now has a name for."""
-    assert holding_discipline_false_claim(
-        action="SELL",
-        reason="Regime flipped to risk-off today.",
-        symbol="ACME", protected=True,
-        macro_regime_today="risk-on", macro_status="ok",
-    ) is not None
-    assert holding_discipline_false_claim(
-        action="SELL",
-        reason="Regime flipped to risk-off today.",
-        symbol="ACME", protected=True,
-        macro_regime_today=None, macro_status="failed",
-    ) is None
+    assert (
+        holding_discipline_false_claim(
+            action="SELL",
+            reason="Regime flipped to risk-off today.",
+            symbol="ACME",
+            protected=True,
+            macro_regime_today="risk-on",
+            macro_status="ok",
+        )
+        is not None
+    )
+    assert (
+        holding_discipline_false_claim(
+            action="SELL",
+            reason="Regime flipped to risk-off today.",
+            symbol="ACME",
+            protected=True,
+            macro_regime_today=None,
+            macro_status="failed",
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
 # End to end through RiskStage — where the veto and the alert live
 # ---------------------------------------------------------------------------
 
+
 def _rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
         cash_target="x",
     )
 
@@ -196,8 +219,12 @@ def _sell(symbol: str, reasoning: str) -> TradeDecision:
     POSITION to sell (see `RiskManagerAgent.build_user_message`), so 100.0 is
     "close it", not "100% of book"."""
     return TradeDecision(
-        action="SELL", symbol=symbol, allocation_pct=100.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        action="SELL",
+        symbol=symbol,
+        allocation_pct=100.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=115.0,
         reasoning=reasoning,
     )
 
@@ -206,8 +233,13 @@ def _buy(symbol: str) -> TradeDecision:
     """A passing BUY that must survive any exit-side block — the veto is
     per-decision, exactly like a per-symbol RM refusal."""
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=6.0, entry_price=24.00,
-        stop_loss=22.50, take_profit=28.55, reasoning="unrelated breakout",
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=6.0,
+        entry_price=24.00,
+        stop_loss=22.50,
+        take_profit=28.55,
+        reasoning="unrelated breakout",
         thesis_invalid_if="closes below support",
     )
 
@@ -218,13 +250,34 @@ def _stage_pipeline(*, decisions, protected=True, active_state_changes=""):
     from src.pipeline import TradingPipeline
 
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="clean",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="clean",
         reasoning="no objection at the book level",
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock( return_value=active_state_changes, ), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=protected, basis="structural_level_intact", detail="level intact on the close", ), ), risk_manager=MagicMock())
+    pipeline = build_pipeline(
+        db=MagicMock(),
+        _sweeper=MagicMock(return_value=None),
+        _filter_supported_symbols=MagicMock(return_value=(decisions, [])),
+        _refuse_queued_earnings_buys=MagicMock(return_value=decisions),
+        _filter_hard_risk_decisions=MagicMock(
+            side_effect=lambda d, *a, **kw: (list(d), [], []),
+        ),
+        _build_active_state_changes=MagicMock(
+            return_value=active_state_changes,
+        ),
+        _structural_protection_for_holding=MagicMock(
+            return_value=StructuralProtectionCheck(
+                protected=protected,
+                basis="structural_level_intact",
+                detail="level intact on the close",
+            ),
+        ),
+        risk_manager=MagicMock(),
+    )
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
     return pipeline
 
@@ -237,12 +290,11 @@ def _ctx(decisions, *, macro_regime="risk-on", macro_status="ok") -> RunContext:
     ctx.cash = 50_000.0
     ctx.macro_analysis = {"regime": macro_regime}
     ctx.data_status = {"macro": macro_status}
-    ctx.position_history = {
-        d.symbol: {"entry_price": 100.0, "stop_loss": 95.0}
-        for d in decisions
-    }
+    ctx.position_history = {d.symbol: {"entry_price": 100.0, "stop_loss": 95.0} for d in decisions}
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
     return ctx
 
@@ -258,10 +310,14 @@ def _events(pipeline) -> list[tuple[str, str, str, str]]:
         if kwargs.get("kind") != "pipeline_event":
             continue
         payload = json.loads(kwargs["evidence_json"])
-        out.append((
-            kwargs.get("symbol"), payload.get("stage"),
-            payload.get("outcome"), payload.get("reason"),
-        ))
+        out.append(
+            (
+                kwargs.get("symbol"),
+                payload.get("stage"),
+                payload.get("outcome"),
+                payload.get("reason"),
+            )
+        )
     return out
 
 
@@ -270,8 +326,7 @@ def test_proven_false_claim_blocks_the_sell_and_alerts_the_owner():
     regime flip to risk-off; today's trusted macro read says risk-on. The
     decision must not survive to order construction, and the owner must be
     told in a message of its own."""
-    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting."),
-                 _buy("CHPX")]
+    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting."), _buy("CHPX")]
     pipeline = _stage_pipeline(decisions=decisions)
     ctx = _ctx(decisions)
 
@@ -282,9 +337,7 @@ def test_proven_false_claim_blocks_the_sell_and_alerts_the_owner():
     assert _symbols(ctx) == ["CHPX"], "the false-justification SELL was dropped"
 
     outcomes = [e[2] for e in _events(pipeline) if e[0] == "ACME"]
-    assert "rejected" in outcomes, (
-        "must reuse the existing per-symbol rejection event, not a new one"
-    )
+    assert "rejected" in outcomes, "must reuse the existing per-symbol rejection event, not a new one"
     assert "holding_discipline_claim_false" in outcomes
 
     assert alert.call_count == 1
@@ -324,9 +377,9 @@ def test_a_true_claim_passes_through_with_no_event_and_no_alert():
     assert result is None
     assert _symbols(ctx) == ["ACME"]
     hd_events = [
-        e for e in _events(pipeline)
-        if e[2] in ("holding_discipline_claim_false",
-                    "holding_discipline_claim_unverified")
+        e
+        for e in _events(pipeline)
+        if e[2] in ("holding_discipline_claim_false", "holding_discipline_claim_unverified")
     ]
     assert hd_events == []
     assert alert.call_count == 0
@@ -367,8 +420,7 @@ def test_blocking_every_remaining_leg_returns_the_terminal_rejected_status():
 def test_an_alert_failure_cannot_break_the_trading_path():
     """The block must still happen if Telegram is down — an alerting bug must
     never be able to break the thing it reports on."""
-    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting."),
-                 _buy("CHPX")]
+    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting."), _buy("CHPX")]
     pipeline = _stage_pipeline(decisions=decisions)
     ctx = _ctx(decisions)
 

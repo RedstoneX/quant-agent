@@ -11,6 +11,7 @@ short and reasoned, so it lives in code and needs no reference commit. Both
 exemptions are proved load-bearing below -- remove either and its site is
 reported -- which is what keeps them narrow.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -29,14 +30,17 @@ NEW_URL_FILE = "src/some_new_alerting_module.py"
 def test_tree_has_no_send_path_outside_the_funnel():
     assert not g.violations(), (
         "Owner-alert send path(s) outside the funnel:\n"
-        + "\n".join(f"  - {b}" for b in g.violations()) + "\n" + g.FIX_ADVICE
+        + "\n".join(f"  - {b}" for b in g.violations())
+        + "\n"
+        + g.FIX_ADVICE
     )
 
 
 def test_guard_refuses_a_new_file_that_builds_the_bot_api_url(monkeypatch):
     monkeypatch.setattr(g, "scanned_paths", lambda: [NEW_URL_FILE, g.FUNNEL_FILE])
     monkeypatch.setattr(
-        g, "read",
+        g,
+        "read",
         lambda p: f"requests.post('https://{g.TELEGRAM_URL_MARKER}X/sendMessage')",
     )
     monkeypatch.setattr(g, "sender_classes", lambda paths: set())
@@ -49,8 +53,12 @@ def test_guard_does_not_scan_itself_but_still_scans_lookalikes(monkeypatch):
         returncode = 0
         stderr = ""
         stdout = "\0".join(
-            [g.GUARD_FILE, "scripts/owner_alert_funnel_guard2.py",
-             "src/scripts/owner_alert_funnel_guard.py", g.FUNNEL_FILE]
+            [
+                g.GUARD_FILE,
+                "scripts/owner_alert_funnel_guard2.py",
+                "src/scripts/owner_alert_funnel_guard.py",
+                g.FUNNEL_FILE,
+            ]
         )
 
     monkeypatch.setattr(g.subprocess, "run", lambda *a, **k: Done())
@@ -64,7 +72,8 @@ def test_guard_still_bites_a_bypass_in_a_file_named_like_the_guard(monkeypatch):
     lookalike = "scripts/owner_alert_funnel_guard_copy.py"
     monkeypatch.setattr(g, "scanned_paths", lambda: [lookalike, g.FUNNEL_FILE])
     monkeypatch.setattr(
-        g, "read",
+        g,
+        "read",
         lambda p: f"requests.post('https://{g.TELEGRAM_URL_MARKER}X/sendMessage')",
     )
     monkeypatch.setattr(g, "sender_classes", lambda paths: set())
@@ -75,7 +84,8 @@ def test_guard_refuses_a_new_stand_in_notifier_class(monkeypatch):
     monkeypatch.setattr(g, "scanned_paths", lambda: [])
     monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
     monkeypatch.setattr(
-        g, "sender_classes",
+        g,
+        "sender_classes",
         lambda paths: set(g.EXEMPT_SENDER_CLASSES) | {("src/newthing.py", "QuietNotifier")},
     )
     bad = g.violations()
@@ -105,7 +115,8 @@ def test_dropping_the_shell_wrapper_exemption_reports_it(monkeypatch):
 
 def test_a_dead_exemption_is_itself_a_failure(monkeypatch):
     monkeypatch.setattr(
-        g, "EXEMPT_SENDER_CLASSES",
+        g,
+        "EXEMPT_SENDER_CLASSES",
         {**g.EXEMPT_SENDER_CLASSES, ("src/gone.py", "Removed"): "stale"},
     )
     assert any("no longer exists" in b for b in g.violations())
@@ -146,11 +157,10 @@ def test_a_failed_owner_alert_leaves_an_undelivered_row(tmp_path, monkeypatch):
         assert send_owner_alert("EXIT NOT PLACED\nAAPL has no stop") is False
 
     import sqlite3
+
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        rows = [dict(r) for r in conn.execute(
-            "SELECT kind, status, detail FROM notifier_sends ORDER BY id"
-        )]
+        rows = [dict(r) for r in conn.execute("SELECT kind, status, detail FROM notifier_sends ORDER BY id")]
     statuses = [r["status"] for r in rows]
     assert statuses.count("failed") == delivery.MAX_ATTEMPTS, rows
     assert statuses[-1] == delivery.UNDELIVERED_STATUS, rows
@@ -173,6 +183,7 @@ def test_a_delivered_owner_alert_is_not_recorded_as_undelivered(tmp_path, monkey
         assert send_owner_alert("EXIT NOT PLACED\nAAPL has no stop") is True
 
     import sqlite3
+
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         statuses = [r[0] for r in conn.execute("SELECT status FROM notifier_sends")]
@@ -200,7 +211,7 @@ def test_a_dead_direct_send_exemption_is_a_failure(monkeypatch):
 
 
 def test_direct_send_is_read_from_code_not_prose():
-    code = "def f(notifier):\n    \"\"\"notifier.send(x) in prose\"\"\"\n    # notifier.send(y)\n    ws.send(1)\n"
+    code = 'def f(notifier):\n    """notifier.send(x) in prose"""\n    # notifier.send(y)\n    ws.send(1)\n'
     assert g._direct_send_lines(code) == []
     assert g._direct_send_lines("TelegramNotifier().send(m)\nself.notifier.send(m)\n") != []
 
@@ -239,7 +250,8 @@ def test_guard_refuses_a_bypass_planted_at_the_repository_root(monkeypatch):
     monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
     monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
     monkeypatch.setattr(
-        g, "direct_send_sites",
+        g,
+        "direct_send_sites",
         lambda paths: {"main.py": ["notifier.send('a brand new root bypass')"]},
     )
     bad = g.violations()

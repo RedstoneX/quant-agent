@@ -6,6 +6,7 @@ file-size baseline and may not grow; the report merges `EXTRA_PLAIN` into
 desk or outside it. Where one token has several producers, the wording says
 so rather than picking one meaning.
 """
+
 from __future__ import annotations
 
 from src.intraday_scan_outcome import OUT_OF_CREDIT_PLAIN

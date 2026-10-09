@@ -39,11 +39,31 @@ _PENDING = re.compile(r"^- \[ \] DECIDE BY (\d{4}-\d{2}-\d{2}) [-—] (.+)$")
 #: thing it would be selected for. Both halves are required so that an honest
 #: pending decision which merely mentions a model in passing is not refused.
 _MODEL_WORDS = ("model", "llm")
-_SEAT_WORDS = ("seat", "portfolio_manager", "portfolio manager", "trade-decision",
-               "trade decision", "decision seat", "risk manager", "agent route",
-               "routing")
-_CHOICE_WORDS = ("which", "should run", "run the", "switch", "swap", "choose",
-                 "choice", "select", "benchmark", "compare", "re-run", "rerun")
+_SEAT_WORDS = (
+    "seat",
+    "portfolio_manager",
+    "portfolio manager",
+    "trade-decision",
+    "trade decision",
+    "decision seat",
+    "risk manager",
+    "agent route",
+    "routing",
+)
+_CHOICE_WORDS = (
+    "which",
+    "should run",
+    "run the",
+    "switch",
+    "swap",
+    "choose",
+    "choice",
+    "select",
+    "benchmark",
+    "compare",
+    "re-run",
+    "rerun",
+)
 
 
 def _board() -> Path:
@@ -77,9 +97,9 @@ def test_no_pending_decision_reopens_the_seat_model_choice() -> None:
         "docs/WORK.md files the seat-model choice as a pending decision:\n  "
         + "\n  ".join(offenders)
         + "\n\nThe owner closed this on 2026-10-02 after 148 graded trials: the "
-          "trade-decision seat runs openai/gpt-5.5 and the question is not to be "
-          "reopened, benchmarked or routed to him. Record the model fact where it "
-          "belongs and remove the pending line; do not loosen this guard."
+        "trade-decision seat runs openai/gpt-5.5 and the question is not to be "
+        "reopened, benchmarked or routed to him. Record the model fact where it "
+        "belongs and remove the pending line; do not loosen this guard."
     )
 
 
@@ -89,8 +109,7 @@ def test_the_guard_recognises_the_question_it_was_written_for() -> None:
     Without this, a later edit could narrow the matching above until the guard
     passes on the very wording it exists to refuse.
     """
-    line = ("- [ ] DECIDE BY 2026-10-31 — Which model should run the desk's "
-            "actual trade-decision seat?")
+    line = "- [ ] DECIDE BY 2026-10-31 — Which model should run the desk's actual trade-decision seat?"
     match = _PENDING.match(line)
     assert match is not None
     question = match.group(2).lower()

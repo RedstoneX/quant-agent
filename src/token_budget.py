@@ -85,7 +85,12 @@ _CACHE_TTL_S = 900.0
 # Kept in step with `ops/rehearsal/replay.py`, which needs the same list for
 # the same reason.
 _SESSION_SUFFIXES = (
-    "_morning", "_midday", "_close", "_evening", "_intra_check", "_preprocess",
+    "_morning",
+    "_midday",
+    "_close",
+    "_evening",
+    "_intra_check",
+    "_preprocess",
 )
 
 _cache: dict[tuple[str, str], tuple[float, "SizeModel"]] = {}
@@ -191,17 +196,21 @@ def size_model(conn, agent_name: str, model: str, *, now=time.monotonic) -> Size
         fitted = _fit([(r[0], r[1]) for r in rows])
     except Exception:
         logger.debug(
-            "token budget: could not fit a size model for %s/%s; using the "
-            "conservative fallback", agent_name, model, exc_info=True,
+            "token budget: could not fit a size model for %s/%s; using the conservative fallback",
+            agent_name,
+            model,
+            exc_info=True,
         )
     result = fitted or _FALLBACK
     with _cache_lock:
         _cache[key] = (now(), result)
     if fitted is not None:
         logger.info(
-            "token budget: %s/%s sized from %d measured calls — %.0f tokens "
-            "fixed + %.3f tokens/byte",
-            agent_name, model, fitted.samples, fitted.fixed_tokens,
+            "token budget: %s/%s sized from %d measured calls — %.0f tokens fixed + %.3f tokens/byte",
+            agent_name,
+            model,
+            fitted.samples,
+            fitted.fixed_tokens,
             fitted.tokens_per_byte,
         )
     return result
@@ -246,9 +255,7 @@ def pack_to_budget(
             # Unmeasurable: assume it fills a request rather than assume it
             # is free. The safe direction is fewer items per request.
             item_bytes = budget_tokens
-        over_budget = bool(current) and (
-            model.predict(used_bytes + item_bytes) > budget_tokens
-        )
+        over_budget = bool(current) and (model.predict(used_bytes + item_bytes) > budget_tokens)
         at_cap = max_items is not None and len(current) >= max_items
         if over_budget or at_cap:
             batches.append(current)

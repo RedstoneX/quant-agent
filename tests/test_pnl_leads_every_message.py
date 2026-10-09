@@ -36,8 +36,7 @@ def first_content_after(message: str, heading_lines: int) -> str:
 def assert_pnl_leads(message: str, heading_lines: int = 1) -> None:
     lead = first_content_after(message, heading_lines)
     assert any(marker in lead for marker in PNL_MARKERS), (
-        "the first thing after the heading was not the P&L block:\n"
-        f"{message[:600]}"
+        f"the first thing after the heading was not the P&L block:\n{message[:600]}"
     )
 
 
@@ -75,9 +74,12 @@ def test_midday_position_review_leads_with_pnl():
     # status; that mechanism was removed 2026-09-20, retired item 32.)
     msg = trader_feed._format_position_review(
         "midday",
-        {**PNL_RESULT, "stop_coverage_gaps": [
-            {"symbol": "NVDA", "state": "uncovered", "coverage": "none"},
-        ]},
+        {
+            **PNL_RESULT,
+            "stop_coverage_gaps": [
+                {"symbol": "NVDA", "state": "uncovered", "coverage": "none"},
+            ],
+        },
         10.0,
     )
     assert_pnl_leads(msg)
@@ -111,9 +113,12 @@ def test_evening_leads_with_pnl_not_the_banners():
     # without it the banner block is empty and this test would pass whatever
     # the order is (verified by swapping the two calls back).
     result = {
-        "status": "analyzed", "run_id": "r",
-        "pnl_4pm": -500.0, "equity_close": 100_500.0,
-        "total_pnl": 678.90, "total_return_pct": 6.78,
+        "status": "analyzed",
+        "run_id": "r",
+        "pnl_4pm": -500.0,
+        "equity_close": 100_500.0,
+        "total_pnl": 678.90,
+        "total_return_pct": 6.78,
         "missing_sessions": ["morning"],
         "analysis": {"risk_rating": "low"},
     }
@@ -133,7 +138,9 @@ def test_premarket_earnings_leads_with_an_honest_not_available():
     keys: inferring it made every trading session assert an account read it
     HAD made had not happened (2026-09-23)."""
     result = {
-        "status": "preprocessed", "run_id": "r", "filings": [],
+        "status": "preprocessed",
+        "run_id": "r",
+        "filings": [],
         "pnl_unavailable_reason": "no_account_read",
     }
     msg = trader_feed._format_earnings(result, 10.0)
@@ -164,9 +171,12 @@ def test_evening_base_formatter_still_uses_the_4pm_figure_when_it_leads():
     shared real-time renderer — that would leak the after-hours number the
     4pm path exists to keep out."""
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 1200.0, "total_value": 101_200.0,
-        "pnl_4pm": -500.0, "equity_close": 100_500.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 1200.0,
+        "total_value": 101_200.0,
+        "pnl_4pm": -500.0,
+        "equity_close": 100_500.0,
         "analysis": {"risk_rating": "low"},
     }
     msg = base_format_session_result("evening", result, 10.0)
@@ -185,7 +195,8 @@ def test_standalone_owner_alerts_carry_the_pnl_line_under_the_heading(monkeypatc
 
     sent: list[str] = []
     monkeypatch.setattr(
-        n, "TelegramNotifier",
+        n,
+        "TelegramNotifier",
         lambda: type("_T", (), {"send": lambda self, text, symbols=None, **kwargs: sent.append(text) or True})(),
     )
     n.send_owner_alert("NAKED POSITION — AAPL has no protective stop\nDetail line.")
@@ -203,7 +214,8 @@ def test_owner_alert_pnl_line_is_not_doubled_up(monkeypatch):
 
     sent: list[str] = []
     monkeypatch.setattr(
-        n, "TelegramNotifier",
+        n,
+        "TelegramNotifier",
         lambda: type("_T", (), {"send": lambda self, text, symbols=None, **kwargs: sent.append(text) or True})(),
     )
     once = n._with_pnl_header("HEADING\nbody")

@@ -43,7 +43,8 @@ def test_suppression_state_paths_track_the_watchdog(monkeypatch):
     from src import drift_state as ds
 
     assert db_reads.SUPPRESSION_STATE_PATHS == (
-        cw.STATE_PATH, ds.DEPLOY_DRIFT_STATE_PATH,
+        cw.STATE_PATH,
+        ds.DEPLOY_DRIFT_STATE_PATH,
     )
 
 
@@ -74,16 +75,23 @@ def wired(tmp_path, monkeypatch):
     _seed_db(db)
     monkeypatch.setattr(db_reads, "get_db_path", lambda: db)
     state = tmp_path / "coverage_heartbeat.json"
-    state.write_text(json.dumps({
-        "suppressed_alerts": {
-            "deploy_drift": {
-                "day": "2026-09-28", "count": 4,
-                "events": [{"key": "MAIN@ABC", "day": "2026-09-28"}],
-            },
-        },
-    }))
+    state.write_text(
+        json.dumps(
+            {
+                "suppressed_alerts": {
+                    "deploy_drift": {
+                        "day": "2026-09-28",
+                        "count": 4,
+                        "events": [{"key": "MAIN@ABC", "day": "2026-09-28"}],
+                    },
+                },
+            }
+        )
+    )
     monkeypatch.setattr(
-        db_reads, "SUPPRESSION_STATE_PATHS", (state, tmp_path / "absent.json"),
+        db_reads,
+        "SUPPRESSION_STATE_PATHS",
+        (state, tmp_path / "absent.json"),
     )
     return db
 
@@ -98,10 +106,12 @@ def test_endpoint_reports_both_records(wired):
 
 
 def test_unreadable_record_is_not_reported_as_empty(tmp_path, monkeypatch):
-    """"Could not read it" and "nothing was suppressed" are different facts."""
+    """ "Could not read it" and "nothing was suppressed" are different facts."""
     monkeypatch.setattr(db_reads, "get_db_path", lambda: tmp_path / "missing.db")
     monkeypatch.setattr(
-        db_reads, "SUPPRESSION_STATE_PATHS", (tmp_path / "nope.json",),
+        db_reads,
+        "SUPPRESSION_STATE_PATHS",
+        (tmp_path / "nope.json",),
     )
     out = db_reads.get_suppressed_alerts()
     assert out["deferred_available"] is False
@@ -114,10 +124,10 @@ def test_live_risk_first_occurrence_is_never_suppressed(tmp_path):
     from src.execution.scale_in import REARM_FAILURE_ALERT_KIND
 
     live_risk_kinds = [
-        REARM_FAILURE_ALERT_KIND,     # protective stop not back after a scale-in
-        "stop_placement_failed",      # a stop the broker refused
-        "uncovered_position",         # a position with no protection at all
-        "broker_rejection",           # an order the broker rejected
+        REARM_FAILURE_ALERT_KIND,  # protective stop not back after a scale-in
+        "stop_placement_failed",  # a stop the broker refused
+        "uncovered_position",  # a position with no protection at all
+        "broker_rejection",  # an order the broker rejected
     ]
     path = tmp_path / "state.json"
     for kind in live_risk_kinds:
@@ -135,8 +145,12 @@ def test_deploy_drift_repeat_is_recorded_not_dropped(tmp_path):
     from src.coverage_watchdog import load_state
 
     report = DriftReport(
-        head_sha="a" * 40, remote_sha="b" * 40, behind_count=41,
-        deployed_path="/box/checkout", fetch_ok=True, missing_commits=[],
+        head_sha="a" * 40,
+        remote_sha="b" * 40,
+        behind_count=41,
+        deployed_path="/box/checkout",
+        fetch_ok=True,
+        missing_commits=[],
         unexpected_dirty_files=[],
     )
     path = tmp_path / "drift.json"

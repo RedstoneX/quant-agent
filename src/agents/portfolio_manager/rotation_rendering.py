@@ -7,9 +7,15 @@ constructor argument, so this builds and runs with no agent behind it.
 
 from src.risk.budget import allocate_risk_budget
 from src.risk.constants import STARTER_POSITION_RISK_PCT
-from src.rotation import (RotationOpportunity, RotationPrecheck, evaluate_rotation, funding_view_measured, holdings_below_entry_bar, rotation_binding_constraints)
+from src.rotation import (
+    RotationOpportunity,
+    RotationPrecheck,
+    evaluate_rotation,
+    funding_view_measured,
+    holdings_below_entry_bar,
+    rotation_binding_constraints,
+)
 from src.verdicts import RankedCandidate
-
 
 
 class RotationSection:
@@ -22,7 +28,8 @@ class RotationSection:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         rotation_constraint_line=None,
         rotation_precheck=None,
     ) -> None:
@@ -34,7 +41,8 @@ class RotationSection:
             self.rotation_precheck = rotation_precheck
 
     def rotation_precheck(
-        self, *,
+        self,
+        *,
         ranked: list[RankedCandidate],
         blocked: dict[str, list[str]],
         held_symbols: set[str],
@@ -71,43 +79,60 @@ class RotationSection:
         held_below = holdings_below_entry_bar(blocked, held_symbols)
         # Board item 219. What the pass looked at, kept verbatim so the
         # owner's report states a measured count rather than an inference.
-        held_examined = tuple(sorted(
-            str(s).strip().upper() for s in held_symbols if str(s).strip()
-        ))
+        held_examined = tuple(sorted(str(s).strip().upper() for s in held_symbols if str(s).strip()))
         if existing_risk_pct is None:
             return RotationPrecheck(
-                opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
-                floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
-                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-                held_below_entry_bar=held_below, held_examined=held_examined,
+                opportunity=None,
+                headroom_pct=0.0,
+                ceiling_pct=ceiling_pct,
+                floor_pct=STARTER_POSITION_RISK_PCT,
+                telemetry_available=False,
+                entry_budget_usd=entry_budget_usd,
+                min_order_usd=min_order_usd,
+                held_below_entry_bar=held_below,
+                held_examined=held_examined,
             )
         headroom_pct = allocate_risk_budget(
-            [], existing_pct=existing_risk_pct, clusters=None,
-            ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            [],
+            existing_pct=existing_risk_pct,
+            clusters=None,
+            ceiling_pct=ceiling_pct,
+            floor_pct=STARTER_POSITION_RISK_PCT,
         ).headroom_pct
         outcome = evaluate_rotation(
-            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
-            headroom_pct=headroom_pct, floor_pct=STARTER_POSITION_RISK_PCT,
-            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+            ranked=ranked,
+            blocked=blocked,
+            held_symbols=held_symbols,
+            headroom_pct=headroom_pct,
+            floor_pct=STARTER_POSITION_RISK_PCT,
+            entry_budget_usd=entry_budget_usd,
+            min_order_usd=min_order_usd,
         )
         opportunity: RotationOpportunity | None = outcome.opportunity
         return RotationPrecheck(
-            opportunity=opportunity, headroom_pct=headroom_pct,
-            ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+            opportunity=opportunity,
+            headroom_pct=headroom_pct,
+            ceiling_pct=ceiling_pct,
+            floor_pct=STARTER_POSITION_RISK_PCT,
             refusal=outcome.refusal,
-            entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-            binding=(
-                () if outcome.refusal is None else outcome.refusal.binding
-            ) or rotation_binding_constraints(
+            entry_budget_usd=entry_budget_usd,
+            min_order_usd=min_order_usd,
+            binding=(() if outcome.refusal is None else outcome.refusal.binding)
+            or rotation_binding_constraints(
                 headroom_pct=headroom_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT,
-                entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
+                entry_budget_usd=entry_budget_usd,
+                min_order_usd=min_order_usd,
             ),
-            held_below_entry_bar=held_below, held_examined=held_examined,
+            held_below_entry_bar=held_below,
+            held_examined=held_examined,
         )
 
     def _rotation_constraint_line(
-        self, precheck: RotationPrecheck, *, ceiling_pct: float,
+        self,
+        precheck: RotationPrecheck,
+        *,
+        ceiling_pct: float,
     ) -> str:
         """The one sentence naming WHICH limit has the book pinned.
 
@@ -138,8 +163,7 @@ class RotationSection:
                 "below the smallest order the desk will place — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
-                if isinstance(budget, (int, float))
-                and isinstance(floor, (int, float))
+                if isinstance(budget, (int, float)) and isinstance(floor, (int, float))
                 else "the deployable budget will not fund a new order"
             )
         if not parts:
@@ -181,8 +205,11 @@ class RotationSection:
         header = "## Opportunity Rotation (deterministic pre-check, Phase 14)"
         if precheck is None:
             precheck = self.rotation_precheck(
-                ranked=ranked, blocked=blocked, held_symbols=held_symbols,
-                existing_risk_pct=existing_risk_pct, ceiling_pct=ceiling_pct,
+                ranked=ranked,
+                blocked=blocked,
+                held_symbols=held_symbols,
+                existing_risk_pct=existing_risk_pct,
+                ceiling_pct=ceiling_pct,
             )
         if not precheck.telemetry_available:
             return (
@@ -193,7 +220,8 @@ class RotationSection:
         headroom_pct = precheck.headroom_pct
         opportunity = precheck.opportunity
         constraint_line = self._rotation_constraint_line(
-            precheck, ceiling_pct=ceiling_pct,
+            precheck,
+            ceiling_pct=ceiling_pct,
         )
         if opportunity is None:
             if precheck.binding:
@@ -204,7 +232,8 @@ class RotationSection:
                     "trimming one for the other. Nothing to surface."
                 )
             if funding_view_measured(
-                precheck.entry_budget_usd, precheck.min_order_usd,
+                precheck.entry_budget_usd,
+                precheck.min_order_usd,
             ):
                 return (
                     f"{header}\n"
@@ -298,9 +327,7 @@ class RotationSection:
         # in a change a reviewer can judge on its own merits rather than
         # as a footnote in a sequencing fix. The categorical text below is
         # therefore byte-for-byte unchanged.
-        desk_may_act = (
-            ranked_margin_enabled and opportunity.tier == "ranked_margin"
-        )
+        desk_may_act = ranked_margin_enabled and opportunity.tier == "ranked_margin"
         if desk_may_act:
             lines.append(
                 "This names the weakest thing currently using the room and "
@@ -381,10 +408,9 @@ class RotationSection:
             # structural protection has broken, and it no longer requires a
             # replacement BUY. Do not reinstate either in prose.
             replacement_clause = (
-                f"If you include a BUY target for {opportunity.new_symbol}, "
-                "size it for the room this close would free"
-                if opportunity.new_symbol else
-                "Nothing un-held ranked well enough to buy this session, so "
+                f"If you include a BUY target for {opportunity.new_symbol}, size it for the room this close would free"
+                if opportunity.new_symbol
+                else "Nothing un-held ranked well enough to buy this session, so "
                 "there is no replacement to size for and the freed room "
                 "simply stays in the book"
             )

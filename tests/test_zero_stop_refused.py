@@ -11,6 +11,7 @@ The one legitimate absence — `stop_loss_price=None`, the cash-sweep park's
 deliberate stopless buy — is pinned here too, because a fix that refused
 absence as well would have broken it.
 """
+
 import math
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +19,10 @@ import pytest
 
 from src.execution.broker import AlpacaBroker
 from src.execution.stop_records import (
-    STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
+    STOP_ABSENT,
+    STOP_UNUSABLE,
+    STOP_USABLE,
+    classify_stop_price,
 )
 from src.execution.stop_repair import repair_stop_coverage
 from tests.pipeline_factory import build_pipeline
@@ -51,13 +55,18 @@ def test_entry_with_no_stop_requested_still_submits(mock_tc_cls):
     must keep working — absence is legal on that one path."""
     mock_client = MagicMock()
     mock_client.submit_order.return_value = MagicMock(
-        id="ord-1", status="accepted", symbol="BIL",
+        id="ord-1",
+        status="accepted",
+        symbol="BIL",
     )
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="BIL", qty=10, side="buy", limit_price=91.5,
+        symbol="BIL",
+        qty=10,
+        side="buy",
+        limit_price=91.5,
         stop_loss_price=None,
     )
     assert result["status"] == "accepted"
@@ -73,7 +82,10 @@ def test_entry_with_garbage_stop_is_refused_before_the_broker(mock_tc_cls, bad):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.submit_order(
-        symbol="X", qty=5, side="sell_short", limit_price=100.0,
+        symbol="X",
+        qty=5,
+        side="sell_short",
+        limit_price=100.0,
         stop_loss_price=bad,
     )
     assert result["status"] == "rejected_bad_stop"
@@ -83,7 +95,8 @@ def test_entry_with_garbage_stop_is_refused_before_the_broker(mock_tc_cls, bad):
 @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("-inf")])
 @patch("src.execution.broker.TradingClient")
 def test_protective_stop_placement_refuses_garbage_without_retrying(
-    mock_tc_cls, bad,
+    mock_tc_cls,
+    bad,
 ):
     """The shared placement path every protection lane routes through. A
     garbage trigger is not a transient failure, so it must not burn the
@@ -93,9 +106,16 @@ def test_protective_stop_placement_refuses_garbage_without_retrying(
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    assert broker._submit_protective_stop_retrying(
-        symbol="X", qty=10, stop_price=bad, limit_price=None, side="sell",
-    ) is None
+    assert (
+        broker._submit_protective_stop_retrying(
+            symbol="X",
+            qty=10,
+            stop_price=bad,
+            limit_price=None,
+            side="sell",
+        )
+        is None
+    )
     mock_client.submit_order.assert_not_called()
 
 
@@ -132,11 +152,17 @@ def test_repair_refuses_a_garbage_recorded_stop_and_says_why(recorded):
     that never had one, and the owner alert carried no reason at all."""
     broker = _repair_broker()
     outcome: dict = {}
-    assert repair_stop_coverage(
-        broker=broker,
-        last_buy=lambda sym, action="BUY": {"stop_loss": recorded},
-        symbol="X", uncovered_qty=5.0, is_short=False, outcome=outcome,
-    ) is False
+    assert (
+        repair_stop_coverage(
+            broker=broker,
+            last_buy=lambda sym, action="BUY": {"stop_loss": recorded},
+            symbol="X",
+            uncovered_qty=5.0,
+            is_short=False,
+            outcome=outcome,
+        )
+        is False
+    )
     broker._submit_protective_stop_retrying.assert_not_called()
     assert "corrupt" in outcome["repair_refusal"]
 
@@ -144,11 +170,17 @@ def test_repair_refuses_a_garbage_recorded_stop_and_says_why(recorded):
 def test_repair_distinguishes_a_row_that_never_had_a_stop():
     broker = _repair_broker()
     outcome: dict = {}
-    assert repair_stop_coverage(
-        broker=broker,
-        last_buy=lambda sym, action="BUY": {"stop_loss": None},
-        symbol="X", uncovered_qty=5.0, is_short=False, outcome=outcome,
-    ) is False
+    assert (
+        repair_stop_coverage(
+            broker=broker,
+            last_buy=lambda sym, action="BUY": {"stop_loss": None},
+            symbol="X",
+            uncovered_qty=5.0,
+            is_short=False,
+            outcome=outcome,
+        )
+        is False
+    )
     assert "was ever recorded" in outcome["repair_refusal"]
 
 
@@ -160,9 +192,14 @@ def test_reprotect_keeps_the_recovery_intent_when_no_price_is_usable():
     from src.pipeline import TradingPipeline
 
     pipeline = build_pipeline(broker=MagicMock())
-    assert pipeline._reprotect_residual_after_partial_sell(
-        "X", 4.0, [{"id": "a", "stop_price": 0.0}, {"id": "b"}],
-    ) is False
+    assert (
+        pipeline._reprotect_residual_after_partial_sell(
+            "X",
+            4.0,
+            [{"id": "a", "stop_price": 0.0}, {"id": "b"}],
+        )
+        is False
+    )
     pipeline.broker._submit_stop_limit_order.assert_not_called()
 
 
@@ -174,12 +211,14 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
     pipeline = build_pipeline(broker=MagicMock(), db=None)
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "s1"}
-    assert pipeline._reprotect_residual_after_partial_sell(
-        "X", 4.0,
-        [{"id": "a", "stop_price": 0.0},
-         {"id": "b", "stop_price": 90.0},
-         {"id": "c", "stop_price": 95.0}],
-    ) is True
+    assert (
+        pipeline._reprotect_residual_after_partial_sell(
+            "X",
+            4.0,
+            [{"id": "a", "stop_price": 0.0}, {"id": "b", "stop_price": 90.0}, {"id": "c", "stop_price": 95.0}],
+        )
+        is True
+    )
     kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["stop_price"] == 95.0
     assert math.isfinite(kwargs["stop_price"])

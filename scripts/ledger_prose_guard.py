@@ -18,6 +18,7 @@ module (`src.rotation.x`, `src/rotation.py::x`) the rest must appear in THAT fil
 Stores nothing. It reads the working tree only; no trunk read.
 No tolerance, no allowed count: every violation is listed, any is a failure.
 """
+
 from __future__ import annotations
 
 import re
@@ -35,9 +36,7 @@ _SKIP_FIELDS = {"id", "value", "base_value", "status"}
 _BACKTICK = re.compile(r"`([^`\n]+)`")
 _IDENT = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\(\))?$")
 _PATH = re.compile(r"^(?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml)$")
-_ANCHOR = re.compile(
-    r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))::([A-Za-z_][\w.]*)"
-)
+_ANCHOR = re.compile(r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))::([A-Za-z_][\w.]*)")
 _WORD = re.compile(r"[A-Za-z_]\w*")
 _SOURCE_SUFFIXES = (".py", ".sql", ".yaml", ".yml", ".json", ".toml", ".ts", ".tsx")
 _SOURCE_ROOTS = ("src/", "scripts/", "config/", "frontend/src/")
@@ -63,10 +62,9 @@ def _source_files(root: Path) -> list[str]:
     paths = guard_reference.working_paths("*")
     ledger = working_ledger()  # found by shape; refuses if not exactly one
     return [
-        p for p in paths
-        if p.endswith(_SOURCE_SUFFIXES)
-        and p.startswith(_SOURCE_ROOTS)
-        and not is_ledger_path(p, ledger)
+        p
+        for p in paths
+        if p.endswith(_SOURCE_SUFFIXES) and p.startswith(_SOURCE_ROOTS) and not is_ledger_path(p, ledger)
     ]
 
 

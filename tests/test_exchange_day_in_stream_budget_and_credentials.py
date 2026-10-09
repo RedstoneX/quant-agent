@@ -4,6 +4,7 @@ EXCHANGE's day, not the runner's local day or the UTC day.
 Driven INSIDE the broken window: 23:58 ET (already the next UTC day) and
 00:05 ET, by moving the one exchange clock the repo owns (trading_calendar.et_now).
 """
+
 from datetime import datetime
 
 import pytest

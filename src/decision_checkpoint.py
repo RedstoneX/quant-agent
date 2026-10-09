@@ -53,6 +53,7 @@ Safety contract (from the adversarial design review):
   - Every function is best-effort: any error degrades to "no checkpoint"
     (normal full run), never to a crashed session.
 """
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -68,6 +69,7 @@ MAX_AGE_MINUTES = 90.0
 
 def checkpoint_path(session: str, et_date: str | None = None) -> Path:
     from src.trading_calendar import session_date_key
+
     return CHECKPOINT_DIR / f"{et_date or session_date_key()}-{session}.json"
 
 
@@ -89,18 +91,14 @@ def write(ctx) -> Path | None:
             "consumed": False,
             "portfolio_decision": pd.model_dump(mode="json"),
             "analyses": [a.model_dump(mode="json") for a in (ctx.analyses or [])],
-            "news_intel": (ctx.news_intel.model_dump(mode="json")
-                           if ctx.news_intel is not None else None),
-            "macro_analysis": (ctx.macro_analysis.model_dump(mode="json")
-                               if ctx.macro_analysis is not None else None),
+            "news_intel": (ctx.news_intel.model_dump(mode="json") if ctx.news_intel is not None else None),
+            "macro_analysis": (ctx.macro_analysis.model_dump(mode="json") if ctx.macro_analysis is not None else None),
             "macro_summary": ctx.macro_summary or {},
             "earnings_results": ctx.earnings_results or [],
             "data_status": dict(ctx.data_status or {}),
-            "admitted_symbols": sorted({
-                str(symbol).strip().upper()
-                for symbol in (ctx.admitted_symbols or set())
-                if str(symbol).strip()
-            }),
+            "admitted_symbols": sorted(
+                {str(symbol).strip().upper() for symbol in (ctx.admitted_symbols or set()) if str(symbol).strip()}
+            ),
         }
         path = checkpoint_path(ctx.session)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,8 +106,9 @@ def write(ctx) -> Path | None:
         tmp.write_text(json.dumps(payload))
         tmp.replace(path)  # atomic on POSIX — no torn half-written checkpoint
         logger.info(
-            "decision checkpoint written: %s (%d decisions) — a killed run "
-            "can resume at RiskStage next tick", path, len(pd.decisions),
+            "decision checkpoint written: %s (%d decisions) — a killed run can resume at RiskStage next tick",
+            path,
+            len(pd.decisions),
         )
         return path
     except Exception as e:  # noqa: BLE001 — checkpointing must never hurt the live run
@@ -138,31 +137,34 @@ def load(session: str, max_age_minutes: float = MAX_AGE_MINUTES) -> dict | None:
         if not (0 <= age_min <= max_age_minutes):
             logger.info(
                 "decision checkpoint %s ignored: age %.0f min exceeds %.0f",
-                path, age_min, max_age_minutes,
+                path,
+                age_min,
+                max_age_minutes,
             )
             return None
         from src.models import (
-            MacroAnalysis, NewsIntelligenceReport, PortfolioDecision,
+            MacroAnalysis,
+            NewsIntelligenceReport,
+            PortfolioDecision,
             TechAnalysisResult,
         )
+
         return {
             "run_id": payload.get("run_id"),
             "age_minutes": age_min,
-            "portfolio_decision": PortfolioDecision.model_validate(
-                payload["portfolio_decision"]),
-            "analyses": [TechAnalysisResult.model_validate(a)
-                         for a in payload.get("analyses") or []],
-            "news_intel": (NewsIntelligenceReport.model_validate(payload["news_intel"])
-                           if payload.get("news_intel") else None),
-            "macro_analysis": (MacroAnalysis.model_validate(payload["macro_analysis"])
-                               if payload.get("macro_analysis") else None),
+            "portfolio_decision": PortfolioDecision.model_validate(payload["portfolio_decision"]),
+            "analyses": [TechAnalysisResult.model_validate(a) for a in payload.get("analyses") or []],
+            "news_intel": (
+                NewsIntelligenceReport.model_validate(payload["news_intel"]) if payload.get("news_intel") else None
+            ),
+            "macro_analysis": (
+                MacroAnalysis.model_validate(payload["macro_analysis"]) if payload.get("macro_analysis") else None
+            ),
             "macro_summary": payload.get("macro_summary") or {},
             "earnings_results": payload.get("earnings_results") or [],
             "data_status": payload.get("data_status") or {},
             "admitted_symbols": {
-                str(symbol).strip().upper()
-                for symbol in (payload.get("admitted_symbols") or [])
-                if str(symbol).strip()
+                str(symbol).strip().upper() for symbol in (payload.get("admitted_symbols") or []) if str(symbol).strip()
             },
         }
     except Exception as e:  # noqa: BLE001
@@ -203,15 +205,13 @@ def mark_consumed(session: str) -> bool:
         return True
     except Exception as e:  # noqa: BLE001
         record_swallowed("decision_checkpoint.mark_consumed", e, log=logger)
-        logger.error("decision checkpoint consume-mark failed (%s) — "
-                     "deleting the checkpoint instead (fail-closed)", e)
+        logger.error("decision checkpoint consume-mark failed (%s) — deleting the checkpoint instead (fail-closed)", e)
         try:
             path.unlink(missing_ok=True)
             return True
         except Exception as e2:  # noqa: BLE001
             record_swallowed("decision_checkpoint.mark_consumed", e2, log=logger)
-            logger.error("decision checkpoint delete also failed: %s — "
-                         "resume lane may re-offer this plan!", e2)
+            logger.error("decision checkpoint delete also failed: %s — resume lane may re-offer this plan!", e2)
             return False
 
 
@@ -223,10 +223,14 @@ def write_status(session: str, status: str) -> None:
     try:
         path = checkpoint_path(session).with_suffix(".status")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "status": status,
-            "at_utc": datetime.now(timezone.utc).isoformat(),
-        }))
+        path.write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "at_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("session status write failed: %s", e)
 

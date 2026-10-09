@@ -1,4 +1,5 @@
 """The intra-check stops making paid ticks once the exchange's real close has passed."""
+
 from __future__ import annotations
 
 from datetime import date

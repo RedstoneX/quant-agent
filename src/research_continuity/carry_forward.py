@@ -13,6 +13,7 @@ here imports src.pipeline. Storage and the evidence journal (anything with
 `EventJournal.persist_evidence`, src/ports/event_journal.py) are handed in,
 never reached for through a host.
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,7 +55,8 @@ class CarryForwardReaders:
     """Remembered-research readers for the macro, news and earnings seats."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db,
         macro_store,
         news_store,
@@ -104,6 +106,7 @@ class CarryForwardReaders:
         """
         from src.evidence_kind import macro_reuse, same_session_from_date
         from src.seat_heal import coerce_macro_shape
+
         try:
             state = self.macro_store.load_last_state() or None
         except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
@@ -173,6 +176,7 @@ class CarryForwardReaders:
             import json as _json
             from src.models import NewsIntelligenceReport
             from src.seat_heal import merge_carried_stock_news
+
             fresher = _json.loads(raw)
             if not isinstance(fresher, dict):
                 return report
@@ -182,8 +186,8 @@ class CarryForwardReaders:
             NewsIntelligenceReport(**fresher)
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "Intraday scan: stored news answer would not parse; using "
-                "the day's report file: %s", e,
+                "Intraday scan: stored news answer would not parse; using the day's report file: %s",
+                e,
             )
             return report
         if not report:
@@ -209,11 +213,13 @@ class CarryForwardReaders:
         desk already holds. See `evidence_gate.HEALABLE_CATEGORIES`.
         """
         from src.evidence_kind import news_reuse
+
         try:
             report = self._latest_news_read_today()
             if not report:
                 return CarryForward(None, "carry_forward_empty", same_session=False)
             from src.models import NewsIntelligenceReport
+
             payload = NewsIntelligenceReport(**report)
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
@@ -244,26 +250,23 @@ class CarryForwardReaders:
         the expiry event — a new filing the preprocess has not written up.
         """
         from src.evidence_kind import earnings_reuse
+
         provider = getattr(self, "earnings_provider", None)
         load = getattr(self, "_load_earnings_analyses", None)
         if provider is None or not callable(load):
             return CarryForward([], "not_run_intraday", same_session=True)
         try:
             _, results = self._load_earnings_analyses(
-                ctx.run_id, session=ctx.session, ctx=ctx,
+                ctx.run_id,
+                session=ctx.session,
+                ctx=ctx,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: earnings remember failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=True)
         results = list(results or [])
-        new_report = any(
-            isinstance(item, dict) and item.get("queued")
-            for item in results
-        )
-        analyzed = [
-            item for item in results
-            if isinstance(item, dict) and isinstance(item.get("analysis"), dict)
-        ]
+        new_report = any(isinstance(item, dict) and item.get("queued") for item in results)
+        analyzed = [item for item in results if isinstance(item, dict) and isinstance(item.get("analysis"), dict)]
         payload = analyzed if analyzed else results
         verdict = earnings_reuse(
             payload if payload else [],

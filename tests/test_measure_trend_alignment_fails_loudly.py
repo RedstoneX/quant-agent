@@ -9,6 +9,7 @@ raises `KeyError` and a swallowed failure leaves every symbol with no bars.
 These tests hold the guards that make that impossible to repeat quietly.
 They are offline: nothing here touches the network.
 """
+
 import json
 import subprocess
 import sys
@@ -81,13 +82,11 @@ def test_empty_position_set_exits_non_zero():
 def test_unfetchable_symbol_exits_non_zero_and_prints_no_table(tmp_path):
     """A symbol whose bars cannot be obtained ends the run before any table."""
     pos = tmp_path / "p.json"
-    pos.write_text(json.dumps(
-        {"ZZZZ-NOT-A-REAL-TICKER": {"entry": "2026-09-01", "entry_px": 1.0, "side": "long"}}
-    ))
+    pos.write_text(json.dumps({"ZZZZ-NOT-A-REAL-TICKER": {"entry": "2026-09-01", "entry_px": 1.0, "side": "long"}}))
     p = subprocess.run(
-        [sys.executable, str(SCRIPT), "--positions", str(pos),
-         "--cache", str(tmp_path / "c.json"), "--cache-only"],
-        capture_output=True, text=True,
+        [sys.executable, str(SCRIPT), "--positions", str(pos), "--cache", str(tmp_path / "c.json"), "--cache-only"],
+        capture_output=True,
+        text=True,
     )
     assert p.returncode != 0, p.stdout
     assert "FATAL" in p.stderr
@@ -95,8 +94,7 @@ def test_unfetchable_symbol_exits_non_zero_and_prints_no_table(tmp_path):
 
 
 def test_self_test_mode_passes():
-    p = subprocess.run([sys.executable, str(SCRIPT), "--self-test"],
-                       capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(SCRIPT), "--self-test"], capture_output=True, text=True)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "SELF-TEST OK" in p.stdout
     assert not any(line.startswith("FAIL ") for line in p.stdout.splitlines())

@@ -21,7 +21,8 @@ class DeleverTrims:
     collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         alert_owner_delever_incomplete=None,
         compute_deployable_cash=None,
         conviction_cut_order=None,
@@ -53,7 +54,10 @@ class DeleverTrims:
         self.db = db
 
     def _submit_gross_ceiling_trims(
-        self, ctx: RunContext, ceiling, outcome,
+        self,
+        ctx: RunContext,
+        ceiling,
+        outcome,
     ) -> list[dict]:
         """Submit, protect, refresh and record a resolved gross-ceiling trim.
 
@@ -68,9 +72,10 @@ class DeleverTrims:
         if not outcome.trims:
             return []
         logger.warning(
-            "GROSS-EXPOSURE DE-LEVER: the book owns $%.0f against a $%.0f "
-            "ceiling (%.2fx equity). %s",
-            outcome.held_gross, outcome.ceiling_usd, ceiling.ceiling_x,
+            "GROSS-EXPOSURE DE-LEVER: the book owns $%.0f against a $%.0f ceiling (%.2fx equity). %s",
+            outcome.held_gross,
+            outcome.ceiling_usd,
+            ceiling.ceiling_x,
             ceiling.reason,
         )
         # A resting entry order would deepen the breach the moment it fills.
@@ -129,11 +134,11 @@ class DeleverTrims:
             is_cover = trim.action == "COVER"
             side = "buy" if is_cover else "sell"
             limit_price, quote_ref = self._live_delever_price(trim.symbol, side)
-            exec_ref = (
-                quote_ref if quote_ref is not None else position.current_price
-            )
+            exec_ref = quote_ref if quote_ref is not None else position.current_price
             sale = self._submit_protected_sell(
-                symbol=trim.symbol, qty=qty, limit_price=limit_price,
+                symbol=trim.symbol,
+                qty=qty,
+                limit_price=limit_price,
                 reference_price=exec_ref,
                 position_qty_before_sell=abs(position.qty),
                 label="FORCE_DELEVER",
@@ -147,7 +152,9 @@ class DeleverTrims:
             orders.append(order)
             logger.info(
                 "GROSS-EXPOSURE DE-LEVER %s %s qty=%s @ limit=%s (%s)",
-                trim.action, trim.symbol, self._format_qty(qty),
+                trim.action,
+                trim.symbol,
+                self._format_qty(qty),
                 (f"${limit_price:.2f}" if limit_price is not None else "market"),
                 ceiling.reason,
             )
@@ -164,8 +171,9 @@ class DeleverTrims:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.error(
-                    "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — "
-                    "the order may still be live at the broker", trim.symbol, e,
+                    "GROSS-EXPOSURE DE-LEVER: trade row for %s failed: %s — the order may still be live at the broker",
+                    trim.symbol,
+                    e,
                 )
             # Rebuild THIS symbol's stop coverage on its actual fill before
             # the loop cancels the next symbol's stops (docs/WORK.md item
@@ -178,7 +186,8 @@ class DeleverTrims:
             protection["trim_action"] = trim.action
             protection["trim_qty"] = qty
             self._finalize_pending_protections(
-                [protection], context="GROSS-EXPOSURE DE-LEVER",
+                [protection],
+                context="GROSS-EXPOSURE DE-LEVER",
             )
         # ASYNC-FILL RACE: any trim that did not reach a terminal state is
         # already in `_unsettled_exit_orders` (registered centrally by
@@ -196,9 +205,11 @@ class DeleverTrims:
             self._resolve_gross_ceiling(ctx)
             self._alert_owner_delever_incomplete(ctx)
             self._record_delever_shortfall(
-                ctx, held_gross_before=outcome.held_gross,
+                ctx,
+                held_gross_before=outcome.held_gross,
                 ceiling_usd_before=outcome.ceiling_usd,
-                equity_before=equity_before, protections=pending_protections,
+                equity_before=equity_before,
+                protections=pending_protections,
             )
         except Exception as e:  # noqa: BLE001
             logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
@@ -231,9 +242,9 @@ class DeleverTrims:
             return []
         decision = getattr(ctx, "portfolio_decision", None)
         planned_exits = [
-            d for d in (getattr(decision, "decisions", None) or [])
-            if getattr(d, "action", None) in ("SELL", "COVER")
-            and float(getattr(d, "allocation_pct", 0.0) or 0.0) > 0
+            d
+            for d in (getattr(decision, "decisions", None) or [])
+            if getattr(d, "action", None) in ("SELL", "COVER") and float(getattr(d, "allocation_pct", 0.0) or 0.0) > 0
         ]
         return self._enforce_gross_ceiling(
             ctx,
@@ -269,5 +280,6 @@ class DeleverTrims:
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Deferred gross-ceiling enforcement failed: %s — the book may "
-                "remain over its §11.2 ceiling until the next session", exc,
+                "remain over its §11.2 ceiling until the next session",
+                exc,
             )

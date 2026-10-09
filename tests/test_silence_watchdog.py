@@ -19,6 +19,7 @@ Nothing here touches the network or a real Telegram chat — every transport
 is mocked at `src.notifier.requests.post`, exactly like the alert-watchdog
 tests.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -59,8 +60,12 @@ def state_path(tmp_path, monkeypatch):
 
 def _seed(db_path: Path, *, source: str, when: datetime, ok: bool = True) -> None:
     alert_watchdog.record_check(
-        ok=ok, stage="delivered", detail="", source=source,
-        db_path=db_path, now=when,
+        ok=ok,
+        stage="delivered",
+        detail="",
+        source=source,
+        db_path=db_path,
+        now=when,
     )
 
 
@@ -73,6 +78,7 @@ def _notifier_env(monkeypatch):
 # ===========================================================================
 # 1. On schedule -> silent
 # ===========================================================================
+
 
 def test_no_alert_when_every_mode_reports_on_schedule(db, state_path):
     """A healthy Monday: every mode writes its row inside its own window.
@@ -102,6 +108,7 @@ def test_a_fresh_deploy_with_recent_history_is_not_silent(db, state_path):
 # 2. Desk-wide, not per-mode
 # ===========================================================================
 
+
 def test_one_quiet_mode_does_not_trigger_while_others_still_run(db, state_path):
     """`close` never fires on a day with no open position to review, but
     `morning`/`intra_check`/`evening` keep running either side of it. That
@@ -123,6 +130,7 @@ def test_one_quiet_mode_does_not_trigger_while_others_still_run(db, state_path):
 # ===========================================================================
 # 3. Real silence is caught, and caught once
 # ===========================================================================
+
 
 def test_a_full_day_of_silence_crosses_the_default_threshold(db, state_path):
     """Nothing recorded since last Friday evening; by Monday evening all six
@@ -188,6 +196,7 @@ def test_check_silence_never_sends_telegram_itself(db, state_path, monkeypatch):
 # 4. The database being unreadable is itself part of the signal
 # ===========================================================================
 
+
 def test_an_unreadable_database_does_not_erase_the_last_known_marker(tmp_path, state_path):
     """The exact 2026-09-02 shape: the database that would prove the desk
     alive is the very thing that is broken. The on-box marker must still
@@ -198,7 +207,8 @@ def test_an_unreadable_database_does_not_erase_the_last_known_marker(tmp_path, s
     seen_at = _et(_MONDAY, 10, 0).astimezone(timezone.utc)
     _seed(good_db, source="morning", when=seen_at)
     baseline = silence_watchdog.check_silence(
-        now=seen_at + timedelta(minutes=1), db_path=good_db,
+        now=seen_at + timedelta(minutes=1),
+        db_path=good_db,
     )
     assert baseline.last_known_session_at is not None
 
@@ -209,7 +219,9 @@ def test_an_unreadable_database_does_not_erase_the_last_known_marker(tmp_path, s
 
 
 def test_an_unreadable_database_still_lets_the_streak_grow_to_alerting(
-    tmp_path, state_path, monkeypatch,
+    tmp_path,
+    state_path,
+    monkeypatch,
 ):
     _notifier_env(monkeypatch)
     good_db = tmp_path / "quant_agent.db"
@@ -231,6 +243,7 @@ def test_an_unreadable_database_still_lets_the_streak_grow_to_alerting(
 # 5. Weekends never manufacture a false alarm
 # ===========================================================================
 
+
 def test_weekend_produces_no_expected_windows(db, state_path):
     """Friday evening's session is the last one recorded; by Saturday
     evening no scheduled window has been missed, because the desk has no
@@ -249,6 +262,7 @@ def test_weekend_produces_no_expected_windows(db, state_path):
 # 6. Threshold is a parameter, not a constant baked into the logic
 # ===========================================================================
 
+
 def test_threshold_is_fully_configurable(db, state_path):
     friday = _MONDAY - timedelta(days=3)
     _seed(db, source="evening", when=_et(friday, 21, 0).astimezone(timezone.utc))
@@ -264,6 +278,7 @@ def test_threshold_is_fully_configurable(db, state_path):
 # ===========================================================================
 # 7. Message shape — severity in words, matching src/notifier.py's convention
 # ===========================================================================
+
 
 def test_alert_text_leads_with_a_plain_english_severity_word():
     status = silence_watchdog.SilenceStatus(
@@ -287,8 +302,11 @@ def test_alert_text_leads_with_a_plain_english_severity_word():
 # 8. scripts/silence_heartbeat.py end to end
 # ===========================================================================
 
+
 def test_script_sends_through_the_owner_alert_path_and_exits_1(
-    db, state_path, monkeypatch,
+    db,
+    state_path,
+    monkeypatch,
 ):
     _notifier_env(monkeypatch)
     friday = _MONDAY - timedelta(days=3)
@@ -301,7 +319,8 @@ def test_script_sends_through_the_owner_alert_path_and_exits_1(
 
     with patch("src.notifier.requests.post") as post:
         post.return_value = MagicMock(
-            status_code=200, json=lambda: {"ok": True, "result": {"message_id": 1}},
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"message_id": 1}},
         )
         code, line = silence_heartbeat.run_check(silence_watchdog.DEFAULT_SILENT_WINDOW_THRESHOLD)
 
@@ -339,6 +358,7 @@ def test_script_exits_0_and_sends_nothing_on_a_healthy_desk(db, state_path, monk
 # indistinguishable from a working desk in a quiet market. These tests are
 # the other half.
 # ===========================================================================
+
 
 @pytest.fixture
 def paused_state_path(tmp_path, monkeypatch):
@@ -407,7 +427,9 @@ def test_paused_reminder_leads_with_a_word_not_a_colour(paused_state_path):
 
 
 def test_paused_state_never_touches_the_silence_marker(
-    db, state_path, paused_state_path,
+    db,
+    state_path,
+    paused_state_path,
 ):
     """The two records must not share a file: a pause episode overwriting
     `last_known_session_at` would blind the silence check for the day the
@@ -431,7 +453,8 @@ def test_script_paused_path_sends_once_and_exits_1(paused_state_path, monkeypatc
 
     with patch("src.notifier.requests.post") as post:
         post.return_value = MagicMock(
-            status_code=200, json=lambda: {"ok": True, "result": {"message_id": 1}},
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"message_id": 1}},
         )
         code, line = silence_heartbeat.run_paused_notice()
         assert code == 1

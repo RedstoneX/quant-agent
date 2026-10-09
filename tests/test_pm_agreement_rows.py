@@ -63,15 +63,18 @@ _INFORMATIVE_ROWS = (
 
 def _render_with_registry(monkeypatch, registry, *, broadcast=None, stale=None) -> str:
     monkeypatch.setattr(
-        PortfolioManagerAgent, "build_evidence_registry",
+        PortfolioManagerAgent,
+        "build_evidence_registry",
         lambda self, **kwargs: dict(registry),
     )
     monkeypatch.setattr(
-        PortfolioManagerAgent, "broadcast_macro_sources",
+        PortfolioManagerAgent,
+        "broadcast_macro_sources",
         lambda self, **kwargs: dict(broadcast or {}),
     )
     monkeypatch.setattr(
-        PortfolioManagerAgent, "stale_evidence_sources",
+        PortfolioManagerAgent,
+        "stale_evidence_sources",
         lambda self, **kwargs: dict(stale or {}),
     )
     sel = _LEVEL_LESS.raw
@@ -111,8 +114,10 @@ def test_rows_with_no_source_on_either_side_are_omitted_and_counted(monkeypatch)
     gone, and one line states how many were omitted and why."""
     agreement = _section(
         _render_with_registry(
-            monkeypatch, _EMPTY_ROW_REGISTRY,
-            broadcast=_EMPTY_ROW_BROADCAST, stale=_EMPTY_ROW_STALE,
+            monkeypatch,
+            _EMPTY_ROW_REGISTRY,
+            broadcast=_EMPTY_ROW_BROADCAST,
+            stale=_EMPTY_ROW_STALE,
         ),
         "Independent Source Agreement",
     )

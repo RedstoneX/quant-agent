@@ -4,6 +4,7 @@ An unknown price is never a reason to leave shares naked (owner ruling
 2026-10-02). When every source fails, the RECORDED stop (a sourced level) is
 placed without the wrong-side test and the fact is recorded durably.
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,8 +15,18 @@ logger = logging.getLogger("src.execution.stop_repair")
 
 
 def read_repair_price(
-    broker, symbol, *, stop_price, uncovered_qty, is_short, caller, db,
-    outcome, resting_stops, rec, live_price_cls,
+    broker,
+    symbol,
+    *,
+    stop_price,
+    uncovered_qty,
+    is_short,
+    caller,
+    db,
+    outcome,
+    resting_stops,
+    rec,
+    live_price_cls,
 ):
     """`(stamped, price, price_error)`; `price_error` set => place blind.
 
@@ -51,7 +62,9 @@ def read_repair_price(
         except Exception as exc:  # noqa: BLE001
             price_error = exc
             logger.warning(
-                "coverage repair: price lookup failed for %s: %s", symbol, exc,
+                "coverage repair: price lookup failed for %s: %s",
+                symbol,
+                exc,
             )
     if price_error is not None:
         try:
@@ -70,7 +83,9 @@ def read_repair_price(
                     price_error = None
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "coverage repair: snapshot fallback failed for %s: %s", symbol, exc,
+                "coverage repair: snapshot fallback failed for %s: %s",
+                symbol,
+                exc,
             )
     if price_error is not None:
         # Every price source failed. The level to place is the RECORDED stop
@@ -80,18 +95,27 @@ def read_repair_price(
         logger.error(
             "coverage repair: NO price source readable for %s (%s) — placing "
             "the recorded stop $%.2f blind rather than leaving it naked",
-            symbol, price_error, stop_price,
+            symbol,
+            price_error,
+            stop_price,
         )
         if isinstance(outcome, dict):
             outcome["repair_blind_placement"] = "price_unreadable"
         from src.execution.exit_path_records import record_stop_repair_refusal
+
         record_stop_repair_refusal(
-            db, code="price_unreadable_placed_blind",
+            db,
+            code="price_unreadable_placed_blind",
             reason="no live price could be read from any source; the recorded "
             "stop was placed without the wrong-side check",
-            symbol=symbol, uncovered_qty=uncovered_qty, is_short=is_short,
-            caller=caller, held_qty=rec["held_qty"], covered_qty=rec["covered_qty"],
-            resting_stops=resting_stops, stop_price=stop_price,
+            symbol=symbol,
+            uncovered_qty=uncovered_qty,
+            is_short=is_short,
+            caller=caller,
+            held_qty=rec["held_qty"],
+            covered_qty=rec["covered_qty"],
+            resting_stops=resting_stops,
+            stop_price=stop_price,
         )
         price = None
 

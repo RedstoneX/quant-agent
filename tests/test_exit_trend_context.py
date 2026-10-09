@@ -88,11 +88,17 @@ def _trend_bars(n: int, step: float, *, start: float = 50.0) -> list[OHLCV]:
     for i in range(n):
         prev = price
         price = max(1.0, price + step)
-        bars.append(OHLCV(
-            symbol="TST", date=dt.date(2026, 1, 1) + dt.timedelta(days=i),
-            open=prev, high=max(prev, price) * 1.01,
-            low=min(prev, price) * 0.99, close=price, volume=1000,
-        ))
+        bars.append(
+            OHLCV(
+                symbol="TST",
+                date=dt.date(2026, 1, 1) + dt.timedelta(days=i),
+                open=prev,
+                high=max(prev, price) * 1.01,
+                low=min(prev, price) * 0.99,
+                close=price,
+                volume=1000,
+            )
+        )
     return bars
 
 
@@ -127,44 +133,95 @@ def test_ma_200_slope_is_exposed():
 
 def test_classify_regimes_long():
     # Strong with-trend: uptrend structure + ADX>=25.
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, adx=30.0, **_UPTREND,
-    ) == REGIME_STRONG_WITH_TREND
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            adx=30.0,
+            **_UPTREND,
+        )
+        == REGIME_STRONG_WITH_TREND
+    )
     # Against/dead trend -> default (no fast path).
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, adx=30.0, **_DOWNTREND,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            adx=30.0,
+            **_DOWNTREND,
+        )
+        == REGIME_DEFAULT
+    )
     # With uptrend structure but ADX < 25 -> default (no moderate regime).
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, adx=22.0, **_UPTREND,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            adx=22.0,
+            **_UPTREND,
+        )
+        == REGIME_DEFAULT
+    )
     # No MA data -> default.
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, ma_50=None, ma_200=None, adx=30.0,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            ma_50=None,
+            ma_200=None,
+            adx=30.0,
+        )
+        == REGIME_DEFAULT
+    )
     # No ADX -> default.
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, **_UPTREND,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            **_UPTREND,
+        )
+        == REGIME_DEFAULT
+    )
     # Flat 200-MA (no slope) is not "with the trend".
-    assert classify_trend_context(
-        is_short=False, current_price=88.5, adx=30.0,
-        ma_50=100.0, ma_200=80.0, ma_200_prior=80.0,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=False,
+            current_price=88.5,
+            adx=30.0,
+            ma_50=100.0,
+            ma_200=80.0,
+            ma_200_prior=80.0,
+        )
+        == REGIME_DEFAULT
+    )
 
 
 def test_classify_short_mirrors_long():
     # Short with-trend strong: price below a FALLING 200MA (far above the
     # popped resistance) and 50<200.
-    assert classify_trend_context(
-        is_short=True, current_price=112.0, adx=30.0,
-        ma_50=110.0, ma_200=130.0, ma_200_prior=131.0,
-    ) == REGIME_STRONG_WITH_TREND
+    assert (
+        classify_trend_context(
+            is_short=True,
+            current_price=112.0,
+            adx=30.0,
+            ma_50=110.0,
+            ma_200=130.0,
+            ma_200_prior=131.0,
+        )
+        == REGIME_STRONG_WITH_TREND
+    )
     # Rising 200MA / 50>200 against the short -> default.
-    assert classify_trend_context(
-        is_short=True, current_price=112.0, adx=30.0,
-        ma_50=140.0, ma_200=130.0, ma_200_prior=129.0,
-    ) == REGIME_DEFAULT
+    assert (
+        classify_trend_context(
+            is_short=True,
+            current_price=112.0,
+            adx=30.0,
+            ma_50=140.0,
+            ma_200=130.0,
+            ma_200_prior=129.0,
+        )
+        == REGIME_DEFAULT
+    )
 
 
 # --------------------------------------------------------------------------
@@ -185,7 +242,9 @@ def test_default_break_needs_two_consecutive_closes_not_one():
     assert confirmed.basis == "structural_level_broken"
     # A single close never lifts protection (no fast one-close path).
     one_close = check_structural_protection(
-        **_common(**kw), prior_break_records=[], prior_session_dates=_SESSIONS,
+        **_common(**kw),
+        prior_break_records=[],
+        prior_session_dates=_SESSIONS,
     )
     assert one_close.protected is True
     assert one_close.basis == "structural_level_pending_confirmation"
@@ -211,10 +270,14 @@ def test_strong_with_trend_holds_until_prior_low_breaks():
     levels = [85.0, 90.0]
     touches = {90.0: 6, 85.0: 6}
     two_closes_only = check_structural_protection(
-        **_common(current_price=88.5, adx=30.0,
-                  computed_levels=levels, computed_level_touches=touches,
-                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
-                  **_UPTREND),
+        **_common(
+            current_price=88.5,
+            adx=30.0,
+            computed_levels=levels,
+            computed_level_touches=touches,
+            computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
+            **_UPTREND,
+        ),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
     )
@@ -223,10 +286,14 @@ def test_strong_with_trend_holds_until_prior_low_breaks():
     assert two_closes_only.basis == "structural_level_pending_confirmation"
 
     prior_low_broken = check_structural_protection(
-        **_common(current_price=83.5, adx=30.0,
-                  computed_levels=levels, computed_level_touches=touches,
-                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
-                  **_UPTREND),
+        **_common(
+            current_price=83.5,
+            adx=30.0,
+            computed_levels=levels,
+            computed_level_touches=touches,
+            computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
+            **_UPTREND,
+        ),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
     )
@@ -284,7 +351,7 @@ def test_margin_is_always_one_atr_across_regimes():
     assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
     for kw in (dict(adx=30.0, **_DOWNTREND), dict(adx=30.0, **_UPTREND)):
         broke = check_structural_protection(**_common(current_price=88.7, **kw))
-        assert broke.raw_broken is True   # 88.7 beyond 1.0-ATR margin in both
+        assert broke.raw_broken is True  # 88.7 beyond 1.0-ATR margin in both
         intact = check_structural_protection(**_common(current_price=89.5, **kw))
         assert intact.raw_broken is False  # 89.5 within 1.0 ATR in both
         assert intact.basis == "structural_level_intact"
@@ -312,11 +379,14 @@ def test_owner_message_wording_lifted_and_kept():
     assert "90 support" in msg
 
     hold_check = check_structural_protection(
-        **_common(current_price=88.5, adx=30.0,
-                  computed_levels=[85.0, 90.0],
-                  computed_level_touches={90.0: 6, 85.0: 6},
-                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
-                  **_UPTREND),
+        **_common(
+            current_price=88.5,
+            adx=30.0,
+            computed_levels=[85.0, 90.0],
+            computed_level_touches={90.0: 6, 85.0: 6},
+            computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
+            **_UPTREND,
+        ),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
     )
@@ -356,7 +426,9 @@ def test_voicing_reaches_telegram_and_board():
     p = _voicing_pipeline()
     with patch("src.notifier.send_owner_alert", return_value=True) as alert:
         p._voice_structural_protection_break(
-            symbol="NVDA", run_id="run-1", check=_exit_check(),
+            symbol="NVDA",
+            run_id="run-1",
+            check=_exit_check(),
         )
     assert alert.call_count == 1
     telegram_text = alert.call_args.args[0]

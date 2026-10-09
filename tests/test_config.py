@@ -37,6 +37,7 @@ storage:
     config_file.write_text(yaml_content)
 
     from src.config import load_config
+
     cfg = load_config(config_file)
 
     assert cfg.api_keys.anthropic == "test-key"
@@ -80,6 +81,7 @@ storage:
     config_file.write_text(yaml_content)
 
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.api_keys.anthropic == "env-key-123"
 
@@ -117,6 +119,7 @@ storage:
 
     import pytest
     from src.config import load_config
+
     # Missing required API keys now raise ValidationError
     with pytest.raises(Exception, match="API key"):
         load_config(config_file)
@@ -230,15 +233,22 @@ def test_llm_config_get_max_tokens_falls_back_to_global():
 
     cfg = LLMConfig(max_tokens=8192)
     for agent in (
-        "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
         "smart_money_analyst",
-        "portfolio_manager", "risk_manager", "position_reviewer", "evening_analyst",
+        "portfolio_manager",
+        "risk_manager",
+        "position_reviewer",
+        "evening_analyst",
     ):
         assert cfg.get_max_tokens(agent) == 8192
 
 
 def test_smart_money_provider_defaults_disabled_until_configured():
     from src.config import SmartMoneyConfig
+
     assert SmartMoneyConfig().enabled is False
 
 
@@ -330,6 +340,7 @@ def test_reconciliation_config_defaults_to_seven_day_lookback():
     accounting correctness, so the default is a real, working lookback
     rather than a feature flag defaulting False."""
     from src.config import ReconciliationConfig
+
     assert ReconciliationConfig().stop_out_lookback_days == 7
 
 
@@ -383,6 +394,7 @@ reconciliation:
     config_file.write_text(yaml_content)
 
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.reconciliation.stop_out_lookback_days == 3
 
@@ -462,7 +474,8 @@ def test_risk_config_rejects_position_and_sector_bound_violations():
 
     def kw(**overrides):
         base = dict(
-            max_position_pct=20, max_total_position_pct=90,
+            max_position_pct=20,
+            max_total_position_pct=90,
             max_sector_pct=40,
             require_stop_loss=True,
         )
@@ -525,14 +538,10 @@ storage:
         f = tmp_path / f"settings_{yaml_bool}.yaml"
         f.write_text(base_yaml.format(margin=yaml_bool))
         cfg = load_config(f)
-        assert cfg.risk.allow_margin is expected, (
-            f"settings.yaml allow_margin={yaml_bool} should load as {expected}"
-        )
+        assert cfg.risk.allow_margin is expected, f"settings.yaml allow_margin={yaml_bool} should load as {expected}"
 
     # Omitting the key falls back to the class default (False).
-    no_key_yaml = base_yaml.format(margin="false").replace(
-        "  allow_margin: false\n", ""
-    )
+    no_key_yaml = base_yaml.format(margin="false").replace("  allow_margin: false\n", "")
     f = tmp_path / "settings_default.yaml"
     f.write_text(no_key_yaml)
     cfg = load_config(f)
@@ -544,6 +553,7 @@ def test_llm_config_defaults_are_current_claude_model():
     agents fall back to a current, priced Claude model, not a 4-6."""
     from src.config import AGENT_NAMES, LLMConfig
     from src.cost_table import estimate_cost
+
     # Per-AGENT model fields only — excludes `fallback_model` (2026-08-31),
     # a single process-wide field that also happens to end in "_model" but
     # is not one of the per-agent defaults this test is about.
@@ -591,6 +601,7 @@ storage:
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     with pytest.raises(Exception, match="DEEPSEEK_API_KEY"):
         load_config(config_file)
 
@@ -643,6 +654,7 @@ storage:
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.api_keys.deepseek == "deepseek-key"
     assert cfg.llm.tech_analyst_model == "deepseek-v4-flash"
@@ -693,12 +705,14 @@ def test_load_config_requires_openrouter_key_for_explicit_provider(tmp_path):
     naming that key — even though the model string alone (an Anthropic-shaped
     id) would otherwise bucket as Anthropic, which already has a key set."""
     yaml_content = _BASE_YAML.format(
-        extra_keys="", model="anthropic/claude-3.5-sonnet",
-        extra_llm="tech_analyst_provider: \"openrouter\"",
+        extra_keys="",
+        model="anthropic/claude-3.5-sonnet",
+        extra_llm='tech_analyst_provider: "openrouter"',
     )
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     with pytest.raises(Exception, match="OPENROUTER_API_KEY"):
         load_config(config_file)
 
@@ -756,6 +770,7 @@ storage:
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.api_keys.openrouter == "or-key"
     assert cfg.llm.tech_analyst_provider == "openrouter"
@@ -770,6 +785,7 @@ def test_provider_field_omitted_config_loads_identically_to_pre_stage1(tmp_path)
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.llm.tech_analyst_provider is None
     assert cfg.llm.get_provider("tech_analyst") is None
@@ -779,18 +795,21 @@ def test_invalid_provider_string_rejected_at_config_load(tmp_path):
     """A typo'd provider must fail loudly at config load, not silently fall
     through to prefix inference and pick an unintended provider."""
     yaml_content = _BASE_YAML.format(
-        extra_keys="", model="gpt-5.5",
+        extra_keys="",
+        model="gpt-5.5",
         extra_llm='tech_analyst_provider: "openrooter"',  # typo
     )
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(yaml_content)
     from src.config import load_config
+
     with pytest.raises(Exception):
         load_config(config_file)
 
 
 def test_llm_config_get_provider_unknown_agent_returns_none():
     from src.config import LLMConfig
+
     cfg = LLMConfig(max_tokens=4096, tech_analyst_provider="openrouter")
     assert cfg.get_provider("tech_analyst") == "openrouter"
     assert cfg.get_provider("nonexistent_agent") is None
@@ -801,20 +820,30 @@ def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path
     model string's prefix would imply, and the key requirement follows the
     override — proving _check_llm_provider_keys doesn't re-derive its own
     independent prefix logic (the triplication risk Stage 1 closes)."""
-    from src.config import AppConfig, ApiKeysConfig, AlpacaConfig, LLMConfig, RiskConfig, TradingConfig, ScheduleConfig, StorageConfig
+    from src.config import (
+        AppConfig,
+        ApiKeysConfig,
+        AlpacaConfig,
+        LLMConfig,
+        RiskConfig,
+        TradingConfig,
+        ScheduleConfig,
+        StorageConfig,
+    )
+
     # A "gpt-"-prefixed model explicitly routed to openrouter must require
     # OPENROUTER_API_KEY, not OPENAI_API_KEY.
     with pytest.raises(Exception, match="OPENROUTER_API_KEY"):
         AppConfig(
-            api_keys=ApiKeysConfig(anthropic="a", openai="o", fred="f",
-                                   alpaca_key="ak", alpaca_secret="as"),
+            api_keys=ApiKeysConfig(anthropic="a", openai="o", fred="f", alpaca_key="ak", alpaca_secret="as"),
             alpaca=AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=True),
-            llm=LLMConfig(max_tokens=4096, tech_analyst_model="gpt-5.5",
-                         tech_analyst_provider="openrouter"),
-            risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
-                            max_sector_pct=40, require_stop_loss=True),
-            trading=TradingConfig(universe=["SPY"], lookback_days=60,
-                                  schedule=ScheduleConfig(morning="06:00", midday="12:00", evening="16:30")),
+            llm=LLMConfig(max_tokens=4096, tech_analyst_model="gpt-5.5", tech_analyst_provider="openrouter"),
+            risk=RiskConfig(max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, require_stop_loss=True),
+            trading=TradingConfig(
+                universe=["SPY"],
+                lookback_days=60,
+                schedule=ScheduleConfig(morning="06:00", midday="12:00", evening="16:30"),
+            ),
             storage=StorageConfig(db_path="data/test.db"),
         )
 
@@ -831,6 +860,7 @@ def test_check_llm_provider_keys_uses_resolve_provider_not_prefix_alone(tmp_path
 
 def test_paper_false_is_rejected_at_config_load():
     from src.config import AlpacaConfig
+
     with pytest.raises(Exception, match="live trading is not authorized"):
         AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=False)
 
@@ -844,12 +874,14 @@ def test_live_base_url_is_rejected_even_when_paper_is_true():
     the disagreement rather than leaving a misleading field in place.
     """
     from src.config import AlpacaConfig
+
     with pytest.raises(Exception, match="paper-api.alpaca.markets"):
         AlpacaConfig(base_url="https://api.alpaca.markets", paper=True)
 
 
 def test_paper_config_still_loads_unchanged():
     from src.config import AlpacaConfig
+
     cfg = AlpacaConfig(base_url="https://paper-api.alpaca.markets", paper=True)
     assert cfg.paper is True
 
@@ -858,9 +890,8 @@ def test_shipped_settings_yaml_is_paper_only():
     """The config the deployment actually runs must satisfy the guard."""
     from pathlib import Path as _Path
     import yaml as _yaml
-    raw = _yaml.safe_load(
-        (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
-    )
+
+    raw = _yaml.safe_load((_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text())
     assert raw["alpaca"]["paper"] is True
     assert "paper-api.alpaca.markets" in raw["alpaca"]["base_url"]
 
@@ -868,10 +899,10 @@ def test_shipped_settings_yaml_is_paper_only():
 def test_full_config_load_rejects_live_trading(tmp_path):
     """End-to-end through load_config(), not just the sub-model."""
     from src.config import load_config
+
     config_file = tmp_path / "settings.yaml"
     config_file.write_text(
-        _BASE_YAML.format(extra_keys="", model="claude-opus-4-7", extra_llm="")
-        .replace("paper: true", "paper: false")
+        _BASE_YAML.format(extra_keys="", model="claude-opus-4-7", extra_llm="").replace("paper: true", "paper: false")
     )
     with pytest.raises(Exception, match="live trading is not authorized"):
         load_config(config_file)
@@ -879,6 +910,7 @@ def test_full_config_load_rejects_live_trading(tmp_path):
 
 def test_provider_order_returns_the_seat_preference_or_none():
     from src.config import LLMConfig
+
     cfg = LLMConfig(
         max_tokens=4096,
         portfolio_manager_provider="openrouter",
@@ -896,6 +928,7 @@ def test_provider_order_on_a_non_openrouter_seat_is_rejected():
     believing a seat runs on a cheaper tier that it never reached."""
     import pytest
     from src.config import LLMConfig
+
     with pytest.raises(ValueError, match="not 'openrouter'"):
         LLMConfig(
             max_tokens=4096,
@@ -909,6 +942,7 @@ def test_empty_provider_order_is_rejected_rather_than_read_as_no_preference():
     typo far more often than as intent. Make the operator write null."""
     import pytest
     from src.config import LLMConfig
+
     with pytest.raises(ValueError, match="non-empty list"):
         LLMConfig(
             max_tokens=4096,
@@ -929,23 +963,27 @@ def test_provider_order_absent_loads_exactly_as_before():
     """Additive-only: a settings.yaml that never mentions the field must
     produce None on every seat."""
     from src.config import AGENT_NAMES, LLMConfig
+
     cfg = LLMConfig(max_tokens=4096)
     assert all(cfg.get_provider_order(name) is None for name in AGENT_NAMES)
 
 
 # === NotificationsConfig — Telegram alert tap-through link ===
 
+
 def test_notifications_config_defaults_to_tailnet_cockpit_url():
     """Default target matches the tailnet address Tailscale Serve exposes
     for the qamc API (proxying tailnet-only port 443 to 127.0.0.1:8800),
     which mounts /cockpit (src/api/server.py app.mount("/cockpit", ...))."""
     from src.config import NotificationsConfig
+
     cfg = NotificationsConfig()
     assert cfg.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 
 def test_notifications_config_allows_empty_url_to_disable_the_link():
     from src.config import NotificationsConfig
+
     cfg = NotificationsConfig(mission_control_url="")
     assert cfg.mission_control_url == ""
 
@@ -955,6 +993,7 @@ def test_notifications_config_rejects_non_http_scheme():
     that isn't http(s) (or empty) rather than trust it blindly."""
     import pytest
     from src.config import NotificationsConfig
+
     with pytest.raises(ValueError, match="http"):
         NotificationsConfig(mission_control_url="javascript:alert(1)")
 
@@ -996,6 +1035,7 @@ storage:
     config_file.write_text(yaml_content)
 
     from src.config import load_config
+
     cfg = load_config(config_file)
     assert cfg.notifications.mission_control_url == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
@@ -1003,9 +1043,8 @@ storage:
 def test_shipped_settings_yaml_notifications_url_matches_default():
     from pathlib import Path as _Path
     import yaml as _yaml
-    raw = _yaml.safe_load(
-        (_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
-    )
+
+    raw = _yaml.safe_load((_Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text())
     assert raw["notifications"]["mission_control_url"] == "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 
@@ -1085,8 +1124,10 @@ _DELETED_LOSS_ALARM_KEYS = (
 
 def _live_risk_kwargs(**overrides):
     base = dict(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40, require_stop_loss=True,
+        max_position_pct=20,
+        max_total_position_pct=90,
+        max_sector_pct=40,
+        require_stop_loss=True,
     )
     base.update(overrides)
     return base
@@ -1122,12 +1163,9 @@ def test_the_live_settings_file_carries_none_of_them(key):
     """The repo's own settings.yaml must stay loadable."""
     import yaml
 
-    raw = yaml.safe_load(
-        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
-    )
+    raw = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text())
     assert key not in (raw.get("risk") or {}), (
-        f"config/settings.yaml carries risk.{key} — the account-level loss "
-        "alarm is retired and this file will not load"
+        f"config/settings.yaml carries risk.{key} — the account-level loss alarm is retired and this file will not load"
     )
 
 

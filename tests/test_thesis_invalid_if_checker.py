@@ -25,6 +25,7 @@ from src.risk.exit_guard import ThesisInvalidationCheck, check_thesis_invalid_if
 # unique specialist_evidence values, 95.7%).
 # ---------------------------------------------------------------------------
 
+
 def test_ma_reference_triggered_real_vlo_condition():
     # VLO BUY, 2026-08-21: "Price closes below MA20 (319.25) on increased
     # volume." — MA20 value is stale-at-writing-time; the checker compares
@@ -50,7 +51,9 @@ def test_ma_reference_not_triggered_real_oxy_condition():
 def test_ma_reference_worded_as_at_still_parses_real_onds_condition():
     # ONDS BUY, 2026-08-27: "Price closes below the MA50 at 8.15."
     result = check_thesis_invalid_if(
-        "Price closes below the MA50 at 8.15.", current_price=7.50, ma_50=8.00,
+        "Price closes below the MA50 at 8.15.",
+        current_price=7.50,
+        ma_50=8.00,
     )
     assert result.status == "TRIGGERED"
 
@@ -68,7 +71,9 @@ def test_ma_reference_missing_ma_value_is_unparseable_not_a_guess():
 def test_ma_reference_unsupported_period_is_unparseable():
     # No pipeline computation exists for MA10 — refuse rather than guess.
     result = check_thesis_invalid_if(
-        "Price closes below MA10 (40.00) on volume.", current_price=35.00, ma_20=38.0,
+        "Price closes below MA10 (40.00) on volume.",
+        current_price=35.00,
+        ma_20=38.0,
     )
     assert result.status == "UNPARSEABLE"
 
@@ -83,7 +88,8 @@ def test_bare_day_average_phrasing_is_recognized():
     close before it does."""
     result = check_thesis_invalid_if(
         "Thesis invalid if price closes below the 50-day average.",
-        current_price=100.0, ma_50=105.0,
+        current_price=100.0,
+        ma_50=105.0,
     )
     assert result.status == "TRIGGERED"
 
@@ -91,6 +97,7 @@ def test_bare_day_average_phrasing_is_recognized():
 # ---------------------------------------------------------------------------
 # Bucket (a): bare numeric price level — second real bucket (38/1028, 3.7%).
 # ---------------------------------------------------------------------------
+
 
 def test_price_level_triggered_real_rsg_condition():
     # RSG BUY, 2026-08-31: "Price closes below the $218.51 support level on
@@ -116,7 +123,8 @@ def test_price_level_not_triggered_real_unh_condition():
 def test_price_level_triggered_real_nvda_condition():
     # NVDA BUY, 2026-09-02: "Price closes below support at 207.89"
     result = check_thesis_invalid_if(
-        "Price closes below support at 207.89", current_price=200.00,
+        "Price closes below support at 207.89",
+        current_price=200.00,
     )
     assert result.status == "TRIGGERED"
 
@@ -133,6 +141,7 @@ def test_price_level_missing_current_price_is_unparseable_not_a_guess():
 # Genuinely out-of-scope real examples — must return UNPARSEABLE, never a
 # guess, however plausible-looking the text is.
 # ---------------------------------------------------------------------------
+
 
 def test_compound_condition_is_unparseable_real_nvda_condition():
     # NVDA BUY, 2026-08-24: "Price closes below MA50 or breaks $180 support"
@@ -173,7 +182,8 @@ def test_empty_condition_is_unparseable():
 
 def test_result_is_frozen_dataclass_with_status_and_detail():
     result = check_thesis_invalid_if(
-        "Price closes below the $218.51 support level.", current_price=200.00,
+        "Price closes below the $218.51 support level.",
+        current_price=200.00,
     )
     assert isinstance(result, ThesisInvalidationCheck)
     assert result.status == "TRIGGERED"
@@ -190,11 +200,11 @@ def test_result_is_frozen_dataclass_with_status_and_detail():
 # back above 420bps" as its own worked example, and that returned UNPARSEABLE.
 
 _MACRO = {
-    "credit_spread": 455.0,      # HY OAS, basis points
-    "ig_credit_spread": 92.0,    # IG OAS, basis points
-    "vix": 18.2,                 # index points
-    "treasury_10y": 4.12,        # percent
-    "unemployment": 4.3,         # percent
+    "credit_spread": 455.0,  # HY OAS, basis points
+    "ig_credit_spread": 92.0,  # IG OAS, basis points
+    "vix": 18.2,  # index points
+    "treasury_10y": 4.12,  # percent
+    "unemployment": 4.3,  # percent
 }
 
 
@@ -210,7 +220,9 @@ def test_the_macro_prompts_own_worked_example_is_now_evaluated() -> None:
 
 def test_macro_series_not_triggered_reads_the_macro_level_not_the_price() -> None:
     result = check_thesis_invalid_if(
-        "VIX closes above 30", current_price=455.00, macro_levels=_MACRO,
+        "VIX closes above 30",
+        current_price=455.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "NOT_TRIGGERED", result
     assert "vix 18.2" in result.detail
@@ -219,7 +231,8 @@ def test_macro_series_not_triggered_reads_the_macro_level_not_the_price() -> Non
 def test_percent_on_a_bps_series_is_the_exact_definitional_conversion() -> None:
     """1% = 100bps is a definition, so it is applied; nothing else is."""
     result = check_thesis_invalid_if(
-        "high-yield spread above 4.9%", current_price=150.00,
+        "high-yield spread above 4.9%",
+        current_price=150.00,
         macro_levels=_MACRO,
     )
     assert result.status == "NOT_TRIGGERED", result  # 455bps < 490bps
@@ -227,7 +240,9 @@ def test_percent_on_a_bps_series_is_the_exact_definitional_conversion() -> None:
 
 def test_bps_series_with_no_unit_is_refused_rather_than_assumed() -> None:
     result = check_thesis_invalid_if(
-        "HY OAS above 420", current_price=150.00, macro_levels=_MACRO,
+        "HY OAS above 420",
+        current_price=150.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "UNPARSEABLE", result
     assert "unit" in result.detail
@@ -235,15 +250,19 @@ def test_bps_series_with_no_unit_is_refused_rather_than_assumed() -> None:
 
 def test_index_series_quoted_in_a_unit_it_does_not_have_is_refused() -> None:
     result = check_thesis_invalid_if(
-        "VIX above 30%", current_price=150.00, macro_levels=_MACRO,
+        "VIX above 30%",
+        current_price=150.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "UNPARSEABLE", result
 
 
 def test_a_digit_inside_the_series_name_is_not_read_as_the_threshold() -> None:
-    """"10y yield above 4.5%" must compare 4.12 to 4.5, never to 10."""
+    """ "10y yield above 4.5%" must compare 4.12 to 4.5, never to 10."""
     result = check_thesis_invalid_if(
-        "10y yield above 4.5%", current_price=150.00, macro_levels=_MACRO,
+        "10y yield above 4.5%",
+        current_price=150.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "NOT_TRIGGERED", result
     assert "vs level 4.5" in result.detail
@@ -251,7 +270,9 @@ def test_a_digit_inside_the_series_name_is_not_read_as_the_threshold() -> None:
 
 def test_macro_series_with_no_supplied_level_is_unparseable_never_a_guess() -> None:
     result = check_thesis_invalid_if(
-        "fed funds rate above 5.0%", current_price=150.00, macro_levels=_MACRO,
+        "fed funds rate above 5.0%",
+        current_price=150.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "UNPARSEABLE", result
     assert "fed_funds_rate" in result.detail
@@ -266,7 +287,9 @@ def test_named_macro_series_wins_over_the_bare_price_shape() -> None:
     is in fact true (455bps > 420.5bps).
     """
     result = check_thesis_invalid_if(
-        "HY OAS above 420.5bps", current_price=150.00, macro_levels=_MACRO,
+        "HY OAS above 420.5bps",
+        current_price=150.00,
+        macro_levels=_MACRO,
     )
     assert result.status == "TRIGGERED", result
     assert "credit_spread" in result.detail
@@ -275,17 +298,28 @@ def test_named_macro_series_wins_over_the_bare_price_shape() -> None:
 def test_a_qualitative_condition_stays_unparseable_by_design() -> None:
     """The remaining, deliberate limit: words the desk cannot compute."""
     result = check_thesis_invalid_if(
-        "the contract award is rescinded", current_price=150.00,
+        "the contract award is rescinded",
+        current_price=150.00,
         macro_levels=_MACRO,
     )
     assert result.status == "UNPARSEABLE", result
 
 
 def test_price_and_ma_shapes_are_unchanged_by_the_macro_addition() -> None:
-    assert check_thesis_invalid_if(
-        "closes below MA50", current_price=150.00, ma_50=160.00,
-        macro_levels=_MACRO,
-    ).status == "TRIGGERED"
-    assert check_thesis_invalid_if(
-        "loses the $142.50 level", current_price=150.00, macro_levels=_MACRO,
-    ).status == "NOT_TRIGGERED"
+    assert (
+        check_thesis_invalid_if(
+            "closes below MA50",
+            current_price=150.00,
+            ma_50=160.00,
+            macro_levels=_MACRO,
+        ).status
+        == "TRIGGERED"
+    )
+    assert (
+        check_thesis_invalid_if(
+            "loses the $142.50 level",
+            current_price=150.00,
+            macro_levels=_MACRO,
+        ).status
+        == "NOT_TRIGGERED"
+    )

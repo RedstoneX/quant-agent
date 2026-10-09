@@ -160,11 +160,7 @@ SECONDS_PER_TEST = 0.034
 
 def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
     """Every test module, sorted, relative to the repo root."""
-    found = [
-        p.relative_to(REPO_ROOT)
-        for p in tests_dir.rglob("test_*.py")
-        if "__pycache__" not in p.parts
-    ]
+    found = [p.relative_to(REPO_ROOT) for p in tests_dir.rglob("test_*.py") if "__pycache__" not in p.parts]
     return sorted(found)
 
 
@@ -258,14 +254,8 @@ def check(shards: int, tests_dir: Path = TESTS_DIR) -> int:
         return 1
 
     seconds = [sum(expected[i] for i in b) for b in buckets]
-    print(
-        f"ci_shard: {len(test_files(tests_dir))} files, {len(expected)} units, "
-        f"{shards} shards"
-    )
-    print(
-        "ci_shard: estimated seconds   "
-        f"{[round(s) for s in seconds]} (longest shard sets the wall-clock)"
-    )
+    print(f"ci_shard: {len(test_files(tests_dir))} files, {len(expected)} units, {shards} shards")
+    print(f"ci_shard: estimated seconds   {[round(s) for s in seconds]} (longest shard sets the wall-clock)")
     return 0
 
 

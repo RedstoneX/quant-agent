@@ -2,6 +2,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, computed_field, field_validator, model_validator
 from src.models.base import LLMOutputModel, _normalize_enum_case_fields, _normalize_symbol, reward_to_risk
 
+
 class TradeDecision(LLMOutputModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -185,10 +186,13 @@ class TradeDecision(LLMOutputModel):
             # No entry geometry to measure, so no ratio exists.
             return None
         ratio = reward_to_risk(
-            self.entry_price, self.stop_loss, self.take_profit,
+            self.entry_price,
+            self.stop_loss,
+            self.take_profit,
             is_short=is_short,
         )
         return None if ratio is None else round(ratio, 2)
+
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
@@ -210,13 +214,9 @@ class TradeDecision(LLMOutputModel):
             if self.take_profit <= 0:
                 raise ValueError("BUY decisions require take_profit > 0")
             if self.stop_loss > 0 and self.stop_loss >= self.entry_price:
-                raise ValueError(
-                    "BUY decisions require stop_loss to stay below entry_price"
-                )
+                raise ValueError("BUY decisions require stop_loss to stay below entry_price")
             if self.take_profit <= self.entry_price:
-                raise ValueError(
-                    "BUY decisions require take_profit to stay above entry_price"
-                )
+                raise ValueError("BUY decisions require take_profit to stay above entry_price")
         elif self.action == "SHORT":
             # Mirror of the BUY geometry: a short's stop protects ABOVE
             # entry and its take-profit sits BELOW entry (price must fall
@@ -228,13 +228,9 @@ class TradeDecision(LLMOutputModel):
             if self.take_profit <= 0:
                 raise ValueError("SHORT decisions require take_profit > 0")
             if self.stop_loss > 0 and self.stop_loss <= self.entry_price:
-                raise ValueError(
-                    "SHORT decisions require stop_loss to stay above entry_price"
-                )
+                raise ValueError("SHORT decisions require stop_loss to stay above entry_price")
             if self.take_profit >= self.entry_price:
-                raise ValueError(
-                    "SHORT decisions require take_profit to stay below entry_price"
-                )
+                raise ValueError("SHORT decisions require take_profit to stay below entry_price")
         # SELL and COVER don't need live entry/stop/target — execution uses
         # market price, exactly as SELL always has.
         return self
@@ -248,6 +244,7 @@ class ReasoningChain(LLMOutputModel):
     (pre-memory-layer / pre-2026-06 respectively) but are mandatory per the
     prompt; everything else is mandatory at the schema layer too.
     """
+
     macro_filter: str = Field(min_length=1)
     news_check: str = Field(min_length=1)
     earnings_check: str = Field(min_length=1)
@@ -306,6 +303,7 @@ class ExitReviewChain(ReasoningChain):
     there. `continuity_check` and `premortem_check` are already optional on
     the parent and are never rendered on this path.
     """
+
     news_check: str = ""
 
 
@@ -330,5 +328,3 @@ class AnalystProvenance(LLMOutputModel):
             values,
             lower_fields=("source", "observed_stance", "relationship"),
         )
-
-

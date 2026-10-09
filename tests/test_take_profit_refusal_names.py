@@ -1,4 +1,5 @@
 """update_open_take_profit must refuse cleanly, never raise NameError."""
+
 import logging
 
 import pytest

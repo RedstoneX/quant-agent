@@ -8,6 +8,7 @@ The ledger handle is the owner's ``db`` when it has one; otherwise ``None``,
 and the traceback is still logged while the row is skipped. Nothing is stored
 here and nothing here can raise into the handler that called it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,8 +22,12 @@ def record_protection_fault(owner, where: str, exc: BaseException | None = None,
     """One pass through a protection catch-all: `exc` set = swallowed fault
     (traceback + ``disagreed``); `exc` None = clean pass (``agreed``)."""
     try:
-        record_guarded_outcome(db=getattr(owner, "db", None),
-                               where=f"pipeline_protection.{where}",
-                               exc=exc, log=logger, context=context or None)
+        record_guarded_outcome(
+            db=getattr(owner, "db", None),
+            where=f"pipeline_protection.{where}",
+            exc=exc,
+            log=logger,
+            context=context or None,
+        )
     except Exception:  # noqa: BLE001 - an observer must never break protection
         logger.error("record_protection_fault could not record %s", where, exc_info=True)

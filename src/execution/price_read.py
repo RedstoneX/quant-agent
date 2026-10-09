@@ -14,6 +14,7 @@ second source, and nothing here describes it as one.
 The attempt count and backoff are the desk's ledgered transient-fault policy
 (`src.infra_retry_policy`), so this module adds no number of its own.
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,7 +24,11 @@ from contextvars import ContextVar
 from typing import Callable, Iterator
 
 from src.infra_retry_policy import (  # noqa: F401 (re-exported for callers and tests)
-    BACKOFF_BASE_S, BACKOFF_MAX_S, MAX_RETRIES, _backoff_s, read_worst_case_s,
+    BACKOFF_BASE_S,
+    BACKOFF_MAX_S,
+    MAX_RETRIES,
+    _backoff_s,
+    read_worst_case_s,
 )
 from src.refusal_errors import PriceReadFailed
 
@@ -48,9 +53,13 @@ def single_attempt_reads() -> Iterator[None]:
         _SINGLE_ATTEMPT.reset(token)
 
 
-def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,
-                          log: logging.Logger | None = None,
-                          sleep: Callable[[float], None] | None = None):
+def read_price_with_retry(
+    read_once: Callable[[str], object],
+    symbol: str,
+    *,
+    log: logging.Logger | None = None,
+    sleep: Callable[[float], None] | None = None,
+):
     """`read_once(symbol)` up to `1 + MAX_RETRIES` times; the first answer wins.
 
     An answer of `None` is a measured absence and is returned as such. An
@@ -69,10 +78,7 @@ def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,
             raise
         except Exception as exc:  # noqa: BLE001 -- retried, then raised typed below
             last = exc
-            log.warning("price read for %s failed (attempt %d of %d): %s",
-                        symbol, attempt, attempts, exc)
+            log.warning("price read for %s failed (attempt %d of %d): %s", symbol, attempt, attempts, exc)
             if attempt < attempts:
                 sleep(_backoff_s(attempt))
-    raise PriceReadFailed(
-        f"{symbol}: price read failed on all {attempts} attempts ({last!r})"
-    ) from last
+    raise PriceReadFailed(f"{symbol}: price read failed on all {attempts} attempts ({last!r})") from last

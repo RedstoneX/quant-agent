@@ -9,6 +9,7 @@ the bodies, moved verbatim. Clause 5 of tests/boundary_harness.py: each part
 has a test that imports it and never names the pipeline. Follows
 tests/test_trailing_parts_boundary.py.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,8 +21,10 @@ from src.risk import book_exposure, conviction_bar, seat_agreement, sector_budge
 from tests.boundary_harness import check_boundary
 
 FUNCTION_ONLY_PARTS = [
-    "src.risk.sector_budget", "src.risk.seat_agreement",
-    "src.risk.unread_filing", "src.risk.conviction_bar",
+    "src.risk.sector_budget",
+    "src.risk.seat_agreement",
+    "src.risk.unread_filing",
+    "src.risk.conviction_bar",
 ]
 
 
@@ -83,8 +86,12 @@ def test_unread_filing_reason_carries_its_prefix_and_the_symbol():
 
 def test_conviction_bar_part_exposes_its_prefix_and_helpers():
     assert conviction_bar.OWN_BAR_REASON_PREFIX == "R7 conviction bar"
-    for name in ("own_bar_block_reason", "own_bar_opposition_reason",
-                 "_has_supported_directional_thesis", "_is_broadcast_macro_verdict"):
+    for name in (
+        "own_bar_block_reason",
+        "own_bar_opposition_reason",
+        "_has_supported_directional_thesis",
+        "_is_broadcast_macro_verdict",
+    ):
         assert callable(getattr(conviction_bar, name))
 
 

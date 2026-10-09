@@ -61,19 +61,22 @@ def _parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--db-path", type=Path, required=True,
-        help="SQLite database to backfill. For review/testing this MUST "
-             "be a COPY, never the live production database.",
+        "--db-path",
+        type=Path,
+        required=True,
+        help="SQLite database to backfill. For review/testing this MUST be a COPY, never the live production database.",
     )
     p.add_argument(
-        "--apply", action="store_true",
+        "--apply",
+        action="store_true",
         help="Actually write the resolved position_id values. Without "
-             "this flag the script only computes and PRINTS counts.",
+        "this flag the script only computes and PRINTS counts.",
     )
     p.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Skip the interactive confirmation prompt when --apply is "
-             "set. Only use once you've already reviewed a dry run.",
+        "set. Only use once you've already reviewed a dry run.",
     )
     return p.parse_args(argv)
 
@@ -91,10 +94,7 @@ def main(argv=None) -> int:
     print()
 
     if args.apply and not args.yes:
-        resp = input(
-            f"About to WRITE position_id values into {db_path}. "
-            f"Type 'yes' to continue: "
-        )
+        resp = input(f"About to WRITE position_id values into {db_path}. Type 'yes' to continue: ")
         if resp.strip().lower() != "yes":
             print("Aborted — no changes made.")
             return 1
@@ -112,8 +112,7 @@ def main(argv=None) -> int:
     print(f"Total trades rows:                 {result['total']}")
     print(f"Already had position_id:           {result['already_assigned']}")
     print(f"{label}:{' ' * (36 - len(label) - 1)}{result['assigned']}")
-    print(f"Left NULL (ambiguous — no open      "
-          f"chain to confidently attach): {result['left_null_ambiguous']}")
+    print(f"Left NULL (ambiguous — no open      chain to confidently attach): {result['left_null_ambiguous']}")
     print(f"Not applicable (HOLD/SWEEP_*):      {result['not_applicable']}")
     print()
     if not args.apply:

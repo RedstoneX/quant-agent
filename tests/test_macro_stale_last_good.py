@@ -1,5 +1,6 @@
 """Board item 187 — after retries are exhausted the desk acts: it serves the
 last-good cached series with its age, and says so in coverage. No live calls."""
+
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -12,8 +13,7 @@ from src.trading_calendar import et_now
 
 
 def _seed(cache, sid, kwargs, days_old):
-    cache.save(sid, kwargs, [("2026-09-01", 1.0), ("2026-09-02", 2.0)],
-               None, None, et_now() - timedelta(days=days_old))
+    cache.save(sid, kwargs, [("2026-09-01", 1.0), ("2026-09-02", 2.0)], None, None, et_now() - timedelta(days=days_old))
 
 
 def _provider(tmp_path, fred_cls, side_effect):
@@ -53,8 +53,8 @@ def test_incomplete_set_is_visible_to_consumers_and_counted(fred_cls, _s, tmp_pa
     _seed(cache, "VIXCLS", {}, 3)
     p._safe_get_series("VIXCLS")
     from src.data.macro import MacroCoverage
-    cov = MacroCoverage(configured=p._run_configured, succeeded=p._run_succeeded,
-                        failed=list(p._run_failed))
+
+    cov = MacroCoverage(configured=p._run_configured, succeeded=p._run_succeeded, failed=list(p._run_failed))
     assert not cov.complete and cov.status == "failed"
     assert "3d old" in cov.describe()
     assert "VIXCLS" in cov.verdict_stamp()[1] and "MISSING" not in cov.verdict_stamp()[1]
@@ -72,6 +72,7 @@ def test_prefetch_mode_never_serves_stale(fred_cls, tmp_path):
 
 def _cov(p):
     from src.data.macro import MacroCoverage
+
     return MacroCoverage(configured=2, succeeded=0, failed=list(p._run_failed))
 
 
@@ -89,6 +90,7 @@ def test_stale_served_is_not_missing_in_stamp_prompt_or_row(fred_cls, _s, tmp_pa
     assert "MISSING (no value at all): none" in text
     assert "VIXCLS (last-good value, 4d old)" in text
     import json
+
     entry = json.loads(build_row(1, cov, None)["series_failed"])[0]
     assert entry["state"] == "stale" and entry["age_days"] == 4
 
@@ -103,5 +105,6 @@ def test_absent_series_is_missing_in_stamp_prompt_and_row(fred_cls, _s, tmp_path
     assert "MISSING (no value): VIXCLS" in note and "STALE" not in note
     assert "MISSING (no value at all): VIXCLS" in cov.describe()
     import json
+
     entry = json.loads(build_row(1, cov, None)["series_failed"])[0]
     assert "state" not in entry and "age_days" not in entry

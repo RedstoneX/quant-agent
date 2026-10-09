@@ -40,13 +40,27 @@ def test_long_block_removed_by_reanchoring_to_the_highest_high():
     # business" and the caller's own in-profit path blocks it (the 54% case).
     assert adverse_move_is_noise(100.0, 107.0, ATR, side="sell") is False
     # the re-anchored band actually EVALUATES the move and clears it
-    assert adverse_move_is_noise(
-        100.0, 107.0, ATR, side="sell", extreme_since_entry=110.0,
-    ) is False
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            107.0,
+            ATR,
+            side="sell",
+            extreme_since_entry=110.0,
+        )
+        is False
+    )
     # and still blocks when the pullback from the high is inside the band
-    assert adverse_move_is_noise(
-        100.0, 109.0, ATR, side="sell", extreme_since_entry=110.0,
-    ) is True
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            109.0,
+            ATR,
+            side="sell",
+            extreme_since_entry=110.0,
+        )
+        is True
+    )
 
 
 def test_long_fallback_reanchor_never_adds_a_block():
@@ -61,19 +75,27 @@ def test_long_fallback_reanchor_never_adds_a_block():
     were flat-or-winning versus entry, and some of those land inside the band.
     """
     kw = dict(
-        thesis_invalid_if=None, atr=ATR, computed_levels=[],
-        min_level_touches=5, level_cluster_tolerance_pct=0.01,
+        thesis_invalid_if=None,
+        atr=ATR,
+        computed_levels=[],
+        min_level_touches=5,
+        level_cluster_tolerance_pct=0.01,
     )
     for entry in (50.0, 100.0):
         for high in (entry, entry + 1.0, entry + 7.0):
             for price in [entry - 5 + 0.5 * k for k in range(30)]:
                 new = check_structural_protection(
-                    current_price=price, entry_price=entry,
-                    stop_loss=entry * 0.9, extreme_since_entry=high, **kw,
+                    current_price=price,
+                    entry_price=entry,
+                    stop_loss=entry * 0.9,
+                    extreme_since_entry=high,
+                    **kw,
                 ).protected
                 old = check_structural_protection(
-                    current_price=price, entry_price=entry,
-                    stop_loss=entry * 0.9, **kw,
+                    current_price=price,
+                    entry_price=entry,
+                    stop_loss=entry * 0.9,
+                    **kw,
                 ).protected
                 assert not (new and not old), (entry, high, price)
 
@@ -84,30 +106,53 @@ def test_short_block_removed_by_reanchoring_to_the_lowest_low():
     the short's favour, so the entry band never evaluates it. From the LOWEST
     LOW the adverse move is 3.0 = 1.5 ATR, outside the band."""
     assert adverse_move_is_noise(100.0, 93.0, ATR, side="buy") is False
-    assert adverse_move_is_noise(
-        100.0, 93.0, ATR, side="buy", extreme_since_entry=90.0,
-    ) is False
-    assert adverse_move_is_noise(
-        100.0, 91.0, ATR, side="buy", extreme_since_entry=90.0,
-    ) is True
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            93.0,
+            ATR,
+            side="buy",
+            extreme_since_entry=90.0,
+        )
+        is False
+    )
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            91.0,
+            ATR,
+            side="buy",
+            extreme_since_entry=90.0,
+        )
+        is True
+    )
 
 
 def test_short_fallback_reanchor_never_adds_a_block():
     """The short mirror of the guarantee above, same home, same sweep."""
     kw = dict(
-        thesis_invalid_if=None, atr=ATR, computed_levels=[], is_short=True,
-        min_level_touches=5, level_cluster_tolerance_pct=0.01,
+        thesis_invalid_if=None,
+        atr=ATR,
+        computed_levels=[],
+        is_short=True,
+        min_level_touches=5,
+        level_cluster_tolerance_pct=0.01,
     )
     for entry in (50.0, 100.0):
         for low in (entry, entry - 1.0, entry - 7.0):
             for price in [entry - 5 + 0.5 * k for k in range(30)]:
                 new = check_structural_protection(
-                    current_price=price, entry_price=entry,
-                    stop_loss=entry * 1.1, extreme_since_entry=low, **kw,
+                    current_price=price,
+                    entry_price=entry,
+                    stop_loss=entry * 1.1,
+                    extreme_since_entry=low,
+                    **kw,
                 ).protected
                 old = check_structural_protection(
-                    current_price=price, entry_price=entry,
-                    stop_loss=entry * 1.1, **kw,
+                    current_price=price,
+                    entry_price=entry,
+                    stop_loss=entry * 1.1,
+                    **kw,
                 ).protected
                 assert not (new and not old), (entry, low, price)
 
@@ -124,20 +169,32 @@ def test_anchor_is_clamped_so_it_is_never_worse_than_entry():
 
 def test_no_extreme_reproduces_the_old_entry_anchored_behaviour_exactly():
     for price in [96.0, 99.0, 99.5, 100.0, 101.0]:
-        assert adverse_move_is_noise(100.0, price, ATR) == (
-            0 < 100.0 - price < NOISE_BAND_ATR_MULTIPLE * ATR
-        )
+        assert adverse_move_is_noise(100.0, price, ATR) == (0 < 100.0 - price < NOISE_BAND_ATR_MULTIPLE * ATR)
 
 
 def test_width_and_session_widening_are_untouched():
     # 1.0 ATR at one session; sqrt(4)=2 ATR at four. Re-anchoring changes the
     # reference point only.
-    assert adverse_move_is_noise(
-        100.0, 97.0, ATR, extreme_since_entry=100.0, days_held=1,
-    ) is False
-    assert adverse_move_is_noise(
-        100.0, 97.0, ATR, extreme_since_entry=100.0, days_held=4,
-    ) is True
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            97.0,
+            ATR,
+            extreme_since_entry=100.0,
+            days_held=1,
+        )
+        is False
+    )
+    assert (
+        adverse_move_is_noise(
+            100.0,
+            97.0,
+            ATR,
+            extreme_since_entry=100.0,
+            days_held=4,
+        )
+        is True
+    )
 
 
 # ------------------------------------------------------------- THE RECORD
@@ -146,49 +203,84 @@ def test_midday_reviewer_row_is_always_entry_anchored():
     its row says so on every observation, and there is no way to ask it for
     another anchor."""
     row = midday_payload(
-        close_side="sell", blocked=True, adverse=1.0, entry=100.0,
-        price=109.0, atr=ATR, band_multiple=1.0, sessions_held=1.0,
-        sessions_measured=True, tail="SELL: x",
+        close_side="sell",
+        blocked=True,
+        adverse=1.0,
+        entry=100.0,
+        price=109.0,
+        atr=ATR,
+        band_multiple=1.0,
+        sessions_held=1.0,
+        sessions_measured=True,
+        tail="SELL: x",
     )
     assert "anchor=100.0000" in row and "anchor_kind=entry" in row
     assert "extreme_since_entry" not in row
     with pytest.raises(TypeError):
         midday_payload(
-            close_side="sell", blocked=True, adverse=1.0, entry=100.0,
-            price=109.0, atr=ATR, band_multiple=1.0, sessions_held=1.0,
-            sessions_measured=True, tail="SELL: x",
-            anchor=110.0, anchor_kind="extreme_since_entry",
+            close_side="sell",
+            blocked=True,
+            adverse=1.0,
+            entry=100.0,
+            price=109.0,
+            atr=ATR,
+            band_multiple=1.0,
+            sessions_held=1.0,
+            sessions_measured=True,
+            tail="SELL: x",
+            anchor=110.0,
+            anchor_kind="extreme_since_entry",
         )
 
 
 def test_fallback_payload_names_the_anchor_it_used():
     _p, _b, detail = fallback_outcome(
-        ent=100.0, cur=109.0, atr_f=ATR, is_short=False, is_noise=True,
-        band_multiple=1.0, anchor=110.0, anchor_kind="extreme_since_entry",
+        ent=100.0,
+        cur=109.0,
+        atr_f=ATR,
+        is_short=False,
+        is_noise=True,
+        band_multiple=1.0,
+        anchor=110.0,
+        anchor_kind="extreme_since_entry",
     )
     assert "anchor=110" in detail and "anchor_kind=extreme_since_entry" in detail
     # default (no extreme available) still says so rather than staying silent
-    assert "anchor_kind=entry" in fallback_outcome(
-        ent=100.0, cur=99.5, atr_f=ATR, is_short=False, is_noise=True,
-        band_multiple=1.0,
-    )[2]
+    assert (
+        "anchor_kind=entry"
+        in fallback_outcome(
+            ent=100.0,
+            cur=99.5,
+            atr_f=ATR,
+            is_short=False,
+            is_noise=True,
+            band_multiple=1.0,
+        )[2]
+    )
 
 
 def test_structural_protection_fallback_uses_the_running_extreme():
     kw = dict(
-        thesis_invalid_if=None, stop_loss=90.0, atr=ATR,
-        computed_levels=[], min_level_touches=5,
+        thesis_invalid_if=None,
+        stop_loss=90.0,
+        atr=ATR,
+        computed_levels=[],
+        min_level_touches=5,
         level_cluster_tolerance_pct=0.01,
     )
     # entry anchor: price above entry -> "no adverse move", protected
     entry_anchored = check_structural_protection(
-        current_price=107.0, entry_price=100.0, **kw,
+        current_price=107.0,
+        entry_price=100.0,
+        **kw,
     )
     assert entry_anchored.protected is True
     # running-extreme anchor: 3.0 adverse = 1.5 ATR, outside the band
     reanchored = check_structural_protection(
-        current_price=107.0, entry_price=100.0,
-        extreme_since_entry=110.0, **kw,
+        current_price=107.0,
+        entry_price=100.0,
+        extreme_since_entry=110.0,
+        **kw,
     )
     assert reanchored.protected is False
     assert "anchor_kind=extreme_since_entry" in reanchored.detail
@@ -208,9 +300,9 @@ def _bars():
     highest bar of all, so a window that ignores the entry date would be
     caught."""
     return [
-        _Bar("2026-01-02", 130.0, 128.0),   # before entry — must NOT count
-        _Bar("2026-01-05", 101.0, 99.0),    # entry session — counts
-        _Bar("2026-01-06", 110.0, 95.0),    # the real extreme both ways
+        _Bar("2026-01-02", 130.0, 128.0),  # before entry — must NOT count
+        _Bar("2026-01-05", 101.0, 99.0),  # entry session — counts
+        _Bar("2026-01-06", 110.0, 95.0),  # the real extreme both ways
         _Bar("2026-01-07", 107.0, 104.0),
     ]
 
@@ -220,15 +312,15 @@ def _home(last_buy=None):
     over stand-ins for the collaborators it actually calls."""
     import types as _types
     from src.exits.structural_protection import StructuralProtection
+
     db = _types.SimpleNamespace(
-        get_symbol_last_buy=lambda s: (last_buy or {}),
+        get_symbol_last_buy=lambda s: last_buy or {},
         get_recent_holding_protection_breaks=lambda *a, **k: [],
         record_holding_protection_break=lambda *a, **k: None,
     )
     return StructuralProtection(
         voice_structural_protection_break=lambda *a, **k: None,
-        config=_types.SimpleNamespace(
-            trading=_types.SimpleNamespace(lookback_days=200)),
+        config=_types.SimpleNamespace(trading=_types.SimpleNamespace(lookback_days=200)),
         db=db,
         market=_types.SimpleNamespace(get_ohlcv=lambda s, n: _bars()),
         risk_engine=None,
@@ -237,12 +329,24 @@ def _home(last_buy=None):
 
 def test_running_extreme_is_read_from_the_entry_session_onward():
     p = _home()
-    assert p._extreme_since_entry(
-        "AAA", _bars(), "2026-01-05", is_short=False,
-    ) == 110.0
-    assert p._extreme_since_entry(
-        "AAA", _bars(), "2026-01-05", is_short=True,
-    ) == 95.0
+    assert (
+        p._extreme_since_entry(
+            "AAA",
+            _bars(),
+            "2026-01-05",
+            is_short=False,
+        )
+        == 110.0
+    )
+    assert (
+        p._extreme_since_entry(
+            "AAA",
+            _bars(),
+            "2026-01-05",
+            is_short=True,
+        )
+        == 95.0
+    )
 
 
 def test_no_entry_date_means_no_extreme_rather_than_an_invented_window():
@@ -251,8 +355,10 @@ def test_no_entry_date_means_no_extreme_rather_than_an_invented_window():
     lookback."""
     p = _home()
     assert p._extreme_since_entry("AAA", _bars(), None, is_short=False) is None
+
     def _boom(s):
         raise RuntimeError("down")
+
     p.db.get_symbol_last_buy = _boom
     assert p._extreme_since_entry("AAA", _bars(), None, is_short=False) is None
 
@@ -266,6 +372,7 @@ def test_the_fallback_call_actually_receives_the_running_extreme(monkeypatch):
     """The defect this file exists to prevent: the anchor computed and then
     never passed to the home that was measured to benefit from it."""
     import src.risk.exit_guard as eg
+
     seen = {}
     real = eg.check_structural_protection
 
@@ -276,8 +383,13 @@ def test_the_fallback_call_actually_receives_the_running_extreme(monkeypatch):
     monkeypatch.setattr(eg, "check_structural_protection", _spy)
     p = _home()
     p._structural_protection_for_holding(
-        symbol="AAA", thesis_invalid_if=None, entry_price=100.0,
-        stop_loss=90.0, is_short=False, run_id="r1", persist=False,
+        symbol="AAA",
+        thesis_invalid_if=None,
+        entry_price=100.0,
+        stop_loss=90.0,
+        is_short=False,
+        run_id="r1",
+        persist=False,
         entry_date="2026-01-05",
     )
     assert seen.get("extreme_since_entry") == 110.0

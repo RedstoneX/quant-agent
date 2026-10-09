@@ -1,4 +1,5 @@
 """Witness for src.data.smart_money_stores: built from plain paths in a tmp dir, the provider never imported."""
+
 import ast
 import json
 import os
@@ -11,8 +12,11 @@ from tests.boundary_harness import check_boundary
 
 def _paths(root: Path) -> dict:
     return dict(
-        manifest_path=root / "m.json", observations_path=root / "o.json",
-        history_path=root / "h.json", tickers_path=root / "t.json", raw_dir=root / "raw",
+        manifest_path=root / "m.json",
+        observations_path=root / "o.json",
+        history_path=root / "h.json",
+        tickers_path=root / "t.json",
+        raw_dir=root / "raw",
     )
 
 
@@ -81,17 +85,21 @@ def test_store_passes_the_boundary_harness():
 def test_provider_has_no_second_owner_for_its_files():
     source = (Path(__file__).parents[1] / "src/data/smart_money.py").read_text()
     tree = ast.parse(source)
-    provider = next(
-        node for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "SECForm4Provider"
-    )
+    provider = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "SECForm4Provider")
     provider_source = ast.get_source_segment(source, provider)
     assert provider_source is not None
     assert "self.stores." in provider_source
     for direct_access in (
-        "self.raw_dir", "self.observations_path", "self.manifest_path",
-        "self.history_path", "self.tickers_path", "self._load_json(",
-        "_atomic_json(", ".read_text(", ".write_text(", ".write_bytes(",
+        "self.raw_dir",
+        "self.observations_path",
+        "self.manifest_path",
+        "self.history_path",
+        "self.tickers_path",
+        "self._load_json(",
+        "_atomic_json(",
+        ".read_text(",
+        ".write_text(",
+        ".write_bytes(",
         "os.replace(",
     ):
         assert direct_access not in provider_source, direct_access

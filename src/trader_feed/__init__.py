@@ -4,6 +4,7 @@ Every definition moved verbatim from the former src/trader_feed.py into the
 submodules below; this package re-exports every name so `src.trader_feed.X`
 and every test patch target keep working unchanged.
 """
+
 from __future__ import annotations
 
 import json  # noqa: F401

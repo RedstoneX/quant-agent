@@ -128,8 +128,7 @@ def venue_tick(price: float) -> float:
     return _TICK_AT_OR_ABOVE_DOLLAR if price >= 1.0 else _TICK_BELOW_DOLLAR
 
 
-def min_ratchet_floor(stop: float, *, is_short: bool = False,
-                      min_ratchet_ticks: int = MIN_RATCHET_TICKS) -> float:
+def min_ratchet_floor(stop: float, *, is_short: bool = False, min_ratchet_ticks: int = MIN_RATCHET_TICKS) -> float:
     """The nearest stop price that is a DIFFERENT stop from `stop`.
 
     Toward less risk only: up for a long, down for a short. A long's

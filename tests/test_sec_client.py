@@ -32,8 +32,14 @@ def test_collaborators_are_the_objects_handed_in():
         return None
 
     client = SecClient(
-        opener=opener, request=Request, http_error=HTTPError, url_error=URLError,
-        sleep=sleep, clock=clock, now=now, lookback_days=7,
+        opener=opener,
+        request=Request,
+        http_error=HTTPError,
+        url_error=URLError,
+        sleep=sleep,
+        clock=clock,
+        now=now,
+        lookback_days=7,
     )
     assert client._opener is opener
     assert client._sleep is sleep
@@ -50,8 +56,10 @@ def test_every_request_is_preceded_by_the_rate_limit_delay():
     class _Resp:
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def read(self):
             return b"{}"
 
@@ -68,13 +76,16 @@ def test_every_request_is_preceded_by_the_rate_limit_delay():
 
 def test_cik_map_is_fetched_once_and_cached_by_the_client():
     import json
+
     calls = []
 
     class _Resp:
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def read(self):
             return json.dumps({"0": {"ticker": "nvda", "cik_str": 1045810}}).encode()
 
@@ -99,14 +110,18 @@ def test_sec_get_retries_on_429():
         call_log.append("call")
         if len(call_log) < 3:
             raise HTTPError(req.full_url, 429, "Too Many Requests", {}, BytesIO(b""))
+
         # 3rd attempt succeeds
         class _Resp:
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 return False
+
             def read(self):
                 return b'{"ok": true}'
+
         return _Resp()
 
     client = _client(fake_urlopen)
@@ -125,13 +140,17 @@ def test_sec_get_retries_on_503():
         call_log.append("call")
         if len(call_log) < 2:
             raise HTTPError(req.full_url, 503, "Service Unavailable", {}, BytesIO(b""))
+
         class _Resp:
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 return False
+
             def read(self):
                 return b'{"ok": 1}'
+
         return _Resp()
 
     client = _client(fake_urlopen)
@@ -146,7 +165,6 @@ def test_sec_get_raises_after_max_retries():
     from urllib.error import HTTPError
     from io import BytesIO
     import pytest
-
 
     def fake_urlopen(req, timeout):
         raise HTTPError(req.full_url, 429, "Too Many Requests", {}, BytesIO(b""))
@@ -193,13 +211,8 @@ def test_sec_get_aborts_when_total_timeout_exceeded():
             max_retries=3,
             total_timeout_s=2.0,
         )
-    assert len(call_log) == 2, (
-        f"expected exactly 2 attempts (3rd aborted by total_timeout_s); "
-        f"got {len(call_log)}"
-    )
-    assert fake_clock["t"] > 2.0, (
-        "fake wallclock should have ticked past the budget"
-    )
+    assert len(call_log) == 2, f"expected exactly 2 attempts (3rd aborted by total_timeout_s); got {len(call_log)}"
+    assert fake_clock["t"] > 2.0, "fake wallclock should have ticked past the budget"
 
 
 def test_get_recent_filings_tolerates_misaligned_arrays():
@@ -225,10 +238,13 @@ def test_get_recent_filings_tolerates_misaligned_arrays():
         class _Resp:
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 return False
+
             def read(self):
                 return _json.dumps(payload).encode()
+
         return _Resp()
 
     client = _client(fake_urlopen, lookback_days=365)

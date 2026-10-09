@@ -124,8 +124,7 @@ def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
             return node
     raise AssertionError(
-        f"{name!r} not found -- it moved or was renamed; update the function "
-        "name in this test's derivation"
+        f"{name!r} not found -- it moved or was renamed; update the function name in this test's derivation"
     )
 
 
@@ -134,9 +133,12 @@ def _class_str_attr(tree: ast.Module, class_name: str, attr: str) -> str:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:
-                if (isinstance(item, ast.Assign) and len(item.targets) == 1
-                        and isinstance(item.targets[0], ast.Name)
-                        and item.targets[0].id == attr):
+                if (
+                    isinstance(item, ast.Assign)
+                    and len(item.targets) == 1
+                    and isinstance(item.targets[0], ast.Name)
+                    and item.targets[0].id == attr
+                ):
                     value = _str_const(item.value)
                     assert value is not None, (
                         f"{class_name}.{attr} is no longer a plain string "
@@ -144,30 +146,24 @@ def _class_str_attr(tree: ast.Module, class_name: str, attr: str) -> str:
                         "status it names"
                     )
                     return value
-    raise AssertionError(
-        f"{class_name}.{attr} not found -- it moved or was renamed; update "
-        "this test's derivation"
-    )
+    raise AssertionError(f"{class_name}.{attr} not found -- it moved or was renamed; update this test's derivation")
 
 
 def _find_method(tree: ast.Module, class_name: str, method_name: str) -> ast.FunctionDef:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:
-                if (isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and item.name == method_name):
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method_name:
                     return item
     raise AssertionError(
-        f"{class_name}.{method_name} not found -- it moved or was renamed; "
-        "update this test's derivation"
+        f"{class_name}.{method_name} not found -- it moved or was renamed; update this test's derivation"
     )
 
 
 def _returned_names(func: ast.FunctionDef) -> set[str]:
     """Names X such that a bare `return X` appears in this function."""
     return {
-        node.value.id for node in ast.walk(func)
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
+        node.value.id for node in ast.walk(func) if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
     }
 
 
@@ -176,11 +172,14 @@ def _names_of_interest(func: ast.FunctionDef) -> set[str]:
     for node in ast.walk(func):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
-            if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
-                    and target.value.id in interesting
-                    and isinstance(target.slice, ast.Constant)
-                    and target.slice.value == "intraday_scan"
-                    and isinstance(node.value, ast.Name)):
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id in interesting
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "intraday_scan"
+                and isinstance(node.value, ast.Name)
+            ):
                 interesting.add(node.value.id)
     return interesting
 
@@ -195,10 +194,7 @@ def _unresolved_bridges(func: ast.FunctionDef, known_bridge_calls: set[str]) -> 
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id in interesting:
                     call_fn = node.value.func
-                    label = (
-                        call_fn.attr if isinstance(call_fn, ast.Attribute)
-                        else getattr(call_fn, "id", "?")
-                    )
+                    label = call_fn.attr if isinstance(call_fn, ast.Attribute) else getattr(call_fn, "id", "?")
                     if label not in known_bridge_calls:
                         unresolved.append(f"{target.id} = {label}(...) @ line {node.lineno}")
     return unresolved
@@ -220,8 +216,7 @@ def _status_literals(func: ast.FunctionDef) -> set[str]:
         # is the right-hand side of an `or` whose left-hand side reads
         # AgentResult.semantic_status by way of ctx.analysis_failure_status.
         if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
-            if any(isinstance(v, ast.Attribute) and v.attr == "analysis_failure_status"
-                   for v in node.values):
+            if any(isinstance(v, ast.Attribute) and v.attr == "analysis_failure_status" for v in node.values):
                 for v in node.values:
                     s = _str_const(v)
                     if s is not None:
@@ -235,21 +230,28 @@ def _status_literals(func: ast.FunctionDef) -> set[str]:
 # old hand list kept it: STATUS_PLAIN is already correct for it and should
 # stay that way).
 _PIPELINE_SESSION_FUNCTIONS = (
-    "run_morning", "run_position_review", "run_intra_check",
-    "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
+    "run_morning",
+    "run_position_review",
+    "run_intra_check",
+    "_run_intraday_opportunity_scan",
+    "_intraday_opportunity_scan_body",
     # `run_evening` is a thin wrapper (2026-09-18) that runs
     # `_run_evening_body` and then persists the result to `evening_reports`
     # so the report can be re-rendered later; every evening status literal
     # lives in the body, so the body is scanned directly — the same shape as
     # run_intra_check / _run_intraday_opportunity_scan above.
-    "run_evening", "_run_evening_body", "run_earnings_preprocess",
+    "run_evening",
+    "_run_evening_body",
+    "run_earnings_preprocess",
     # `run_morning` / `run_position_review` / `run_intra_check` themselves
     # became thin persistence wrappers the same day, for the same reason
     # (2026-09-18 gap sweep — see `Database.save_session_report` /
     # `save_intra_check_report`): every status literal for these three now
     # lives in `_run_morning_body` / `_run_position_review_body` /
     # `_run_intra_check_body`, so the bodies are scanned directly too.
-    "_run_morning_body", "_run_position_review_body", "_run_intra_check_body",
+    "_run_morning_body",
+    "_run_position_review_body",
+    "_run_intra_check_body",
     # `run_earnings_preprocess` became the same shape on 2026-09-23: the
     # wrapper stamps the P&L block's `pnl_unavailable_reason` (this mode
     # genuinely reads no account) and every status literal lives in the
@@ -265,7 +267,8 @@ _BRIDGE_FUNCTION_NAMES = {
     # bridges that used to be here are gone: the account-level loss breaker
     # was removed entirely on 2026-09-20 (retired item 32), so there is no
     # `daily_loss_halted` status left to derive.
-    "_risk_stage", "run",
+    "_risk_stage",
+    "run",
     "_paid_suspended_payload",
     # 2026-09-02: the kill switch halts all three sessions from a shared
     # helper rather than at each return site, the same shape as the entries
@@ -275,17 +278,14 @@ _BRIDGE_FUNCTION_NAMES = {
     # seat's answer never arrived, from a shared helper whose status dict
     # lives in `_evidence_gate_skip` — same shape as the entries above, and
     # bridged below so its status is derived rather than hand-listed.
-    "_evidence_gate_skip", "failed_scan_result",
+    "_evidence_gate_skip",
+    "failed_scan_result",
 }
 
 
 def _derive_known_pipeline_statuses() -> set[str]:
     pipeline_tree = ast.Module(
-        body=[
-            stmt
-            for mod in PART_MODULES
-            for stmt in ast.parse((REPO_ROOT / "src" / mod).read_text()).body
-        ],
+        body=[stmt for mod in PART_MODULES for stmt in ast.parse((REPO_ROOT / "src" / mod).read_text()).body],
         type_ignores=[],
     )
     # item 210 step 10 moved RiskStage into src/stage_risk.py.
@@ -303,10 +303,7 @@ def _derive_known_pipeline_statuses() -> set[str]:
     for fn_name in _PIPELINE_SESSION_FUNCTIONS:
         func = _find_function(pipeline_tree, fn_name)
         statuses |= _status_literals(func)
-        unresolved += [
-            f"{fn_name}: {u}"
-            for u in _unresolved_bridges(func, known_calls)
-        ]
+        unresolved += [f"{fn_name}: {u}" for u in _unresolved_bridges(func, known_calls)]
     assert not unresolved, (
         "this derivation found a return of a name sourced from a call it "
         f"has no bridge for: {unresolved} -- either it is a new terminal "
@@ -320,8 +317,12 @@ def _derive_known_pipeline_statuses() -> set[str]:
     # src/agents/portfolio_manager/__init__.py's `_semantic_failure(result, status,
     # error)`. All 11 call sites pass a literal as the status argument.
     for node in ast.walk(pm_tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "_semantic_failure" and len(node.args) >= 2):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_semantic_failure"
+            and len(node.args) >= 2
+        ):
             s = _str_const(node.args[1])
             if s is not None:
                 statuses.add(s)
@@ -363,8 +364,12 @@ _KNOWN_STATUS_PLAIN_GAPS: set[str] = set()
 
 def _report(status: str) -> RehearsalReport:
     return RehearsalReport(
-        session="midday", rehearsed_date="2026-08-31", run_id="r",
-        source_run_id=None, status=status, completed=True,
+        session="midday",
+        rehearsed_date="2026-08-31",
+        run_id="r",
+        source_run_id=None,
+        status=status,
+        completed=True,
     )
 
 
@@ -395,8 +400,12 @@ def test_nested_intraday_no_trades_status_is_treated_as_healthy():
     """
     # The status would be extracted by collect() from the nested result
     report = RehearsalReport(
-        session="intra_check", rehearsed_date="2026-08-31", run_id="r",
-        source_run_id=None, status="intraday_no_trades", completed=True,
+        session="intra_check",
+        rehearsed_date="2026-08-31",
+        run_id="r",
+        source_run_id=None,
+        status="intraday_no_trades",
+        completed=True,
     )
     assert _verdict(report) == "PASS"
 
@@ -407,8 +416,12 @@ def test_nested_intraday_executed_status_is_treated_as_healthy():
     """
     # The status would be extracted by collect() from the nested result
     report = RehearsalReport(
-        session="intra_check", rehearsed_date="2026-08-31", run_id="r",
-        source_run_id=None, status="intraday_executed", completed=True,
+        session="intra_check",
+        rehearsed_date="2026-08-31",
+        run_id="r",
+        source_run_id=None,
+        status="intraday_executed",
+        completed=True,
     )
     assert _verdict(report) == "PASS"
 
@@ -416,8 +429,11 @@ def test_nested_intraday_executed_status_is_treated_as_healthy():
 def test_genuine_failure_statuses_are_still_fail():
     """The fix must not swallow real failures alongside the healthy ones."""
     for status in (
-        "position_review_parse_error", "evening_analysis_error",
-        "evening_parse_error", "broker_error", "pm_agent_failure",
+        "position_review_parse_error",
+        "evening_analysis_error",
+        "evening_parse_error",
+        "broker_error",
+        "pm_agent_failure",
         # Giving this one a plain-English entry must not smuggle it into the
         # healthy set: the intraday scan paid for an analysis and got no
         # usable decision back.
@@ -491,7 +507,11 @@ def test_every_known_pipeline_terminal_status_is_classified():
     # FUNCTIONS above needs a matching audit before this test can be trusted
     # again.
     unexpected_sessions = set(runner.SESSIONS) - {
-        "morning", "midday", "close", "evening", "intra_check",
+        "morning",
+        "midday",
+        "close",
+        "evening",
+        "intra_check",
     }
     assert not unexpected_sessions, (
         f"runner.SESSIONS grew {sorted(unexpected_sessions)} — audit "
@@ -519,6 +539,7 @@ def test_every_known_pipeline_terminal_status_is_classified():
 
 # Integration tests for nested intraday_scan status extraction
 # ================================================================
+
 
 def test_collect_extracts_nested_intraday_no_trades_status():
     """Test that collect() properly extracts the nested intraday_no_trades
@@ -608,6 +629,7 @@ def test_collect_extracts_nested_intraday_no_trades_status():
         assert _verdict(report) == "PASS"
     finally:
         import os
+
         try:
             os.unlink(db_path)
         except Exception:
@@ -700,6 +722,7 @@ def test_collect_extracts_nested_intraday_executed_status():
         assert _verdict(report) == "PASS"
     finally:
         import os
+
         try:
             os.unlink(db_path)
         except Exception:
@@ -793,6 +816,7 @@ def test_collect_ignores_nested_scan_for_non_intra_check_sessions():
         assert _verdict(report) == "PASS"
     finally:
         import os
+
         try:
             os.unlink(db_path)
         except Exception:
@@ -998,10 +1022,7 @@ def _grounding_db(tmp_path, *, run_id, analysed=("AAPL", "MSFT")):
         "CREATE TABLE specialist_evidence (id INTEGER PRIMARY KEY, run_id TEXT, "
         "agent_name TEXT, kind TEXT, symbol TEXT, evidence_json TEXT)"
     )
-    conn.execute(
-        "CREATE TABLE trades (id INTEGER PRIMARY KEY, run_id TEXT, "
-        "symbol TEXT, action TEXT, qty INTEGER)"
-    )
+    conn.execute("CREATE TABLE trades (id INTEGER PRIMARY KEY, run_id TEXT, symbol TEXT, action TEXT, qty INTEGER)")
     conn.execute(
         "CREATE TABLE llm_circuit_events (id INTEGER PRIMARY KEY, run_id TEXT, "
         "trigger_code TEXT, detail TEXT, agent_name TEXT, event_type TEXT)"
@@ -1017,7 +1038,12 @@ def _grounding_db(tmp_path, *, run_id, analysed=("AAPL", "MSFT")):
 
 
 def _grounding_report(
-    tmp_path, *, pm_run, analyst_run, error, analysed=("AAPL", "MSFT"),
+    tmp_path,
+    *,
+    pm_run,
+    analyst_run,
+    error,
+    analysed=("AAPL", "MSFT"),
     source_run_symbols=("ZS",),
 ):
     import sqlite3
@@ -1037,19 +1063,39 @@ def _grounding_report(
     )
     conn.commit()
     conn.close()
-    library = _FakeLibrary([
-        {"agent": "tech_analyst", "run_id": analyst_run, "row_id": 307,
-         "similarity": 0.91, "recorded_at": "2026-09-01 13:33:27"},
-        {"agent": "portfolio_manager", "run_id": pm_run, "row_id": 309,
-         "similarity": 0.88, "recorded_at": "2026-09-01 13:34:33"},
-    ])
+    library = _FakeLibrary(
+        [
+            {
+                "agent": "tech_analyst",
+                "run_id": analyst_run,
+                "row_id": 307,
+                "similarity": 0.91,
+                "recorded_at": "2026-09-01 13:33:27",
+            },
+            {
+                "agent": "portfolio_manager",
+                "run_id": pm_run,
+                "row_id": 309,
+                "similarity": 0.88,
+                "recorded_at": "2026-09-01 13:34:33",
+            },
+        ]
+    )
     return collect(
-        session="morning", rehearsed_date="2026-09-01", run_id=run_id,
+        session="morning",
+        rehearsed_date="2026-09-01",
+        run_id=run_id,
         source_run_id=None,
         result={"status": "pm_grounding_error", "error": error},
-        db_path=db_path, library=library, trading_stub=None,
-        isolation_checks=[], unavailable=[], network_attempts=[], notes=[],
-        fill_model="immediate", duration_s=1.0,
+        db_path=db_path,
+        library=library,
+        trading_stub=None,
+        isolation_checks=[],
+        unavailable=[],
+        network_attempts=[],
+        notes=[],
+        fill_model="immediate",
+        duration_s=1.0,
     )
 
 
@@ -1059,9 +1105,11 @@ def test_a_pm_answer_replayed_from_another_session_is_inconclusive(tmp_path):
     reproduce the session, so it has not judged the code."""
     report = _grounding_report(
         tmp_path,
-        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
-        error=("ZS: increase lacks a current-run Technical analysis; "
-               "ZS: claims technical coverage that does not exist"),
+        pm_run="intra_check-d0909ddc",
+        analyst_run="run-64290730",
+        error=(
+            "ZS: increase lacks a current-run Technical analysis; ZS: claims technical coverage that does not exist"
+        ),
     )
     assert report.verdict == "INCONCLUSIVE"
     rendered = report.render()
@@ -1078,9 +1126,11 @@ def test_the_same_failure_from_one_recorded_run_is_still_a_failure(tmp_path):
     that invents a ticker is the defect this rig exists to catch."""
     report = _grounding_report(
         tmp_path,
-        pm_run="run-64290730", analyst_run="run-64290730",
-        error=("ZS: increase lacks a current-run Technical analysis; "
-               "ZS: claims technical coverage that does not exist"),
+        pm_run="run-64290730",
+        analyst_run="run-64290730",
+        error=(
+            "ZS: increase lacks a current-run Technical analysis; ZS: claims technical coverage that does not exist"
+        ),
     )
     assert report.verdict == "FAIL"
 
@@ -1091,7 +1141,8 @@ def test_a_stitched_replay_is_still_a_failure_when_the_symbol_was_covered(tmp_pa
     genuinely produced an ungrounded plan about something in front of it."""
     report = _grounding_report(
         tmp_path,
-        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
+        pm_run="intra_check-d0909ddc",
+        analyst_run="run-64290730",
         error="AAPL: claims technical coverage that does not exist",
         analysed=("AAPL", "MSFT"),
     )
@@ -1104,7 +1155,8 @@ def test_a_pinned_rehearsal_can_never_be_downgraded(tmp_path):
     therefore unreachable on a default invocation, by construction."""
     report = _grounding_report(
         tmp_path,
-        pm_run="run-64290730", analyst_run="run-64290730",
+        pm_run="run-64290730",
+        analyst_run="run-64290730",
         error="NVDA: claims macro coverage that does not exist",
     )
     assert report.verdict == "FAIL"
@@ -1122,27 +1174,43 @@ def test_the_report_states_what_it_replayed_and_how_much_it_covered(tmp_path):
     run_id = "rehearsal-morning-20260901"
     db_path = _grounding_db(tmp_path, run_id=run_id, analysed=("AAPL", "MSFT"))
     import sqlite3
+
     conn = sqlite3.connect(db_path)
     conn.executemany(
         "INSERT INTO specialist_evidence (run_id, agent_name, kind, symbol, "
         "evidence_json) VALUES (?, 'pipeline', 'pipeline_event', ?, ?)",
-        [(run_id, sym, '{"outcome": "blocked", "stage": "deterministic_gate", '
-          '"reason": "technical_analysis_unresolved_after_retry"}')
-         for sym in ("KO", "HD", "NKE")],
+        [
+            (
+                run_id,
+                sym,
+                '{"outcome": "blocked", "stage": "deterministic_gate", '
+                '"reason": "technical_analysis_unresolved_after_retry"}',
+            )
+            for sym in ("KO", "HD", "NKE")
+        ],
     )
     conn.commit()
     conn.close()
 
     report = collect(
-        session="morning", rehearsed_date="2026-09-01", run_id=run_id,
-        source_run_id="run-64290730", result={"status": "no_orders"},
-        db_path=db_path, library=_FakeLibrary([]), trading_stub=None,
-        isolation_checks=[], unavailable=[], network_attempts=[], notes=[],
-        fill_model="immediate", duration_s=1.0,
+        session="morning",
+        rehearsed_date="2026-09-01",
+        run_id=run_id,
+        source_run_id="run-64290730",
+        result={"status": "no_orders"},
+        db_path=db_path,
+        library=_FakeLibrary([]),
+        trading_stub=None,
+        isolation_checks=[],
+        unavailable=[],
+        network_attempts=[],
+        notes=[],
+        fill_model="immediate",
+        duration_s=1.0,
         replay_choice=ReplayRunChoice(
-            run_id="run-64290730", mode="auto",
-            reason="replay pinned automatically to run-64290730, the most "
-                   "recent complete morning run",
+            run_id="run-64290730",
+            mode="auto",
+            reason="replay pinned automatically to run-64290730, the most recent complete morning run",
         ),
     )
     assert report.verdict == "PASS"
@@ -1168,7 +1236,8 @@ def test_a_symbol_the_source_run_does_not_own_is_not_a_transplant(tmp_path):
     transplanted. Report the failure; do not explain it away."""
     report = _grounding_report(
         tmp_path,
-        pm_run="intra_check-d0909ddc", analyst_run="run-64290730",
+        pm_run="intra_check-d0909ddc",
+        analyst_run="run-64290730",
         error="ZS: claims technical coverage that does not exist",
         source_run_symbols=(),
     )

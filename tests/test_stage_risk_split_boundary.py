@@ -1,4 +1,5 @@
 """Boundary witness for the stage_risk lift: the new module is checked directly."""
+
 import sys
 from pathlib import Path
 

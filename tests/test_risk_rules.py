@@ -21,8 +21,12 @@ def engine(risk_config):
 
 def test_position_size_within_limit(engine):
     decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=15.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
+        action="BUY",
+        symbol="SPY",
+        allocation_pct=15.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
         reasoning="Test",
     )
     violations = engine.check(decision, positions=[], total_value=10000.0)
@@ -31,8 +35,12 @@ def test_position_size_within_limit(engine):
 
 def test_position_size_exceeds_limit(engine):
     decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=25.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
+        action="BUY",
+        symbol="SPY",
+        allocation_pct=25.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
         reasoning="Test",
     )
     violations = engine.check(decision, positions=[], total_value=10000.0)
@@ -52,8 +60,12 @@ def test_existing_position_plus_new_buy_exceeds_limit(engine):
         )
     ]
     decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
+        action="BUY",
+        symbol="SPY",
+        allocation_pct=10.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
         reasoning="Add to winner",
     )
 
@@ -63,8 +75,12 @@ def test_existing_position_plus_new_buy_exceeds_limit(engine):
 
 def test_pending_same_symbol_buy_exceeds_limit(engine):
     decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=15.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
+        action="BUY",
+        symbol="SPY",
+        allocation_pct=15.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
         reasoning="Second leg",
     )
 
@@ -72,22 +88,48 @@ def test_pending_same_symbol_buy_exceeds_limit(engine):
         decision,
         positions=[],
         total_value=10000.0,
-        pending_symbol_investment={"SPY": 1500.0},)
+        pending_symbol_investment={"SPY": 1500.0},
+    )
     assert any(v.rule == "max_position_pct" for v in violations)
 
 
 def test_total_exposure_exceeds_limit(engine):
     positions = [
-        Position(symbol="AAPL", qty=10, avg_entry=180.0, current_price=190.0,
-                 market_value=1900.0, unrealized_pnl=100.0, sector="Technology"),
-        Position(symbol="MSFT", qty=10, avg_entry=400.0, current_price=410.0,
-                 market_value=4100.0, unrealized_pnl=100.0, sector="Technology"),
-        Position(symbol="GOOGL", qty=5, avg_entry=170.0, current_price=175.0,
-                 market_value=875.0, unrealized_pnl=25.0, sector="Technology"),
+        Position(
+            symbol="AAPL",
+            qty=10,
+            avg_entry=180.0,
+            current_price=190.0,
+            market_value=1900.0,
+            unrealized_pnl=100.0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="MSFT",
+            qty=10,
+            avg_entry=400.0,
+            current_price=410.0,
+            market_value=4100.0,
+            unrealized_pnl=100.0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="GOOGL",
+            qty=5,
+            avg_entry=170.0,
+            current_price=175.0,
+            market_value=875.0,
+            unrealized_pnl=25.0,
+            sector="Technology",
+        ),
     ]
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=25.0,
-        entry_price=850.0, stop_loss=810.0, take_profit=920.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=25.0,
+        entry_price=850.0,
+        stop_loss=810.0,
+        take_profit=920.0,
         reasoning="Test",
     )
     violations = engine.check(decision, positions=positions, total_value=10000.0)
@@ -96,8 +138,12 @@ def test_total_exposure_exceeds_limit(engine):
 
 def test_no_stop_loss(engine):
     decision = TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=0.0, take_profit=530.0,
+        action="BUY",
+        symbol="SPY",
+        allocation_pct=10.0,
+        entry_price=500.0,
+        stop_loss=0.0,
+        take_profit=530.0,
         reasoning="Test",
     )
     violations = engine.check(decision, positions=[], total_value=10000.0)
@@ -106,28 +152,54 @@ def test_no_stop_loss(engine):
 
 def test_sector_concentration(engine):
     positions = [
-        Position(symbol="AAPL", qty=10, avg_entry=180.0, current_price=190.0,
-                 market_value=1900.0, unrealized_pnl=100.0, sector="Technology"),
-        Position(symbol="MSFT", qty=5, avg_entry=400.0, current_price=410.0,
-                 market_value=2050.0, unrealized_pnl=50.0, sector="Technology"),
+        Position(
+            symbol="AAPL",
+            qty=10,
+            avg_entry=180.0,
+            current_price=190.0,
+            market_value=1900.0,
+            unrealized_pnl=100.0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="MSFT",
+            qty=5,
+            avg_entry=400.0,
+            current_price=410.0,
+            market_value=2050.0,
+            unrealized_pnl=50.0,
+            sector="Technology",
+        ),
     ]
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=15.0,
-        entry_price=850.0, stop_loss=810.0, take_profit=920.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=15.0,
+        entry_price=850.0,
+        stop_loss=810.0,
+        take_profit=920.0,
         reasoning="Test",
     )
     # Sector is now auto-detected from _get_sector(symbol)
     from unittest.mock import patch
+
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         violations = engine.check(
-            decision, positions=positions, total_value=10000.0,)
+            decision,
+            positions=positions,
+            total_value=10000.0,
+        )
     assert any(v.rule == "max_sector_pct" for v in violations)
 
 
 def test_sell_decision_skips_buy_rules(engine):
     decision = TradeDecision(
-        action="SELL", symbol="SPY", allocation_pct=0,
-        entry_price=0, stop_loss=0, take_profit=0,
+        action="SELL",
+        symbol="SPY",
+        allocation_pct=0,
+        entry_price=0,
+        stop_loss=0,
+        take_profit=0,
         reasoning="Take profit",
     )
     violations = engine.check(decision, positions=[], total_value=10000.0)
@@ -138,6 +210,7 @@ def test_sell_decision_skips_buy_rules(engine):
 # Zero / NaN total_value guard — must NOT silently approve BUYs
 # ===========================================================================
 
+
 def test_check_zero_total_value_emits_blocking_violation(engine):
     """Alpaca portfolio_value=0 during a market-open glitch must NOT be
     treated as 'all checks passed'. Pre-fix: early return `[]` had the
@@ -146,18 +219,35 @@ def test_check_zero_total_value_emits_blocking_violation(engine):
     Now: synthesizes a HARD_BLOCK_RULES violation so the pipeline
     filter blocks the BUY until the next snapshot reads non-zero.
     """
-    decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0,
-        reasoning="Test", reasoning_chain={"setup": "x", "rr": "x", "alignment": "x", "risk": "x", "thesis": "x"} if False else "Test",
-    ) if False else TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
+    decision = (
+        TradeDecision(
+            action="BUY",
+            symbol="NVDA",
+            allocation_pct=10.0,
+            entry_price=500.0,
+            stop_loss=485.0,
+            take_profit=530.0,
+            reasoning="Test",
+            reasoning_chain={"setup": "x", "rr": "x", "alignment": "x", "risk": "x", "thesis": "x"}
+            if False
+            else "Test",
+        )
+        if False
+        else TradeDecision(
+            action="BUY",
+            symbol="NVDA",
+            allocation_pct=10.0,
+            entry_price=500.0,
+            stop_loss=485.0,
+            take_profit=530.0,
+            reasoning="Test",
+        )
     )
     violations = engine.check(decision, positions=[], total_value=0.0)
     assert len(violations) == 1
     # Must be in HARD_BLOCK_RULES so _filter_hard_risk_decisions blocks
     from src.risk.rules import HARD_BLOCK_RULES
+
     assert violations[0].rule in HARD_BLOCK_RULES
     assert "not a valid equity" in violations[0].message
 
@@ -168,12 +258,18 @@ def test_check_nan_total_value_emits_blocking_violation(engine):
     early-return guard didn't even fire, and the rest of the check
     propagated NaN comparisons that all returned False."""
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
+        reasoning="Test",
     )
     violations = engine.check(decision, positions=[], total_value=float("nan"))
     assert len(violations) == 1
     from src.risk.rules import HARD_BLOCK_RULES
+
     assert violations[0].rule in HARD_BLOCK_RULES
 
 
@@ -181,8 +277,13 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
     """Defense-in-depth: negative equity (extremely unlikely but
     possible during paper-trading reset) must also block, not bypass."""
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=10.0,
-        entry_price=500.0, stop_loss=485.0, take_profit=530.0, reasoning="Test",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=10.0,
+        entry_price=500.0,
+        stop_loss=485.0,
+        take_profit=530.0,
+        reasoning="Test",
     )
     violations = engine.check(decision, positions=[], total_value=-100.0)
     assert len(violations) == 1
@@ -209,14 +310,20 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
 # test below).
 # ===========================================================================
 
+
 def _breaching_positions():
     """A book that, if SELL/COVER were not exempt, would fail
     max_position_pct, max_total_position_pct AND max_sector_hard_pct at
     once: one name at 500% of a $10 book, all in one sector."""
     return [
         Position(
-            symbol="MEGA", qty=500, avg_entry=100.0, current_price=100.0,
-            market_value=50_000.0, unrealized_pnl=0.0, sector="Technology",
+            symbol="MEGA",
+            qty=500,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=50_000.0,
+            unrealized_pnl=0.0,
+            sector="Technology",
         ),
     ]
 
@@ -226,27 +333,39 @@ def test_sell_bypasses_every_hard_block_even_at_extreme_breach(engine):
     RiskRuleEngine.check's own synthetic total_value violation) — a SELL
     must sail through regardless."""
     decision = TradeDecision(
-        action="SELL", symbol="MEGA", allocation_pct=100.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action="SELL",
+        symbol="MEGA",
+        allocation_pct=100.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="closing the position",
     )
     violations = engine.check(
-        decision, positions=_breaching_positions(),
-        total_value=-1.0,          # would hard-block a BUY outright
-        cash=float("nan"),)        # would hard-block cash_only
+        decision,
+        positions=_breaching_positions(),
+        total_value=-1.0,  # would hard-block a BUY outright
+        cash=float("nan"),
+    )  # would hard-block cash_only
     assert violations == []
 
 
 def test_cover_bypasses_every_hard_block_even_at_extreme_breach(engine):
     decision = TradeDecision(
-        action="COVER", symbol="MEGA", allocation_pct=100.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action="COVER",
+        symbol="MEGA",
+        allocation_pct=100.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="covering the short",
     )
     violations = engine.check(
-        decision, positions=_breaching_positions(),
+        decision,
+        positions=_breaching_positions(),
         total_value=float("nan"),
-        cash=float("nan"),)
+        cash=float("nan"),
+    )
     assert violations == []
 
 
@@ -255,13 +374,19 @@ def test_buy_is_NOT_exempt_under_the_same_breaching_state(engine):
     that accidentally short-circuits the whole engine: a BUY under
     identical conditions must still be hard-blocked."""
     decision = TradeDecision(
-        action="BUY", symbol="MEGA", allocation_pct=10.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        action="BUY",
+        symbol="MEGA",
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=115.0,
         reasoning="adding more",
     )
     violations = engine.check(
-        decision, positions=_breaching_positions(),
-        total_value=-1.0,)
+        decision,
+        positions=_breaching_positions(),
+        total_value=-1.0,
+    )
     assert len(violations) > 0
 
 
@@ -273,29 +398,68 @@ def test_apply_gross_ceiling_never_blocks_sell_or_cover_on_unusable_equity():
     from src.risk.rules import GrossCeiling, apply_gross_ceiling
 
     ceiling = GrossCeiling(
-        ceiling_x=2.0, base_x=2.0, drawdown_pct=None,
-        alert_owner=False, rung="unknown", reason="test",
+        ceiling_x=2.0,
+        base_x=2.0,
+        drawdown_pct=None,
+        alert_owner=False,
+        rung="unknown",
+        reason="test",
     )
     decisions = [
-        TradeDecision(action="SELL", symbol="AAA", allocation_pct=100.0,
-                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                      reasoning="exit"),
-        TradeDecision(action="COVER", symbol="BBB", allocation_pct=100.0,
-                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                      reasoning="cover"),
-        TradeDecision(action="BUY", symbol="CCC", allocation_pct=10.0,
-                      entry_price=50.0, stop_loss=45.0, take_profit=60.0,
-                      reasoning="new risk"),
+        TradeDecision(
+            action="SELL",
+            symbol="AAA",
+            allocation_pct=100.0,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning="exit",
+        ),
+        TradeDecision(
+            action="COVER",
+            symbol="BBB",
+            allocation_pct=100.0,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning="cover",
+        ),
+        TradeDecision(
+            action="BUY",
+            symbol="CCC",
+            allocation_pct=10.0,
+            entry_price=50.0,
+            stop_loss=45.0,
+            take_profit=60.0,
+            reasoning="new risk",
+        ),
     ]
     positions = [
-        Position(symbol="AAA", qty=10, avg_entry=100.0, current_price=100.0,
-                 market_value=1000.0, unrealized_pnl=0.0, sector="Technology"),
-        Position(symbol="BBB", qty=-10, avg_entry=100.0, current_price=100.0,
-                 market_value=-1000.0, unrealized_pnl=0.0, sector="Technology"),
+        Position(
+            symbol="AAA",
+            qty=10,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=1000.0,
+            unrealized_pnl=0.0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="BBB",
+            qty=-10,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=-1000.0,
+            unrealized_pnl=0.0,
+            sector="Technology",
+        ),
     ]
     for bad_equity in (float("nan"), 0.0, -5_000.0):
         outcome = apply_gross_ceiling(
-            [d.model_copy(deep=True) for d in decisions], positions, bad_equity, ceiling,
+            [d.model_copy(deep=True) for d in decisions],
+            positions,
+            bad_equity,
+            ceiling,
         )
         by_symbol = {d.symbol: d for d in outcome.decisions}
         assert by_symbol["AAA"].allocation_pct == 100.0, "SELL must be untouched"
@@ -319,22 +483,52 @@ def test_apply_gross_ceiling_never_blocks_sell_or_cover_when_book_is_over_ceilin
     from src.risk.rules import GrossCeiling, apply_gross_ceiling
 
     ceiling = GrossCeiling(
-        ceiling_x=0.5, base_x=2.0, drawdown_pct=-30.0,
-        alert_owner=True, rung="-20%", reason="test",
+        ceiling_x=0.5,
+        base_x=2.0,
+        drawdown_pct=-30.0,
+        alert_owner=True,
+        rung="-20%",
+        reason="test",
     )
     decisions = [
-        TradeDecision(action="SELL", symbol="AAA", allocation_pct=100.0,
-                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                      reasoning="exit"),
-        TradeDecision(action="SHORT", symbol="DDD", allocation_pct=5.0,
-                      entry_price=50.0, stop_loss=55.0, take_profit=40.0,
-                      reasoning="new short"),
+        TradeDecision(
+            action="SELL",
+            symbol="AAA",
+            allocation_pct=100.0,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning="exit",
+        ),
+        TradeDecision(
+            action="SHORT",
+            symbol="DDD",
+            allocation_pct=5.0,
+            entry_price=50.0,
+            stop_loss=55.0,
+            take_profit=40.0,
+            reasoning="new short",
+        ),
     ]
     positions = [
-        Position(symbol="AAA", qty=1000, avg_entry=100.0, current_price=100.0,
-                 market_value=100_000.0, unrealized_pnl=0.0, sector="Technology"),
-        Position(symbol="ZZZ", qty=500, avg_entry=100.0, current_price=100.0,
-                 market_value=50_000.0, unrealized_pnl=0.0, sector="Healthcare"),
+        Position(
+            symbol="AAA",
+            qty=1000,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=100_000.0,
+            unrealized_pnl=0.0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="ZZZ",
+            qty=500,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=50_000.0,
+            unrealized_pnl=0.0,
+            sector="Healthcare",
+        ),
     ]
     outcome = apply_gross_ceiling(decisions, positions, 10_000.0, ceiling)
     by_symbol = {d.symbol: d for d in outcome.decisions}

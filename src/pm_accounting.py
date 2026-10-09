@@ -77,9 +77,9 @@ STAGE = "portfolio_manager"
 
 #: Outcomes. Three, because the three cases are genuinely different and
 #: collapsing them is what produced the original defect.
-OUTCOME_NOT_SELECTED = "not_selected"      # the seat dropped it and said why
+OUTCOME_NOT_SELECTED = "not_selected"  # the seat dropped it and said why
 OUTCOME_HELD_UNCHANGED = "held_unchanged"  # held, left out, prompt says hold
-OUTCOME_UNACCOUNTED = "unaccounted"        # the seat would not say at all
+OUTCOME_UNACCOUNTED = "unaccounted"  # the seat would not say at all
 
 #: The `reason` half of each key — a rule name, never prose.
 REASON_REJECTED = "pm_rejected_candidate"
@@ -124,43 +124,24 @@ REASK_DIRECTIVE = (
 # because guessing what an unknown token means to someone reading it as a
 # trading fact is the failure the rule exists to stop.
 _PLAIN_BY_CODE: dict[str, str] = {
-    "evidence_insufficient":
-        "there was not enough current evidence behind it to justify risking "
-        "money on it",
-    "evidence_conflicts":
-        "the evidence pointed both ways and the disagreement was not resolved",
-    "evidence_stale":
-        "the evidence that existed was too old to act on",
-    "thesis_not_compelling":
-        "the evidence was there but the trade it suggested did not earn a "
-        "place in the book",
-    "no_readable_structure":
-        "there was no level on the chart to enter against or to be proved "
-        "wrong by",
-    "reward_not_worth_risk":
-        "the money it stood to make did not justify the money it put at risk",
-    "event_risk":
-        "a known event — earnings or similar — was too close to enter in "
-        "front of",
-    "risk_budget_full":
-        "the book had no risk budget left for another name",
-    "no_deployment_headroom":
-        "there was no cash or buying power left to put behind it",
-    "sector_or_cluster_crowded":
-        "the desk already holds too much that moves with it",
-    "better_use_of_the_slot":
-        "another candidate was judged the better use of the same slot",
-    "already_sized_correctly":
-        "it is already held at the size the desk thinks it deserves",
-    "other":
-        "the desk gave a reason that does not fit any of its standard "
-        "categories — the detail below is that reason",
-    CODE_HELD_UNCHANGED:
-        "it is already held and the desk decided to leave it exactly as it is",
-    CODE_UNACCOUNTED:
-        "the desk's portfolio manager would not say. It was asked once more "
-        "and still did not give a ground. This is a fault in the desk, not a "
-        "judgement about the stock",
+    "evidence_insufficient": "there was not enough current evidence behind it to justify risking money on it",
+    "evidence_conflicts": "the evidence pointed both ways and the disagreement was not resolved",
+    "evidence_stale": "the evidence that existed was too old to act on",
+    "thesis_not_compelling": "the evidence was there but the trade it suggested did not earn a place in the book",
+    "no_readable_structure": "there was no level on the chart to enter against or to be proved wrong by",
+    "reward_not_worth_risk": "the money it stood to make did not justify the money it put at risk",
+    "event_risk": "a known event — earnings or similar — was too close to enter in front of",
+    "risk_budget_full": "the book had no risk budget left for another name",
+    "no_deployment_headroom": "there was no cash or buying power left to put behind it",
+    "sector_or_cluster_crowded": "the desk already holds too much that moves with it",
+    "better_use_of_the_slot": "another candidate was judged the better use of the same slot",
+    "already_sized_correctly": "it is already held at the size the desk thinks it deserves",
+    "other": "the desk gave a reason that does not fit any of its standard "
+    "categories — the detail below is that reason",
+    CODE_HELD_UNCHANGED: "it is already held and the desk decided to leave it exactly as it is",
+    CODE_UNACCOUNTED: "the desk's portfolio manager would not say. It was asked once more "
+    "and still did not give a ground. This is a fault in the desk, not a "
+    "judgement about the stock",
 }
 
 # Every stated rejection code must have wording. A code with no sentence
@@ -181,15 +162,13 @@ def plain_reason(code: str) -> str:
     known = _PLAIN_BY_CODE.get(str(code or "").strip().lower())
     if known:
         return known
-    return (
-        "the desk recorded a ground for dropping it that it has no plain "
-        "wording for"
-    )
+    return "the desk recorded a ground for dropping it that it has no plain wording for"
 
 
 # ---------------------------------------------------------------------------
 # the accounting itself
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class AccountedCandidate:
@@ -248,18 +227,15 @@ def account_for_candidates(
     one re-ask) is for; everything in `accounted` already has a real,
     per-candidate ground behind it.
     """
-    targeted = {_norm(getattr(t, "symbol", None)) for t in (
-        getattr(decision, "targets", None) or []
-    )}
+    targeted = {_norm(getattr(t, "symbol", None)) for t in (getattr(decision, "targets", None) or [])}
     targeted.discard("")
     held = {
         _norm(getattr(p, "symbol", None))
         for p in (positions or [])
-        if _norm(getattr(p, "symbol", None))
-        and getattr(p, "qty", 0) not in (0, 0.0, None)
+        if _norm(getattr(p, "symbol", None)) and getattr(p, "qty", 0) not in (0, 0.0, None)
     }
     stated: dict[str, object] = {}
-    for rejection in (getattr(decision, "rejections", None) or []):
+    for rejection in getattr(decision, "rejections", None) or []:
         sym = _norm(getattr(rejection, "symbol", None))
         if sym:
             stated.setdefault(sym, rejection)
@@ -273,13 +249,15 @@ def account_for_candidates(
         seen.add(symbol)
         rejection = stated.get(symbol)
         if rejection is not None:
-            result.accounted.append(AccountedCandidate(
-                symbol=symbol,
-                outcome=OUTCOME_NOT_SELECTED,
-                reason=REASON_REJECTED,
-                code=str(getattr(rejection, "code", "") or "other"),
-                note=str(getattr(rejection, "detail", "") or "")[:400],
-            ))
+            result.accounted.append(
+                AccountedCandidate(
+                    symbol=symbol,
+                    outcome=OUTCOME_NOT_SELECTED,
+                    reason=REASON_REJECTED,
+                    code=str(getattr(rejection, "code", "") or "other"),
+                    note=str(getattr(rejection, "detail", "") or "")[:400],
+                )
+            )
             continue
         if symbol in held:
             # MECHANICAL, from a rule the seat's own prompt states: "Held
@@ -287,16 +265,18 @@ def account_for_candidates(
             # that rule back is not inventing a reason, and it is why an
             # ordinary quiet session over a full book does not spend a paid
             # re-ask on names nobody proposed changing.
-            result.accounted.append(AccountedCandidate(
-                symbol=symbol,
-                outcome=OUTCOME_HELD_UNCHANGED,
-                reason=REASON_HELD,
-                code=CODE_HELD_UNCHANGED,
-                note=(
-                    "the seat left a held name out of its targets, which its "
-                    "own instructions define as leaving the position alone"
-                ),
-            ))
+            result.accounted.append(
+                AccountedCandidate(
+                    symbol=symbol,
+                    outcome=OUTCOME_HELD_UNCHANGED,
+                    reason=REASON_HELD,
+                    code=CODE_HELD_UNCHANGED,
+                    note=(
+                        "the seat left a held name out of its targets, which its "
+                        "own instructions define as leaving the position alone"
+                    ),
+                )
+            )
             continue
         result.unaccounted.append(symbol)
     return result
@@ -317,10 +297,11 @@ def unaccounted_row(symbol: str, *, asked: bool) -> AccountedCandidate:
         code=CODE_UNACCOUNTED,
         note=(
             "the portfolio manager did not name a ground for dropping this "
-            "candidate" + (
+            "candidate"
+            + (
                 ", and did not name one when it was asked again"
-                if asked else
-                "; the one re-ask this seat gets was already spent or blocked "
+                if asked
+                else "; the one re-ask this seat gets was already spent or blocked "
                 "this session, so it was not asked again"
             )
         ),

@@ -12,7 +12,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ops.rehearsal.feed_recording import (
-    RecordedFeedFailure, recorded_feeds, url_key,
+    RecordedFeedFailure,
+    recorded_feeds,
+    url_key,
 )
 from ops.rehearsal.isolation import MissingRecordedInput, assert_hermetic, no_network
 
@@ -84,10 +86,16 @@ def test_a_recorded_fred_failure_replays_as_a_failure_not_as_a_success():
 @pytest.mark.parametrize(
     "call",
     [
-        pytest.param(lambda: __import__("src.data.macro", fromlist=["Fred"]).Fred(
-            api_key="unused").get_series("UNRECORDED"), id="fred"),
-        pytest.param(lambda: __import__("src.data.news", fromlist=["urlopen"]).urlopen(
-            "https://feeds.npr.org/1001/rss.xml", timeout=1), id="news"),
+        pytest.param(
+            lambda: __import__("src.data.macro", fromlist=["Fred"]).Fred(api_key="unused").get_series("UNRECORDED"),
+            id="fred",
+        ),
+        pytest.param(
+            lambda: __import__("src.data.news", fromlist=["urlopen"]).urlopen(
+                "https://feeds.npr.org/1001/rss.xml", timeout=1
+            ),
+            id="news",
+        ),
     ],
 )
 def test_a_gap_in_the_recording_fails_loudly_and_is_never_fetched_or_filled_in(call):

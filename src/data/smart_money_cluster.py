@@ -41,6 +41,7 @@ figure from the secondary summary above, not the paper's abstract; it is a
 retention parameter, and nothing trade-governing now reads it as the
 research cluster.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -111,9 +112,9 @@ def cluster_survivors(
                 survivors[observation_key(item)] = item
         for anchor in group:
             window = [
-                item for item in group
-                if abs((item.transaction_date - anchor.transaction_date).days)
-                <= cluster_window_days
+                item
+                for item in group
+                if abs((item.transaction_date - anchor.transaction_date).days) <= cluster_window_days
                 and item.transaction_value_usd is not None
             ]
             independent = {item.actor_cik for item in window if item.actor_cik}
@@ -217,9 +218,7 @@ def insider_purchase_clusters(
 
     latest: dict[str, InsiderPurchaseCluster] = {}
     for (symbol, day), members in by_day.items():
-        insiders = sorted({
-            (m.actor_cik or m.actor.strip().casefold()) for m in members
-        })
+        insiders = sorted({(m.actor_cik or m.actor.strip().casefold()) for m in members})
         if len(insiders) < MIN_PURCHASE_CLUSTER_INSIDERS:
             continue
         if symbol in latest and latest[symbol].transaction_date >= day:
@@ -230,7 +229,8 @@ def insider_purchase_clusters(
             distinct_insiders=len(insiders),
             insider_ciks=insiders,
             combined_value_usd=round(
-                sum(m.transaction_value_usd or 0 for m in members), 2,
+                sum(m.transaction_value_usd or 0 for m in members),
+                2,
             ),
             latest_disclosure_date=disclosed,
             filing_age_days=max(0, (today - disclosed).days),

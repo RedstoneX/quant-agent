@@ -9,6 +9,7 @@ at which the FINISHED order list and the allocator's result both exist.
 RECORDING ONLY. Nothing here decides anything and nothing reads these rows
 back into a sizing, ordering or refusal decision.
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,7 +45,10 @@ def _record_realised_risk_budget(pipeline, ctx, total_value) -> None:
 
 
 def _record_realised_concentration(
-    pipeline, ctx, portfolio_decision, total_value,
+    pipeline,
+    ctx,
+    portfolio_decision,
+    total_value,
 ) -> None:
     """Both concentration recordings, taken together at the one call site."""
     _record_realised_sector_weights(pipeline, ctx, portfolio_decision, total_value)
