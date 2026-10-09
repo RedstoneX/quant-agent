@@ -82,6 +82,8 @@ from src.portfolio_constructor.config import (
     STOP_RULE_PRIOR_BAR_NO_ATR,
     STOP_REFUSAL_WIDER_THAN_REACH,
     STOP_REFUSAL_BUDGET_EXHAUSTED,
+    STOP_REFUSAL_BOOK_RISK_UNKNOWN,
+    STOP_REFUSAL_DOLLAR_TARGET_NO_STOP,
     STOP_REFUSAL_AGREEMENT_NET,
     STOP_REFUSAL_SIZED_TO_ZERO,
     STOP_REFUSAL_GROSS_EXPOSURE_CEILING,
@@ -415,6 +417,14 @@ class PortfolioConstructor:
             ranking=ranking,
             live_stops=live_stops,
         )
+        # Dollar-only targets that ADD exposure were converted to risk through
+        # their stop and charged against the 25% ceiling inside
+        # `_plan_risk_targets` (defect 2026-10-09: they used to bypass it
+        # entirely). One refused there produces no order; the rest are sized
+        # the old way, exactly as before.
+        refused_dollar = getattr(self, "_dollar_targets_refused", None) or set()
+        if refused_dollar:
+            targets = [t for t in targets if t.symbol not in refused_dollar]
 
         # Spec §10.3. Held GROSS exposure per sector, carried through the
         # loop and updated as each entry is built, so the second and third
@@ -790,12 +800,34 @@ class PortfolioConstructor:
         # rather than looking like a clean 2-source idea.
         dissent_notes: dict[str, str] = {}
 
+        # Defect 2026-10-09: the 25% ceiling used to be SKIPPED when any
+        # holding's risk could not be read. `unknown` is carried on the
+        # book map itself (`BookRiskPct`); while it is non-empty every
+        # risk-adding request is refused by name. A close is never blocked.
+        book_unknown = sorted(getattr(existing_risk_pct, "unknown", ()) or ())
+        self._dollar_targets_refused: set[str] = set()
+        dollar_risk: dict[str, tuple[str, float]] = {}  # symbol -> (direction, risk %)
+
         for target in targets:
             if target.risk_allocation_pct is None:
-                # drop-reason: NOT a drop. A legacy notional target simply
-                # gets no RiskPlan; the delta loop still sizes it the old
-                # way and still builds its order.
-                continue  # legacy notional target — sized the old way
+                converted = self._dollar_target_as_risk(
+                    target,
+                    analyses_by_sym=analyses_by_sym,
+                    price_map=price_map,
+                    current_weights=current_weights,
+                    regime=regime,
+                    book_unknown=book_unknown,
+                    gross_multiplier=_gross_multiplier,
+                )
+                if converted is None:
+                    self._dollar_targets_refused.add(target.symbol)
+                    continue  # drop-reason: delegated — refused by name in `_dollar_target_as_risk`
+                if converted > 0:
+                    dollar_risk[target.symbol] = (target.direction, converted)
+                # drop-reason: NOT a drop. A dollar-only target gets no
+                # RiskPlan; it is charged against the ceiling below and the
+                # delta loop sizes it the old way.
+                continue
             sym = target.symbol
             if target.risk_allocation_pct == 0.0:
                 # A close needs no price, no stop and no budget. Routing it
@@ -821,6 +853,11 @@ class PortfolioConstructor:
                 requests.append(RiskRequest(sym, 0.0))
                 # drop-reason: NOT a drop. This is PM asking to CLOSE the
                 # name; it goes to the exit builder, not to nowhere.
+                continue
+            if book_unknown:
+                self._refuse_book_unknown(sym, target.direction, book_unknown)
+                # drop-reason: delegated — `_refuse_book_unknown` files
+                # STOP_REFUSAL_BOOK_RISK_UNKNOWN and logs the symbols.
                 continue
             if 0.0 < target.risk_allocation_pct < self.cfg.min_risk_pct:
                 # Board item 223 — RECORDING ONLY. The target is not
@@ -1098,6 +1135,30 @@ class PortfolioConstructor:
             else None
         )
 
+        if allocation is not None and dollar_risk:
+            # A close of either kind (risk 0.0, or a dollar-only 0% weight)
+            # frees its existing risk, exactly as `closes` does for the allocator.
+            closing = {c.upper() for c in closes} | {
+                t.symbol.upper() for t in targets if t.risk_allocation_pct is None and not (t.target_weight_pct or 0.0)
+            }
+            committed = sum(v for k, v in existing_risk_pct.items() if k.upper() not in closing)
+            committed += sum(g.granted_pct for g in allocation.grants.values())
+            for dsym, (ddir, drisk) in dollar_risk.items():
+                ceiling = self.cfg.max_portfolio_risk_pct
+                if committed + drisk > ceiling + 1e-9:
+                    self._dollar_targets_refused.add(dsym)
+                    self._note_refusal(
+                        dsym,
+                        ddir,
+                        STOP_REFUSAL_BUDGET_EXHAUSTED,
+                        f"the portfolio risk budget has {max(0.0, ceiling - committed):.2f}% left of the "
+                        f"{ceiling:.2f}% ceiling; this dollar-only target, converted through its "
+                        f"stop, would risk {drisk:.2f}%. Refused (defect 2026-10-09: dollar-only "
+                        f"targets used to bypass the ceiling).",
+                    )
+                    continue
+                committed += drisk
+
         plans: dict[str, RiskPlan] = {}
         for sym in closes:
             plans[sym] = RiskPlan(
@@ -1178,6 +1239,82 @@ class PortfolioConstructor:
                 sized_from_live_stop=sym in live_stop_trims,
             )
         return plans
+
+    def _refuse_book_unknown(self, sym: str, direction: str, book_unknown: list[str]) -> None:
+        """Refuse one risk-adding request because the book's risk is UNKNOWN."""
+        self._note_refusal(
+            sym,
+            direction,
+            STOP_REFUSAL_BOOK_RISK_UNKNOWN,
+            f"the risk of held {', '.join(book_unknown)} could not be measured "
+            f"(no usable price, or the book could not be read), so the "
+            f"{self.cfg.max_portfolio_risk_pct:.2f}% total-risk ceiling cannot be "
+            f"checked. No risk is added until it can; exits and stops are unaffected.",
+        )
+        logger.warning(
+            "Constructor: %s refused — book risk UNKNOWN for %s; new buys wait until it is read",
+            sym,
+            ", ".join(book_unknown),
+        )
+
+    def _dollar_target_as_risk(
+        self,
+        target: TargetPosition,
+        *,
+        analyses_by_sym: dict,
+        price_map: dict[str, float],
+        current_weights: dict[str, float],
+        regime: str | None,
+        book_unknown: list[str],
+        gross_multiplier,
+    ) -> float | None:
+        """A dollar-only target that ADDS exposure, as a risk request — or refused by name.
+
+        Defect 2026-10-09: a target carrying only `target_weight_pct` got no
+        RiskPlan and was sized "the old way", never charged against the 25%
+        total-risk ceiling. Returns 0.0 for a close, a side flip (flattened
+        by the delta loop) or a same-side hold at or below the held weight:
+        nothing is added. Otherwise the weight converted through its own
+        stop, `risk = weight / gross x |entry - stop| / entry`, which the
+        caller charges against the ceiling — or None when it is refused by
+        name (book risk unknown, or no stop to convert through).
+        """
+        sym = target.symbol
+        weight = float(target.target_weight_pct or 0.0)
+        held = current_weights.get(sym, 0.0)
+        held_same_side = -held if target.direction == "short" else held
+        if weight <= 0 or held_same_side < 0 or weight <= held_same_side:
+            return 0.0
+        if book_unknown:
+            self._refuse_book_unknown(sym, target.direction, book_unknown)
+            return None  # drop-reason: delegated — `_refuse_book_unknown` files STOP_REFUSAL_BOOK_RISK_UNKNOWN
+        entry, stop = self._resolve_entry_and_stop(
+            target,
+            analyses_by_sym.get(sym),
+            price_map.get(sym),
+            regime=regime,
+        )
+        if entry is None or stop is None or entry <= 0 or entry == stop:
+            self._note_refusal(
+                sym,
+                target.direction,
+                STOP_REFUSAL_DOLLAR_TARGET_NO_STOP,
+                f"a {weight:.2f}% dollar-only target with no usable stop cannot be "
+                f"converted to risk, so it cannot be charged against the "
+                f"{self.cfg.max_portfolio_risk_pct:.2f}% total-risk ceiling. Refused.",
+                only_if_unrecorded=True,
+            )
+            logger.warning("Constructor: %s dollar-only target refused — no stop to convert it to risk", sym)
+            return None
+        risk_pct = weight / gross_multiplier(sym) * abs(entry - stop) / entry
+        logger.info(
+            "Constructor: %s dollar-only target %.2f%% converted to %.3f%% risk through its stop $%.2f",
+            sym,
+            weight,
+            risk_pct,
+            stop,
+        )
+        return risk_pct
 
     def _held_trim_entry_and_stop(
         self,

@@ -136,26 +136,38 @@ class PromptExposure:
         unreadable: set[str] = set()
         for p in positions:
             sym = p.symbol
-            _live_read = read_stop(self.broker, sym, db=self.db, context="prompt stop map")
-            unreadable.update([sym] if _live_read.unreadable else [])
-            if _live_read.found:
-                live_stops[sym] = _live_read.price
-            from src.execution.stop_records import recorded_initial_stop
-
             try:
-                qty = float(getattr(p, "qty", 0) or 0)
-            except (TypeError, ValueError):
-                qty = 0.0
-            try:
-                opening = "SHORT" if qty < 0 else "BUY"
-                buy = self.db.get_symbol_last_buy(sym, action=opening)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("stop map: last-buy lookup failed for %s: %s", sym, e)
-                buy = None
-            initial = recorded_initial_stop(buy)
-            if initial > 0:
-                initial_stops[sym] = initial
+                self._one_stop(p, sym, live_stops, initial_stops, unreadable)
+            except Exception as e:  # noqa: BLE001 — one holding degrades, never the whole book
+                # Defect 2026-10-09: one raise here used to lose the whole
+                # book's risk and skip the 25% ceiling. Unreadable → this
+                # holding is charged at full market value by the heat roll-up.
+                logger.error("stop map: %s stop could not be read (%s) — charged at full market value", sym, e)
+                live_stops.pop(sym, None)
+                unreadable.add(sym)
         return live_stops, initial_stops, unreadable
+
+    def _one_stop(self, p, sym, live_stops, initial_stops, unreadable) -> None:
+        """One holding's live and initial stop, written into the caller's maps."""
+        _live_read = read_stop(self.broker, sym, db=self.db, context="prompt stop map")
+        unreadable.update([sym] if _live_read.unreadable else [])
+        if _live_read.found:
+            live_stops[sym] = _live_read.price
+        from src.execution.stop_records import recorded_initial_stop
+
+        try:
+            qty = float(getattr(p, "qty", 0) or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        try:
+            opening = "SHORT" if qty < 0 else "BUY"
+            buy = self.db.get_symbol_last_buy(sym, action=opening)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("stop map: last-buy lookup failed for %s: %s", sym, e)
+            buy = None
+        initial = recorded_initial_stop(buy)
+        if initial > 0:
+            initial_stops[sym] = initial
 
 
 class PromptHistory:

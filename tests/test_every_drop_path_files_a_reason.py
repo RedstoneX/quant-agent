@@ -227,6 +227,7 @@ _CANDIDATE_ENDING_METHODS = frozenset(
         "_plan_risk_targets",
         "_resolve_entry_and_stop",
         "_held_trim_entry_and_stop",
+        "_dollar_target_as_risk",
         "_widen_stop_past_noise",
         "_build_buy",
         "_build_short",
@@ -254,6 +255,7 @@ _CANNOT_END_A_CANDIDATE = {
     "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
     "_note_refusal": "the recorder itself",
+    "_refuse_book_unknown": "the recorder itself — files STOP_REFUSAL_BOOK_RISK_UNKNOWN and logs; the caller drops",
     "_record_subfloor_risk_target": (
         "board item 223 recording only — a durable row for a positive "
         "sub-floor PM risk request; it was ruled on the risk route "

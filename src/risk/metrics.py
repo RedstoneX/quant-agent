@@ -37,12 +37,17 @@ counted as unprotected — see `exclude_symbols`.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PositionRisk",
     "PortfolioHeat",
+    "BookRiskPct",
+    "full_value_charge",
     "r_multiple",
     "position_risk",
     "portfolio_heat",
@@ -154,10 +159,31 @@ class PositionRisk:
     #: False when no stop is known. Full notional is charged to the budget.
     protected: bool
     r_multiple: float | None
+    #: True when the charge above could not be computed from real numbers —
+    #: no finite current price, or no finite entry. A missing price is
+    #: UNKNOWN, never $0: while any holding is unknown the constructor refuses
+    #: every risk-ADDING order (exits and stops are never blocked).
+    risk_unknown: bool = False
 
     @property
     def market_value(self) -> float:
         return self.qty * self.current_price
+
+
+def full_value_charge(qty: object, current_price: object, entry: object = None) -> tuple[float, bool]:
+    """Worst-case budget charge — the whole position at market — and whether it is UNKNOWN.
+
+    `(abs(qty) * price, False)` when a finite positive price exists. With no
+    price the charge cannot be measured: `(abs(qty) * entry, True)` when an
+    entry exists (a stand-in, still flagged unknown), else `(0.0, True)`.
+    Never `(0.0, False)` for a held position with no price.
+    """
+    shares = abs(_finite(qty) or 0.0)
+    cur = _finite(current_price)
+    if cur is not None and cur > 0:
+        return round(shares * cur, 2), False
+    ent = _finite(entry)
+    return (round(shares * ent, 2) if ent is not None and ent > 0 else 0.0), True
 
 
 def position_risk(
@@ -181,8 +207,16 @@ def position_risk(
     reduces to the pre-existing long arithmetic exactly when qty > 0.
     """
     qty_f = _finite(qty) or 0.0
-    entry_f = _finite(entry) or 0.0
-    cur_f = _finite(current_price) or 0.0
+    # A missing price is UNKNOWN, never $0 (defect 2026-10-09): `or 0.0`
+    # here charged an unprotected holding with no price at $0 — the riskiest
+    # reading scored as the safest. The 0.0 placeholders below are never
+    # charged as if real; `risk_unknown` says so.
+    entry_raw = _finite(entry)
+    cur_raw = _finite(current_price)
+    price_unknown = cur_raw is None or cur_raw <= 0
+    entry_unknown = entry_raw is None or entry_raw <= 0
+    entry_f = 0.0 if entry_unknown else float(entry_raw)  # type: ignore[arg-type]
+    cur_f = 0.0 if price_unknown else float(cur_raw)  # type: ignore[arg-type]
     stop_f = _finite(stop) if stop is not None else None
     if stop_f is not None and stop_f <= 0:
         stop_f = None
@@ -204,7 +238,7 @@ def position_risk(
         # as 0.0 would make an unprotected book look like the safest one. A
         # short's notional is its absolute exposure — max(0.0, qty * price)
         # scored every short as riskless.
-        notional = max(0.0, shares * cur_f)
+        notional, unknown = full_value_charge(qty_f, cur_f, entry_f)
         return PositionRisk(
             symbol=symbol,
             qty=qty_f,
@@ -216,15 +250,24 @@ def position_risk(
             open_risk_dollars=notional,
             risk_released=False,
             protected=False,
-            r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None),
+            r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f and not price_unknown else None),
+            risk_unknown=unknown,
         )
 
     assert stop_f is not None  # narrowed by `protected`
     # Released = the stop can no longer lose money against entry. For a long
     # that is stop >= entry; for a short it is stop <= entry.
     released = entry_f > 0 and side * (stop_f - entry_f) >= 0
-    budget = 0.0 if released else max(0.0, shares * side * (entry_f - stop_f))
-    open_r = max(0.0, shares * side * (cur_f - stop_f))
+    if entry_unknown:
+        # No entry means no entry-to-stop distance: charge the worst case,
+        # the whole position at market. Unknown only if the price is too.
+        budget, unknown = full_value_charge(qty_f, cur_f, entry_f)
+    else:
+        budget = 0.0 if released else max(0.0, shares * side * (entry_f - stop_f))
+        unknown = price_unknown
+    # No price: today's loss-to-stop cannot be measured; carry the budget
+    # figure rather than a confident $0, and flag the row unknown.
+    open_r = budget if price_unknown else max(0.0, shares * side * (cur_f - stop_f))
     return PositionRisk(
         symbol=symbol,
         qty=qty_f,
@@ -236,7 +279,8 @@ def position_risk(
         open_risk_dollars=round(open_r, 2),
         risk_released=released,
         protected=True,
-        r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None),
+        r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f and not price_unknown else None),
+        risk_unknown=unknown,
     )
 
 
@@ -271,6 +315,11 @@ class PortfolioHeat:
     @property
     def unprotected(self) -> list[str]:
         return sorted(p.symbol for p in self.per_position if not p.protected)
+
+    @property
+    def unknown_risk(self) -> list[str]:
+        """Holdings whose charge could not be measured (no price). Buys wait on these."""
+        return sorted(p.symbol for p in self.per_position if p.risk_unknown)
 
     @property
     def released(self) -> list[str]:
@@ -308,17 +357,68 @@ def portfolio_heat(
         # Skipping qty <= 0 exempted every short from the at-risk ceiling.
         if qty == 0:
             continue
-        rows.append(
-            position_risk(
-                symbol=symbol,
-                qty=qty,
-                entry=getattr(p, "avg_entry", 0.0),
-                current_price=getattr(p, "current_price", 0.0),
-                stop=stops.get(symbol),
-                initial_stop=initial_stops.get(symbol),
+        # Caught PER POSITION (defect 2026-10-09): one holding whose stop or
+        # price could not be read used to raise out of the whole roll-up, the
+        # book's risk became None, and the 25% ceiling was skipped for every
+        # trade. Now only that holding degrades — charged at its full market
+        # value, the worst case — and the ceiling is still enforced.
+        try:
+            rows.append(
+                position_risk(
+                    symbol=symbol,
+                    qty=qty,
+                    entry=getattr(p, "avg_entry", None),
+                    current_price=getattr(p, "current_price", None),
+                    stop=stops.get(symbol),
+                    initial_stop=initial_stops.get(symbol),
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001 — degrade one row, never the book
+            rows.append(_full_value_row(symbol, qty, p, exc))
     return PortfolioHeat(equity=max(0.0, equity_f), per_position=rows)
+
+
+def _full_value_row(symbol: str, qty: float, position: object, exc: BaseException) -> PositionRisk:
+    """The worst-case row for a holding whose risk could not be computed."""
+    cur = _finite(getattr(position, "current_price", None))
+    entry = _finite(getattr(position, "avg_entry", None))
+    charge, unknown = full_value_charge(qty, cur, entry)
+    logger.error(
+        "risk budget: %s risk could not be read (%s) — charged at full market value $%.2f%s",
+        symbol,
+        exc,
+        charge,
+        " (price UNKNOWN: new buys refused until it is read)" if unknown else "",
+    )
+    return PositionRisk(
+        symbol=symbol,
+        qty=qty,
+        entry=entry or 0.0,
+        current_price=cur or 0.0,
+        stop=None,
+        initial_stop=None,
+        budget_risk_dollars=charge,
+        open_risk_dollars=charge,
+        risk_released=False,
+        protected=False,
+        r_multiple=None,
+        risk_unknown=unknown,
+    )
+
+
+class BookRiskPct(dict):
+    """`{symbol: budget risk % of equity}` that also carries which holdings are UNKNOWN.
+
+    A plain dict cannot say "this book has a holding whose risk could not be
+    measured", so that fact used to be dropped between the heat roll-up and
+    the constructor. The unknown set travels WITH the numbers it qualifies:
+    no caller can take one without the other. `unknown` non-empty means the
+    constructor refuses every risk-adding order (exits and stops pass).
+    """
+
+    def __init__(self, data=(), *, unknown: frozenset[str] | set[str] = frozenset()) -> None:
+        super().__init__(data)
+        self.unknown: frozenset[str] = frozenset(str(s).upper() for s in unknown)
 
 
 def format_heat_block(
@@ -345,6 +445,11 @@ def format_heat_block(
         )
     if heat.unprotected:
         lines.append(f"- ⚠️ UNPROTECTED (no stop found — charged at full notional): {', '.join(heat.unprotected)}")
+    if heat.unknown_risk:
+        lines.append(
+            f"- RISK UNKNOWN (no usable price — never scored as $0; new buys refused until read): "
+            f"{', '.join(heat.unknown_risk)}"
+        )
     if getattr(heat, "unreadable", None):
         lines.append(heat.unreadable_note())
     lines.append("- Per position: symbol | at-risk $ | % equity | R-multiple")

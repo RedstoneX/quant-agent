@@ -243,21 +243,53 @@ def _book_risk_inputs(ctx, total_value: float):
     presumes to be empty (2026-09-03 incident — see
     `docs/INCIDENT_HISTORY.md`).
     """
+    from src.risk.metrics import BookRiskPct, full_value_charge
+
     facts = getattr(ctx, "facts", None)
     if facts is None:
         return (None, None)
     heat = getattr(facts, "heat", None)
     clusters = getattr(facts, "correlation_clusters", None)
     existing: dict[str, float] | None = None
-    if heat is not None and total_value > 0:
+    if total_value > 0:
         try:
-            existing = {row.symbol: row.budget_risk_dollars / total_value * 100 for row in heat.per_position}
-        except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
+            if heat is None:
+                raise RuntimeError("portfolio heat unavailable")
+            existing = BookRiskPct(
+                {row.symbol: row.budget_risk_dollars / total_value * 100 for row in heat.per_position},
+                unknown=set(getattr(heat, "unknown_risk", ()) or ()),
+            )
+        except Exception as e:  # noqa: BLE001 — degrade to the worst case, never skip the ceiling
+            # Defect 2026-10-09: this used to return None, which SKIPPED the
+            # 25% ceiling for every trade. The worst case is still a view of
+            # the book: each holding charged at its full market value, and a
+            # holding with no price marked UNKNOWN (buys refused while so).
             record_stage(ctx, "book_risk_map", e)
-            existing = None
+            existing = _full_value_book(getattr(ctx, "positions", None), total_value, BookRiskPct, full_value_charge)
         else:
             record_stage(ctx, "book_risk_map")
     return (existing, list(clusters) if clusters else None)
+
+
+def _full_value_book(positions, total_value: float, book_cls, charge_fn):
+    """Every holding charged at full market value; unreadable positions → UNKNOWN."""
+    if positions is None:
+        logger.error("risk budget: the held book could not be read at all — every new buy is refused this run")
+        return book_cls({}, unknown={"*BOOK*"})
+    out: dict[str, float] = {}
+    unknown: set[str] = set()
+    for p in positions:
+        sym = str(getattr(p, "symbol", "") or "").upper()
+        if not sym:
+            continue
+        charge, is_unknown = charge_fn(
+            getattr(p, "qty", 0.0), getattr(p, "current_price", None), getattr(p, "avg_entry", None)
+        )
+        out[sym] = charge / total_value * 100
+        if is_unknown:
+            logger.error("risk budget: %s has no usable price — its risk is UNKNOWN; new buys refused", sym)
+            unknown.add(sym)
+    return book_cls(out, unknown=unknown)
 
 
 def _sizing_read(pipeline, read, arg, symbol: str, what: str):
