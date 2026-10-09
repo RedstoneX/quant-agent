@@ -671,7 +671,7 @@ mornings with the same inputs produce the same number:
 base       = conviction_to_base(alignment)
              # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
              # low=0.75 (mid of 0.5-1.0)
-rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
+rr_mult    = 1.0                   # reward:risk is never a size multiplier
 # no multiplier for a stale call: if Tech high-conv sits at or past the
 # code's stale boundary (age≥8d) with no progress, NAME the override in
 # `sizing_logic` and do not size above what a stale call has earned
