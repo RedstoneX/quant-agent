@@ -1067,7 +1067,7 @@ numbers:
       that a global risk constant is a defect rather than a value to ratify.
       That ruling was already applied to the two neighbouring aggregate rows
       -- `src.config.RiskConfig.max_portfolio_risk_pct` and
-      `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX` (deleted 2026-10-09) both carried an "ITEM 186
+      the sector hard ceiling (deleted 2026-10-09) both carried an "ITEM 186
       PASS 2026-09-30" paragraph withdrawing their owner questions -- and it
       was not applied here, which is how this row kept routing the one
       question the ruling forbids. UNLIKE those two it is NOT exempt as an
