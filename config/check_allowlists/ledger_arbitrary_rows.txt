@@ -36,8 +36,6 @@ src.config.DeploymentGapConfig.band_pct
 src.config.EventRiskConfig.horizon_days
 src.config.ExecutionConfig.max_entry_slippage_bps
 src.config.IntradayScanConfig.cooldown_hours
-src.config.IntradayScanConfig.max_candidates_per_scan
-src.config.IntradayScanConfig.move_threshold_pct
 src.config.NominationConfig.max_per_seat_per_run
 src.config.NominationConfig.max_total_per_run
 src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
@@ -86,6 +84,7 @@ src.execution.cash_sweep._SELL_LIMIT_PAD
 src.exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)
 src.models.analysis.RATING_MAGNITUDE['buy']
 src.models.analysis.RATING_MAGNITUDE['strong_buy']
+src.pipeline_intraday._NAMES_PER_PAID_CALL
 src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]
 src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
 src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct

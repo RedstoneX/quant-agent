@@ -115,9 +115,8 @@ def _todays_news_dump():
 def _intraday_pipeline(
     universe=("SPY", "SQQQ", "AAPL"),
     enabled=True,
-    move_threshold_pct=3.0,
     cooldown_hours=3.0,
-    max_candidates=5,
+    atr=2.0,
     cooldown_rows=None,
     db_path=None,
 ):
@@ -127,9 +126,7 @@ def _intraday_pipeline(
         storage={"db_path": str(db_path or (Path(tempfile.mkdtemp()) / "t.db"))},
         intraday_scan=IntradayScanConfig(
             enabled=enabled,
-            move_threshold_pct=move_threshold_pct,
             cooldown_hours=cooldown_hours,
-            max_candidates_per_scan=max_candidates,
         ).model_dump(),
     )
     broker = MagicMock()
@@ -145,7 +142,7 @@ def _intraday_pipeline(
     macro_store = MagicMock(**{"load_last_state.return_value": _todays_macro_state()})
     news_store = MagicMock(**{"load_daily_report.return_value": _todays_news_dump()})
     tech_store = MagicMock(**{"load.return_value": {}, "compute_ages.return_value": {}})
-    return build_pipeline(
+    p = build_pipeline(
         config,
         broker=broker,
         db=db,
@@ -161,6 +158,11 @@ def _intraday_pipeline(
         earnings_provider=MagicMock(name="earnings_provider"),
         news_provider=MagicMock(name="news_provider"),
     )
+    # The scan ranks by move / the name's own ATR; a name with no ATR is
+    # dropped (`no_atr`). Default: every name has an ATR of `atr` (prev=100 -> atr%);
+    # a dict gives per-name ATRs, and a name absent from it has none.
+    p._atr_for_symbol = MagicMock(side_effect=atr.get) if isinstance(atr, dict) else MagicMock(return_value=atr)
+    return p
 
 
 def _snapshot(last, prev, *, trade_at="today"):
@@ -214,10 +216,10 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     -> ExecutionStage objects morning uses — no separate/duplicated PM/RM
     logic for the intraday path."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["SPY", "AAPL"])
+    p = _intraday_pipeline(universe=["SPY", "AAPL"], atr={"AAPL": 2.0})
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
-        "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% — qualifies
+        "SPY": _snapshot(last=500.0, prev=499.0),  # no ATR — dropped as no_atr
+        "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% on a 2% ATR — ranked
     }
     analysis = _ta_result("AAPL", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
@@ -266,7 +268,7 @@ def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
     inverse ETF (SQQQ) the same way a rally shows up in a long candidate —
     no separate bearish code path, no direct shorting."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["SPY", "SQQQ"])
+    p = _intraday_pipeline(universe=["SPY", "SQQQ"], atr={"SQQQ": 2.0})
     p.broker.get_intraday_snapshots.return_value = {
         "SPY": _snapshot(last=498.0, prev=500.0),  # -0.4%, below threshold
         "SQQQ": _snapshot(last=112.0, prev=100.0),  # +12% (3x inverse Nasdaq)
@@ -292,20 +294,7 @@ def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
     assert result["status"] == "intraday_executed"
     assert result["candidates"] == ["SQQQ"]
     submitted_symbols = [s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]]
-    assert submitted_symbols == ["SQQQ"], "SPY's own sub-threshold move must not qualify"
-
-
-@patch("src.pipeline_intraday.compute_indicators")
-def test_below_threshold_move_never_calls_tech_analyst(mock_compute_indicators):
-    p = _intraday_pipeline(universe=["AAPL"], move_threshold_pct=3.0)
-    p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": _snapshot(last=101.0, prev=100.0),  # 1% — below 3% threshold
-    }
-    ctx = RunContext.start("intra_check")
-    result = p._run_intraday_opportunity_scan(ctx)
-    assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
-    p.tech_analyst.analyze_batch.assert_not_called()
-    p.decision_stage.run.assert_not_called()
+    assert submitted_symbols == ["SQQQ"], "SPY has no ATR, so it is not ranked"
 
 
 # ---------- cooldown / dedup ----------
@@ -439,7 +428,7 @@ def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
     decision after the paid call. Missing Tech is a producing-step
     defect; this is that step."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["SPY", "AAPL", "MSFT"])
+    p = _intraday_pipeline(universe=["SPY", "AAPL", "MSFT"], atr={"AAPL": 2.0})
     p.broker.get_intraday_snapshots.return_value = {
         "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
         "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% — qualifies as mover
@@ -476,34 +465,15 @@ def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
 
 
 @patch("src.pipeline_intraday.compute_indicators")
-def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
-    """Discovery stays capped; held-name coverage is added on top."""
-    mock_compute_indicators.return_value = MagicMock()
-    universe = [f"SYM{i}" for i in range(10)] + ["MSFT"]
-    p = _intraday_pipeline(universe=universe, max_candidates=2, move_threshold_pct=3.0)
-    snaps = {sym: _snapshot(last=100.0 + i, prev=100.0) for i, sym in enumerate(universe[:-1])}
-    snaps["MSFT"] = _snapshot(last=100.2, prev=100.0)
-    p.broker.get_intraday_snapshots.return_value = snaps
-    p.tech_analyst.analyze_batch.return_value = ({}, None)
-
-    ctx = RunContext.start("intra_check")
-    ctx.positions = [_held_position("MSFT")]
-    p._run_intraday_opportunity_scan(ctx)
-
-    submitted = {s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]}
-    assert submitted == {"SYM9", "SYM8", "MSFT"}
-
-
-@patch("src.pipeline_intraday.compute_indicators")
 def test_quiet_book_without_movers_does_not_pay_tech_just_for_holds(
     mock_compute_indicators,
 ):
     """Holds do not themselves trigger a paid scan. No movers → no Tech call.
     Midday/close review still owns the quiet book."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["MSFT"], move_threshold_pct=3.0)
+    p = _intraday_pipeline(universe=["MSFT"], atr={})
     p.broker.get_intraday_snapshots.return_value = {
-        "MSFT": _snapshot(last=100.2, prev=100.0),  # 0.2% — below threshold
+        "MSFT": _snapshot(last=100.2, prev=100.0),  # no ATR — not rankable
     }
     ctx = RunContext.start("intra_check")
     ctx.positions = [_held_position("MSFT")]
@@ -529,28 +499,6 @@ def test_held_mover_is_not_submitted_twice(mock_compute_indicators):
 
 
 # ---------- bounded cost ----------
-
-
-@patch("src.pipeline_intraday.compute_indicators")
-def test_candidates_capped_at_max_per_scan(mock_compute_indicators):
-    """Even on a broad market-wide move day, only the top N movers (by
-    move size) are selected for discovery — bounded, not high-frequency.
-    Held-name coverage is a separate list and is tested elsewhere."""
-    mock_compute_indicators.return_value = MagicMock()
-    universe = [f"SYM{i}" for i in range(10)]
-    p = _intraday_pipeline(universe=universe, max_candidates=2, move_threshold_pct=3.0)
-    p.broker.get_intraday_snapshots.return_value = {
-        sym: _snapshot(last=100.0 + i, prev=100.0) for i, sym in enumerate(universe)
-    }
-    p.tech_analyst.analyze_batch.return_value = ({}, None)
-
-    ctx = RunContext.start("intra_check")
-    p._run_intraday_opportunity_scan(ctx)
-
-    submitted = p.tech_analyst.analyze_batch.call_args.args[0]
-    assert len(submitted) == 2
-    # Largest movers first: SYM9 (+9) and SYM8 (+8).
-    assert {s["symbol"] for s in submitted} == {"SYM9", "SYM8"}
 
 
 # ---------- run_intra_check wiring ----------
@@ -1149,7 +1097,7 @@ def test_a_symbol_missing_snapshot_data_is_tracked_but_not_alerted_once():
     `Database.record_intraday_symbol_snapshot_result`'s threshold reasoning."""
     from src.storage.db import Database
 
-    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"], atr={})
     real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
     real_db.initialize()
     p.db = real_db
@@ -1181,7 +1129,7 @@ def test_three_consecutive_missing_snapshots_pages_the_owner_once():
     # batch succeeds; only a TOTAL fetch failure returns {} outright, which
     # is the separate, already-handled "intraday_scan_no_opportunity" path
     # and out of scope for this fix).
-    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"], atr={})
     real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
     real_db.initialize()
     p.db = real_db
@@ -1205,7 +1153,7 @@ def test_a_recovered_symbol_resets_its_miss_streak():
     a future, unrelated outage."""
     from src.storage.db import Database
 
-    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"], atr={})
     real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
     real_db.initialize()
     p.db = real_db
@@ -1428,7 +1376,7 @@ def test_intraday_partial_tech_failure_still_trades(mock_compute_indicators):
     start blocking ordinary intraday activity on a single bad symbol, only
     on a seat that is genuinely and entirely lost."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["AAPL", "MSFT"])
+    p = _intraday_pipeline(universe=["AAPL", "MSFT"], atr={"AAPL": 2.0})
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
         "MSFT": _snapshot(last=330.0, prev=300.0),
@@ -1465,10 +1413,10 @@ def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
     stays `intraday_scan_no_opportunity`, distinct from a seat that was
     asked and lost."""
     mock_compute_indicators.return_value = MagicMock()
-    p = _intraday_pipeline(universe=["SPY", "AAPL"], move_threshold_pct=3.0)
+    p = _intraday_pipeline(universe=["SPY", "AAPL"], atr={})
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
-        "AAPL": _snapshot(last=100.5, prev=100.0),  # 0.5% — below threshold
+        "SPY": _snapshot(last=500.0, prev=499.0),  # no ATR — no_atr
+        "AAPL": _snapshot(last=100.5, prev=100.0),  # no ATR — no_atr
     }
 
     ctx = RunContext.start("intra_check")
@@ -1605,7 +1553,7 @@ def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
     stamping it would contaminate the very measurement meant to answer for
     that trigger — and would give a quiet hold a mover cooldown."""
     mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
-    p = _intraday_pipeline(universe=["AAPL", "MSFT"])
+    p = _intraday_pipeline(universe=["AAPL", "MSFT"], atr={"AAPL": 2.0})
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),  # mover
         "MSFT": _snapshot(last=100.2, prev=100.0),  # quiet hold

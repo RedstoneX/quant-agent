@@ -22,8 +22,8 @@ logger = logging.getLogger("src.pipeline")
 def record_dropped_name(owner, ctx, symbol: str, reason: str, **details) -> None:
     """One durable pipeline event per name the scan drops, once per run and reason.
 
-    stage=opportunity, outcome=dropped, reason below_move_threshold |
-    cooling_down | over_name_cap. Never raises: the scan must not fail on its
+    stage=opportunity, outcome=dropped, reason cooling_down | no_atr |
+    budget_refused. Never raises: the scan must not fail on its
     own bookkeeping. Deliberately NOT an intraday_evaluations row, because
     any row there starts the cooldown for the name.
     """
@@ -57,6 +57,7 @@ class IntradayCandidates:
         track_intraday_snapshot_ok=None,
         track_intraday_snapshot_miss=None,
         blocking_owner_session=None,
+        atr_for_symbol=None,
     ) -> None:
         self.config = config
         self.broker = broker
@@ -69,6 +70,7 @@ class IntradayCandidates:
         self._track_intraday_snapshot_ok = track_intraday_snapshot_ok
         self._track_intraday_snapshot_miss = track_intraday_snapshot_miss
         self._blocking_owner_session = blocking_owner_session
+        self._atr_for_symbol = atr_for_symbol
 
     def _run_intraday_opportunity_scan(self, ctx: RunContext) -> dict:
         """Concurrency-guarded wrapper around the scan body.
@@ -157,7 +159,11 @@ class IntradayCandidates:
         self,
         ctx: RunContext,
     ) -> tuple[list[tuple[str, float]], dict]:
-        """Cheap snapshot of who moved. No paid calls.
+        """Cheap snapshot of who moved, ranked by move / own ATR. No paid calls.
+
+        Returns (symbol, move_pct) pairs, largest move-in-ATR-multiples
+        first. Every name outside its cooldown with a readable ATR is
+        returned; there is no cap and no move threshold.
 
         Runs before the owner-lock wait so a contended morning/midday
         cannot vanish the mover list. A skip after wait names these
@@ -174,7 +180,7 @@ class IntradayCandidates:
         snapshots = self.broker.get_intraday_snapshots(universe) or {}
         if not snapshots:
             return [], {}
-        candidates: list[tuple[str, float]] = []
+        ranked: list[tuple[str, float, float]] = []
         for symbol in universe:
             snap = snapshots.get(symbol) or {}
             # item 120: the move that buys a PAID look has to be today's.
@@ -206,16 +212,6 @@ class IntradayCandidates:
             if prev <= 0:
                 continue
             move_pct = abs(last - prev) / prev * 100.0
-            if move_pct < cfg.move_threshold_pct:
-                record_dropped_name(
-                    self,
-                    ctx,
-                    symbol,
-                    "below_move_threshold",
-                    move_pct=move_pct,
-                    threshold_pct=cfg.move_threshold_pct,
-                )
-                continue
             if self._recently_intraday_evaluated(symbol, cfg.cooldown_hours):
                 record_dropped_name(
                     self,
@@ -227,9 +223,32 @@ class IntradayCandidates:
                     hours_since_last=self._hours_since_last_evaluation(symbol, cfg.cooldown_hours),
                 )
                 continue
-            candidates.append((symbol, move_pct))
-        candidates.sort(key=lambda t: -t[1])
+            # Rank by the move in the name's OWN range (ATR as a percent of
+            # the prior close), never a flat percentage: 2% on a 1%/day name
+            # outranks 4% on an 8%/day name. A name whose ATR cannot be read
+            # is dropped with a recorded reason, never given a made-up one.
+            atr_pct, move_atr = self._intraday_move_in_atr(move_pct, self._read_atr(symbol), prev)
+            if atr_pct is None or move_atr is None:
+                record_dropped_name(self, ctx, symbol, "no_atr", move_pct=move_pct)
+                continue
+            ranked.append((symbol, move_pct, move_atr))
+        # Largest move-in-own-ATR first. No cap and no move threshold: the
+        # paid-analysis budget (llm_cost_circuit) is the only stop, applied
+        # by the scan body in this order.
+        ranked.sort(key=lambda t: -t[2])
+        candidates = [(symbol, move_pct) for symbol, move_pct, _ in ranked]
         return candidates, snapshots
+
+    def _read_atr(self, symbol: str) -> float | None:
+        """The pipeline's own ATR(14) for `symbol`; None when unavailable or unreadable."""
+        reader = self._atr_for_symbol
+        if not callable(reader):
+            return None
+        try:
+            return reader(symbol)
+        except Exception as exc:  # noqa: BLE001 - recorded as no_atr by the caller
+            _site(self, "intraday_rank_atr", exc, context={"symbol": symbol}, log=logger)
+            return None
 
     @staticmethod
     def _intraday_move_in_atr(
