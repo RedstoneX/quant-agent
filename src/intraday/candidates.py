@@ -19,6 +19,24 @@ from src.pipeline_stages import _record_pipeline_event
 logger = logging.getLogger("src.pipeline")
 
 
+def record_dropped_name(owner, ctx, symbol: str, reason: str, **details) -> None:
+    """One durable pipeline event per name the scan drops, once per run and reason.
+
+    stage=opportunity, outcome=dropped, reason below_move_threshold |
+    cooling_down | over_name_cap. Never raises: the scan must not fail on its
+    own bookkeeping. Deliberately NOT an intraday_evaluations row, because
+    any row there starts the cooldown for the name.
+    """
+    seen = ctx.__dict__.setdefault("_dropped_seen", set())
+    if (symbol, reason) in seen:
+        return
+    seen.add((symbol, reason))
+    try:
+        _record_pipeline_event(owner, ctx, symbol, "opportunity", "dropped", reason, **details)
+    except Exception as exc:  # noqa: BLE001
+        _site(owner, "dropped_name_event", exc, context={"symbol": symbol, "reason": reason}, log=logger)
+
+
 class IntradayCandidates:
     """The paid scan's wrapper and its inputs: the process-locked entry, held-technical refresh, mover
     candidates, the ATR move context and the two skip records. Standalone, built from explicit
@@ -120,6 +138,21 @@ class IntradayCandidates:
             out.append(symbol)
         return out
 
+    def _hours_since_last_evaluation(self, symbol: str, cooldown_hours: float) -> float | None:
+        """Hours since this name's newest evaluation row; None when unreadable."""
+        from datetime import UTC, datetime
+
+        try:
+            rows = self.db.get_recent_intraday_evaluations(symbol, cooldown_hours=cooldown_hours)
+            if not isinstance(rows, list) or not rows:
+                return None
+            raw = str(rows[0]["timestamp"]).replace("T", " ")[:19]
+            then = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            return round((datetime.now(UTC) - then).total_seconds() / 3600.0, 3)
+        except Exception as exc:  # noqa: BLE001 - the reason is still recorded without the age
+            _site(self, "cooldown_age_read", exc, context={"symbol": symbol}, log=logger)
+            return None
+
     def _intraday_scan_mover_candidates(
         self,
         ctx: RunContext,
@@ -174,8 +207,25 @@ class IntradayCandidates:
                 continue
             move_pct = abs(last - prev) / prev * 100.0
             if move_pct < cfg.move_threshold_pct:
+                record_dropped_name(
+                    self,
+                    ctx,
+                    symbol,
+                    "below_move_threshold",
+                    move_pct=move_pct,
+                    threshold_pct=cfg.move_threshold_pct,
+                )
                 continue
             if self._recently_intraday_evaluated(symbol, cfg.cooldown_hours):
+                record_dropped_name(
+                    self,
+                    ctx,
+                    symbol,
+                    "cooling_down",
+                    move_pct=move_pct,
+                    cooldown_hours=cfg.cooldown_hours,
+                    hours_since_last=self._hours_since_last_evaluation(symbol, cfg.cooldown_hours),
+                )
                 continue
             candidates.append((symbol, move_pct))
         candidates.sort(key=lambda t: -t[1])
