@@ -36,6 +36,10 @@ import logging
 import math
 from datetime import datetime, timedelta
 
+from src.exits_parts.midday_gates import midday_pre_gates
+from src.exits_parts.midday_holding_discipline import midday_holding_discipline
+from src.exits_parts.midday_spent_trigger import midday_spent_trigger
+from src.exits_parts.midday_state import SKIP, MiddayLoop
 from src.models import ReasoningChain, TradeDecision
 from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
@@ -452,6 +456,14 @@ class ExitEngineMixin:
         # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
         # review must not buy the DB reads.
         hd_position_history: dict | None = None
+        # The per-symbol phases lifted into src/exits_parts/ read the values
+        # that are the same for every symbol of this pass from one object.
+        _loop = MiddayLoop(
+            owner=self, positions=positions, run_id=run_id,
+            metric_deltas=metric_deltas,
+            risk_vetoed_symbols=risk_vetoed_symbols,
+            already_trimmed=already_trimmed, acted_today=acted_today,
+        )
 
         for action_item in _actions_with_scan_fallback(
             best_by_symbol.values(), _scan_displaced, orders,
@@ -460,81 +472,7 @@ class ExitEngineMixin:
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
             symbol = action_item.get("symbol", "")
-            # Same-day trim discipline: a symbol that already had a sell-side
-            # action TODAY (midday REDUCE, force-delever, etc.) is off-limits for
-            # additional REDUCE / SELL on a SECOND session unless the LLM
-            # explicitly cites a hard trigger in the reason. TRAIL_STOP is
-            # exempt — adjusting a stop is not selling shares.
-            #
-            # 2026-05-04 AMZN: midday REDUCE 20 of 41 @ +12.4% on TARGET_BREACH,
-            # then close REDUCE 10 of 21 @ +13.8% on the SAME TARGET_BREACH
-            # flag = 73% one-day trim on a strengthening thesis. Mechanical
-            # double-application of one signal violates "good stocks are meant
-            # to be held".
-            # Phase 3.2 — a deterioration verdict may not contradict the
-            # reviewer's own recorded numbers. Vetoes ONLY a SELL/REDUCE/
-            # COVER whose stated reason claims the position is stalling
-            # while every metric that moved since the previous review
-            # improved. Exits on new information (news, earnings, regime,
-            # invalidation) are untouched, however good the numbers look —
-            # see src/risk/exit_guard.py. metric_deltas is already sign-
-            # corrected per symbol (see _build_position_facts), so COVER
-            # needs no extra handling here.
-            if act in ("SELL", "REDUCE", "COVER") and metric_deltas:
-                from src.risk.exit_guard import veto_contradicted_exit
-                deltas = metric_deltas.get(symbol)
-                if deltas is not None:
-                    veto = veto_contradicted_exit(
-                        act, action_item.get("reason", ""), deltas,
-                    )
-                    if veto:
-                        logger.warning("Exit guard: %s", veto)
-                        try:
-                            self.db.record_intraday_evaluation(
-                                symbol=symbol, run_id=run_id,
-                                status="exit_vetoed_contradicts_own_metrics",
-                                detail=veto[:500],
-                            )
-                            record_exit_guard(self, "exit_guard.metric_audit_write")
-                        except Exception as e:  # noqa: BLE001
-                            record_exit_guard(
-                                self,
-                                "exit_guard.metric_audit_write",
-                                e,
-                                logger,
-                                symbol=symbol,
-                                effect="audit row not written",
-                            )
-                        from src.risk.exit_refusal import CODE_CONTRADICTS_METRICS
-                        self._record_exit_refusal(
-                            symbol=symbol, run_id=run_id, action=act,
-                            code=CODE_CONTRADICTS_METRICS, dropped=True,
-                            detail=veto[:400], layer="metric_contradiction",
-                        )
-                        continue
-
-            # Phase 3.3 — EVERY exit must name a trigger, not just the second
-            # one on a symbol in a day.
-            #
-            # The gate below used to be conditioned on `symbol in
-            # already_trimmed`, so a position's FIRST sale of the day executed
-            # on soft reasoning entirely unchecked — and a first sale is almost
-            # every sale. Both of the exits the evening review graded
-            # "premature" on 2026-08-26 (EPD, MRVL) were first sales and sailed
-            # straight through.
-            #
-            # Failing closed here means HOLDING, and every position carries a
-            # broker-resident stop (AGENTS.md invariant 3), so the downside of
-            # a wrongly-blocked exit is bounded by that stop. The downside of a
-            # wrongly-allowed one is the pattern that emptied the book.
-            # Phase 3.4 — the AI Risk Manager reviewed these exits and
-            # rejected this one. Its authority over exits mirrors the veto it
-            # has always had over entries.
-            if act in ("SELL", "REDUCE", "COVER") and symbol in (risk_vetoed_symbols or set()):
-                logger.warning(
-                    "Position reviewer: skipping %s %s — vetoed by AI Risk",
-                    act, symbol,
-                )
+            if midday_pre_gates(_loop, action_item, act, symbol) is SKIP:
                 continue
 
             # Phase 3.6 — noise band on exits. A PRICE-DERIVED failure inside
@@ -837,194 +775,16 @@ class ExitEngineMixin:
                     reason_text if isinstance(reason_text, str) else str(reason_text or "")
                 )
 
-            # 2026-09-11 — and now: is the named trigger actually TRUE?
-            #
-            # The gate immediately above only proves the reason SAYS the
-            # words. Until this landed that was the whole of the midday /
-            # close check: "regime shift to risk-off; correlation breach
-            # across the book" executed a SELL on a structurally protected
-            # position on the strength of the phrasing, with no part of the
-            # system ever asking whether a regime shift had happened. The
-            # deterministic answer to that question already existed —
-            # `exit_guard.holding_discipline_claim_check` — but was wired
-            # only to the morning Portfolio-Manager path in
-            # `pipeline_stages.RiskStage`. Same function here, same
-            # semantics, assembled by `_holding_discipline_check_for_exit`.
-            #
-            # PROVABLY FALSE drops the exit (the morning path's own
-            # response, mirroring the existing gates on this loop).
-            # UNVERIFIABLE is recorded and ALLOWED THROUGH, unchanged from
-            # the morning path and deliberately: absence of proof is not
-            # proof, and refusing an exit on a claim we merely cannot check
-            # would trap the desk in a losing position — a far worse
-            # failure than the one being fixed. An infrastructure failure
-            # inside the check fails OPEN for the same reason, matching
-            # `_risk_review_exits`' disclosed posture on this path.
-            if act in ("SELL", "REDUCE", "COVER"):
-                if hd_position_history is None:
-                    try:
-                        hd_position_history = self._build_position_history(positions)
-                        record_exit_guard(self, "holding_discipline.position_history")
-                    except Exception as e:  # noqa: BLE001
-                        record_exit_guard(
-                            self,
-                            "holding_discipline.position_history",
-                            e,
-                            logger,
-                            symbol=symbol,
-                            effect="protection read without entry context",
-                        )
-                        hd_position_history = {}
-                try:
-                    hd_check = self._holding_discipline_check_for_exit(
-                        symbol=symbol, action=act, reason=reason_text,
-                        positions=positions, run_id=run_id,
-                        position_history=hd_position_history,
-                        # The STRUCTURED trigger, so the fact-check reads
-                        # the claim from the field the seat filled rather
-                        # than guessing it from the sentence. This is what
-                        # makes the 2026-09-16 "adverse news" shape
-                        # adjudicable at all.
-                        exit_trigger=action_item.get("exit_trigger"),
-                    )
-                    record_exit_guard(self, "holding_discipline.check")
-                except Exception as e:  # noqa: BLE001
-                    record_exit_guard(
-                        self,
-                        "holding_discipline.check",
-                        e,
-                        logger,
-                        symbol=symbol,
-                        effect="claim goes unverified rather than blocking",
-                    )
-                    hd_check = None
-                if hd_check is not None and hd_check.blocks:
-                    logger.warning(
-                        "Position reviewer: blocking %s %s — holding-"
-                        "discipline claim PROVEN FALSE. %s",
-                        act, symbol, hd_check.finding,
-                    )
-                    try:
-                        self.db.record_intraday_evaluation(
-                            symbol=symbol, run_id=run_id,
-                            status="exit_blocked_holding_discipline_claim_false",
-                            detail=(hd_check.finding or "")[:500],
-                        )
-                        record_exit_guard(self, "holding_discipline.audit_write_blocked")
-                    except Exception as e:  # noqa: BLE001
-                        record_exit_guard(
-                            self,
-                            "holding_discipline.audit_write_blocked",
-                            e,
-                            logger,
-                            symbol=symbol,
-                            effect="audit row not written",
-                        )
-                    from src.risk.exit_refusal import CODE_HOLDING_DISCIPLINE_FALSE
-                    self._record_exit_refusal(
-                        symbol=symbol, run_id=run_id, action=act,
-                        code=CODE_HOLDING_DISCIPLINE_FALSE, dropped=True,
-                        detail=(hd_check.finding or "")[:400],
-                        layer="holding_discipline",
-                    )
-                    continue
-                if hd_check is not None and hd_check.verdict == "unverifiable":
-                    # Audit trail only. NOT a block — see above.
-                    logger.warning("Holding discipline: %s", hd_check.finding)
-                    try:
-                        self.db.record_intraday_evaluation(
-                            symbol=symbol, run_id=run_id,
-                            status="holding_discipline_claim_unverified",
-                            detail=(hd_check.finding or "")[:500],
-                        )
-                        record_exit_guard(self, "holding_discipline.audit_write_unverified")
-                    except Exception as e:  # noqa: BLE001
-                        record_exit_guard(
-                            self,
-                            "holding_discipline.audit_write_unverified",
-                            e,
-                            logger,
-                            symbol=symbol,
-                            effect="audit row not written",
-                        )
-
-            # The same-day-trim gate that used to sit here is GONE, not
-            # relaxed: it read `symbol in already_trimmed and not
-            # _reason_cites_hard_trigger(...)`, and a completed unnamed-
-            # trigger judgment above now `continue`s on every untriggered
-            # SELL/REDUCE before control ever reaches it. (A recogniser that
-            # cannot run fails OPEN instead — that is uncertainty, not a
-            # completed "no".) Leaving the old gate in place would have been
-            # dead code wearing the costume of a safety check, which is worse
-            # than no check at all.
-            #
-            # That residual gap — hard triggers exempt, so a symbol trimmed
-            # at midday on "bearish earnings" could be trimmed again at close
-            # on the SAME "bearish earnings" — is CLOSED below by the
-            # per-event dedup it called for (board item 74, 2026-09-26). The
-            # warning here stays: a second sell-side action is still worth
-            # seeing in the log even when it is legitimate.
-            if act in ("SELL", "REDUCE", "COVER") and symbol in already_trimmed:
-                logger.warning(
-                    "Position reviewer: %s %s is a SECOND sell-side action "
-                    "today. Reason: %r",
-                    act, symbol, (action_item.get("reason") or "")[:160],
-                )
-            # Board item 74 — the RESIDUAL GAP above, now closed. The line is
-            # the RECORD the seat cites, never a cooldown or a score: same
-            # trigger + same cited record = spent, refuse; a different record
-            # = new information, execute and say so.
-            spent = spent_trigger_check(
-                action=act, symbol=symbol,
-                trigger=action_item.get("exit_trigger"),
-                evidence=action_item.get("trigger_evidence"),
-                acted_today=acted_today,
+            _hd_verdict, hd_position_history = midday_holding_discipline(
+                _loop, action_item, act, symbol, reason_text,
+                hd_position_history,
             )
-            if spent.verdict == "uncertain":
-                logger.error(
-                    "Spent-trigger check: today's acted-trigger record is "
-                    "unreadable — failing OPEN on %s %s. %s",
-                    act, symbol, spent.detail,
-                )
-            elif spent.blocks:
-                logger.warning(
-                    "Position reviewer: REFUSING %s %s — the trigger is "
-                    "SPENT. %s", act, symbol, spent.detail,
-                )
-                try:
-                    self.db.record_intraday_evaluation(
-                        symbol=symbol, run_id=run_id,
-                        status="exit_blocked_trigger_already_spent",
-                        detail=spent.detail[:500],
-                    )
-                    record_exit_guard(self, "spent_trigger.audit_write")
-                except Exception as e:  # noqa: BLE001
-                    record_exit_guard(
-                        self, "spent_trigger.audit_write", e, logger, symbol=symbol, effect="audit row not written",
-                    )
-                self._record_exit_refusal(
-                    symbol=symbol, run_id=run_id, action=act,
-                    code=spent.code, dropped=True,
-                    detail=spent.detail[:400], layer=SPENT_LAYER,
-                )
+            if _hd_verdict is SKIP:
                 continue
-            elif spent.verdict in ("new_evidence", "unidentifiable"):
-                # Allowed, NOT silent. `new_evidence` is the "genuinely worse
-                # reading" this item preserves; `unidentifiable` is a second
-                # cut naming no record, which this layer cannot prove is the
-                # same one and which the upstream substantiation layer
-                # already lets through — the two must not disagree about the
-                # identical input. Both are recorded for the evening grade.
-                logger.warning(
-                    "Position reviewer: %s %s is a second cut on the same "
-                    "trigger — allowed (%s). %s",
-                    act, symbol, spent.verdict, spent.detail,
-                )
-                self._record_exit_refusal(
-                    symbol=symbol, run_id=run_id, action=act,
-                    code=spent.code, dropped=False,
-                    detail=spent.detail[:400], layer=SPENT_LAYER,
-                )
+
+            spent = midday_spent_trigger(_loop, action_item, act, symbol)
+            if spent is SKIP:
+                continue
             existing = [p for p in positions if p.symbol == symbol]
             # COVER only matches a held SHORT (qty < 0); SELL / REDUCE /
             # TRAIL_STOP only match a held LONG (qty > 0) — same "the order
