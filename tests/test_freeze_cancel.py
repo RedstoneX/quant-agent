@@ -96,3 +96,36 @@ def test_sweep_runs_only_when_frozen_or_unknown(monkeypatch):
     assert fc.sweep_if_frozen(broker, "db") is None and broker.cancelled == []
     monkeypatch.setattr(fc.owner_flags, "read_flags", lambda db: fc.owner_flags.Flags(unknown=True))
     assert fc.sweep_if_frozen(broker, "db").cancelled == ["e1"]
+
+
+def test_scheduler_session_start_cancels_resting_entry_when_frozen(tmp_path):
+    """The seam: a scheduled session start with Freeze on cancels a resting buy entry."""
+    import sqlite3
+    from unittest.mock import MagicMock, patch
+
+    from src.owner_flags import PAUSE
+    from src.scheduler import TradingScheduler
+    from src.storage.schema.owner_intent_tables import apply
+
+    db = str(tmp_path / "desk.db")
+    conn = sqlite3.connect(db)
+    apply(conn)
+    conn.execute(
+        "INSERT INTO owner_intents (action, raised_at, state) VALUES (?, '2026-10-09T23:30:00Z', 'acted')", (PAUSE,)
+    )
+    conn.commit()
+    conn.close()
+
+    broker = FakeBroker(
+        [_pos("MSFT", "5")], [_order("entry", "AAPL", "buy", "10"), _order("stop", "MSFT", "sell", "5", "stop")]
+    )
+    broker.is_trading_day = lambda: True
+    pipeline = MagicMock(broker=broker)
+    pipeline.run_morning.return_value = {"status": "executed"}
+    with patch("src.scheduler.TradingPipeline", return_value=pipeline):
+        sched = TradingScheduler(MagicMock(storage=MagicMock(db_path=db)))
+    sched.notifier = MagicMock()
+    sched._run_safe(pipeline.run_morning, "morning")
+
+    assert broker.cancelled == ["entry"]
+    pipeline.run_morning.assert_called_once()
