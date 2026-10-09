@@ -1,30 +1,45 @@
-"""The single door honours the owner's PAUSE (panel instalment 1).
+"""The single door honours the owner's FREEZE (panel instalment 1).
 
-Every write-capable `AlpacaBroker` method is wrapped here, so a pause holds for
-every caller at once: exits, sizing and scale-in, rotation, de-lever and the
-coverage sweep's repairs all reach the broker through these methods.
+Every write-capable `AlpacaBroker` method is wrapped here, so a freeze holds
+for every caller at once: entries, scale-in, re-entry, rotation, de-lever and
+the coverage sweep's repairs all reach the broker through these methods.
 
-PAUSE blocks every desk-initiated order verb (PAUSE_BLOCKS), sells and closes
-included (owner ruling 2026-10-09): while paused only the broker-held stops act.
-Protective-stop upkeep and cancels keep running: a paused desk must not leave
-positions naked.
+FREEZE (owner ruling 2026-10-09 ~23:20 UTC, superseding the same-day "pause
+blocks sells too"): the desk keeps running and protecting what it holds --
+stops, trails and exits all work -- but opens NOTHING new. Freeze is also the
+future Sentinel's inbound seam: "a flag, never a call" (docs/FUTURE.md).
+
+The rule is position-aware. An order is an ENTRY when it opens or increases
+exposure, judged against the broker's own position read (`get_positions`,
+ungated) at the moment of the order:
+  - buy with no position or a long (open / add / re-entry), or buying more
+    than a short holds (flip);
+  - sell_short, always; a plain sell with no position or a short, or selling
+    more than a long holds (flip);
+  - every entry-limit re-peg (`replace_entry_limit`).
+Entries are refused while frozen. Exits (selling at most the long held,
+buying at most the short held, `close_position`), stop placement / amend /
+repair and cancels go through. An order whose side, size or position cannot
+be read is treated as an ENTRY (refused): when the door cannot tell, it opens
+nothing.
 
 If the flag cannot be read the state is UNKNOWN: "cannot tell whether the owner
-paused". UNKNOWN behaves exactly like paused (UNKNOWN_BLOCKS == PAUSE_BLOCKS),
+froze". UNKNOWN behaves exactly like frozen -- entries blocked, exits allowed --
 and the owner is alerted once when the flag becomes unreadable and once when it
 is readable again -- never once per order.
 
 An UNAIMED door (no desk session: tools, tests, after `release`) reads no flag
 and lets calls through; a desk session aimed at no database is UNKNOWN.
 `main.main` aims the door (at nothing) before anything else runs, so a desk
-session is never unaimed; an empty or missing path blocks like a pause.
+session is never unaimed; an empty or missing path blocks like a freeze.
 
 There is deliberately no per-position or per-symbol exclusion of any kind: the
 desk manages every position it holds. Owner actions are instructions it carries
 out, never an exemption from management.
 
 `install` REFUSES TO LOAD if a write-capable method has no entry in `_REFUSALS`,
-so a new broker verb cannot silently bypass the flag.
+so a new broker verb cannot silently bypass the flag. Stored keys keep the old
+names (PAUSE / RESUME, `paused`) so existing intent rows replay unchanged.
 """
 
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
@@ -46,8 +61,11 @@ WRITE_PREFIXES = (
     "shift_",
     "liquidate_",
 )
-PAUSE_BLOCKS = frozenset({"submit_order", "replace_entry_limit", "close_position"})
-UNKNOWN_BLOCKS = PAUSE_BLOCKS
+#: Always an entry: a re-peg only ever moves a working ENTRY limit.
+FREEZE_BLOCKS = frozenset({"replace_entry_limit"})
+#: Judged per order against the held position: entry refused, exit allowed.
+FREEZE_JUDGES = frozenset({"submit_order"})
+_QTY_EPS = 1e-9
 _HALT = lambda why: {"id": None, "status": "owner_flag_halted", "reason": why}  # noqa: E731
 
 # method -> the value returned in place of the call when it is refused
@@ -109,18 +127,66 @@ def _note_state(unknown: bool, name: str) -> None:
     _was_unknown = unknown
     if unknown:
         text = (
-            "Owner pause flag UNREADABLE: desk treats itself as PAUSED -- no "
-            f"desk orders (sells included) until it reads again (first refused: {name})."
+            "Owner Freeze flag UNREADABLE: desk treats itself as FROZEN -- no new "
+            "positions or adds until it reads again; exits and stops keep working "
+            f"(first checked: {name})."
         )
     else:
-        text = "Owner pause flag readable again: desk orders follow the flag as normal."
+        text = "Owner Freeze flag readable again: desk orders follow the flag as normal."
     try:
         unknown_state_recorder(text)
     except Exception as exc:  # noqa: BLE001 - alerting never decides
         record_guarded_pass(NO_LEDGER, "owner_flags_gate.unknown_state_recorder", exc)
 
 
-def _verdict(name):
+def _order_terms(args, kwargs):
+    """(symbol, qty, side) of a `submit_order` call, or None if unreadable."""
+    try:
+        symbol = kwargs["symbol"] if "symbol" in kwargs else args[0]
+        qty = float(kwargs["qty"] if "qty" in kwargs else args[1])
+        side = str(kwargs["side"] if "side" in kwargs else args[2]).lower()
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(symbol, str) or not qty > 0:
+        return None
+    return symbol, qty, side
+
+
+def _held_qty(broker, symbol):
+    """Signed quantity held in `symbol` (0.0 if none), or None if unreadable."""
+    want = symbol.strip().upper().replace("/", "")
+    try:
+        total = 0.0
+        for p in broker.get_positions():
+            if str(p.symbol).strip().upper().replace("/", "") == want:
+                total += float(p.qty)
+        return total
+    except Exception as exc:  # noqa: BLE001 - cannot tell: the caller treats it as an entry
+        logger.error("freeze gate cannot read positions (%s): treating the order as an entry", exc)
+        return None
+
+
+def is_entry(broker, name, args, kwargs) -> bool:
+    """True when this write opens or increases exposure (see module docstring)."""
+    if name in FREEZE_BLOCKS:
+        return True
+    if name not in FREEZE_JUDGES:
+        return False
+    terms = _order_terms(args, kwargs or {})
+    if terms is None:
+        return True
+    symbol, qty, side = terms
+    if side not in ("buy", "sell"):
+        return True  # sell_short (and anything unrecognised) opens or adds
+    held = _held_qty(broker, symbol)
+    if held is None:
+        return True
+    if side == "sell":
+        return not (held > 0 and qty <= held + _QTY_EPS)
+    return not (held < 0 and qty <= -held + _QTY_EPS)
+
+
+def _verdict(name, broker=None, args=(), kwargs=None):
     """Return a refusal reason, or None to let the call through."""
     global unknown_flag_state_calls
     if _db_path is _UNAIMED:
@@ -129,18 +195,19 @@ def _verdict(name):
     _note_state(flags.unknown, name)
     if flags.unknown:
         unknown_flag_state_calls += 1
-        why = "owner pause flag unreadable: treated as paused"
         logger.error("desk running on an UNKNOWN owner-flag state (%s)", name)
-        return why if name in UNKNOWN_BLOCKS else None
-    if flags.paused and name in PAUSE_BLOCKS:
-        return "desk is paused by the owner"
+        if is_entry(broker, name, args, kwargs):
+            return "owner Freeze flag unreadable: treated as frozen, no new exposure"
+        return None
+    if flags.frozen and is_entry(broker, name, args, kwargs):
+        return "desk is frozen by the owner: no new exposure"
     return None
 
 
 def _wrap(name, orig):
     @functools.wraps(orig)
     def gated(self, *args, **kwargs):
-        why = _verdict(name)
+        why = _verdict(name, self, args, kwargs)
         if why is not None:
             logger.warning("owner flag refused %s: %s", name, why)
             return _REFUSALS[name](why)
