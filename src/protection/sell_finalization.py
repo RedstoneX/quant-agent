@@ -43,8 +43,10 @@ class SellFinalization:
         persist_orphaned_protection_restore,
         reprotect_residual_after_partial_sell,
         derive_close_side_for_drain,
+        trim_book=None,
     ) -> None:
         self.broker = broker
+        self._trim_book = trim_book  # the broker CLASS (host-injected): src.protection imports no src.execution
         self.db = db
         self._TERMINAL_ORDER_STATUSES = terminal_order_statuses
         self._finalize_protection_after_sell = finalize_protection_after_sell

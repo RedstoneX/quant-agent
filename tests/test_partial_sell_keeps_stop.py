@@ -18,7 +18,8 @@ import pytest
 from src.execution.broker import AlpacaBroker
 from src.protection.protected_sell import ProtectedSell
 from src.protection.sell_finalization import SellFinalization
-from src.protection.trim_amend import finalize_trim_amend, trim_keeps_shares
+from src.execution.broker_parts.trim_book import trim_keeps_shares
+from src.protection.trim_amend import finalize_trim_amend
 from tests.fakes.holding_broker import OLD, SYM, HoldingBroker
 
 

@@ -9,7 +9,7 @@ Host attributes a body reads with a defaulted getattr or ASSIGNS go through `sta
 """
 
 import logging
-from src.protection.trim_amend import TrimAmend, refusal_reason, settle_book, trim_keeps_shares
+from src.protection.trim_amend import refusal_reason, trim_book_call
 from src.sentinel.guarded import record_guarded_pass
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -30,8 +30,10 @@ class ProtectedSell:
         write_ahead_protection_restore=None,
         cancel_stops_with_write_ahead=None,
         state=None,
+        trim_book=None,
     ) -> None:
         self.broker = broker
+        self._trim_book = trim_book  # the broker CLASS (host-injected): src.protection imports no src.execution
         self.db = db
         self._alert_owner_exit_declined = alert_owner_exit_declined
         self._order_accepted = order_accepted
@@ -169,7 +171,7 @@ class ProtectedSell:
                     **stop_side_kwargs,
                 )
             if kept_leg is not None:
-                settle_book(self.broker, symbol, side)
+                trim_book_call(self, "settle_trim_book", symbol, side)
 
         try:
             order = self.broker.submit_order(
@@ -272,15 +274,19 @@ class ProtectedSell:
     def _clear_stops_for(self, label, symbol, qty, position_qty_before_sell, side):
         """A trim KEEPS shares, so its stop is shrunk in place (whole-share
         PATCH, confirmed) rather than cancelled; only a DAY sliver the sell
-        needs is cancelled (src/protection/trim_amend.py). Every full exit
+        needs is cancelled (src/execution/broker_parts/trim_book.py, via the broker). Every full exit
         keeps cancel-all. Returns ``(ok, cancelled_specs, wal_row_id, kept_leg)``."""
-        if trim_keeps_shares(label, position_qty_before_sell, qty):
-            return TrimAmend(
-                broker=self.broker,
-                db=self.db,
+        if trim_book_call(self, "trim_keeps_shares", label, position_qty_before_sell, qty):
+            return trim_book_call(
+                self,
+                "clear_stops_for_trim",
+                symbol,
+                position_qty_before_sell,
+                qty,
+                side=side,
                 cancel_specs_with_write_ahead=self._cancel_specs_with_write_ahead,
                 state=self._state,
-            ).clear_for_trim(symbol, position_qty_before_sell, qty, side=side)
+            )
         stop_side_kwargs = {} if side == "sell" else {"side": side}
         ok, specs, wal_row_id = self._cancel_stops_with_write_ahead(
             symbol, position_qty_before_sell, **stop_side_kwargs
