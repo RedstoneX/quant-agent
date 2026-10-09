@@ -2,7 +2,8 @@
 
 The body is unchanged apart from `self` -> `owner` (the pipeline instance is
 now the first argument); `ExitEngineMixin._risk_review_exits` is a one-line shim with the
-same signature. Sell-side code: behaviour is identical.
+same signature. Sell-side code. Since 2026-10-09 the seat is advisory on
+exits: it records objections and never removes an exit (see the docstring).
 """
 import importlib
 import logging
@@ -27,8 +28,17 @@ def _risk_review_exits(
     `position_reviewer` and then executed, so the entire sell side skipped
     the veto layer the buy side has always had.
 
-    Returns `(vetoed_symbols, verdict_or_None)`. Symbols in the returned
-    set are dropped by the caller.
+    Returns `(vetoed_symbols, verdict_or_None)`. The set is now ALWAYS
+    empty: the shape is kept so the caller is unchanged.
+
+    **The seat is ADVISORY on exits (decided 2026-09-19, adversary-approved
+    again 2026-10-09).** PR #634 made it advisory on entries and left this
+    path vetoing; this closes that gap. A whole-book reject or a per-name
+    rejection no longer removes any exit: each objection is recorded per
+    stock with the seat's reason as `CODE_AI_RISK_OBJECTION`
+    (`dropped=False`) and logged, and the sell proceeds to the
+    deterministic fact gates. Measured before the change: in production
+    the seat never blocked an exit (5 reviews, all approvals).
 
     **Failure posture: FAIL OPEN on uncertainty.** An unparseable or
     errored Risk Manager lets the exits through, logged loudly. This
@@ -47,13 +57,14 @@ def _risk_review_exits(
     — this seat unavailable/unparseable/verdict-less, or the
     hard-trigger recogniser itself unable to run — fails OPEN on
     both layers, which is the 2026-08-27 ratification applied to the
-    pair. AI Risk remains a challenge seat: a parseable reject still
-    drops, and an approval cannot override a deterministic drop.
-    Every drop and every uncertainty fail-open writes an append-only
-    per-symbol reason (`src/risk/exit_refusal.py`).
+    pair. AI Risk remains a challenge seat but only an advisory one: a
+    parseable reject is recorded, not a drop, and an approval cannot
+    override a deterministic drop. Every drop, every objection and every
+    uncertainty fail-open writes an append-only per-symbol reason
+    (`src/risk/exit_refusal.py`).
 
     The fact gates — the noise band, the metric-contradiction veto and
-    `holding_discipline_claim_check` — remain the LAST LINE on data,
+    `holding_discipline_claim_check` — are the LAST LINE, on data,
     not on word-recognition. Each abstains somewhere: the trigger
     gate checks the words, not the truth of the claim; the noise
     band is bypassed by any reason citing external information (which
@@ -62,7 +73,8 @@ def _risk_review_exits(
     check looks only at a regime-flip or HIGH-conviction-bearish
     claim, only on a still-protected position, passing every
     unverifiable claim by design. A plausibly-worded, deterministically-
-    clean, wrong exit passes those. That gap is what this seat is for.
+    clean, wrong exit passes those. The seat's objection to such an exit
+    is now a durable per-stock record for review, not a block.
 
     **Ordering.** Named-trigger filtering now happens in this method
     before the model is called, so a dead Risk Manager cannot
@@ -71,11 +83,11 @@ def _risk_review_exits(
     invokes AFTER this method; they still run on every surviving exit
     before any order can reach the broker.
 
-    **The verdict's only live effect here is `rejected_symbols`.**
+    **The verdict's only effect here is the record it leaves**
+    (`approved` / `rejected_symbols` become objection or approval rows).
     `modifications` and `scale_all_buys` are applied by
     `_apply_risk_modifications`, which is called ONLY from the morning
-    `RiskStage` (`src/pipeline_stages.py`); this method returns a veto set
-    and reads neither.
+    `RiskStage` (`src/pipeline_stages.py`); this method reads neither.
 
     **Since 2026-09-14 they are no longer emitted at all here.** The seat
     answers `ExitRiskVerdict`, which is `RiskVerdict` without those two
@@ -106,7 +118,7 @@ def _risk_review_exits(
         ExitReviewChain, PortfolioDecision, TradeDecision,
     )
     from src.risk.exit_refusal import (
-        CODE_AI_RISK_REJECT,
+        CODE_AI_RISK_OBJECTION,
         CODE_AI_RISK_UNAVAILABLE,
         CODE_HARD_TRIGGER_UNCERTAIN,
         CODE_UNRECOGNIZED_TRIGGER,
@@ -312,60 +324,47 @@ def _risk_review_exits(
             )
         return set(), None
 
-    # Phase 10.1 — the same granularity split as the morning plan, on the
-    # exit side: `approved=False` still vetoes EVERY exit (the book is
-    # what failed), while a per-symbol refusal vetoes only the exit it
-    # names and lets the other exits through. Empty `rejected_symbols`
-    # (every historical verdict, and any model that never emits the
-    # field) reproduces the previous behaviour exactly.
+    # 2026-09-19 decision (adversary-approved again 2026-10-09): the seat
+    # is ADVISORY on exits, as PR #634 already made it on entries. A
+    # whole-book reject (`approved=False`) or a per-symbol rejection no
+    # longer removes any exit; each objection is recorded durably per
+    # stock, with the seat's reason, as `CODE_AI_RISK_OBJECTION`
+    # (`dropped=False`), so a reader can tell an objection that did not
+    # stop the sell from a refusal that did.
     rejections = verdict.rejections_by_symbol()
     if verdict.approved:
-        veto_reasons = {
+        objection_reasons = {
             d.symbol: rejections[d.symbol.strip().upper()]
             for d in decisions if d.symbol.strip().upper() in rejections
         }
-        if not veto_reasons:
-            logger.info(
-                "AI Risk approved %d exit(s): %s",
-                len(decisions), (verdict.reasoning or "")[:200],
-            )
-            owner._record_exit_review_approvals(
-                decisions, set(), verdict, run_id=run_id,
-                original_action_by_symbol=original_action_by_symbol,
-            )
-            return set(), verdict
     else:
-        veto_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
+        objection_reasons = {d.symbol: (verdict.reasoning or "") for d in decisions}
 
-    vetoed = set(veto_reasons)
-    logger.warning(
-        "AI Risk REJECTED %d of %d exit(s) %s — holding instead. Reason: %s",
-        len(vetoed), len(decisions), sorted(vetoed),
-        (verdict.reasoning or "")[:300],
-    )
-    for symbol in sorted(vetoed):
-        try:
-            owner.db.record_intraday_evaluation(
-                symbol=symbol, run_id=run_id,
-                status="exit_vetoed_by_ai_risk",
-                detail=(veto_reasons[symbol] or "")[:400],
-            )
-            record_exit_guard(owner, "exit_review.veto_audit_write")
-        except Exception as e:  # noqa: BLE001
-            record_exit_guard(
-                owner, "exit_review.veto_audit_write", e, logger, symbol=symbol, effect="veto audit row not written",
-            )
-        owner._record_exit_refusal(
-            symbol=symbol, run_id=run_id,
-            action=original_action_by_symbol.get(symbol, "SELL"),
-            code=CODE_AI_RISK_REJECT, dropped=True,
-            detail=(veto_reasons[symbol] or "")[:400],
-            layer="ai_risk",
+    if not objection_reasons:
+        logger.info(
+            "AI Risk approved %d exit(s): %s",
+            len(decisions), (verdict.reasoning or "")[:200],
         )
-    # The exits the seat let through beside the ones it vetoed.
+    else:
+        objected = sorted(objection_reasons)
+        logger.warning(
+            "AI Risk OBJECTED to %d of %d exit(s) %s — advisory only, the "
+            "sell(s) proceed to the fact gates. Reason: %s",
+            len(objected), len(decisions), objected,
+            (verdict.reasoning or "")[:300],
+        )
+        for symbol in objected:
+            owner._record_exit_refusal(
+                symbol=symbol, run_id=run_id,
+                action=original_action_by_symbol.get(symbol, "SELL"),
+                code=CODE_AI_RISK_OBJECTION, dropped=False,
+                detail=(objection_reasons[symbol] or "")[:400],
+                layer="ai_risk",
+            )
+    # The exits the seat approved, beside the ones it objected to (an
+    # objection is not an approval, so those are excluded here).
     owner._record_exit_review_approvals(
-        decisions, vetoed, verdict, run_id=run_id,
+        decisions, set(objection_reasons), verdict, run_id=run_id,
         original_action_by_symbol=original_action_by_symbol,
     )
-    return vetoed, verdict
-
+    return set(), verdict

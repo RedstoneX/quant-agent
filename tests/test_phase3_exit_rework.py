@@ -770,12 +770,14 @@ def _risk_pipeline(verdict=None, raises=False):
     return pipeline
 
 
-def test_ai_risk_can_veto_an_exit():
+def test_ai_risk_reject_is_advisory_on_an_exit():
+    # 2026-09-19 decision: the seat may not block an exit; its reject is
+    # recorded as an objection and the sell proceeds.
     pipeline = _risk_pipeline(_verdict(False, "thesis is not actually broken"))
     vetoed, verdict = pipeline._risk_review_exits(
         _review_with(), [_position("AAA")], run_id="r1", total_value=100_000.0,
     )
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     assert verdict is not None and verdict.approved is False
 
 

@@ -19,7 +19,7 @@ import yaml
 from src.pipeline import TradingPipeline, _reason_cites_hard_trigger
 from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
 from src.risk.exit_refusal import (
-    CODE_AI_RISK_REJECT,
+    CODE_AI_RISK_OBJECTION,
     CODE_AI_RISK_UNAVAILABLE,
     CODE_HARD_TRIGGER_UNCERTAIN,
     CODE_UNRECOGNIZED_TRIGGER,
@@ -244,10 +244,10 @@ def test_parseable_ai_reject_of_a_cover_records_cover_not_sell():
         _review_with(action="COVER", reason="thesis_invalid_if triggered"),
         [_position("AAA", qty=-10)], run_id="r1", total_value=100_000.0,
     )
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     payloads = _payloads(pipeline)
     assert any(
-        p["code"] == CODE_AI_RISK_REJECT and p["dropped"] is True
+        p["code"] == CODE_AI_RISK_OBJECTION and p["dropped"] is False
         and p.get("action") == "COVER"
         for p in payloads
     )

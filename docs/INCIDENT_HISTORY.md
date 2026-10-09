@@ -22,6 +22,30 @@ what would catch it next time.
 
 ---
 
+### 2026-10-09 — The AI risk seat could still block a sell, against a decision made three weeks earlier
+
+**In plain words:** the desk had decided on 2026-09-19 that the AI risk
+reviewer may question a sale but never stop one; the buy side was changed to
+match, the sell side never was.
+
+**What was wrong [measured on main]:** the exit review still removed every
+midday/close exit when the seat rejected the whole book, and removed one exit
+when it rejected that name. In production it never actually did [measured:
+5 exit reviews, all approvals], so no sale was ever held by it.
+
+**What changed:** a rejection now removes nothing. Each objection is written
+per stock, with the seat's reason, to the same append-only exit record as
+every refusal, under its own code (`ai_risk_objection_advisory`,
+`dropped=False`), so an objection that did not stop the sell cannot be
+mistaken for a refusal that did. The old `ai_risk_reject` code is kept only to
+name historical rows. Unchanged: the code-owned named-trigger drop before the
+seat, fail-open when the seat is unavailable, and every fact gate that runs
+afterwards (noise band, metric contradiction, holding-discipline claim).
+Earlier entries below that list "the risk-manager exit veto" among the things
+that can hold a sale describe the desk as it was then.
+
+---
+
 ### 2026-10-01 — Every order now carries a deterministic `client_order_id` (idempotent submission)
 
 **Defect [measured on main]:** `client_order_id` appeared zero times in

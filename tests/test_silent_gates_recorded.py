@@ -495,8 +495,9 @@ def test_the_exits_let_through_beside_a_veto_are_recorded_too():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     rows = _exit_rows(pipeline)
-    assert rows["AAA"]["code"] == "ai_risk_reject"
+    assert rows["AAA"]["code"] == "ai_risk_objection_advisory"
+    assert rows["AAA"]["dropped"] is False
     assert rows["BBB"]["code"] == "ai_risk_approved"
     assert rows["BBB"]["dropped"] is False

@@ -669,7 +669,25 @@ def _two_exits():
     )
 
 
-def test_a_per_symbol_refusal_vetoes_only_that_exit():
+def _objection_rows(pipeline):
+    """`exit_refusal` rows carrying the advisory-objection code, by symbol."""
+    import json
+
+    from src.risk.exit_refusal import CODE_AI_RISK_OBJECTION, EXIT_REFUSAL_KIND
+
+    rows = {}
+    for c in pipeline.db.insert_specialist_evidence.call_args_list:
+        if c.kwargs.get("kind") != EXIT_REFUSAL_KIND:
+            continue
+        payload = json.loads(c.kwargs["evidence_json"])
+        if payload["code"] == CODE_AI_RISK_OBJECTION:
+            rows[c.kwargs["symbol"]] = payload
+    return rows
+
+
+def test_a_per_symbol_refusal_is_advisory_on_that_exit():
+    # 2026-09-19 decision: the seat may not block an exit. A per-name
+    # rejection now proceeds and leaves that name's own objection row.
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(),
         rejected_symbols=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
@@ -682,15 +700,17 @@ def test_a_per_symbol_refusal_vetoes_only_that_exit():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA"}
+    assert vetoed == set()
     assert returned is verdict
-    detail = pipeline.db.record_intraday_evaluation.call_args.kwargs["detail"]
-    assert detail == "invalidation not confirmed", (
-        "the vetoed exit must record ITS OWN reason, not the run narrative"
+    rows = _objection_rows(pipeline)
+    assert set(rows) == {"AAA"}
+    assert rows["AAA"]["dropped"] is False
+    assert rows["AAA"]["detail"] == "invalidation not confirmed", (
+        "the objected exit must record ITS OWN reason, not the run narrative"
     )
 
 
-def test_book_level_veto_still_holds_every_exit():
+def test_book_level_reject_holds_no_exit_and_records_each():
     verdict = RiskVerdict(
         approved=False, reasoning_chain=_rc(),
         reasoning="drawdown state — hold everything",
@@ -702,7 +722,8 @@ def test_book_level_veto_still_holds_every_exit():
         run_id="r1", total_value=100_000.0,
     )
 
-    assert vetoed == {"AAA", "BBB"}
+    assert vetoed == set()
+    assert set(_objection_rows(pipeline)) == {"AAA", "BBB"}
 
 
 # ---------------------------------------------------------------------------
