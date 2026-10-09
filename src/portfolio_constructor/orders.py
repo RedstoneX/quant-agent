@@ -52,10 +52,8 @@ from src.models import (
     stated_soft_exit,
 )
 from src.risk.constants import (
-    REWARD_RISK_PARITY,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
-    reward_risk_parity_refuses,
 )
 
 from src.portfolio_constructor.config import logger  # the package logger, named as before the split

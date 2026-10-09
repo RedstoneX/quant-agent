@@ -17,7 +17,6 @@ src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT	src/pipeline_earnings
 src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]	src/pipeline.py::TradingPipeline._collab	no_mention
 src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT	src/pipeline_sizing.py@`# connected the two, so this independent recheck`	dead
 src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE	src/pipeline_stages.py@`STARTER_POSITION_RISK_PCT,`	dead
-src.portfolio_constructor.config.ConstructorConfig.min_risk_pct	src/risk/constants.py@`and it is the unique point on the scale that can`	no_mention
 src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
 src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[0][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
 src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
@@ -44,7 +43,6 @@ src.prompt_facts.review.exits.ReviewExits._build_recent_loss_pits(lookback_days)
 src.prompt_facts.review.exits.ReviewExits._build_recent_missed_lessons(lookback_days)	docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`	no_mention
 src.risk.budget.allocate_risk_budget(cluster_share_pct)	src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message	no_mention
 src.risk.constants.STARTER_POSITION_RISK_PCT	docs/INCIDENT_HISTORY.md@`He was right. The work to that point had been co`	no_mention
-src.risk.constants.STARTER_POSITION_RISK_PCT	src/risk/constants.py@`a number. Any higher figure (1.5, 2.0) would be`	no_mention
 src.risk.rules.DESK_INVESTED_TARGET_PCT	src/risk/rules.py@`# sitting in T-bills or any other positions that`	dead
 src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)	src/pipeline.py::TradingPipeline._run_morning_body	no_mention
 src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)	src/pipeline_config_build.py::_threaded_risk_settings	no_mention

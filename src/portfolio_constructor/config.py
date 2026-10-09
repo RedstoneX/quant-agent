@@ -52,10 +52,8 @@ from src.models import (
     stated_soft_exit,
 )
 from src.risk.constants import (
-    REWARD_RISK_PARITY,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
-    reward_risk_parity_refuses,
 )
 
 logger = logging.getLogger(
@@ -574,14 +572,6 @@ STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 STOP_REFUSAL_GEOMETRY_AT_KEPT = "reward_risk_below_floor_at_kept_stop"
 STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
 
-#: Owner ruling 2026-10-01 — "For now, let's refuse a bad risk reward ratio.
-#: See if that improves the desk purchases." Reward below risk REFUSES the
-#: purchase outright: no resize, no change to any stop, target or trailing
-#: behaviour. Distinct from the four GEOMETRY codes above, which belonged to
-#: the retired 1.5 floor measured inside the stop-widening path; this one is
-#: measured at the point where the trade as a whole is accepted or declined,
-#: so the refusal is not a function of stop width wearing a new name.
-STOP_REFUSAL_REWARD_BELOW_RISK = "reward_below_risk_at_parity"
 #: NOT a refusal and NOT a resize — a recording, and the only thing board
 #: item 223 changed. Ruled on the RISK ROUTE 2026-10-01 on the adversary's
 #: measurement -- NOT an owner ruling, which the item itself permits ("the

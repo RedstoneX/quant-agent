@@ -13,9 +13,6 @@ inside ordinary noise.
 """
 
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
-from src.portfolio_constructor import (  # noqa: F401
-    STOP_REFUSAL_REWARD_BELOW_RISK,
-)
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 
 
@@ -1138,7 +1135,7 @@ def test_the_atr_multiple_is_not_one_constant_for_every_trade():
     assert stop("range", "risk-off") == 93.66
 
 
-def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
+def test_widening_a_stop_into_a_sub_parity_payoff_still_ships():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** The target still does
     not move when the stop does, so the reward:risk still falls — and it is
     still computed and logged. What changed is that a range trade is no
@@ -1160,18 +1157,13 @@ def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
         total_value=EQUITY,
         price_map={"MSFT": 100.0},
     )
-    # AMENDED 2026-10-01 (owner ruling, board item 218). 4.00 of reward
-    # against 5.2875 of risk is 0.76 — below parity — so the purchase is
-    # now refused. Stated truthfully: the stop here HAS been widened, and
-    # the refusal reads that final widened stop, so for this name the
-    # refusal IS a function of the widened width. That is the departure
-    # the owner's ruling makes from "a wide stop is answered by size" —
-    # the widened stop is the risk the desk actually transacts. What did
-    # NOT change: no stop, target or trailing behaviour moved, and nothing
-    # was resized within this name.
-    assert decisions == []
-    assert constructor.last_refusals["MSFT"]["refusal"] == STOP_REFUSAL_REWARD_BELOW_RISK
-    assert "below parity" in constructor.last_refusals["MSFT"]["detail"]
+    # 2026-10-09 (owner mandate, docs/OUTCOME.md): the 2026-10-01 parity
+    # refusal is deleted. 4.00 of reward against 5.2875 of risk is 0.76 and
+    # the trade SHIPS: the reward side is a forecast level the desk never
+    # sells at, and the widened stop plus the risk caps bound the loss.
+    assert len(decisions) == 1
+    assert "MSFT" not in constructor.last_refusals
+    assert decisions[0].stop_loss < 97.6
 
 
 def test_no_volatility_reading_derives_structural_stop_and_holds():

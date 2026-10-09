@@ -12,11 +12,9 @@ from __future__ import annotations
 import logging
 
 from src.portfolio_constructor.config import (
-    STOP_REFUSAL_REWARD_BELOW_RISK,
     SUBFLOOR_RISK_OBSERVED,
     _SUBFLOOR_RISK_STAGE,
 )
-from src.risk.constants import REWARD_RISK_PARITY
 
 #: One row per computed-vs-analyst target comparison (ledger row
 #: `target_divergence_warn_pct`). An OBSERVATION, never a refusal: it carries
@@ -33,41 +31,6 @@ class TradeRefusalRecorder:
 
     def __init__(self, db) -> None:
         self.db = db
-
-    def record_parity_refusal(
-        self,
-        symbol,
-        direction,
-        entry,
-        stop,
-        level,
-        ratio,
-        *,
-        stage="construction",
-    ):
-        """Write ONE parity refusal to the durable table. Never raises."""
-        db = self.db
-        if db is None:
-            return
-        try:
-            db.insert_trade_refusal(
-                symbol=symbol,
-                direction=direction,
-                refusal=STOP_REFUSAL_REWARD_BELOW_RISK,
-                entry_price=float(entry),
-                stop_price=float(stop),
-                level_used=float(level),
-                reward_risk=float(ratio),
-                threshold=float(REWARD_RISK_PARITY),
-                level_was_measured=True,
-                stage=stage,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Constructor: parity refusal row write failed for %s: %s",
-                symbol,
-                e,
-            )
 
     def record_subfloor_risk_target(
         self,

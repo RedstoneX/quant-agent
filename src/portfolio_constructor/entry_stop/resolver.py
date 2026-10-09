@@ -8,7 +8,7 @@ import math
 import re
 from src.data.levels import FAULT_NO_ENTRY, FAULT_NO_PRICE, derive_structural_target, touch_probability
 from src.models import TargetPosition, TechAnalysisResult, TradeDecision
-from src.risk.constants import REWARD_RISK_PARITY, reward_risk_floor_applies
+from src.risk.constants import reward_risk_floor_applies
 import src.portfolio_constructor.absolute_floor_record as absolute_floor_record
 from src.portfolio_constructor.config import logger
 from src.portfolio_constructor.config import (
@@ -23,7 +23,6 @@ from src.portfolio_constructor.config import (
     STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
     STOP_REFUSAL_NO_VALID_STOP,
     STOP_REFUSAL_NO_STRUCTURAL_TARGET,
-    STOP_REFUSAL_REWARD_BELOW_RISK,
 )
 
 
@@ -34,10 +33,7 @@ class EntryStopResolver:
         cfg,
         derive_target,
         note_data_fault,
-        note_parity_standdown,
         note_refusal,
-        parity_verdict,
-        record_parity_refusal,
         resolve_stop,
         unpriceable_symbols,
         reward_risk_at,
@@ -49,10 +45,7 @@ class EntryStopResolver:
         self.cfg = cfg
         self._derive_target = derive_target
         self._note_data_fault = note_data_fault
-        self._note_parity_standdown = note_parity_standdown
         self._note_refusal = note_refusal
-        self._parity_verdict = parity_verdict
-        self._record_parity_refusal = record_parity_refusal
         self._resolve_stop = resolve_stop
         self._unpriceable_symbols = unpriceable_symbols
         self._reward_risk_at = reward_risk_at
@@ -213,104 +206,6 @@ class EntryStopResolver:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss <= entry_price
         else:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price
-        if not invalid:
-            # ---- Owner ruling 2026-10-01: refuse arithmetically losing
-            # geometry ---------------------------------------------------
-            # "For now, let's refuse a bad risk reward ratio. See if that
-            # improves the desk purchases." This SUPERSEDES the previous
-            # standing rule, which was that a wide stop ships and is
-            # answered by a smaller position. Here, and only here: the
-            # trade is refused outright. Nothing is resized, and no stop,
-            # target or trailing behaviour changes.
-            #
-            # It sits at this line on purpose. Inside
-            # `_widen_stop_past_noise` the comparison would key off the
-            # WIDENED stop, which makes the refusal a function of stop
-            # width — the deleted width gate (board item 56) wearing a new
-            # name. This is the point where the trade as a whole is
-            # accepted or declined, on its own final entry, final stop and
-            # derived target.
-            #
-            # Threshold is PARITY and nothing above it; see
-            # `REWARD_RISK_PARITY` for why that is the only line needing no
-            # invented number, and for the caveat the owner accepted: the
-            # risk side is a real transactable price, the reward side is a
-            # forecast level this desk never actually sells at (it rides a
-            # trailing stop out), so the ratio compares one real number
-            # against one estimated one.
-            # WHERE THIS READS ITS RISK, stated truthfully (coordinator
-            # ruling 2026-10-01). `_widen_stop_past_noise` has already run
-            # a few lines above, so `stop_loss` here is the FINAL stop
-            # INCLUDING any widening, and for a widened name this refusal
-            # is therefore a function of the widened stop width. That is
-            # deliberate and it is a departure from the old "a wide stop
-            # ships and is answered by size" rule, which the owner's
-            # 2026-10-01 ruling supersedes for this case: the widened stop
-            # is the risk the desk will actually transact, and measuring
-            # the narrower pre-widening stop would judge a trade nobody
-            # takes. The earlier claim here that the refusal is "not a
-            # function of stop width" was false for every widened name and
-            # has been removed.
-            #
-            # WHAT IT READS AS REWARD: `level_used`, the structural level
-            # the desk's own scan found, not `derivation.price`, which is
-            # that level after the horizon reach cap. See `_parity_verdict`
-            # for the three stand-downs and why each one is a number the
-            # code does not believe.
-            refuse_rr, rr_ratio, standdown = self._parity_verdict(
-                entry_price,
-                stop_loss,
-                derivation,
-                is_short,
-            )
-            if standdown is not None:
-                self._note_parity_standdown(
-                    target.symbol,
-                    target.direction,
-                    standdown,
-                    derivation,
-                )
-            if refuse_rr:
-                level = float(derivation.level_used)
-                # Durable, per-symbol, numbers in their OWN fields.
-                self._record_parity_refusal(
-                    target.symbol,
-                    target.direction,
-                    entry_price,
-                    stop_loss,
-                    level,
-                    rr_ratio,
-                )
-                self._note_refusal(
-                    target.symbol,
-                    target.direction,
-                    STOP_REFUSAL_REWARD_BELOW_RISK,
-                    f"reward:risk {rr_ratio:.2f} is below parity "
-                    f"({REWARD_RISK_PARITY:.2f}): entry ${entry_price:,.2f}, "
-                    f"final stop ${stop_loss:,.2f} INCLUDING any widening "
-                    f"(risking ${abs(entry_price - stop_loss):,.2f}/share) "
-                    f"against the nearest structural level at ${level:,.2f} "
-                    f"(making ${abs(level - entry_price):,.2f}/share). Owner "
-                    f"ruling 2026-10-01 refuses the purchase outright rather "
-                    f"than shrinking it. Two caveats recorded with the "
-                    f"number: the reward side is a forecast level the desk "
-                    f"never actually sells at, and refusing a name here "
-                    f"happens before book-level risk rationing, so the "
-                    f"surviving names do take a larger share of the "
-                    f"session's at-risk budget — nothing is resized within "
-                    f"this name, but the BOOK is.",
-                )
-                logger.warning(
-                    "Constructor: %s %s refused — reward:risk %.2f below "
-                    "parity (entry=$%.2f, final stop=$%.2f, level=$%.2f)",
-                    "SHORT" if is_short else "BUY",
-                    target.symbol,
-                    rr_ratio,
-                    entry_price,
-                    stop_loss,
-                    level,
-                )
-                return (None, None)
         if invalid:
             # Board item 10 (2026-09-14, second pass). THE BACKSTOP. Every
             # named stop refusal in `_widen_stop_past_noise` arrives here as
@@ -457,60 +352,6 @@ class EntryStopResolver:
             # ranking consumes) rather than a None the gate reads as
             # "ineligible".
             return None
-        # ONE DEFINITION (coordinator ruling 2026-10-01). The parity
-        # verdict used to run only at construction, so a sub-parity name
-        # could rank here, be proposed by the PM, and then die silently
-        # downstream — the precise divergence this method exists to close.
-        # It runs here too, against the SAME numerator, and files the SAME
-        # refusal code, so the PM sees the name as refused BY CODE (the
-        # `last_refusals` snapshot DecisionStage already reads) instead of
-        # as a number it may rank.
-        refuse_rr, rr_ratio, standdown = self._parity_verdict(
-            entry_price,
-            honoured_stop,
-            derivation,
-            is_short,
-        )
-        if standdown is not None:
-            self._note_parity_standdown(
-                analysis.symbol,
-                direction,
-                standdown,
-                derivation,
-            )
-        if refuse_rr:
-            level = float(derivation.level_used)
-            self._record_parity_refusal(
-                analysis.symbol,
-                direction,
-                entry_price,
-                honoured_stop,
-                level,
-                rr_ratio,
-                stage="preview",
-            )
-            self._note_refusal(
-                analysis.symbol,
-                direction,
-                STOP_REFUSAL_REWARD_BELOW_RISK,
-                f"reward:risk {rr_ratio:.2f} is below parity "
-                f"({REWARD_RISK_PARITY:.2f}) at PM-eligibility preview: "
-                f"entry ${entry_price:,.2f}, final stop "
-                f"${honoured_stop:,.2f} INCLUDING any widening, structural "
-                f"level ${level:,.2f}. Owner ruling 2026-10-01.",
-            )
-            # The real number is still RETURNED, deliberately. This
-            # method's contract is "None means cannot judge", and callers
-            # are documented as forbidden to read a None as "sub-floor";
-            # returning None here would have broken that contract and two
-            # guard tests that pin a weak-but-real range payoff yielding
-            # its honest number for RANKING. What the ruling requires is
-            # that the name not die SILENTLY, and it no longer does: the
-            # refusal is filed by code into `last_refusals`, which
-            # DecisionStage already snapshots at PM-eligibility time, and
-            # into the durable `trade_refusals` table. One definition of
-            # the verdict, used by both stages; the ranking number stays a
-            # ranking number.
         ratio = self._reward_risk_at(
             entry_price,
             honoured_stop,

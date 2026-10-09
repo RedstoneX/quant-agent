@@ -54,10 +54,8 @@ from src.models import (
     stated_soft_exit,
 )
 from src.risk.constants import (
-    REWARD_RISK_PARITY,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
-    reward_risk_parity_refuses,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +106,6 @@ from src.portfolio_constructor.config import (
     STOP_REFUSAL_GEOMETRY_AT_LEVEL,
     STOP_REFUSAL_GEOMETRY_AT_KEPT,
     STOP_REFUSAL_GEOMETRY_UNMEASURABLE,
-    STOP_REFUSAL_REWARD_BELOW_RISK,
     SUBFLOOR_RISK_OBSERVED,
     _SUBFLOOR_RISK_STAGE,
     STOP_PERMIT_SUBFLOOR_CATALYST,
@@ -130,16 +127,12 @@ class PortfolioConstructor:
     def __init__(self, config: ConstructorConfig | None = None, recorder=None):
         self.cfg = config or ConstructorConfig()
         hold_parts(self, delegate_owner=PortfolioConstructor)  # parts HELD, not inherited; wiring in assembly.py
-        # Owner ruling 2026-10-01 (board item 218) made the parity refusal a
-        # TRIAL — "see if that improves the desk purchases" — and a trial
-        # judged by grepping English prose out of an in-memory dict cannot
-        # be judged at all. `recorder` is optional so every existing
-        # caller and every test still constructs this class with no
-        # arguments; when the composition root supplies one (built around
-        # the db), each refusal is written to the `trade_refusals` table
-        # with the numbers in their OWN columns, never as a sentence.
+        # `recorder` is optional so every existing caller and every test
+        # still constructs this class with no arguments; when the
+        # composition root supplies one (built around the db), refusals and
+        # observations are written to the `trade_refusals` table with the
+        # numbers in their OWN columns, never as a sentence.
         self.refusal_recorder = recorder
-        self.last_parity_standdowns: dict[str, dict] = {}
         # Populated fresh by every `construct_orders` call — see
         # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
         # ..."} for every target dropped THIS call. Empty, never absent, so
@@ -226,48 +219,6 @@ class PortfolioConstructor:
     def drain_refusals(self) -> dict[str, dict[str, str]]:
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
         return refusal_log.drain_refusals(self)
-
-    #: Parity stand-downs (owner ruling 2026-10-01, board item 218).
-    #: {SYMBOL: {"reason", "detail", "direction"}} for every name the parity
-    #: refusal declined to judge because the reward side was not a number
-    #: the code itself believes. Kept SEPARATE from `last_refusals` because a
-    #: stand-down is not a refusal: the trade ships. It is recorded so the
-    #: trial can report how often the gate had no opinion, which is the
-    #: difference between "parity refused little" and "parity ran rarely".
-    PARITY_STANDDOWN_NO_LEVEL = "no_structural_level_found"
-    PARITY_STANDDOWN_LEVEL_PAST_REACH = "level_past_horizon_reach"
-    PARITY_STANDDOWN_REWARD_INSIDE_NOISE = "reward_inside_noise_floor"
-
-    def _parity_verdict(self, entry_price, stop_loss, derivation, is_short):
-        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
-        return refusal_log._parity_verdict(self, entry_price, stop_loss, derivation, is_short)
-
-    def _note_parity_standdown(self, symbol, direction, reason, derivation):
-        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
-        refusal_log._note_parity_standdown(self, symbol, direction, reason, derivation)
-
-    def _record_parity_refusal(
-        self,
-        symbol,
-        direction,
-        entry,
-        stop,
-        level,
-        ratio,
-        *,
-        stage="construction",
-    ):
-        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
-        refusal_log._record_parity_refusal(
-            self,
-            symbol,
-            direction,
-            entry,
-            stop,
-            level,
-            ratio,
-            stage=stage,
-        )
 
     def _record_subfloor_risk_target(
         self,

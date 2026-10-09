@@ -15,7 +15,6 @@ def _owner():
     return SimpleNamespace(
         last_data_faults={},
         last_refusals={},
-        last_parity_standdowns={},
         refusal_recorder=None,
     )
 
@@ -31,14 +30,6 @@ def test_refusal_log_records_and_drains_in_the_owners_dicts():
     refusal_log._note_data_fault(owner, "xyz", "long", "F", "no price")
     assert refusal_log.drain_data_faults(owner)["XYZ"]["fault"] == "F"
     assert owner.last_data_faults == {}
-
-
-def test_refusal_log_parity_standdown_without_a_level():
-    owner = SimpleNamespace(PARITY_STANDDOWN_NO_LEVEL="none", last_parity_standdowns={})
-    derivation = SimpleNamespace(level_used=None)
-    assert refusal_log._parity_verdict(owner, 10.0, 9.0, derivation, False) == (False, None, "none")
-    refusal_log._note_parity_standdown(owner, "q", "long", "none", derivation)
-    assert owner.last_parity_standdowns["Q"]["reason"] == "none"
 
 
 def test_sector_dial_weights_and_accrual(monkeypatch):

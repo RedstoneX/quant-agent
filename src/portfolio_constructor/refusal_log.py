@@ -2,14 +2,12 @@
 
 Bodies moved verbatim from `PortfolioConstructor`; `owner` is the constructor
 instance, which keeps owning the state dicts (`last_data_faults`,
-`last_refusals`, `last_parity_standdowns`) so their identity never changes.
+`last_refusals`) so their identity never changes.
 """
 
 from __future__ import annotations
 
 import logging
-
-from src.risk.constants import reward_risk_parity_refuses
 
 # The constructor's own logger, so log capture and filters keep matching.
 logger = logging.getLogger("src.portfolio_constructor")
@@ -69,94 +67,6 @@ def drain_refusals(owner) -> dict[str, dict[str, str]]:
     refusals = dict(owner.last_refusals)
     owner.last_refusals = {}
     return refusals
-
-
-def _parity_verdict(owner, entry_price, stop_loss, derivation, is_short):
-    """The ONE parity test. Returns `(refuse, ratio, standdown)`.
-
-    Called from `_resolve_entry_and_stop` (construction) and from
-    `real_reward_risk_preview` (PM eligibility/ranking) so the two
-    cannot disagree. Before 2026-10-01's second pass the preview did
-    not run it at all, so a name could rank, be proposed, and then die
-    silently at construction — the exact divergence
-    `real_reward_risk_preview` was built to close.
-
-    THREE STAND-DOWNS, all of them "the numerator is not a number this
-    code believes", and all recorded rather than silent:
-
-    * no structural level found at all — refusing on the ATR
-      projection would be refusing on an invented number, which
-      doctrine bars;
-    * the level is PAST the horizon reach, in which case
-      `derive_structural_target` has already ruled it unreachable and
-      returned a measured-move target instead, while still reporting
-      the level in `level_used`. Crediting reward from a price the
-      same function just declared unreachable overstates the reward;
-    * the reward sits INSIDE the one-session noise floor
-      (`target_inside_noise`), i.e. the code has already labelled the
-      reward noise. Refusing on a figure labelled noise is refusing on
-      a number the desk does not believe.
-    """
-    level = getattr(derivation, "level_used", None)
-    if level is None:
-        return (False, None, owner.PARITY_STANDDOWN_NO_LEVEL)
-    if getattr(derivation, "basis", "") != "structural_level":
-        return (False, None, owner.PARITY_STANDDOWN_LEVEL_PAST_REACH)
-    if getattr(derivation, "target_inside_noise", False):
-        return (False, None, owner.PARITY_STANDDOWN_REWARD_INSIDE_NOISE)
-    refuse, ratio = reward_risk_parity_refuses(
-        entry_price,
-        stop_loss,
-        level,
-        is_short=is_short,
-        reward_is_measured_level=True,
-    )
-    return (refuse, ratio, None)
-
-
-def _note_parity_standdown(owner, symbol, direction, reason, derivation):
-    key = str(symbol or "").strip().upper()
-    if not key:
-        return
-    owner.last_parity_standdowns[key] = {
-        "reason": reason,
-        "direction": direction,
-        "basis": getattr(derivation, "basis", ""),
-        "level_used": getattr(derivation, "level_used", None),
-        "horizon_reach": getattr(derivation, "horizon_reach", None),
-    }
-
-
-def _record_parity_refusal(
-    owner,
-    symbol,
-    direction,
-    entry,
-    stop,
-    level,
-    ratio,
-    *,
-    stage="construction",
-):
-    """Write ONE parity refusal to the durable table. Never raises.
-
-    The owner ruled parity a trial. A trial whose only record is an
-    English sentence in an in-memory dict, drained only for the symbols
-    that happen to reach `constructor_dropped`, cannot be judged — so
-    every number goes in its OWN column here.
-    """
-    recorder = owner.refusal_recorder
-    if recorder is None:
-        return
-    recorder.record_parity_refusal(
-        symbol,
-        direction,
-        entry,
-        stop,
-        level,
-        ratio,
-        stage=stage,
-    )
 
 
 def _record_subfloor_risk_target(
