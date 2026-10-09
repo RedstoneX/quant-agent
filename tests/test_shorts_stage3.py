@@ -283,7 +283,7 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
 # ==========================================================================
 
 
-def test_cover_short_partial_buys_back_a_fraction():
+def test_cover_short_partial_is_refused_whole_exits_only():
     position = _pos("TSLA", qty=-40, entry=250, price=240)
     decision = TradeDecision(
         action="COVER",
@@ -315,12 +315,9 @@ def test_cover_short_partial_buys_back_a_fraction():
     ctx = _ctx([decision], positions=[position])
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert len(orders) == 1
-    call_kwargs = pipeline._submit_protected_sell.call_args.kwargs
-    assert call_kwargs["side"] == "buy"
-    assert call_kwargs["qty"] == 20.0  # 50% of the 40-share short
-    assert call_kwargs["position_qty_before_sell"] == 40.0
-    assert call_kwargs["label"] == "PARTIAL_COVER(50%)"
+    # Owner ruling 2026-10-09: no partial covers — refused, nothing submitted.
+    assert orders == []
+    pipeline._submit_protected_sell.assert_not_called()
 
 
 def test_cover_short_full_buys_back_everything():
