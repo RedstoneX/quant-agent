@@ -105,7 +105,12 @@ quote-style = "double"
 exclude = ["tests/fixtures/resolver_log_bodies_pre_move.py"]
 
 [tool.ruff.lint]
-select = ["E501", "E701", "E702", "E703", "C901", "PLR0912", "PLR0915"]
+# PGH003: a `type: ignore` must name its error code; TID251: `typing.cast` is banned (it silences the
+# checker instead of fixing the type; use src/money.py values). Both measured at zero violations 2026-10-09.
+select = ["E501", "E701", "E702", "E703", "C901", "PLR0912", "PLR0915", "PGH003", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.cast".msg = "cast() silences the type checker instead of fixing the type; use src.money types or a real conversion"
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
