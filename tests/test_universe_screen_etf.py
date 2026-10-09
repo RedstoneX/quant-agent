@@ -81,28 +81,3 @@ def test_a_non_shortable_stock_is_admitted():
     profile = {"quote_type": "EQUITY", "market_cap_usd": 5e9, "sector": "Industrials"}
     result = us.screen_symbol("ACME", _sources(asset, profile), TH)
     assert result.passed, result.failures
-
-
-def test_the_session_bound_is_computed_from_config():
-    cfg = UniverseScreenConfig()
-    limit = 0.90
-    expected = int((limit - cfg.measured_base_session_cost_usd) // cfg.measured_cost_per_name_usd)
-    got = us.affordable_names_per_session(limit, cfg.measured_base_session_cost_usd, cfg.measured_cost_per_name_usd)
-    assert got == expected == 126
-    # It moves with the spend limit, and is zero when the base eats it all.
-    assert us.affordable_names_per_session(0.30, 0.2619, 0.005025) == 7
-    assert us.affordable_names_per_session(0.20, 0.2619, 0.005025) == 0
-
-
-def test_the_admission_cap_reads_the_deployed_spend_limit(tmp_path):
-    from tests.test_universe_screen import TODAY, _pass, _pipeline
-
-    pipeline = _pipeline(tmp_path)
-    pipeline.config.llm_cost_circuit = SimpleNamespace(session_cost_limit_usd=0.30)
-    store = us.UniverseStore(tmp_path)
-    state = us.empty_state()
-    for i in range(12):
-        us.apply_result(state, _pass(f"S{i:02d}"), today=TODAY, held=set())
-    store.save(state)
-    symbols, _ = pipeline.admission._admit_screened_universe_symbols([])
-    assert len(symbols) == 7

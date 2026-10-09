@@ -223,14 +223,10 @@ class AdmissionService:
             raw = self.market.get_company_profile(symbol)
             if raw is None:
                 return None
-            quote_type = raw.get("quote_type")
-            if str(quote_type or "").strip().upper() == "ETF":
-                # A fund's sector key is its own Yahoo category; no lookup.
-                return {"quote_type": quote_type, "category": raw.get("category")}
             sector = _canonicalize_sector(raw.get("sector_raw"))
             if sector == "Unknown":
                 sector = _get_sector(symbol) or "Unknown"
-            return {"market_cap_usd": raw.get("market_cap_usd"), "sector": sector, "quote_type": quote_type}
+            return {"market_cap_usd": raw.get("market_cap_usd"), "sector": sector}
 
         def _filings(symbol: str):
             provider = getattr(self, "sec_form4_provider", None)
@@ -317,15 +313,14 @@ class AdmissionService:
     def _admit_screened_universe_symbols(self, positions=None) -> tuple[set[str], dict[str, dict]]:
         """This session's share of the screened universe (screen on only).
 
-        Every held admitted name, plus at most as many others as one session
-        can afford (`universe_screen.affordable_names_per_session`: the
-        session spend limit less the measured base session cost, divided by
-        the measured research cost per name), rotated least-recently-offered
-        first, so the portfolio manager's bill is a number that is set.
+        Every held admitted name, plus at most `nominations.
+        max_per_seat_per_run` others, rotated least-recently-offered first —
+        the screen is one more source of candidates and is capped like one
+        seat, so the portfolio manager's bill is a number that is set.
         """
         if not self._universe_screen_enabled():
             return set(), {}
-        from src.universe_screen import UniverseStore, affordable_names_per_session, select_for_run
+        from src.universe_screen import UniverseStore, select_for_run
         from src.util.time import et_today
 
         store = UniverseStore(self.config.universe_screen.data_dir)
@@ -335,11 +330,7 @@ class AdmissionService:
         chosen = select_for_run(
             state,
             held=held,
-            cap=affordable_names_per_session(
-                float(self.config.llm_cost_circuit.session_cost_limit_usd),
-                float(self.config.universe_screen.measured_base_session_cost_usd),
-                float(self.config.universe_screen.measured_cost_per_name_usd),
-            ),
+            cap=int(self.config.nominations.max_per_seat_per_run),
             today=et_today(),
         )
         chosen = {s: d for s, d in chosen.items() if s not in configured}

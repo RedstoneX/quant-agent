@@ -973,25 +973,6 @@ def run_screen(
 
 
 # --------------------------------------------------------------------------
-# How many screened names one session can afford
-# --------------------------------------------------------------------------
-
-
-def affordable_names_per_session(
-    session_limit_usd: float,
-    base_session_cost_usd: float,
-    cost_per_name_usd: float,
-) -> int:
-    """The screen's own per-session bound, a named affordability limit: the
-    names that fit in what a session may spend after its measured base
-    cost, at the measured research cost per name. Zero when nothing fits."""
-    if cost_per_name_usd <= 0:
-        return 0
-    headroom = float(session_limit_usd) - float(base_session_cost_usd)
-    return max(0, math.floor(headroom / float(cost_per_name_usd)))
-
-
-# --------------------------------------------------------------------------
 # Per-run selection (the cap on what reaches the portfolio manager)
 # --------------------------------------------------------------------------
 

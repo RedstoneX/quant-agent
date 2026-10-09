@@ -412,15 +412,13 @@ def test_thresholds_are_read_from_existing_desk_numbers():
     assert th.min_history_bars == 210
 
 
-def test_screen_code_default_is_off_and_deployment_turns_it_on():
-    # Code default stays off; the deployed settings turn it on (owner
-    # approval 2026-10-09, docs/OUTCOME.md).
+def test_screen_ships_off():
     assert UniverseScreenConfig().enabled is False
     import yaml
     from pathlib import Path
 
     settings = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text())
-    assert settings["universe_screen"]["enabled"] is True
+    assert settings["universe_screen"]["enabled"] is False
 
 
 # -------------------------------------------------------- state machine ----
@@ -637,9 +635,6 @@ def _pipeline(tmp_path, *, enabled=True):
         execution=SimpleNamespace(max_entry_slippage_bps=40.0),
         risk=SimpleNamespace(min_stop_atr_multiple=2.5, max_target_horizon_sessions=60),
         nominations=SimpleNamespace(max_per_seat_per_run=3),
-        # 0.28 leaves room for exactly 3 screened names at the measured
-        # base session cost and cost per name (UniverseScreenConfig).
-        llm_cost_circuit=SimpleNamespace(session_cost_limit_usd=0.28),
     )
     # Item 165: sessions_held now comes from `broker.trading_sessions_held`
     # (holiday-aware). None of these tests span a market holiday, so
@@ -739,7 +734,7 @@ def test_screened_universe_reaches_the_session_capped(tmp_path):
         [SimpleNamespace(symbol="EEE")],
     )
     assert "EEE" in symbols
-    assert len(symbols - {"EEE"}) == 3  # affordable_names_per_session at a $0.28 limit
+    assert len(symbols - {"EEE"}) == 3  # nominations.max_per_seat_per_run
     assert details["AAA"]["reason"] == "universe_screen_admission"
 
 
