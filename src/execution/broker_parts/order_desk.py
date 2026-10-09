@@ -795,6 +795,26 @@ class OrderDesk:
             mark(self, "cancel_entry_order", exc, order=order_id)
             return False
 
+    def replace_order_qty(self, order_id: str, qty: int) -> tuple[bool, str]:
+        """Amend one resting order's quantity in place; `(ok, detail)`.
+
+        The freeze sweep's shrink: a closing order larger than the position is
+        cut to the held size so it can never flip side, without cancelling
+        the protection it is. Whole shares only (ReplaceOrderRequest types
+        `qty` as int); callers pass the held size, never a larger one.
+        """
+        try:
+            self.client.replace_order_by_id(order_id, ReplaceOrderRequest(qty=int(qty)))
+            ok(self, "replace_order_qty", order=order_id)
+            return True, ""
+        except Exception as exc:  # noqa: BLE001
+            mark(self, "replace_order_qty", exc, order=order_id)
+            return False, f"{type(exc).__name__}: {exc}"
+
+    def list_open_orders_checked(self) -> tuple[bool, list]:
+        """`(ok, orders)` for EVERY working order, flat (see order_desk_reads)."""
+        return _reads.list_open_orders_checked(self)
+
     def resolve_replacement_chain(self, order_id: str) -> str | None:
         """Follow Alpaca's `replaced_by` links to the order that is live now.
 

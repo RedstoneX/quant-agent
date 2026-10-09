@@ -101,12 +101,10 @@ def _held_by_symbol(broker) -> dict:
 
 
 def _open_orders(broker) -> list:
-    from alpaca.trading.enums import QueryOrderStatus
-    from alpaca.trading.requests import GetOrdersRequest
-
-    # Flat (nested=False): every working order -- bracket legs included -- is
-    # judged on its own, so a filled bracket's stop leg is seen and kept.
-    return list(broker.client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=False)) or [])
+    ok, orders = broker.list_open_orders_checked()
+    if not ok:
+        raise FreezeSweepFault("broker open-order listing failed")
+    return orders
 
 
 def _is_stop_type(order) -> bool:
@@ -136,13 +134,8 @@ def _shrink(broker, order_id: str, new_total: Decimal) -> str | None:
     """Amend the order's quantity in place; None on success, else why not."""
     if new_total != new_total.to_integral_value():
         return f"held size {new_total} is fractional; the broker amends whole shares only"
-    from alpaca.trading.requests import ReplaceOrderRequest
-
-    try:
-        broker.client.replace_order_by_id(order_id, ReplaceOrderRequest(qty=int(new_total)))
-    except Exception as exc:  # noqa: BLE001 - surfaced as a named fault and recorded
-        return f"broker refused the amend: {type(exc).__name__}: {exc}"
-    return None
+    done, detail = broker.replace_order_qty(order_id, int(new_total))
+    return None if done else f"broker refused the amend: {detail}"
 
 
 def _settle(broker, order, held: dict, result: SweepResult) -> None:

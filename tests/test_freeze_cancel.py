@@ -11,10 +11,14 @@ class FakeBroker:
         self._positions_error = positions_error
         self.cancelled = []
         self.replaced = []
-        self.client = NS(
-            get_orders=lambda filter=None: list(orders),
-            replace_order_by_id=lambda oid, req: self.replaced.append((oid, req.qty)),
-        )
+        self._orders = orders
+
+    def list_open_orders_checked(self):
+        return True, list(self._orders)
+
+    def replace_order_qty(self, order_id, qty):
+        self.replaced.append((order_id, qty))
+        return True, ""
 
     def get_positions(self):
         if self._positions_error:
@@ -89,6 +93,13 @@ def test_oversized_stop_shrunk_to_held_never_cancelled():
     assert res.shrunk == [("stop", 6)] and res.ok
 
 
+def test_orders_unreadable_touches_nothing_and_names_fault():
+    broker = FakeBroker([], [_order("e1", "AAPL", "buy", "1")])
+    broker.list_open_orders_checked = lambda: (False, [])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == [] and [f[0] for f in res.faults] == [fc.ORDERS_UNREADABLE]
+
+
 def test_oversized_fractional_stop_kept_with_named_fault():
     broker = FakeBroker([_pos("AAPL", "6.5")], [_order("stop", "AAPL", "sell", "10", "stop")])
     res = fc.cancel_resting_entries(broker)
@@ -151,6 +162,7 @@ def test_scheduler_session_start_cancels_resting_entry_when_frozen(tmp_path):
     import sqlite3
     from unittest.mock import MagicMock, patch
 
+    from src.execution.broker import AlpacaBroker
     from src.owner_flags import PAUSE
     from src.scheduler import TradingScheduler
     from src.storage.schema.owner_intent_tables import apply
@@ -168,6 +180,7 @@ def test_scheduler_session_start_cancels_resting_entry_when_frozen(tmp_path):
         [_pos("MSFT", "5")], [_order("entry", "AAPL", "buy", "10"), _order("stop", "MSFT", "sell", "5", "stop")]
     )
     broker.is_trading_day = lambda: True
+    broker.sweep_frozen_resting_orders = lambda db_path: AlpacaBroker.sweep_frozen_resting_orders(broker, db_path)
     pipeline = MagicMock(broker=broker)
     pipeline.run_morning.return_value = {"status": "executed"}
     with patch("src.scheduler.TradingPipeline", return_value=pipeline):

@@ -170,11 +170,11 @@ class TradingScheduler:
             try:
                 # FREEZE step 2: the door only sees NEW orders; cancel any
                 # already-resting entry the freeze observed here would let fill.
-                from src.execution.freeze_cancel import sweep_if_frozen
-
-                # Returns the result; every cancel / shrink / fault is already a
-                # per-symbol reconciliation row and the sweep logs its summary.
-                sweep_if_frozen(self.pipeline.broker, getattr(getattr(self.config, "storage", None), "db_path", None))
+                # Reached through the broker (the seam the scheduler already holds).
+                # Every cancel / shrink / fault is a per-symbol reconciliation row.
+                self.pipeline.broker.sweep_frozen_resting_orders(
+                    getattr(getattr(self.config, "storage", None), "db_path", None)
+                )
             except Exception as exc:  # noqa: BLE001 - a failed sweep never stops a session
                 logger.error("[%s] freeze resting-order sweep failed: %s", name, exc)
             result = func()

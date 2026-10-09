@@ -618,6 +618,24 @@ class AlpacaBroker:
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
         return self._order_desk().open_buy_notional(*args, **kwargs)
 
+    def sweep_frozen_resting_orders(self, db_path):
+        """FREEZE step 2 at session start: settle resting exposure-adding orders when frozen.
+
+        Lives on the broker so callers outside the broker seam reach it through
+        the broker they already hold (see src/execution/freeze_cancel.py).
+        """
+        from src.execution.freeze_cancel import sweep_if_frozen
+
+        return sweep_if_frozen(self, db_path)
+
+    def list_open_orders_checked(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk_reads.py."""
+        return self._order_desk().list_open_orders_checked(*args, **kwargs)
+
+    def replace_order_qty(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().replace_order_qty(*args, **kwargs)
+
     def list_recent_orders(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
         return self._order_desk().list_recent_orders(*args, **kwargs)
