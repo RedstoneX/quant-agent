@@ -3586,69 +3586,6 @@ numbers:
       for 20 (50) and one for 50 (200), and none for 200. Read off the
       existing indicator set rather than picked; changing it would require
       the desk to compute an average it does not compute.
-  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-      records: >-
-        across the tradable universe, not this desk's trades: for trends that later resumed and for
-        trends that had genuinely ended, how far price gave back below the last chart mark (a moving
-        average, or a level confirmed broken) measured in that name's own ATR
-      closes_when: >-
-        the two give-back distributions are separable, so the band is read off the difference between a
-        pullback and a finished move rather than set as an appetite dial. This replaces the appetite
-        question this row used to carry: the owner withdrew the risk dials on 2026-09-30 and asked for
-        the threshold-free alternative instead. DELETE OUTCOME: if the alignment rule's own three-way
-        agreement (structure, ATR and an SMA cross) already fires before this band is ever reached in
-        the recording, the band never governs an exit and is deleted
-    value: 3.0
-    status: arbitrary
-    route_audit_2026_10_04: >-
-      The row contradicts itself and the measurement half is the live half. Its
-      settles_by route closes when the give-back distributions of a resumed
-      trend and a finished one are separable, which asks the owner nothing and
-      names no extreme. Its open_question, written earlier, declares the same
-      number an owner dial that no research can settle. Those cannot both
-      stand, and the 2026-09-30 ruling that withdrew the risk dials settles
-      which one falls: the appetite framing is stale and the measurement route
-      is the one to run. The value is unchanged and the status stays arbitrary
-      until that measurement exists; what changed is that the row no longer
-      claims to be waiting on a person. Reproduce the contradiction with
-      scripts/measure_ledger_route_admissibility.py.
-    site: src/risk/alignment_exit.py
-    note: >-
-      Give-back below the last CHART MARK (a moving average, or the level
-      `check_structural_protection` confirmed broken), in the name's own
-      ATR, before the alignment exit reads the move as over. AN OWNER
-      APPETITE DIAL, recorded as arbitrary on purpose. A draft of this
-      entry claimed the value was SOURCED to Wilder's Volatility System
-      ARC (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit
-      (3.0 x ATR default). That claim is WITHDRAWN, for three reasons.
-      (1) The `NOISE_BAND_ATR_MULTIPLE` note gives TWO reasons for
-      refusing 3.0 and the draft answered only the anchor one; the other
-      stands -- "how readily the desk blocks a sale is owner appetite".
-      (2) Wilder and Le Beau measure give-back from a running EXTREME
-      (highest high since entry); this measures it from a MOVING AVERAGE,
-      which sits materially below an extreme, so the same multiple is a
-      looser stop and their calibration does not transfer. (3)
-      Chandelier's 3.0 is calibrated on ATR(22); this divides by ATR(14).
-      The published 2.5-3.5 band is retained as CONTEXT for the order of
-      magnitude only. Deliberately NOT reused from
-      the since-removed exit_guard entry-anchored noise-band multiple
-      (1.0, measured excess over noise FROM ENTRY; gate and constant
-      deleted 2026-10-09).
-    open_question: >-
-      Where the desk sits is the owner's dial, left at 3.0 until he moves
-      it: tighter realises gains sooner and whipsaws more often, looser
-      gives more back. No research can settle it -- see reason (1).
-    cost_while_unanswered: >-
-      Until the owner sets the dial, every alignment exit realises its
-      gain 3.0 ATR below the last chart mark. Too loose and a finished
-      move hands back more than it needed to before the desk sells; too
-      tight and a live trend is sold into an ordinary pullback and the
-      rest of the move is forgone. The exposure is the whole unrealised
-      gain of any position this exit fires on.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     settles_by:
       kind: recording
@@ -8380,9 +8317,11 @@ numbers:
       `EarningsProximity.describe()` (prompt text a seat reads) and filters
       which held names the evening owner report lists under "reports soon"
       (`src/trader_feed/evening.py`). No Python path sizes, prices, stops,
-      buys or sells a position from it; the gates that actually refuse a
-      trade around an event live in `EventRiskConfig`, which is separately in
-      scope. Informational, not trade-governing. HONEST CAVEAT, not
+      buys or sells a position from it. Nothing on the desk refuses a trade
+      because earnings are NEAR: `EventRiskConfig` holds only fetch timeouts,
+      retries, a cache age and the look-ahead horizon, and the one event
+      refusal is `src/pipeline_earnings_refusal.py`, which refuses a BUY only
+      when a just-filed report reached the session UNREAD. Informational, not trade-governing. HONEST CAVEAT, not
       softened: the value 3 itself has no measurement behind it, and because
       an LLM seat reads the phrase it can still colour a verdict. It is
       recorded here as informational rather than `arbitrary` only because

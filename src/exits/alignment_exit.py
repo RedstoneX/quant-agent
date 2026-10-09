@@ -426,6 +426,7 @@ class AlignmentExit:
                 target_effective_date=effective,
                 target_version=version,
                 bar_dates=[getattr(b, "date", None) for b in sorted_bars],
+                bars=sorted_bars,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
