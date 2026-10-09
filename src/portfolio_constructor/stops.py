@@ -51,10 +51,8 @@ from src.models import (
     stated_soft_exit,
 )
 from src.risk.constants import (
-    REWARD_RISK_PARITY,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
-    reward_risk_parity_refuses,
 )
 
 from src.portfolio_constructor.config import logger  # the package logger, named as before the split
@@ -72,7 +70,6 @@ from src.portfolio_constructor.config import (
     STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY,
     STOP_REFUSAL_NO_VALID_STOP,
     STOP_REFUSAL_NO_STRUCTURAL_TARGET,
-    STOP_REFUSAL_REWARD_BELOW_RISK,
 )
 
 

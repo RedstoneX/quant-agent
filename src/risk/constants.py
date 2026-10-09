@@ -101,21 +101,13 @@ def reward_risk_floor_applies(
 
     True for a Type A / range trade, whose reward:risk IS real — measured
     from that specific trade's own support (risk) and resistance (reward).
-    What is done with that number: ranking, and, since the owner ruling of
-    2026-10-01, ALSO a refusal at parity — never a size cap. The older
-    wording here ("ranking, not a cutoff, and not a size cap", owner
-    2026-09-17) is SUPERSEDED on the cutoff half only: the owner was shown
-    buy 100 / stop 94 / nearest level above 104 (risking 6 to make 4) and
-    chose to refuse the purchase outright rather than leave it alone or
-    shrink it. `reward_risk_parity_refuses` is that cutoff; the "not a size
-    cap" half still holds, because the answer to thin geometry is now no
-    trade, not a smaller one. An unmeasurable range payoff is a recorded
-    fact / ranking hint — still not a refuse and still not a size-cap.
-
-    NOTE this function answers "does the RANKING machinery apply", which is
-    a label-keyed question. The 2026-10-01 refusal deliberately does NOT
-    consult it — see `reward_risk_parity_refuses` for why the refusal keys
-    off the measured level instead.
+    What is done with that number: ranking only — never a refusal and never
+    a size cap. The 2026-10-01 parity refusal was deleted on 2026-10-09
+    (owner mandate, docs/OUTCOME.md): measured that day, structural ceilings
+    rejected price less often than a randomised control in both range and
+    trend regimes (n~5,700), so the reward side is a forecast the desk never
+    sells at. The stop and the risk caps bound the loss. An unmeasurable
+    range payoff is a recorded fact / ranking hint.
 
     Fails to the conservative side: an unknown or missing setup type, with
     no measured ceiling fact supplied, keeps the reward:risk machinery on.
@@ -129,91 +121,6 @@ def reward_risk_floor_applies(
         setup_type,
         structural_ceiling=structural_ceiling,
     )
-
-
-#: The reward:risk line below which a purchase is refused outright (owner
-#: ruling, 2026-10-01). PARITY and nothing above it.
-REWARD_RISK_PARITY = 1.0
-"""Why 1.0, and why nothing larger.
-
-The owner ruled on 2026-10-01: "For now, let's refuse a bad risk reward
-ratio. See if that improves the desk purchases." He was shown the worked
-case — buy at 100, stop at 94, nearest structural level above at 104, so
-risking 6 to make 4 — and chose REFUSAL over both leaving it alone and
-shrinking the position. That supersedes the previous standing rule (a wide
-stop ships and is answered by a smaller position) for the geometry case.
-
-Parity sits here because the owner ruled refusal and parity is the only
-line that needs no invented value: "reward at least equals risk" is the
-boundary between arithmetically losing and arithmetically winning geometry,
-and it is the unique point on the scale that can be stated without picking
-a number. Any higher figure (1.5, 2.0) would be an invented number and is
-BARRED by the desk's no-arbitrary-numbers rule.
-
-**Parity is NOT mathematically derived, and the record must not overstate
-the case.** The ratio compares one real number against one estimated one:
-the risk side is a real price the desk will actually transact at (the
-protective stop), while the reward side is the nearest structural level
-above entry, which is a FORECAST — and this desk never actually sells
-there. It rides a trailing stop out (`src/risk/trailing.py`). So the
-numerator is a yardstick, not a plan. The owner knows this and accepted it.
-"""
-
-
-def reward_risk_parity_refuses(
-    entry: float | None,
-    stop: float | None,
-    target: float | None,
-    *,
-    is_short: bool = False,
-    reward_is_measured_level: bool | None = None,
-) -> tuple[bool, float | None]:
-    """Does the 2026-10-01 parity ruling refuse this purchase?
-
-    Returns `(refuse, ratio)`. `ratio` is None when the geometry cannot be
-    measured at all, and an unmeasurable ratio is NEVER a refusal here —
-    honesty about unknown geometry is a separate, already-settled rule.
-
-    **Why this does not consult `reward_risk_floor_applies`.** That helper
-    answers a label-keyed question ("is this a Type B breakout?"). Keying
-    the refusal off the label would be wrong by this module's OWN stated
-    reasoning: the breakout exemption exists because for a trend trade the
-    reward number is *invented* (nothing overhead is being defended, so the
-    numerator is a figure produced to satisfy a ratio). The honest test of
-    that is the MEASUREMENT, not the word — exactly what the measured half
-    of `is_trend_trade` was added for. So the refusal applies whenever the
-    reward side is a real structural level that the desk's own level
-    computation found above the entry, and stands down when the target had
-    to be projected instead.
-
-    This is also what the production record says to do. Of 33 recorded buys
-    carrying entry, stop and target (measured 2026-10-01, read-only), eleven
-    sit below parity, and five of those eleven are labelled `breakout` —
-    including the two WORST ratios in the whole book (0.42 and 0.46). A
-    label-keyed exemption would therefore spare the worst geometry the desk
-    has ever bought while refusing better trades, which inverts the ruling.
-
-    `reward_is_measured_level=None` means the caller could not say. That
-    keeps the refusal ON, which is the conservative side under a ruling
-    whose whole content is "refuse".
-    """
-    if reward_is_measured_level is False:
-        return (False, None)
-    try:
-        e = float(entry)
-        s = float(stop)
-        t = float(target)
-    except (TypeError, ValueError):
-        return (False, None)
-    risk = (s - e) if is_short else (e - s)
-    reward = (e - t) if is_short else (t - e)
-    if not (risk > 0) or reward <= 0:
-        # A non-positive risk is not this rule's business (the stop-side
-        # checks own it), and a target on the wrong side of entry is
-        # already refused by name upstream.
-        return (False, None)
-    ratio = reward / risk
-    return (ratio < REWARD_RISK_PARITY, ratio)
 
 
 REWARD_RISK_FLOOR = 1.5

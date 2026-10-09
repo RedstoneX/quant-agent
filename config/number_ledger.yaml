@@ -3480,7 +3480,7 @@ numbers:
       one decision; the open question belongs to the base entry and is answered there, not twice.
       PRIOR NOTE, kept verbatim: Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
       rather than shrunk (src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct). One of three sites holding the
-      same ratified number; the other two are src/risk/constants.py@`and it is the unique point on the scale that can` and src/config/__init__.py::RiskConfig.'
+      same ratified number; the other two are src/risk/constants.py::STARTER_POSITION_RISK_PCT and src/config/__init__.py::RiskConfig.'
     prior_source: 'Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335). docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not`
       states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml@`min_position_risk_pct: 0.5`
       carries the deployed key `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger''s
@@ -3785,34 +3785,6 @@ numbers:
       (src/risk/constants.py::MARGIN_DEFICIT_FLOOR_USD). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
-  - id: src.risk.constants.REWARD_RISK_PARITY
-    value: 1.0
-    status: sourced
-    site: src/risk/constants.py
-    source: >-
-      docs/board_notes/:1198 (section "## item 218 — Arithmetically losing
-      geometry is refused (owner ruling 2026-10-01)") records the ruling
-      verbatim, and src/risk/constants.py::REWARD_RISK_PARITY defines it and
-      src/risk/constants.py@`return (ratio < REWARD_RISK_PARITY, ratio)` applies it. Owner ruling 2026-10-01, verbatim: "For now,
-      let's refuse a bad risk
-      reward ratio. See if that improves the desk purchases." He was shown
-      the worked case (buy 100, stop 94, nearest structural level above 104
-      — risking 6 to make 4) and chose refusal over both leaving it alone
-      and shrinking the position. Parity is not a picked number: it is the
-      boundary between arithmetically losing and arithmetically winning
-      geometry, the only line on the scale statable without inventing a
-      value, and any higher figure would be barred as arbitrary. Board item
-      218. CAVEAT RECORDED WITH IT, and accepted by the owner: parity is
-      not mathematically DERIVED. The risk side is a real transactable
-      price; the reward side is the nearest structural level above entry,
-      which is a forecast the desk never actually sells at (it rides a
-      trailing stop out), so the ratio compares one real number against one
-      estimated one.
-    cost_while_unanswered: >-
-      None outstanding; measured effect is recorded instead. Against the
-      production book [measured 2026-10-01, read-only, decision-time
-      initial_stop_loss / initial_take_profit on 33 BUY trades] median
-      reward:risk is 1.24 and eleven buys sit below parity.
   - cost_while_unanswered: Inert in the live entry path but still exported as a name tests, docs and
       prompts import.
     id: src.risk.constants.REWARD_RISK_FLOOR
@@ -3868,7 +3840,7 @@ numbers:
       minimum-risk floor are different quantities that share a digit.
     note: >-
       The smallest position this desk will hold. Its own docstring
-      (src/risk/constants.py@`a number. Any higher figure (1.5, 2.0) would be`) says it is not a new number: it is
+      (src/risk/constants.py::STARTER_POSITION_RISK_PCT) says it is not a new number: it is
       `RiskConfig.min_position_risk_pct`, the floor `allocate_risk_budget`
       already denies requests under. CORRECTION 2026-09-18: the first version
       of this entry called it "the size a range ticket is cut to" and cited

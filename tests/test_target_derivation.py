@@ -40,9 +40,6 @@ from src.models import (
     TechAnalysisResult,
     TechReasoningChain,
 )
-from src.portfolio_constructor import (  # noqa: F401
-    STOP_REFUSAL_REWARD_BELOW_RISK,
-)
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 
 
@@ -1137,7 +1134,7 @@ class TestSLB:
         assert result.divergence_pct is not None
         assert result.divergence_pct < 0
 
-    def test_a_thin_computed_geometry_is_refused_at_parity(self):
+    def test_a_thin_computed_geometry_ships_on_the_computed_shelf(self):
         """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to
         assert that when the stop rule and the computed target could not make
         a trade together, the trade was refused with a GEOMETRY code rather
@@ -1190,15 +1187,12 @@ class TestSLB:
             total_value=100_000,
             price_map={"SLB": self.ENTRY},
         )
-        # AMENDED 2026-10-01 (owner ruling, board item 218). $2.40 of
-        # reward against $3.00 of risk is 0.80 — below parity — so the
-        # purchase is refused again. The DERIVATION, which is what this
-        # class exists for, is unchanged and is still asserted through the
-        # recorded refusal: the computed shelf at $62.50 (not the model's
-        # guess) and the band-edge stop at $57.10 are the two numbers the
-        # refusal is measured from and reports.
-        assert decisions == []
-        recorded = constructor.last_refusals["SLB"]
-        assert recorded["refusal"] == STOP_REFUSAL_REWARD_BELOW_RISK
-        assert "62.50" in recorded["detail"] and "57.10" in recorded["detail"]
-        assert "0.80" in recorded["detail"]
+        # 2026-10-09 (owner mandate, docs/OUTCOME.md): the 2026-10-01 parity
+        # refusal is deleted, so the 0.80 geometry TRADES again. The
+        # DERIVATION, which is what this class exists for, is asserted on the
+        # shipped order: the computed shelf at $62.50 (not the model's guess)
+        # and the band-edge stop at $57.10.
+        assert len(decisions) == 1
+        assert "SLB" not in constructor.last_refusals
+        assert decisions[0].take_profit == 62.50
+        assert decisions[0].stop_loss == 57.10
