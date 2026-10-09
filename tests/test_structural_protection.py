@@ -14,10 +14,10 @@ never by elapsed time. Priority order tested below:
      `PortfolioConstructor._level_backing_stop` (`min_level_touches`, and
      the stop falling inside the level's own `CLUSTER_TOLERANCE_PCT`
      zone), no new constant introduced.
-  3. Neither resolves: the fallback noise band (`adverse_move_is_noise` /
-     `FALLBACK_PROTECTION_ATR_MULTIPLE`) — NOT an automatic unprotect (owner
-     refinement 2026-09-04), so breakout/momentum trades without classic
-     multi-touch structure are not systematically stripped of protection.
+  3. Neither resolves (or no data to read either): NOT protected (owner
+     mandate 2026-10-09: cut losers fast; the protective stop bounds every
+     loss). The ATR noise-band fallback that kept such holdings protected
+     was removed.
 
 `current_price` for (1) and (2) MUST be a CLOSING price, never a live
 intraday quote — a wick that pierces a level and closes back inside is
@@ -357,15 +357,13 @@ def test_unparseable_thesis_falls_back_to_structural_level():
 
 
 # ---------------------------------------------------------------------------
-# 3. No thesis_invalid_if and no qualifying level -> noise-band fallback
-#    (owner refinement 2026-09-04), immediate (no confirmation gate).
+# 3. No thesis_invalid_if and no qualifying level -> NOT protected, immediately
+#    (owner mandate 2026-10-09). No chart level never refuses a cut.
 # ---------------------------------------------------------------------------
 
 
-def test_no_basis_within_noise_band_stays_protected():
-    # entry 100, atr 2, FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0 -> band is 2.0.
-    # Adverse move of 1.0 is inside the band.
-    result = check_structural_protection(
+def _no_basis(**over):
+    kwargs = dict(
         thesis_invalid_if=None,
         current_price=99.0,
         entry_price=100.0,
@@ -376,88 +374,84 @@ def test_no_basis_within_noise_band_stays_protected():
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
     )
-    assert result.protected is True
-    assert result.basis == "noise_band_intact"
-    assert result.raw_broken is False  # noise-band basis is never gated by confirmation
+    kwargs.update(over)
+    return check_structural_protection(**kwargs)
 
 
-def test_no_basis_beyond_noise_band_loses_protection_immediately():
-    # Adverse move of 3.0 exceeds the 2.0 band -> not protected, and NOT
-    # gated by the two-day confirmation rule (that applies only to the
-    # thesis/level basis).
-    result = check_structural_protection(
-        thesis_invalid_if=None,
-        current_price=97.0,
-        entry_price=100.0,
-        stop_loss=90.0,
-        atr=2.0,
-        computed_levels=[],
-        computed_level_touches={},
-        min_level_touches=MIN_TOUCHES,
-        level_cluster_tolerance_pct=ZONE_PCT,
-        break_seen_prior_close=False,  # irrelevant to this basis
-    )
+def test_no_basis_small_loss_is_not_protected():
+    """A loss of half an ATR used to sit inside the fallback band and stay
+    protected; with no chart level backing the thesis it now never is."""
+    result = _no_basis()
     assert result.protected is False
-    assert result.basis == "noise_band_broken"
+    assert result.basis == "no_chart_level"
+    assert result.raw_broken is False
+    assert result.confirmed_chart_break is False
 
 
-def test_no_basis_flat_or_winning_stays_protected():
-    result = check_structural_protection(
-        thesis_invalid_if=None,
-        current_price=105.0,  # in profit
-        entry_price=100.0,
-        stop_loss=90.0,
-        atr=2.0,
-        computed_levels=[],
-        computed_level_touches={},
-        min_level_touches=MIN_TOUCHES,
-        level_cluster_tolerance_pct=ZONE_PCT,
-    )
+def test_no_basis_large_loss_is_not_protected():
+    result = _no_basis(current_price=94.0, break_seen_prior_close=False)
+    assert result.protected is False
+    assert result.basis == "no_chart_level"
+
+
+def test_no_basis_in_profit_stays_protected():
+    """A WINNER with no chart level stays protected, so a rotation cannot sell
+    it on that ground (owner mandate: take profit early only sideways)."""
+    result = _no_basis(current_price=105.0)
     assert result.protected is True
-    # Board item 70: the band is NOT evaluated here, so it may not be named
-    # as the basis — there is no adverse move to compare against it.
     assert result.basis == "no_adverse_move_from_entry"
+    assert result.confirmed_chart_break is False
 
 
-def test_no_basis_no_price_or_atr_data_fails_toward_protection():
-    """When there isn't even enough data to evaluate the noise band, the
-    position stays protected (never manufacture a block out of missing
-    data) — and the case is visible via `basis`/`detail`, not a silent
-    no-op."""
-    result = check_structural_protection(
-        thesis_invalid_if=None,
-        current_price=None,
-        entry_price=None,
-        stop_loss=None,
-        atr=None,
-        computed_levels=[],
-        computed_level_touches={},
-        min_level_touches=MIN_TOUCHES,
-        level_cluster_tolerance_pct=ZONE_PCT,
-    )
-    assert result.protected is True
-    assert result.basis == "noise_band_unevaluable_no_data"
-    assert "insufficient price/ATR data" in result.detail
+def test_no_basis_flat_stays_protected_and_short_mirrors():
+    assert _no_basis(current_price=100.0).protected is True
+    short_winning = _no_basis(current_price=95.0, stop_loss=110.0, is_short=True)
+    assert short_winning.protected is True
+    assert short_winning.basis == "no_adverse_move_from_entry"
+    short_losing = _no_basis(current_price=101.0, stop_loss=110.0, is_short=True)
+    assert short_losing.protected is False
+    assert short_losing.basis == "no_chart_level"
 
 
-def test_low_touch_level_does_not_qualify_falls_back_to_noise_band():
+def test_no_basis_missing_data_is_never_protected_by_default():
+    """Missing data never manufactures protection — and the case is visible
+    via `basis`/`detail`, not a silent no-op."""
+    result = _no_basis(current_price=None, entry_price=None, stop_loss=None, atr=None)
+    assert result.protected is False
+    assert result.basis == "no_chart_level"
+    assert "no verified structural level" in result.detail
+
+
+def test_low_touch_level_does_not_qualify_and_is_not_protected():
     """A level with fewer than `min_level_touches` prior touches does not
     back the stop (same fail-closed rule as `_level_backing_stop`), so this
     is a no-basis case even though `computed_levels` is non-empty."""
-    result = check_structural_protection(
-        thesis_invalid_if=None,
-        current_price=99.0,
-        entry_price=100.0,
-        stop_loss=90.0,
-        atr=2.0,
+    result = _no_basis(
         computed_levels=[90.3],
         computed_level_touches={90.3: 2},  # below the 5-touch bar
         computed_level_bars={90.3: [(90.0, 90.6)]},  # bar is fine; touches are not
-        min_level_touches=MIN_TOUCHES,
-        level_cluster_tolerance_pct=ZONE_PCT,
     )
-    assert result.basis == "noise_band_intact"
-    assert result.protected is True
+    assert result.basis == "no_chart_level"
+    assert result.protected is False
+
+
+def test_confirmed_chart_break_is_recorded_only_on_a_confirmed_break():
+    assert (
+        check_structural_protection(
+            thesis_invalid_if=None,
+            current_price=99.0,
+            entry_price=100.0,
+            stop_loss=95.0,
+            atr=2.0,
+            computed_levels=[95.0],
+            computed_level_touches={95.0: 5},
+            computed_level_zones={95.0: [94.5, 95.5]},
+            computed_level_bars={95.0: [(94.5, 95.5)]},
+            min_level_touches=3,
+            level_cluster_tolerance_pct=1.0,
+        ).confirmed_chart_break
+        is False
+    )
 
 
 # --- item 215: every "still backed by a level" claim carries the span ----

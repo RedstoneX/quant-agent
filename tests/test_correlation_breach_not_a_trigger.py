@@ -38,11 +38,7 @@ import pytest
 
 from src.pipeline import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
 from src.agents.portfolio_manager import PortfolioManagerAgent
-from src.risk.exit_guard import (
-    EXTERNAL_INFORMATION_PATTERNS,
-    cites_external_information,
-    holding_discipline_claim_check,
-)
+from src.risk.exit_guard import holding_discipline_claim_check
 
 
 CORRELATION_PHRASINGS = (
@@ -64,21 +60,9 @@ def test_phrase_is_absent_from_the_hard_trigger_vocabulary():
     assert "correlation" not in joined
 
 
-def test_phrase_is_absent_from_the_external_information_patterns():
-    joined = " ".join(EXTERNAL_INFORMATION_PATTERNS).lower()
-    assert "correlation" not in joined
-
-
 @pytest.mark.parametrize("reason", CORRELATION_PHRASINGS)
 def test_correlation_reason_no_longer_cites_a_hard_trigger(reason):
     assert _reason_cites_hard_trigger(reason) is False
-
-
-@pytest.mark.parametrize("reason", CORRELATION_PHRASINGS)
-def test_correlation_reason_no_longer_bypasses_the_noise_band(reason):
-    """A correlation is computed FROM the price series, so it is price-derived
-    by construction and never qualified as external information."""
-    assert cites_external_information(reason) is False
 
 
 def test_correlation_claim_is_invisible_to_the_holding_discipline_checker():
@@ -129,20 +113,6 @@ def test_correlation_claim_is_invisible_to_the_holding_discipline_checker():
 )
 def test_every_other_trigger_still_passes(reason):
     assert _reason_cites_hard_trigger(reason) is True, reason
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        "adverse news: FDA rejection this morning",
-        "bearish earnings, revenue missed",
-        "macro regime flip to risk-off",
-        "sector shock hit the whole group",
-        "stopped out at the broker",
-    ],
-)
-def test_other_external_information_still_bypasses_the_noise_band(reason):
-    assert cites_external_information(reason) is True, reason
 
 
 # ---------------------------------------------------------------------------

@@ -38,7 +38,6 @@ def test_one_atr_is_not_treated_as_an_identity() -> None:
     assert "src.config.RiskConfig.absolute_min_stop_atr_multiple" in ids
     assert "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
     assert "src.config.CashReserveConfig.pct" in ids
-    assert "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE" in ids
 
 
 def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:

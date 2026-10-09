@@ -111,7 +111,6 @@ src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
 src.risk.constants.REWARD_RISK_FLOOR
 src.risk.constants.STARTER_POSITION_RISK_PCT
 src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
-src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE
 src.risk.exit_guard_deltas._NOISE_FLOOR['distance_to_stop_pct']
 src.risk.exit_guard_deltas._NOISE_FLOOR['pace']
 src.risk.exit_guard_deltas._NOISE_FLOOR['r_multiple']

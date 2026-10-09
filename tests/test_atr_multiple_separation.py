@@ -28,18 +28,12 @@ import yaml
 
 from src.config import RiskConfig
 from src.portfolio_constructor import ConstructorConfig
-from src.risk.exit_guard import (
-    BREAK_CONFIRMATION_ATR_MULTIPLE,
-    FALLBACK_PROTECTION_ATR_MULTIPLE,
-)
+from src.risk.exit_guard import BREAK_CONFIRMATION_ATR_MULTIPLE
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = _REPO_ROOT / "config" / "number_ledger.yaml"
 
-_EXIT_GUARD_IDS = (
-    "src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE",
-    "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE",
-)
+_EXIT_GUARD_IDS = ("src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE",)
 _MIN_STOP_ID = "src.config.RiskConfig.absolute_min_stop_atr_multiple"
 _MIN_STOP_MIRROR_ID = "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple"
 
@@ -67,7 +61,6 @@ def _ledger_entries() -> dict[str, dict]:
 def test_values_unchanged() -> None:
     """No behaviour change: every remaining one still reads exactly 1.0."""
     assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
-    assert FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0
     assert RiskConfig.model_fields["absolute_min_stop_atr_multiple"].default == 1.0
     assert ConstructorConfig().absolute_min_stop_atr_multiple == 1.0
 
@@ -76,10 +69,7 @@ def test_three_distinct_names_not_one_shared_constant() -> None:
     """The jobs must stay separately named so one cannot be retuned via another."""
     import src.risk.exit_guard as exit_guard
 
-    for name in (
-        "BREAK_CONFIRMATION_ATR_MULTIPLE",
-        "FALLBACK_PROTECTION_ATR_MULTIPLE",
-    ):
+    for name in ("BREAK_CONFIRMATION_ATR_MULTIPLE",):
         assert name in exit_guard.__all__, f"{name} is no longer exported"
 
     # The minimum stop multiple is a THIRD, config-borne number: it must not be
@@ -150,13 +140,20 @@ def test_entry_anchored_sale_gate_is_gone_and_its_removal_is_recorded() -> None:
     row were removed together. This pins all four gone and the recorded outcome
     present, so the gate cannot quietly return under its old name.
     """
+    import importlib.util
+
     import src.risk.exit_guard as exit_guard
-    import src.risk.noise_band_anchor as anchor
 
     assert not hasattr(exit_guard, "NOISE_BAND_ATR_MULTIPLE")
     assert not hasattr(exit_guard, "noise_band_atr")
-    assert not hasattr(anchor, "band_width_atr")
     assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" not in _ledger_entries()
+    # The structural-protection fallback copy of the band went the same way
+    # (owner mandate 2026-10-09): no constant, no helper, no anchor module.
+    for gone in ("FALLBACK_PROTECTION_ATR_MULTIPLE", "adverse_move_is_noise", "cites_external_information"):
+        assert not hasattr(exit_guard, gone), gone
+    assert "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE" not in _ledger_entries()
+    assert importlib.util.find_spec("src.risk.noise_band_anchor") is None
+    assert importlib.util.find_spec("src.risk.noise_band_record") is None
 
     pipeline_src = (_REPO_ROOT / "src" / "pipeline_exits.py").read_text()
     assert "adverse_move_is_noise" not in pipeline_src
