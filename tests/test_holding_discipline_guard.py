@@ -61,8 +61,8 @@ def test_false_regime_flip_claim_is_caught():
     )
     assert finding is not None
     assert "ACME" in finding
-    assert "risk-on" in finding
-    assert "not risk-off" in finding
+    assert "market mood" in finding
+    assert "risk-off alone" in finding
 
 
 def test_false_bearish_state_change_claim_is_caught():
@@ -99,7 +99,7 @@ def test_true_regime_flip_claim_is_not_flagged():
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="Regime flipped to risk-off today per Macro; cutting risk.",
+        reason="Regime flipped to risk-off today per Macro; cutting risk; thesis invalidated.",
         symbol="ACME",
         protected=True,
         macro_regime_today="risk-off",  # matches the claim
@@ -107,6 +107,39 @@ def test_true_regime_flip_claim_is_not_flagged():
         active_state_changes="",
     )
     assert finding is None
+
+
+def test_true_regime_flip_on_market_mood_alone_is_refused():
+    """Owner mandate 2026-10-09: even a CONFIRMED risk-off read cannot decide
+    an exit by itself when the name's own level is intact."""
+    finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
+        action="SELL",
+        reason="Regime flipped to risk-off today per Macro; cutting risk.",
+        symbol="ACME",
+        protected=True,  # own level intact
+        macro_regime_today="risk-off",
+        macro_status="ok",
+        active_state_changes="",
+    )
+    assert finding is not None
+    assert "market mood" in finding
+
+
+def test_risk_off_claim_with_intact_level_and_no_stock_evidence_is_refused():
+    for macro_regime_today, macro_status in (("risk-off", "ok"), ("risk-on", "ok"), (None, "failed")):
+        finding = holding_discipline_false_claim(
+            state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
+            action="SELL",
+            reason="Regime shift to risk-off, de-risking.",
+            symbol="ACME",
+            protected=True,
+            macro_regime_today=macro_regime_today,
+            macro_status=macro_status,
+            active_state_changes="",
+        )
+        assert finding is not None, (macro_regime_today, macro_status)
+        assert "market mood" in finding
 
 
 def test_true_bearish_state_change_claim_is_not_flagged():
@@ -153,7 +186,7 @@ def test_unverifiable_regime_claim_is_not_flagged():
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="Regime flipped to risk-off today; cutting risk.",
+        reason="Regime flipped to risk-off today; cutting risk; thesis invalidated.",
         symbol="ACME",
         protected=True,
         macro_regime_today=None,
