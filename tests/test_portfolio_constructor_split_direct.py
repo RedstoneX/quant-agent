@@ -73,4 +73,4 @@ def test_target_derivation_without_analysis_is_a_named_data_fault():
 
 
 def test_target_note_is_empty_without_a_price():
-    assert target_derivation._target_note(SimpleNamespace(price=None)) == ""
+    assert target_derivation._target_note(SimpleNamespace(price=None, no_target=False)) == ""
