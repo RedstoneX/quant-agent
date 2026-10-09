@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 
 from src.api.deps import get_db_path
 from src.api.holding_entry_evidence import entry_evidence
+from src.data_paths import alerting_dir
 from src.trading_calendar import et_today
 
 ET = ZoneInfo("America/New_York")
@@ -1357,8 +1358,8 @@ def get_holding_why(symbol: str) -> dict | None:
 #: `src.coverage_watchdog.STATE_PATH` builds, and a test pins the two
 #: together so a move cannot silently blank this endpoint.
 SUPPRESSION_STATE_PATHS = (
-    Path(__file__).resolve().parent.parent.parent / "data" / "alerting" / "coverage_heartbeat.json",
-    Path(__file__).resolve().parent.parent.parent / "data" / "alerting" / "deploy_drift.json",
+    alerting_dir() / "coverage_heartbeat.json",
+    alerting_dir() / "deploy_drift.json",
 )
 
 

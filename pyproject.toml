@@ -99,6 +99,8 @@ line-length = 120
 
 [tool.ruff.format]
 quote-style = "double"
+# A frozen historical text whose sha256 is pinned (tests/test_absolute_floor_record.py): it must stay byte-identical.
+exclude = ["tests/fixtures/resolver_log_bodies_pre_move.py"]
 
 [tool.ruff.lint]
 select = ["E501", "E701", "E702", "E703", "C901", "PLR0912", "PLR0915"]

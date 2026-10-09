@@ -8,7 +8,7 @@ rows sat forever at `realized_pnl IS NULL`, and the `positions` table
 claimed. Verified against the live paper account on 2026-08-28:
 
   ONDS: BUY 17 @ 8.53 (2026-08-27 14:31:55 UTC) → stop-limit order
-        865a3187-af9d-4752-be45-f121dcb9a390 filled 17 @ 7.93
+        00000000-0000-4000-8000-0000000000b1 filled 17 @ 7.93
         (2026-08-28 16:16:07 UTC) → realized -$10.20
   CCJ:  BUY 2 @ 107.465 (2026-08-27 13:36:04 UTC) → stop-limit order
         c785ae7e-359d-49fc-9853-0930e879eae5 filled 2 @ 102.955
@@ -92,7 +92,7 @@ def test_insert_stop_out_trade_computes_realized_pnl_for_a_loss(tmp_path):
         symbol="ONDS",
         qty=17.0,
         price=7.93,
-        broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
+        broker_order_id="00000000-0000-4000-8000-0000000000b1",
         filled_at="2026-08-28 16:16:07",
         run_id="r2",
     )
@@ -106,7 +106,7 @@ def test_insert_stop_out_trade_computes_realized_pnl_for_a_loss(tmp_path):
     assert stop_out["fill_status"] == "filled"
     assert stop_out["fill_qty"] == 17.0
     assert stop_out["fill_price"] == 7.93
-    assert stop_out["broker_order_id"] == "865a3187-af9d-4752-be45-f121dcb9a390"
+    assert stop_out["broker_order_id"] == "00000000-0000-4000-8000-0000000000b1"
     assert stop_out["timestamp"].startswith("2026-08-28 16:16:07")
 
 
@@ -144,7 +144,7 @@ def test_insert_stop_out_trade_is_idempotent_across_repeated_calls(tmp_path):
             symbol="ONDS",
             qty=17.0,
             price=7.93,
-            broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
+            broker_order_id="00000000-0000-4000-8000-0000000000b1",
             filled_at="2026-08-28 16:16:07",
             run_id=f"pass-{i}",
         )
@@ -306,7 +306,7 @@ def test_reconcile_stop_out_fills_written_exactly_once_across_three_passes(tmp_p
     broker = MagicMock()
     broker.get_positions.return_value = []
     broker.list_filled_sell_orders.return_value = [
-        _stop_order("865a3187-af9d-4752-be45-f121dcb9a390", "ONDS", 17.0, 7.93),
+        _stop_order("00000000-0000-4000-8000-0000000000b1", "ONDS", 17.0, 7.93),
     ]
 
     pipeline = _mk_pipeline(db, broker)
@@ -677,7 +677,7 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
         symbol="ONDS",
         qty=17.0,
         price=7.93,
-        broker_order_id="865a3187-af9d-4752-be45-f121dcb9a390",
+        broker_order_id="00000000-0000-4000-8000-0000000000b1",
         filled_at="2026-08-28 16:16:07",
     )
     db.conn.commit()
@@ -1112,7 +1112,7 @@ def test_surface_reconcile_outcomes_pages_owner_for_a_broker_stop_out(
         if symbol == "ONDS":
             return [
                 _stop_order(
-                    "865a3187-af9d-4752-be45-f121dcb9a390",
+                    "00000000-0000-4000-8000-0000000000b1",
                     "ONDS",
                     17.0,
                     7.93,

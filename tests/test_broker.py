@@ -2686,7 +2686,7 @@ def test_list_filled_sell_orders_includes_stale_submitted_recent_fill(mock_tc_cl
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
         SimpleNamespace(
-            id="6f5a4781-1690-4bf1-8a3c-cd9c63a33652",
+            id="00000000-0000-4000-8000-0000000000a1",
             status="filled",
             symbol="MRVL",
             type="stop_limit",
@@ -2705,7 +2705,7 @@ def test_list_filled_sell_orders_includes_stale_submitted_recent_fill(mock_tc_cl
     after = datetime(2026, 8, 21, 20, 48, tzinfo=timezone.utc)
     out = broker.list_filled_sell_orders("MRVL", after)
 
-    assert [o["id"] for o in out] == ["6f5a4781-1690-4bf1-8a3c-cd9c63a33652"]
+    assert [o["id"] for o in out] == ["00000000-0000-4000-8000-0000000000a1"]
     assert out[0]["qty"] == 2.0
     assert out[0]["price"] == 224.6
     # The broker call itself must be unbounded on date — no after= passed.
