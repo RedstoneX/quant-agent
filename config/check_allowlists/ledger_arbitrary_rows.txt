@@ -126,7 +126,6 @@ src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R
 src.rotation.evaluate_rotation(margin_pct)
 src.rotation.evaluate_rotation_opportunity(margin_pct)
 src.rotation_parts.types.ROTATION_MARGIN_PCT
-src.rotation_projection._projected_post_sale_book:factor[1]
 src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][0]
 src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][1]
 src.trading_calendar.SESSION_WINDOWS['midday'][0]

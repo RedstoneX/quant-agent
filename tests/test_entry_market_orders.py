@@ -133,7 +133,7 @@ def test_the_limit_path_is_reachable_behind_the_switch(monkeypatch, refusals):
 
 def _rotation_kwargs(monkeypatch, rot, *, quote, action="BUY"):
     seen = {}
-    monkeypatch.setattr(rot, "_projected_post_sale_book", lambda *a: ([], 100_000.0))
+    monkeypatch.setattr(rot, "_projected_post_sale_book", lambda *a, **k: ([], 100_000.0))
     monkeypatch.setattr(rot, "_live_fill_price", lambda p, s: PRINT)
     monkeypatch.setattr(rot, "sizing_price_or_refusal", lambda *a: (PRINT, None, None))
     monkeypatch.setattr(rot, "read_exit_quote", lambda broker, symbol: quote)
@@ -145,7 +145,7 @@ def _rotation_kwargs(monkeypatch, rot, *, quote, action="BUY"):
         return 1.0
 
     monkeypatch.setattr(rot, "_qty_by_risk_budget", _risk)
-    monkeypatch.setattr(rot, "_projected_post_sale_cash", lambda *a: 50_000.0)
+    monkeypatch.setattr(rot, "_projected_post_sale_cash", lambda *a, **k: 50_000.0)
     monkeypatch.setattr(rot, "_entry_deployment_budget", lambda *a: (50_000.0, True, "test"))
     monkeypatch.setattr(rot, "_single_name_execution_cap", lambda *a: 50_000.0)
     decision = SimpleNamespace(symbol="XYZ", action=action, entry_price=ENTRY, allocation_pct=5.0, stop_loss=97.0)

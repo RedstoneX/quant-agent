@@ -3,10 +3,10 @@
 Bodies are unchanged apart from dedenting and a one-line unpack of the
 per-name facts at the top of `record_rotation_close`; where the loop body
 said `continue`, the lifted body returns `SKIP` and the caller continues. The
-sell limit (`sell_price * 0.995`) and the rotation refusal gate
-(`if rotation_final_reason is _ROTATION_SELL_REFUSED: continue`) stay in
-`_run_session`, where config/number_ledger.yaml and
-tests/test_rotation_sequencing.py read them. Live-money exit code: behaviour
+sell itself is a plain DAY MARKET order (src/exit_quote.py; the old 0.995
+limit pad is gone), and the rotation refusal gate
+(`if rotation_final_reason is _ROTATION_SELL_REFUSED: continue`) stays in
+`_run_session`, where tests/test_rotation_sequencing.py reads it. Live-money exit code: behaviour
 is identical.
 """
 

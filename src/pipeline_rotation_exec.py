@@ -35,6 +35,7 @@ from src.rotation_projection import (  # noqa: E402,F401  lifted, re-exported
     _projected_post_sale_cash,
     _projected_sale_qty,
     _scaled_position,
+    ProjectionRefused,
 )
 from src.rotation_buy_leg_post import (  # noqa: E402,F401  lifted, re-exported
     _alert_rotation_buy_leg_missing,
@@ -677,12 +678,23 @@ def _rotation_buy_leg_projected_refusal(
     # is already in it. A session with a COVER still pending never reaches
     # this function at all (`_pending_cover_symbols`), so the only thing
     # left to project is the one sale that has not happened yet.
-    projected_positions, equity_for_weights = _projected_post_sale_book(
-        positions,
-        total_value,
-        [rotation_sell] if rotation_sell is not None else [],
-        [],
-    )
+    # The sale is a market order, so it fills at the LIVE bid; that is what
+    # it is projected to bring in. No bid, no projection: the rotation is
+    # refused with the reason rather than priced off a guessed fill.
+    exit_quotes = {}
+    if rotation_sell is not None:
+        sell_symbol = str(getattr(rotation_sell, "symbol", "") or "").strip().upper()
+        exit_quotes[sell_symbol] = read_exit_quote(pipeline.broker, sell_symbol)
+    try:
+        projected_positions, equity_for_weights = _projected_post_sale_book(
+            positions,
+            total_value,
+            [rotation_sell] if rotation_sell is not None else [],
+            [],
+            quotes=exit_quotes,
+        )
+    except ProjectionRefused as exc:
+        return None, "no_price", str(exc)
 
     # --- gates 1/2: price and entry staleness, exact now -----------------
     checked.append("no_price")
@@ -814,6 +826,7 @@ def _rotation_buy_leg_projected_refusal(
         positions,
         [rotation_sell] if rotation_sell is not None else [],
         [],
+        quotes=exit_quotes,
     )
     try:
         entry_budget, ladder_backed, budget_note = _entry_deployment_budget(

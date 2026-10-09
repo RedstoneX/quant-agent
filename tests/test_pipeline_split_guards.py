@@ -137,7 +137,9 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     2026-10-09: `src.pipeline_intraday.*` gains one NEW id, `_NAMES_PER_PAID_CALL`
     (the rank-by-ATR change's per-call batch size) -- added, not moved."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
+    # 2026-10-09: the dead `_EMERGENCY_LIMIT_CUSHION_PCT` id was deleted with
+    # the constant, leaving 1 -- removed, not moved.
+    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 2
     assert (
         len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 0
@@ -165,8 +167,8 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 4
     assert (
         len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 0
-        and len(ledger_ids_for_module("src.rotation_projection", ledger)) == 4
-    )  # moved verbatim to its part 2026-10-08
+        and len(ledger_ids_for_module("src.rotation_projection", ledger)) == 0
+    )  # moved 2026-10-08; its four exit-pad factors deleted 2026-10-09 (live quote)
     assert len(ledger_ids_for_module("src.pipeline_entry_orders", ledger)) == 0
     # Both exit pads deleted 2026-10-09: ordinary exits are market orders.
     assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 0
@@ -224,7 +226,9 @@ def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() ->
     # The entries that moved get the new `site:`; everything else keeps the old one.
     assert new_ledger.count("site: src/pipeline_split_canary.py") == len(plan.id_rewrites)
     untouched = len(ledger_ids_for_module("src.pipeline", new_ledger))
-    assert untouched == 2 - len(plan.id_rewrites)  # 2 ids remain under `src.pipeline.*` after steps 5/6/11
+    assert untouched == 1 - len(
+        plan.id_rewrites
+    )  # 1 id remains under `src.pipeline.*` (dead cushion deleted 2026-10-09)
     assert '    "src/pipeline_split_canary.py",\n' in new_scoped
     # Nothing but the id, the site and the scope list may change.
     assert len(new_ledger.splitlines()) == len(ledger.splitlines())

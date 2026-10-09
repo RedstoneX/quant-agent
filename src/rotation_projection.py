@@ -3,6 +3,40 @@
 from __future__ import annotations
 
 
+class ProjectionRefused(Exception):
+    """An exit being projected has no usable live quote side.
+
+    Every ordinary exit is a plain DAY MARKET order (src/exit_quote.py), so a
+    SELL fills at the bid and a COVER at the ask. Without that side the
+    proceeds are unknown, and the projection refuses with this reason rather
+    than credit a guessed price.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _exit_fill_side(decision, symbol: str, quotes) -> tuple[bool, float]:
+    """`(covering, price)` — the live side a market exit fills at: bid for a
+    SELL, ask for a COVER. Raises `ProjectionRefused` when that side is
+    missing, non-positive or non-finite."""
+    from src.stage_execution_parts.entry_order_pricing import quote_side_paid
+
+    covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
+    quote = (quotes or {}).get(symbol) or {}
+    # quote_side_paid returns the bid when its first argument is True.
+    price = quote_side_paid(not covering, quote.get("bid"), quote.get("ask"))
+    if price is None:
+        side = "ask" if covering else "bid"
+        action = "COVER" if covering else "SELL"
+        raise ProjectionRefused(
+            f"no live {side} for {symbol}: a {action} is a market order that fills at the {side}, "
+            f"so its proceeds cannot be projected without it, and the projection refuses rather than guess"
+        )
+    return covering, price
+
+
 def _projected_sale_qty(decision, position) -> float:
     """How many shares `decision` will actually take off `position`.
 
@@ -52,7 +86,7 @@ def _projected_sale_qty(decision, position) -> float:
     return held_qty
 
 
-def _projected_post_sale_book(positions, total_value: float, sell_decisions: list, cover_decisions: list):
+def _projected_post_sale_book(positions, total_value: float, sell_decisions: list, cover_decisions: list, *, quotes):
     """The held book and the equity as they will be once THIS SESSION'S
     exits have gone through — the state the downstream gates will actually
     read, projected before any of them has been submitted.
@@ -76,9 +110,12 @@ def _projected_post_sale_book(positions, total_value: float, sell_decisions: lis
 
     Returns `(projected_positions, equity_for_weights)`.
 
-      * `equity_for_weights` is `total_value` LESS the concession the
-        marketable limits give up against the marks (0.995 for a SELL, its
-        1.005 COVER mirror). A sale is otherwise mark-to-market neutral: it
+      * `equity_for_weights` is `total_value` LESS the concession each exit
+        gives up against its mark: the distance from the mark to the LIVE
+        quote side the market exit fills at (bid for a SELL, ask for a
+        COVER), read from `quotes` — `{symbol: {"bid": ..., "ask": ...}}` as
+        `src.exit_quote.read_exit_quote` returns it. A missing side raises
+        `ProjectionRefused`; no fixed offset stands in for it. A sale is otherwise mark-to-market neutral: it
         converts a marked position into the cash that position was already
         marked at, so the book's composition changes and its total does
         not. The concession is the one real equity effect of executing, it
@@ -123,20 +160,13 @@ def _projected_post_sale_book(positions, total_value: float, sell_decisions: lis
             price = float(getattr(position, "current_price", 0.0) or 0.0)
         except (TypeError, ValueError):
             price = 0.0
+        _covering, fill = _exit_fill_side(decision, symbol, quotes)
         if price > 0:
-            # What the marketable limit gives up against the mark if it
-            # fills at the limit. A SELL rests BELOW the mark and a COVER
-            # BUYS back ABOVE it, so the cushion is applied in opposite
-            # directions and costs the account in both. Rounded the same
-            # way the loops round it so the two cannot drift.
-            covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
-            # The SAME two factors `ExecutionStage._run_session` prices its
-            # own exits at — 0.995 for a SELL, its 1.005 mirror for a COVER
-            # (board item 138, `config/number_ledger.yaml`). No new number:
-            # a projection that priced an exit differently from the loop
-            # that places it would be describing a fill that never happens.
-            limit = round(price * (1.005 if covering else 0.995), 2)
-            concession += abs(limit - price) * abs(sold)
+            # What the market exit gives up against the mark: the distance
+            # to the live side it fills at. Counted as a cost in either
+            # direction, so the projection never credits a quote above the
+            # mark as a gain.
+            concession += abs(fill - price) * abs(sold)
         remaining = abs(held_qty) - abs(sold)
         if remaining <= 0 or held_qty == 0:
             continue  # position gone
@@ -181,7 +211,7 @@ def _scaled_position(position, remaining_fraction: float):
     return clone
 
 
-def _projected_post_sale_cash(cash: float, positions, sell_decisions, cover_decisions) -> float:
+def _projected_post_sale_cash(cash: float, positions, sell_decisions, cover_decisions, *, quotes) -> float:
     """Settled cash once this session's exits have gone through — a LOWER
     bound, deliberately.
 
@@ -189,8 +219,11 @@ def _projected_post_sale_cash(cash: float, positions, sell_decisions, cover_deci
     exit is already reflected in the `cash` this is handed, because that
     number comes from a broker read taken after they ran.
 
-    A SELL adds its limit proceeds; a COVER SPENDS cash to buy the borrowed
-    shares back, so it is subtracted. The cash sweep is not modelled at
+    A SELL adds quantity x the LIVE BID; a COVER SPENDS quantity x the LIVE
+    ASK to buy the borrowed shares back, so it is subtracted. Both are market
+    orders (src/exit_quote.py) and fill at that side; `quotes` is
+    `{symbol: {"bid": ..., "ask": ...}}`, and a missing side raises
+    `ProjectionRefused` rather than guessing the proceeds. The cash sweep is not modelled at
     all: it can only liquidate the park INTO cash, never out of it, so
     leaving it out can only understate what is deployable. Understating
     refuses a rotation that would have worked; overstating sells a position
@@ -218,15 +251,8 @@ def _projected_post_sale_cash(cash: float, positions, sell_decisions, cover_deci
         sold = _projected_sale_qty(decision, position)
         if sold <= 0:
             continue
-        try:
-            price = float(getattr(position, "current_price", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            continue
-        if price <= 0:
-            continue
-        covering = str(getattr(decision, "action", "") or "").upper() == "COVER"
-        limit = round(price * (1.005 if covering else 0.995), 2)
-        cash += (-1.0 if covering else 1.0) * limit * abs(sold)
+        covering, fill = _exit_fill_side(decision, symbol, quotes)
+        cash += (-1.0 if covering else 1.0) * fill * abs(sold)
     return cash
 
 
