@@ -160,3 +160,31 @@ def test_a_dollar_only_target_with_no_stop_is_refused_by_name(caplog):
     # The data fault upstream is already on record for NVDA, so the named
     # refusal is filed only-if-unrecorded; the log line always names it.
     assert any("NVDA dollar-only target refused" in r.getMessage() for r in caplog.records)
+
+
+def test_missing_facts_or_account_value_is_an_unknown_book_never_a_skipped_ceiling():
+    from src.pipeline_stages import _book_risk_inputs
+
+    for ctx, value in (
+        (SimpleNamespace(facts=None), EQUITY),
+        (SimpleNamespace(facts=SimpleNamespace(heat=None, correlation_clusters=None)), 0.0),
+    ):
+        existing, _ = _book_risk_inputs(ctx, value)
+        assert existing is not None  # None used to skip the 25% ceiling outright
+        assert existing.unknown
+
+
+def test_a_partial_trim_of_a_held_name_is_not_refused_while_the_book_is_unknown():
+    constructor = PortfolioConstructor()
+    constructor.construct_orders(
+        targets=[_risk_target("AAPL", 1.0), _risk_target("NVDA", 1.0)],
+        positions=[_pos("AAPL", 100, 100.0, 100.0)],
+        analyses=[_analysis("AAPL", 100, 95, 140), _analysis("NVDA", 100, 95, 140)],
+        total_value=EQUITY,
+        price_map={"AAPL": 100.0, "NVDA": 100.0},
+        existing_risk_pct=metrics.BookRiskPct({"X": 1.0, "AAPL": 2.0}, unknown={"X"}),
+        clusters=[],
+    )
+    refusals = constructor.drain_refusals()
+    assert refusals.get("AAPL", {}).get("refusal") != "book_risk_unknown"  # reduces risk: passes
+    assert refusals["NVDA"]["refusal"] == "book_risk_unknown"  # adds risk: refused

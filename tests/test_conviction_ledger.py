@@ -1177,7 +1177,14 @@ def _decision_stage_pipeline(db):
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
     p._build_position_history = MagicMock(return_value={})
-    p._build_pm_facts = MagicMock(return_value=None)
+    # A readable, empty book: since 2026-10-09 a run with NO facts has an
+    # UNKNOWN book and refuses every new buy, which this fixture is not about.
+    from src.pipeline_pm_facts import PMFacts
+    from src.risk.metrics import PortfolioHeat
+
+    _facts = PMFacts()
+    _facts.heat = PortfolioHeat(equity=100_000.0)
+    p._build_pm_facts = MagicMock(return_value=_facts)
     p._ensure_correlation_matrix = MagicMock(return_value={})
     p.config = MagicMock()
     p.config.risk.allow_margin = False

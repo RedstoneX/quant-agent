@@ -488,6 +488,12 @@ class PortfolioConstructor:
                 signed_target = 0.0
 
             plan_for_sym = risk_plan.get(sym) if target.risk_allocation_pct is not None else None
+            if sym in (getattr(self, "_reduce_only", None) or ()) and abs(signed_target) > abs(current_pct):
+                # Book risk is UNKNOWN: this request was let through only
+                # because it asked for no more risk than the name carries, so
+                # it may shrink the position but never grow it.
+                logger.info("Constructor: %s held at its size — book risk unknown, reductions only", sym)
+                signed_target = current_pct
             if plan_for_sym is not None and plan_for_sym.sized_from_live_stop and abs(signed_target) > abs(current_pct):
                 # A trim sized from the live stop may only reduce. At its live
                 # stop this position already carries no more than the risk
@@ -806,6 +812,10 @@ class PortfolioConstructor:
         # risk-adding request is refused by name. A close is never blocked.
         book_unknown = sorted(getattr(existing_risk_pct, "unknown", ()) or ())
         self._dollar_targets_refused: set[str] = set()
+        #: Held same-side names whose risk request is at or below what they
+        #: already carry: a reduction, allowed while the book is unknown, and
+        #: never allowed to GROW the position in the delta loop.
+        self._reduce_only: set[str] = set()
         dollar_risk: dict[str, tuple[str, float]] = {}  # symbol -> (direction, risk %)
 
         for target in targets:
@@ -855,10 +865,18 @@ class PortfolioConstructor:
                 # name; it goes to the exit builder, not to nowhere.
                 continue
             if book_unknown:
-                self._refuse_book_unknown(sym, target.direction, book_unknown)
-                # drop-reason: delegated — `_refuse_book_unknown` files
-                # STOP_REFUSAL_BOOK_RISK_UNKNOWN and logs the symbols.
-                continue
+                held_pct = current_weights.get(sym, 0.0)
+                held_same = held_pct < 0 if target.direction == "short" else held_pct > 0
+                held_risk = (existing_risk_pct or {}).get(sym.upper(), (existing_risk_pct or {}).get(sym))
+                if held_same and held_risk is not None and target.risk_allocation_pct <= held_risk:
+                    # Reduces risk on a held name: never blocked by an
+                    # unknown book, and pinned so it can only shrink.
+                    self._reduce_only.add(sym)
+                else:
+                    self._refuse_book_unknown(sym, target.direction, book_unknown)
+                    # drop-reason: delegated — `_refuse_book_unknown` files
+                    # STOP_REFUSAL_BOOK_RISK_UNKNOWN and logs the symbols.
+                    continue
             if 0.0 < target.risk_allocation_pct < self.cfg.min_risk_pct:
                 # Board item 223 — RECORDING ONLY. The target is not
                 # refused, not resized and not reordered; it falls through
@@ -1109,15 +1127,11 @@ class PortfolioConstructor:
                 )
             requests.append(RiskRequest(sym, requested_pct))
 
-        # `clusters` alone is not enough to run the allocator: without
-        # `existing_risk_pct` the held book's risk is invisible, and
-        # `allocate_risk_budget` treats a missing map as `{}` — i.e. as a
-        # book carrying ZERO existing risk — rather than as "unknown". Ceilings
-        # computed against a book presumed empty are computed against the
-        # wrong number, not a smaller one, so a partial failure (heat missing,
-        # clusters present) must degrade the SAME way as a total one: ceilings
-        # unenforced, per-position sizing still applies. See
-        # `_book_risk_inputs` in `src/pipeline_stages.py`.
+        # `existing_risk_pct is None` means the CALLER supplied no book at
+        # all (unit tests, the backtest engine's own budget). The live path
+        # never passes None: `_book_risk_inputs` returns a `BookRiskPct`,
+        # marked UNKNOWN when the book cannot be read, and an unknown book
+        # refuses every risk-adding request above (defect 2026-10-09).
         allocation = self.last_risk_allocation = (
             allocate_risk_budget(
                 requests,
