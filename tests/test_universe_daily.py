@@ -186,3 +186,59 @@ def test_write_record_is_durable_and_marks_the_day(tmp_path):
     assert rows[1]["failures"] == ["asset_not_tradable"]
     on_disk = json.loads((tmp_path / "daily" / f"{TODAY.isoformat()}.summary.json").read_text())
     assert on_disk["names_listed"] == summary["names_listed"] == 2
+
+
+class _BrokerStub:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.chunks: list[list[str]] = []
+
+    def get_bars_batch(self, symbols, lookback_days, on_page=None):
+        self.chunks.append(list(symbols))
+        if on_page:
+            on_page()
+        if self.fail:
+            raise RuntimeError("429 Too Many Requests")
+        return {s: _good_bars() for s in symbols}
+
+
+class _YahooStub:
+    def __init__(self):
+        self.bar_downloads = 0
+
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        self.bar_downloads += 1
+        return {}
+
+
+def _run_with(broker, tmp_path):
+    batches = ud._CountedBatches(broker, 120)
+    run = ud.run_daily_record(
+        [_asset("AAA"), _asset("BBB"), _asset("CCC")],
+        get_bars_batch=batches,
+        get_profile=lambda s: PROFILE,
+        get_filings=lambda s: [],
+        th=TH,
+        today=TODAY,
+        deadline=1e9,
+        batch_size=2,
+        cache=ud.ReadCache(tmp_path),
+        clock=Clock(),
+    )
+    return run, batches
+
+
+def test_run_uses_the_broker_batch_and_makes_no_yahoo_bar_download(tmp_path):
+    yahoo, broker = _YahooStub(), _BrokerStub()
+    run, batches = _run_with(broker, tmp_path)
+    assert broker.chunks == [["AAA", "BBB"], ["CCC"]]
+    assert batches.calls == 2
+    assert yahoo.bar_downloads == 0
+    assert set(run.records) == {"AAA", "BBB", "CCC"}
+
+
+def test_rate_limited_chunk_is_recorded_unavailable_per_name(tmp_path):
+    run, _ = _run_with(_BrokerStub(fail=True), tmp_path)
+    for name in ("AAA", "BBB", "CCC"):
+        assert run.records[name]["status"] == "inconclusive"
+        assert "market_data_unavailable" in run.records[name]["failures"]

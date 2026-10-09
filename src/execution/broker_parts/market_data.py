@@ -533,6 +533,84 @@ class MarketData:
 
         return read_price_with_retry(once, list(symbols), log=logger)
 
+    def get_bars_batch(self, symbols: list[str], lookback_days: int, on_page=None) -> dict[str, list]:
+        """Daily bars for many symbols, one Alpaca request per page.
+
+        Follows `next_page_token` here (not inside the SDK) so every page is
+        visible: `on_page()` is called once per page requested. The client is
+        built HERE, where the replay patches it. Any failure (HTTP 429 or
+        otherwise) RAISES and returns nothing for the whole call, so the
+        caller records every name in the chunk as unavailable; a half-read
+        chunk is never returned and nothing is retried here (the SDK's own
+        bounded retry applies). The SDK exposes no rate-limit headers, so the
+        caller paces by issuing chunks one after another.
+        """
+        from datetime import datetime as _dt, timedelta as _td
+        from src.models import OHLCV
+        from src.util.time import et_today
+
+        if not symbols:
+            return {}
+        if self._data_client is None:
+            from alpaca.data.historical.stock import StockHistoricalDataClient
+
+            self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+            _install_http_timeout(self._data_client)
+        from alpaca.data.enums import Adjustment
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+
+        end = et_today()
+        wanted = {_alpaca_symbol(s): s for s in symbols}
+        req = StockBarsRequest(
+            symbol_or_symbols=list(wanted),
+            timeframe=TimeFrame.Day,
+            start=end - _td(days=int(lookback_days)),
+            end=end,
+            # Split-adjusted only, matching the Yahoo auto_adjust=False bars
+            # this replaced. Feed left unset: this account is entitled to IEX,
+            # not SIP (docs/STATE.md), so SIP would be rejected.
+            adjustment=Adjustment.SPLIT,
+        )
+        fields = req.to_request_fields()
+        out: dict[str, list] = {s: [] for s in symbols}
+        token = None
+        seen: set = set()
+        while True:
+            if on_page is not None:
+                on_page()
+            params = dict(fields)
+            params["limit"] = 10_000
+            if token:
+                params["page_token"] = token
+            page = self._data_client.get(path="/stocks/bars", data=params) or {}
+            for sym, rows in (page.get("bars") or {}).items():
+                internal = wanted.get(sym)
+                if internal is None:
+                    continue
+                for row in rows or []:
+                    try:
+                        stamp = _dt.fromisoformat(str(row["t"]).replace("Z", "+00:00"))
+                        out[internal].append(
+                            OHLCV(
+                                date=stamp.date(),
+                                open=float(row.get("o") or 0),
+                                high=float(row.get("h") or 0),
+                                low=float(row.get("l") or 0),
+                                close=float(row.get("c") or 0),
+                                volume=int(row.get("v") or 0),
+                            )
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        continue
+            token = page.get("next_page_token")
+            if not token or token in seen:
+                break
+            seen.add(token)
+        for rows in out.values():
+            rows.sort(key=lambda b: b.date)
+        return out
+
     def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """Bulk current-session move data; see `snapshots_from_client` for the
         payload. The client is built HERE, where the replay patches it."""

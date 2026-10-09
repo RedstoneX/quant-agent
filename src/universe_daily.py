@@ -14,13 +14,14 @@ session path alone. No new threshold: every limit is `ScreenThresholds`.
 
 Data and call budget:
   asset list   one Alpaca GET (`broker.list_assets`).
-  daily bars   `MarketDataProvider.get_ohlcv_batch` — the desk's existing
-               multi-symbol daily-bar path, which the rehearsal replay seam
-               already covers (the weekly screen reads bars the same way):
-               `universe_screen.bars_batch_size` symbols per request. Alpaca
-               multi-symbol bars are NOT used: no broker method fetches them
-               and a direct Alpaca client here would be a live outbound site
-               with no replay seam. Every batch request is counted.
+  daily bars   `broker.get_bars_batch` - Alpaca multi-symbol daily bars,
+               `universe_screen.bars_batch_size` symbols per request, chunks
+               read one after another (the SDK exposes no rate-limit
+               headers), pages followed by next-page token and each page
+               counted. The client is built inside the broker method, where
+               the rehearsal replay patches it. A failed chunk (HTTP 429 or
+               other) is recorded `market_data_unavailable` per name; there
+               is no retry loop. No Yahoo bar download is made.
   size/sector  Yahoo company profile, one call per name that reaches it,
                CACHED: a profile read this ISO week is reused, an older one is
                re-read while time remains and otherwise reused with its date
@@ -405,16 +406,18 @@ def _filings_reader(config, deadline: float):
 
 
 class _CountedBatches:
-    """`get_ohlcv_batch` with a request counter."""
+    """`broker.get_bars_batch` (Alpaca multi-symbol daily bars), counting pages."""
 
-    def __init__(self, market, lookback_days: int):
-        self.market = market
+    def __init__(self, broker, lookback_days: int):
+        self.broker = broker
         self.lookback_days = int(lookback_days)
         self.calls = 0
 
     def __call__(self, symbols: list[str]) -> dict[str, list]:
+        return self.broker.get_bars_batch(symbols, self.lookback_days, on_page=self._page)
+
+    def _page(self) -> None:
         self.calls += 1
-        return self.market.get_ohlcv_batch(symbols, self.lookback_days)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     deadline = time.monotonic() + float(cfg.screen_deadline_s)
     market = MarketDataProvider()
-    bars = _CountedBatches(market, HISTORY_FETCH_DAYS)
+    bars = _CountedBatches(broker, HISTORY_FETCH_DAYS)
     cache = ReadCache(cfg.data_dir)
     run = run_daily_record(
         broker.list_assets(),

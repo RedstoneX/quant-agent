@@ -644,3 +644,51 @@ def test_bare_get_latest_price_keeps_its_old_shape():
         trade=SimpleNamespace(price=181.25, timestamp=_at(date(2026, 9, 16))),
     )
     assert b.get_latest_price("NVDA") == 181.25
+
+
+# ---------------------------------------------------------------------------
+# get_bars_batch — multi-symbol daily bars, pages followed, failure raises
+# ---------------------------------------------------------------------------
+
+
+def _json_bar(day: str, close: float) -> dict:
+    return {"t": f"{day}T05:00:00Z", "o": close, "h": close, "l": close, "c": close, "v": 10}
+
+
+def test_bars_batch_merges_every_page_and_counts_them():
+    b = _broker()
+    b._data_client = MagicMock()
+    b._data_client.get.side_effect = [
+        {
+            "bars": {"AAA": [_json_bar("2026-09-14", 1.0)], "BBB": [_json_bar("2026-09-14", 2.0)]},
+            "next_page_token": "p2",
+        },
+        {"bars": {"AAA": [_json_bar("2026-09-15", 1.5)]}, "next_page_token": None},
+    ]
+    pages = []
+    out = b.get_bars_batch(["AAA", "BBB", "CCC"], 30, on_page=lambda: pages.append(1))
+    assert [x.close for x in out["AAA"]] == [1.0, 1.5]
+    assert [x.close for x in out["BBB"]] == [2.0]
+    assert out["CCC"] == []
+    assert len(pages) == 2
+    assert b._data_client.get.call_args_list[1].kwargs["data"]["page_token"] == "p2"
+
+
+def test_bars_batch_rate_limit_raises_and_is_not_retried():
+    b = _broker()
+    b._data_client = MagicMock()
+    b._data_client.get.side_effect = RuntimeError("429 Too Many Requests")
+    with pytest.raises(RuntimeError):
+        b.get_bars_batch(["AAA"], 30)
+    assert b._data_client.get.call_count == 1
+
+
+def test_bars_batch_requests_split_adjusted_daily_bars():
+    b = _broker()
+    b._data_client = MagicMock()
+    b._data_client.get.return_value = {"bars": {}, "next_page_token": None}
+    b.get_bars_batch(["AAA", "BBB"], 30)
+    data = b._data_client.get.call_args.kwargs["data"]
+    assert data["adjustment"] == "split"
+    assert str(data["timeframe"]) == "1Day"
+    assert data["symbols"] == "AAA,BBB"
