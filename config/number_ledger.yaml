@@ -369,7 +369,12 @@ numbers:
         unknown and no re-derivation was possible; every BUY and SHORT entry check now writes an
         `entry_slippage_check` evidence row with the observed slippage, the cap, whether the cap
         bound, and that name's own latest daily range as a percent of close, behaviour unchanged, and
-        the value stays `arbitrary` until those rows exist in number
+        the value stays `arbitrary` until those rows exist in number. Owner ruling 2026-10-09 (paper) -
+        every BUY and SHORT entry is a plain DAY MARKET order and the ceiling no longer prices the
+        order the desk sends; the marketable-limit path and this recorder are reachable only behind
+        `execution.entry_order_type` set to `limit` (src/stage_execution_parts/entry_order_type.py). The
+        value still governs a LIVE path every session, src/universe_screen.py reading it as the
+        max half-spread a name may quote to be admitted
       closes_when: the half-spread distribution is in hand and the ceiling is set at a stated percentile
         with the share of the universe it excludes named; it is DELETED, and the spread is charged
         to sizing instead of gating admission, if the measured distribution has no tail the ceiling

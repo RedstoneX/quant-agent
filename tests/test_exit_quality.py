@@ -405,6 +405,8 @@ def test_entry_stop_floor_widens_tight_stop_and_resizes():
         {"NVDA": 100.0},
     )
     pipeline.broker.get_latest_price.return_value = 100.0
+    # A market BUY is sized against the live ask it pays.
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 99.9, "ask_price": 100.0}
 
     # 20 synthetic daily bars with true range ≈ $4 → ATR14 ≈ 4.
     bars = [
@@ -460,6 +462,7 @@ def test_entry_stop_floor_leaves_wide_stop_alone():
         {"NVDA": 100.0},
     )
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     bars = [
         OHLCV(date=_date(2026, 6, d + 1), open=100, high=102, low=98, close=100, volume=1_000_000) for d in range(20)
     ]

@@ -22,7 +22,7 @@ from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
 from src.stage_execution_parts.cover_loop import await_cover_and_finalize, cover_qty_and_label
 from src.stage_execution_parts.entry_geometry import entry_stop_price
-from src.stage_execution_parts.entry_quote import entry_limit_from_quote
+from src.stage_execution_parts.entry_order_pricing import price_entry
 from src.stage_execution_parts.entry_sizing import entry_qty
 from src.stage_execution_parts.protect_entry_stops import protect_pending_entry_stops
 from src.stage_execution_parts.sell_loop import (
@@ -767,23 +767,11 @@ class ExecutionStage:
                 # and inflates qty_by_risk, so it falls back to the print.
                 risk_sizing_price = sizing_print if is_short else sizing_price
 
-                # Liquid-equity execution policy: cross the displayed quote
-                # with a limit (never a market order). A wider spread remains
-                # price-protected and may expire after the bounded entry
-                # window instead of paying through an abnormal book. If quote
-                # data is degraded, retain the validated last/PM limit and
-                # the same bounded wait.
-                #
-                # Fillability parity, not a new risk budget: BUY crosses the
-                # displayed OFFER with a ceiling `reference * (1 + bps/1e4)`;
-                # SHORT crosses the displayed BID with the same
-                # `max_entry_slippage_bps` as a floor
-                # `reference * (1 - bps/1e4)`. A SHORT still keeps the >5%
-                # stale-entry skip and the direction-aware lower-to-market
-                # adjustment just above; this block only adds the NBBO-aware
-                # floor a BUY already had as a ceiling. Repeg stays off —
-                # walking a short toward the buy-side ceiling would worsen
-                # it, not fix an unmarketable birth price.
+                # Owner ruling 2026-10-09: entries are plain DAY MARKET orders
+                # (src/stage_execution_parts/entry_order_type.py holds the one
+                # switch that puts the marketable-limit path back for go-live
+                # testing). The quote is read for the RISK DIVISOR — the ask a
+                # BUY pays, the bid a SHORT pays — and recorded on the order.
                 try:
                     quote = pipeline.broker.get_latest_quote(decision.symbol)
                 except Exception as e:  # noqa: BLE001
@@ -812,29 +800,18 @@ class ExecutionStage:
                         "latency blew the window",
                     )
                     continue
-                priced = entry_limit_from_quote(
+                priced = price_entry(
                     entry_run,
                     EntryLeg(decision, is_short, queue_index, market_price, ask, bid),
                     limit_price,
                     sizing_price,
+                    risk_sizing_price,
                 )
                 if priced is SKIP:
                     continue
-                limit_price, sizing_price = priced
+                limit_price, sizing_price, risk_sizing_price = priced
 
                 stop_price = entry_stop_price(ctx, decision, is_short, sizing_price)
-
-                # ROOT FIX (2026-10-04, measured live): REPLACES the fallback
-                # divisor above — size the risk budget against the price the
-                # desk is ABOUT TO PAY. It was bound before the marketable
-                # limit existed, so realised fill-to-stop was WIDER than the
-                # sized distance and positions carried more than the
-                # authorised ~1% of equity: 6.1% median BUY overshoot (25%
-                # worst), 10.9% on a short. The limit is known here, so no
-                # buffer and no multiplier — the budget divides by it.
-                # Identical both ways, the worst fill either way (ruling).
-                if isinstance(limit_price, (int, float)) and limit_price > 0:
-                    risk_sizing_price = float(limit_price)
 
                 sized = entry_qty(
                     entry_run,
@@ -1037,7 +1014,9 @@ class ExecutionStage:
                 # leaves a fill_status='pending_submit' row the operator
                 # (or a periodic cleanup) can reconcile against the
                 # broker's order list.
-                executed_price = limit_price if limit_price is not None else sizing_price
+                # A market entry's recorded price is the quote side it pays (the
+                # risk divisor); the fill's own average lands via reconciliation.
+                executed_price = limit_price if limit_price is not None else risk_sizing_price
                 # Phase 3.1 — pin the analyst's stated horizon and setup type to
                 # the trade row at entry. Everything downstream that asks "is
                 # this position on schedule?" must measure against THIS number,
@@ -1266,6 +1245,8 @@ class ExecutionStage:
                     broker_order_id=order.get("id"),
                     qty=qty,
                     limit_price=executed_price,
+                    quote_bid=bid,
+                    quote_ask=ask,
                 )
                 if isinstance(order, dict):
                     order.setdefault("action", decision.action)  # audit F5

@@ -85,6 +85,7 @@ def _pipeline(
     """
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = live_price
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": live_price, "ask_price": live_price}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
@@ -881,6 +882,7 @@ def _repair_pipeline(*, stop_loss=140.0, live_price=150.0) -> MagicMock:
     pipeline = MagicMock()
     pipeline.db.get_symbol_last_buy.return_value = {"stop_loss": stop_loss}
     pipeline.broker.get_latest_price.return_value = live_price
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": live_price, "ask_price": live_price}
     pipeline.broker.STOP_LIMIT_BUFFER_PCT = 0.03
     return pipeline
 
