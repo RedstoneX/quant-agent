@@ -662,7 +662,10 @@ def test_idx29_37_prompt_matches_executor_enforcement():
     # SCOPE CHANGED AGAIN, Stage 3 (shorts, feat/shorts-stage3). COVER is the
     # short-side twin of SELL/REDUCE and is subject to the exact same
     # named-trigger gate — the prompt now says so explicitly.
-    assert "EVERY SELL, REDUCE and COVER, first exit of the day included" in text
+    # SCOPE CHANGED AGAIN, owner ruling 2026-10-09: REDUCE (a 50% part-sell)
+    # was removed — exits are whole. The pin now guards the whole-exit wording.
+    assert "EVERY SELL and COVER, first exit of the day included" in text
+    assert "REDUCE" not in text
     # TRAIL_STOP clamps are named where the exemption is claimed.
     assert "ratchet cooldown" in text
     assert "1.25×ATR" in text

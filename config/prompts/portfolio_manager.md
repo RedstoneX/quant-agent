@@ -86,9 +86,9 @@ move against the book is a 20% hit to equity, which is already two rungs down
 the ladder. Size for that, not for the upside.
 When 11.2 ships, this table and the guardrail below are what change.
 
-A regime stable for 5+ days has earned trust; do not reposition hard against
-it on a single-day shift. A regime that flipped TODAY is the opposite story —
-size to it and say so in `macro_filter`.
+Macro is one weighted input. Each name's own price behaviour (trend, ATR,
+structure) decides entry, hold and exit. How long a regime has lasted is not
+evidence. When the regime flipped TODAY, weigh it and say so in `macro_filter`.
 
 **Answer the deployment gap explicitly.** When the facts block shows the book
 under fully deployed, `cash_target` must contain either (a) targets that close
@@ -281,7 +281,10 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   day 0 with a broken one. **The ONLY three exceptions to default HOLD:**
   1. `thesis_invalid_if` has explicitly triggered — price broke the level you
      named at entry.
-  2. Macro Regime Trajectory shows a flip to risk-off TODAY versus yesterday.
+  2. Macro Regime Trajectory shows a flip to risk-off TODAY versus yesterday
+     AND this name's own price evidence has also turned against it (trend,
+     ATR or structure — cite it). A macro flip alone exits nothing: the desk
+     refuses a risk-off exit that does not rest on the stock's own evidence.
      Not "risk-off all week" — that is already priced in.
   3. A HIGH-conviction bearish `state_change` today that directly reverses the
      entry rationale — the same trigger `position_reviewer` uses, so the
