@@ -386,12 +386,12 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
             sym, "BUY", 10, entry, "x", "r1", broker_order_id=f"buy-{sym}", fill_status="filled", stop_loss=90.0
         )
         db.conn.execute(
-            "UPDATE trades SET timestamp = datetime('now', ?) WHERE broker_order_id=?",
+            "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', ?) WHERE broker_order_id=?",
             (f"-{days_back[0]} days", f"buy-{sym}"),
         )
         db.insert_trade(sym, "SELL", 10, exit_, "x", "r2", broker_order_id=f"sell-{sym}", fill_status="filled")
         db.conn.execute(
-            "UPDATE trades SET timestamp = datetime('now', ?) WHERE broker_order_id=?",
+            "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', ?) WHERE broker_order_id=?",
             (f"-{days_back[1]} days", f"sell-{sym}"),
         )
     db.conn.commit()

@@ -58,17 +58,17 @@ def test_mixed_long_and_short_ledger_produces_correct_separate_and_combined_figu
     db.initialize()
 
     # Long WIN: BUY 10 NVDA @ 100, SELL @ 120 -> +20%
-    _insert(db, "NVDA", "BUY", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "NVDA", "SELL", 10, 120.0, "2026-08-03 10:00:00")
+    _insert(db, "NVDA", "BUY", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "NVDA", "SELL", 10, 120.0, "2026-11-03 10:00:00")
     # Long LOSS: BUY 10 AAPL @ 50, SELL @ 45 -> -10%
-    _insert(db, "AAPL", "BUY", 10, 50.0, "2026-08-01 10:00:00")
-    _insert(db, "AAPL", "SELL", 10, 45.0, "2026-08-04 10:00:00")
+    _insert(db, "AAPL", "BUY", 10, 50.0, "2026-11-01 10:00:00")
+    _insert(db, "AAPL", "SELL", 10, 45.0, "2026-11-04 10:00:00")
     # Short WIN: SHORT 10 TSLA @ 250, COVER @ 200 (price FELL) -> +20%
-    _insert(db, "TSLA", "SHORT", 10, 250.0, "2026-08-01 10:00:00")
-    _insert(db, "TSLA", "COVER", 10, 200.0, "2026-08-05 10:00:00")
+    _insert(db, "TSLA", "SHORT", 10, 250.0, "2026-11-01 10:00:00")
+    _insert(db, "TSLA", "COVER", 10, 200.0, "2026-11-05 10:00:00")
     # Short LOSS: SHORT 10 MSFT @ 300, COVER @ 315 (price ROSE) -> -5%
-    _insert(db, "MSFT", "SHORT", 10, 300.0, "2026-08-01 10:00:00")
-    _insert(db, "MSFT", "COVER", 10, 315.0, "2026-08-02 10:00:00")
+    _insert(db, "MSFT", "SHORT", 10, 300.0, "2026-11-01 10:00:00")
+    _insert(db, "MSFT", "COVER", 10, 315.0, "2026-11-02 10:00:00")
 
     calib = db.compute_trade_calibration(lookback_days=365)
 
@@ -103,12 +103,12 @@ def test_short_closing_below_entry_is_a_win_and_above_entry_is_a_loss(tmp_path):
     db.initialize()
 
     # Three short round-trips so the >=3 floor is cleared by shorts alone.
-    _insert(db, "AAA", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "AAA", "COVER", 10, 90.0, "2026-08-02 10:00:00")  # price fell -> WIN
-    _insert(db, "BBB", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "BBB", "COVER", 10, 110.0, "2026-08-02 10:00:00")  # price rose -> LOSS
-    _insert(db, "CCC", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "CCC", "COVER", 10, 100.0, "2026-08-02 10:00:00")  # unchanged -> breakeven
+    _insert(db, "AAA", "SHORT", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "AAA", "COVER", 10, 90.0, "2026-11-02 10:00:00")  # price fell -> WIN
+    _insert(db, "BBB", "SHORT", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "BBB", "COVER", 10, 110.0, "2026-11-02 10:00:00")  # price rose -> LOSS
+    _insert(db, "CCC", "SHORT", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "CCC", "COVER", 10, 100.0, "2026-11-02 10:00:00")  # unchanged -> breakeven
 
     calib = db.compute_trade_calibration(lookback_days=365)
     assert calib["n"] == 3
@@ -122,12 +122,12 @@ def test_partial_and_emergency_cover_labels_close_the_short_lot(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    _insert(db, "AAA", "SHORT", 20, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "AAA", "PARTIAL_COVER(50%)", 10, 90.0, "2026-08-02 10:00:00")
-    _insert(db, "BBB", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "BBB", "EMERGENCY_COVER", 10, 80.0, "2026-08-02 10:00:00")
-    _insert(db, "CCC", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "CCC", "COVER", 10, 70.0, "2026-08-02 10:00:00")
+    _insert(db, "AAA", "SHORT", 20, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "AAA", "PARTIAL_COVER(50%)", 10, 90.0, "2026-11-02 10:00:00")
+    _insert(db, "BBB", "SHORT", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "BBB", "EMERGENCY_COVER", 10, 80.0, "2026-11-02 10:00:00")
+    _insert(db, "CCC", "SHORT", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "CCC", "COVER", 10, 70.0, "2026-11-02 10:00:00")
 
     calib = db.compute_trade_calibration(lookback_days=365)
     assert calib["n"] == 3
@@ -148,12 +148,12 @@ def test_long_only_ledger_top_level_numbers_unchanged_by_short_support(tmp_path)
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    _insert(db, "NVDA", "BUY", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "NVDA", "SELL", 10, 110.0, "2026-08-03 10:00:00")
-    _insert(db, "AAPL", "BUY", 10, 50.0, "2026-08-01 10:00:00")
-    _insert(db, "AAPL", "SELL", 10, 45.0, "2026-08-04 10:00:00")
-    _insert(db, "JPM", "BUY", 10, 200.0, "2026-08-01 10:00:00")
-    _insert(db, "JPM", "SELL", 10, 210.0, "2026-08-06 10:00:00")
+    _insert(db, "NVDA", "BUY", 10, 100.0, "2026-11-01 10:00:00")
+    _insert(db, "NVDA", "SELL", 10, 110.0, "2026-11-03 10:00:00")
+    _insert(db, "AAPL", "BUY", 10, 50.0, "2026-11-01 10:00:00")
+    _insert(db, "AAPL", "SELL", 10, 45.0, "2026-11-04 10:00:00")
+    _insert(db, "JPM", "BUY", 10, 200.0, "2026-11-01 10:00:00")
+    _insert(db, "JPM", "SELL", 10, 210.0, "2026-11-06 10:00:00")
 
     calib = db.compute_trade_calibration(lookback_days=365)
     assert calib["n"] == 3

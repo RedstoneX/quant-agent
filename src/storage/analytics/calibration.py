@@ -886,8 +886,14 @@ class TradeAnalytics:
         # built from the lots opened on/after the start; earlier ones are
         # excluded here and counted once, in the position-level count below.
         closed = [c for c in closed if not _opened_before_clean_record(c["open_ts"])]
+        # ONE exclusion unit across every section: whole POSITIONS (see
+        # `conviction_positions`), so the owner sees how much was set aside
+        # even when the clean window is too thin to render anything else.
+        all_positions = conviction_positions(rows, lookback_days)
+        positions = [p for p in all_positions if not _opened_before_clean_record(p["open_ts"])]
+        excluded_before_clean_record_n = len(all_positions) - len(positions)
         if len(closed) < 3:
-            return {}
+            return {"excluded_before_clean_record_n": excluded_before_clean_record_n} if excluded_before_clean_record_n else {}
 
         def _bucket_stats(bucket: list[dict]) -> dict:
             if not bucket:
@@ -966,9 +972,6 @@ class TradeAnalytics:
         # are counted in `conviction_unknown_n` rather than silently folded
         # into one of the three real labels.
         # Position-level record (see `conviction_positions` for the one rule).
-        all_positions = conviction_positions(rows, lookback_days)
-        positions = [p for p in all_positions if not _opened_before_clean_record(p["open_ts"])]
-        excluded_before_clean_record_n = len(all_positions) - len(positions)
         conv_levels = ("high", "medium", "low")
         conv_known = {lv: [p for p in positions if p["conviction"] == lv and p["pnl_known"]] for lv in conv_levels}
         conv_unknown = {
