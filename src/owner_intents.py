@@ -1,4 +1,7 @@
-"""The owner intent record and the one flag-only action, pause/resume (panel instalment 1).
+"""The owner intent record and the one flag-only action, Freeze/Start (panel instalment 1).
+
+Stored action strings stay PAUSE / RESUME (aliased FREEZE / UNFREEZE) so old
+rows replay unchanged; owner-facing outcomes say Freeze / Start.
 
 DESK-SIDE ONLY. `src/api/` must never import this: it writes the database,
 and tests/test_api_cannot_trade.py forbids that by construction. A future
@@ -11,7 +14,7 @@ broker door reads `current_flags` (see src/execution/owner_flags_gate.py).
 Staleness has no time constant. An intent is stale when the owner gave it an
 `expires_at` that has passed by the time the desk picks it up (EXPIRED, with
 that reason). A row naming an action this desk does not know is REFUSED, with
-its reason. Pause and resume name no position, so replaying them
+its reason. Freeze and Start name no position, so replaying them
 in raised order is always correct.
 
 There is no per-position "hands off" and no never-touch list: the desk manages
@@ -25,8 +28,10 @@ import sqlite3
 from datetime import datetime, timezone
 
 from src.owner_flags import (  # noqa: F401
+    FREEZE,
     PAUSE,
     RESUME,
+    UNFREEZE,
     Flags,
     current_flags,
     read_flags,
@@ -35,6 +40,10 @@ from src.owner_flags import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 ACTIONS = {PAUSE, RESUME}
+_OWNER_WORDS = {
+    PAUSE: "Freeze now in force: no new positions or adds; exits and stops keep working",
+    RESUME: "Start now in force: the desk may open new positions again",
+}
 
 
 def _now() -> datetime:
@@ -82,7 +91,7 @@ def process_pending(conn, *, now=None) -> list:
         elif exp and datetime.fromisoformat(exp) <= now:
             state, outcome = "expired", f"expired at {exp} before the desk could act"
         else:
-            state, outcome = "acted", f"{action} now in force"
+            state, outcome = "acted", _OWNER_WORDS[action]
         conn.execute(
             "UPDATE owner_intents SET state=?, outcome=?, resolved_at=? WHERE id=?", (state, outcome, _iso(now), rid)
         )

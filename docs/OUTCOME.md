@@ -782,7 +782,7 @@ Functional correctness is necessary but not sufficient. The Dashboard must also 
 
 The target is a credible professional trading cockpit, not a technically correct dashboard shell containing miniature widgets.
 
-The visual reference is directional, not blanket feature authorization. Mockup concepts that conflict with current safety boundaries — including broker-write PAUSE/KILL controls, direct trade controls, or other write paths — remain unimplemented unless separately authorized. Do not fabricate unsupported data merely to match a mockup.
+The visual reference is directional, not blanket feature authorization. Mockup concepts that conflict with current safety boundaries — including direct trade controls or other write paths — remain unimplemented unless separately authorized. Exception, owner authorisation 2026-10-09: the owner authorised Stop / Freeze / Start dashboard buttons. Freeze (ruled ~23:20 UTC that day) keeps the desk running and protecting what it holds — stops, trails and exits all work — but opens nothing new; it is a flag the desk reads at its single broker door, never a call, and is also the future Sentinel's inbound seam (docs/FUTURE.md). Its rule is built into the owner flag gate (src/execution/owner_flags_gate.py); the Stop and Start buttons and their API are later changes. Do not fabricate unsupported data merely to match a mockup.
 
 ## MVP lifecycle principle
 

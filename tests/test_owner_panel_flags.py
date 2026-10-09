@@ -86,21 +86,21 @@ class _Door:
 def _recording_class():
     calls = []
     ns = {n: (lambda n: lambda self, *a, **k: calls.append(n) or "THROUGH")(n) for n in gate._REFUSALS}
-    ns["get_positions"] = lambda self: "READ"
+    ns["get_positions"] = lambda self: []  # flat: every buy/sell would open
     cls = type("Door", (), ns)
     gate.install(cls)
     return cls, calls
 
 
-def test_paused_desk_raises_no_orders_and_resume_restores(db_path):
+def test_frozen_desk_opens_nothing_and_start_restores(db_path):
     cls, calls = _recording_class()
     d = cls()
     _raise(db_path, oi.PAUSE)
     oi.intake(db_path)
-    for n in gate.PAUSE_BLOCKS:
+    for n in gate.FREEZE_BLOCKS | gate.FREEZE_JUDGES:
         assert getattr(d, n)("ABC") != "THROUGH"
     assert not calls
-    d.replace_stop_loss("ABC", 1.0)  # protection upkeep continues under pause
+    d.replace_stop_loss("ABC", 1.0)  # protection upkeep continues under a freeze
     assert calls == ["replace_stop_loss"]
     _raise(db_path, oi.RESUME)
     oi.intake(db_path)
@@ -141,8 +141,8 @@ def test_wholesale_cancels_are_not_symbol_filtered(db_path):
     assert d.cancel_open_orders() == "THROUGH"  # a pause never blocks a cancel
 
 
-def test_unreadable_flag_is_unknown_and_unknown_blocks_like_paused(db_path, monkeypatch):
-    """Owner ruling 2026-10-09: UNKNOWN behaves exactly like paused, sells included."""
+def test_unreadable_flag_is_unknown_and_unknown_blocks_like_frozen(db_path, monkeypatch):
+    """Owner ruling 2026-10-09 ~23:20 UTC: UNKNOWN behaves exactly like frozen -- entries out, exits on."""
     monkeypatch.setattr(owner_flags.time, "sleep", lambda s: None)
     seen = []
     monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
@@ -153,12 +153,12 @@ def test_unreadable_flag_is_unknown_and_unknown_blocks_like_paused(db_path, monk
     owner_flags._CACHE.clear()  # a restarted desk: only the file copy survives
     f = owner_flags.read_flags(db_path)
     assert f.stale and f.unknown  # a saved "not paused" is never trusted
-    for n in gate.PAUSE_BLOCKS:
+    for n in gate.FREEZE_BLOCKS | gate.FREEZE_JUDGES:
         assert getattr(d, n)("ZZZ")["status"] == "owner_flag_halted"
-    assert d.close_position("ZZZ")["status"] == "owner_flag_halted"  # sells blocked too
+    assert d.close_position("ZZZ") == "THROUGH"  # exits keep working
     assert d.replace_stop_loss("ZZZ", 1.0) == "THROUGH"  # protection continues
     assert d.cancel_protective_stops("ZZZ") == "THROUGH"
-    assert not [c for c in calls if c not in ("replace_stop_loss", "cancel_protective_stops")]
+    assert calls == ["close_position", "replace_stop_loss", "cancel_protective_stops"]
     assert len(seen) == 1 and "UNREADABLE" in seen[0]  # once per state change, not per order
 
 
@@ -192,7 +192,7 @@ def test_desk_aimed_at_no_database_is_unknown(monkeypatch):
     gate.configure(None)
     try:
         cls, calls = _recording_class()
-        assert cls().close_position("ZZZ")["status"] == "owner_flag_halted"
+        assert cls().submit_order("ZZZ", 1, "buy")["status"] == "owner_flag_halted"
         assert not calls and len(seen) == 1
     finally:
         gate.release()

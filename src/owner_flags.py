@@ -1,4 +1,4 @@
-"""READ-ONLY owner flags (panel instalment 1). SELECT only, safe for the broker door.
+"""READ-ONLY owner flags (panel instalment 1): the owner's Freeze. SELECT only, safe for the broker door.
 
 Flags are a replay of the intents that were ACTED on, in order; nothing is
 stored twice. The writer lives in src/owner_intents.py (desk-side only).
@@ -13,7 +13,10 @@ from dataclasses import dataclass, replace
 
 logger = logging.getLogger(__name__)
 
+# Stored action strings keep their original names so old rows replay unchanged;
+# the owner-facing names are Freeze / Start (owner ruling 2026-10-09).
 PAUSE, RESUME = "PAUSE", "RESUME"
+FREEZE, UNFREEZE = PAUSE, RESUME
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,11 @@ class Flags:
     paused: bool = False
     unknown: bool = False  # cannot tell whether the owner paused: treated as paused
     stale: bool = False  # read failed; `paused` is the last saved copy (still UNKNOWN)
+
+    @property
+    def frozen(self) -> bool:
+        """Owner-facing name: frozen = open nothing new; exits and stops keep working."""
+        return self.paused
 
 
 def current_flags(conn) -> Flags:
