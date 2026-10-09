@@ -576,6 +576,9 @@ def test_calibration_closes_the_lot_on_a_filled_trail_stop(tmp_path):
             fill_status="submitted",
         )
         db.update_trade_fill(f"stop-{i}", fill_status="filled", fill_qty=8, fill_price=1100.0)
+    # Clean-record start (owner ruling 2026-10-09): date the rows after it, in order.
+    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-13 14:00:00', '+' || id || ' seconds')")
+    db.conn.commit()
 
     calib = db.compute_trade_calibration(lookback_days=45)
     assert calib.get("n") == 3, "each stop-out must close its lot"

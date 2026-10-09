@@ -185,8 +185,8 @@ class ReviewCalibration:
         except Exception as e:
             record_swallowed("prompt_facts.review.calibration._build_calibration_note", e, log=logger)
             return ""
-        if not isinstance(stats, dict) or not stats:
-            return ""
+        if not isinstance(stats, dict) or not stats or "win_rate_pct" not in stats:
+            return ""  # empty, or only the clean-record exclusion count (too few clean trades)
         # Conviction ledger (spec §7.2) — operator-only surface. Logged on
         # EVERY call regardless of the floor below, deliberately separate
         # from the prompt text being built: this is how a human operator

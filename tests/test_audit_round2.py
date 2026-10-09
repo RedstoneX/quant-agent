@@ -292,7 +292,7 @@ def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    old_ts = "2026-05-01 14:00:00"
+    old_ts = "2026-10-12 14:00:00"  # oldest lot; all later rows are re-dated after it below
     db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, fill_status, timestamp) "
         "VALUES ('NVDA', 'BUY', 100, 150.0, 'filled', ?)",
@@ -313,6 +313,11 @@ def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):
         db.insert_trade(symbol=sym, action="SELL", qty=1, price=110.0, reasoning="x", run_id="r", fill_status="filled")
     db.insert_trade(symbol="NVDA", action="SELL", qty=100, price=210.0, reasoning="x", run_id="r", fill_status="filled")
 
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-13 14:00:00', '+' || id || ' seconds') WHERE timestamp != ?",
+        (old_ts,),
+    )
+    db.conn.commit()
     calib = db.compute_trade_calibration(lookback_days=30)
     nvda = [c for c in db.conn.execute("SELECT 1").fetchall()]  # keep db alive
     # The NVDA close must report the TRUE +40% vs the 60-day-old $150 lot,

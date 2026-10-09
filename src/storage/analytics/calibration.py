@@ -18,7 +18,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.storage.analytics.agent_log_reads import recent_agent_outputs
 from src.util.time import ET
@@ -78,6 +78,25 @@ _POSITION_OPEN_ACTIONS: dict[str, str] = {"BUY": "long", "SHORT": "short"}
 #: (see docs/QAMC_REMEDIATION_SPEC.md §7.2 and the conviction ledger
 #: report for the exact measured figures).
 _CONVICTION_OUTCOME_MIN_N = 20
+
+
+#: Start of the CLEAN RECORD, as a naive-UTC timestamp string compared against
+#: each position's opening-entry timestamp. Owner ruling 2026-10-09: every
+#: trade before that day's fixes is NOT evidence (stops and targets were set
+#: wrongly); the clean record starts at the market open of Monday 2026-10-12
+#: 09:30 America/New_York (EDT, UTC-4) = 13:30 UTC. A dated ruling, not a
+#: tunable: no config knob. Older rows stay in the database, only uncounted.
+CLEAN_RECORD_START_UTC = "2026-10-12T13:30:00"
+
+
+def _opened_before_clean_record(open_ts) -> bool:
+    try:
+        dt = datetime.fromisoformat(str(open_ts).replace(" ", "T").replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return True  # unparseable opening time cannot prove it is clean
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt < datetime.fromisoformat(CLEAN_RECORD_START_UTC)
 
 
 _LONG_EXIT_ACTIONS = ("EMERGENCY_SELL", "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "RECONCILED_EXIT")
@@ -162,6 +181,7 @@ def conviction_positions(rows, lookback_days: int) -> list[dict]:
                 "pnl": pos["pnl"],
                 "return_pct": pos["pnl"] / pos["cost"] * 100 if pos["cost"] > 0 else 0.0,
                 "hold_days": hold_days,
+                "open_ts": pos["open_ts"],
             }
         )
     return out
@@ -804,6 +824,7 @@ class TradeAnalytics:
                             "allocated_risk_pct": lot.get("allocated_risk_pct"),
                             "requested_risk_pct": lot.get("requested_risk_pct"),
                             "decision_model": lot.get("decision_model"),
+                            "open_ts": lot["ts"],
                         }
                     )
                     lot["qty"] -= closed_qty
@@ -853,14 +874,30 @@ class TradeAnalytics:
                             "allocated_risk_pct": lot.get("allocated_risk_pct"),
                             "requested_risk_pct": lot.get("requested_risk_pct"),
                             "decision_model": lot.get("decision_model"),
+                            "open_ts": lot["ts"],
                         }
                     )
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
                         lots.pop(0)
                     remaining -= closed_qty
+        # Clean record (owner ruling 2026-10-09): every outcome section below
+        # (by_size, by_side, by_conviction, by_allocated_risk, overall) is
+        # built from the lots opened on/after the start; earlier ones are
+        # excluded here and counted once, in the position-level count below.
+        closed = [c for c in closed if not _opened_before_clean_record(c["open_ts"])]
+        # ONE exclusion unit across every section: whole POSITIONS (see
+        # `conviction_positions`), so the owner sees how much was set aside
+        # even when the clean window is too thin to render anything else.
+        all_positions = conviction_positions(rows, lookback_days)
+        positions = [p for p in all_positions if not _opened_before_clean_record(p["open_ts"])]
+        excluded_before_clean_record_n = len(all_positions) - len(positions)
         if len(closed) < 3:
-            return {}
+            return (
+                {"excluded_before_clean_record_n": excluded_before_clean_record_n}
+                if excluded_before_clean_record_n
+                else {}
+            )
 
         def _bucket_stats(bucket: list[dict]) -> dict:
             if not bucket:
@@ -939,7 +976,6 @@ class TradeAnalytics:
         # are counted in `conviction_unknown_n` rather than silently folded
         # into one of the three real labels.
         # Position-level record (see `conviction_positions` for the one rule).
-        positions = conviction_positions(rows, lookback_days)
         conv_levels = ("high", "medium", "low")
         conv_known = {lv: [p for p in positions if p["conviction"] == lv and p["pnl_known"]] for lv in conv_levels}
         conv_unknown = {
@@ -982,6 +1018,8 @@ class TradeAnalytics:
                 for lv in conv_levels
             },
             "conviction_unknown_n": conviction_unknown_n,
+            "clean_record_start_utc": CLEAN_RECORD_START_UTC,
+            "excluded_before_clean_record_n": excluded_before_clean_record_n,
             "by_allocated_risk": {
                 "high (≥3%)": _gated_bucket_stats(by_risk_high, "high allocated risk"),
                 "medium (1-3%)": _gated_bucket_stats(by_risk_medium, "medium allocated risk"),

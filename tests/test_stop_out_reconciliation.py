@@ -660,25 +660,33 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
     # Three closed pairs needed to cross compute_trade_calibration's n>=3
     # reporting threshold. Two ordinary SELLs plus one STOP_OUT loss.
     db.insert_trade("AAA", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='b1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='b1'"
+    )
     db.insert_trade("AAA", "SELL", 10, 110.0, "x", "r2", broker_order_id="s1", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-9 days') WHERE broker_order_id='s1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-9 days') WHERE broker_order_id='s1'"
+    )
 
     db.insert_trade("BBB", "BUY", 10, 100.0, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE broker_order_id='b2'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-8 days') WHERE broker_order_id='b2'"
+    )
     db.insert_trade("BBB", "SELL", 10, 110.0, "x", "r2", broker_order_id="s2", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE broker_order_id='s2'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE broker_order_id='s2'"
+    )
 
     db.insert_trade(
         "ONDS", "BUY", 17, 8.53, "x", "r1", broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0
     )
-    db.conn.execute("UPDATE trades SET timestamp = '2026-08-27 14:31:55' WHERE broker_order_id='entry-onds'")
+    db.conn.execute("UPDATE trades SET timestamp = '2026-10-27 14:31:55' WHERE broker_order_id='entry-onds'")
     db.insert_stop_out_trade(
         symbol="ONDS",
         qty=17.0,
         price=7.93,
         broker_order_id="00000000-0000-4000-8000-0000000000b1",
-        filled_at="2026-08-28 16:16:07",
+        filled_at="2026-10-28 16:16:07",
     )
     db.conn.commit()
 
@@ -1067,6 +1075,8 @@ def test_calibration_and_ledger_qty_agree_on_trail_stop_fill_state(tmp_path):
     db.conn.execute(
         "UPDATE trades SET fill_status = NULL, fill_qty = NULL WHERE action = 'TRAIL_STOP' AND broker_order_id IS NULL"
     )
+    # Clean-record start (owner ruling 2026-10-09): date the rows after it, in order.
+    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-13 14:00:00', '+' || id || ' seconds')")
     db.conn.commit()
 
     net = db.get_symbols_with_open_ledger_qty()
