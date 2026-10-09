@@ -4,8 +4,8 @@
 Board item 74: the second-sell-side-action warning and the per-event dedup
 that refuses a cut whose trigger and cited record were already acted on
 today. The body is unchanged apart from `continue` -> `return SKIP` and
-returning `spent`, which the authorisation record further down the loop
-reads; `self` is bound to the pipeline instance (`loop.owner`) so every
+returning the check result `spent` (nothing later in the loop reads it);
+`self` is bound to the pipeline instance (`loop.owner`) so every
 line reads as before. `acted_today` is the method's own list, so cuts
 submitted earlier in the same pass are seen. Sell-side code: behaviour is
 identical.
