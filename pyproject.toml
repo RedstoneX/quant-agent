@@ -97,6 +97,9 @@ tmp_path_retention_count = 5
 [tool.ruff]
 line-length = 120
 
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.ruff.lint]
 select = ["E501", "E701", "E702", "E703", "C901", "PLR0912", "PLR0915"]
 
