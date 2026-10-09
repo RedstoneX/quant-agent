@@ -15,4 +15,4 @@ Run:
       python ops/order_type_test/order_type_test.py
 
 Refuses to run if any variable is unset or the account number does not end with
-SANDBOX_ACCOUNT_SUFFIX. Optional: ALPACA_TRADING_URL (defaults to the live API).
+SANDBOX_ACCOUNT_SUFFIX. Required: ALPACA_TRADING_URL, with no default, so the caller always names paper or live on purpose.

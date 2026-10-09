@@ -1,13 +1,15 @@
 """Go-live order-type fill test: market vs limit fills per order type.
 
-Run only against a LIVE account. Needs env: ALPACA_API_KEY, ALPACA_SECRET_KEY,
-SANDBOX_ACCOUNT_SUFFIX (the account number must end with it).
+Paper fills are simulated at the NBBO, so only a LIVE run measures anything.
+Needs env: ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_TRADING_URL (no default:
+the caller must name paper or live explicitly), and SANDBOX_ACCOUNT_SUFFIX
+(the account number must end with it).
 """
 
 import io, json, os, time, csv, urllib.request, threading, datetime as dt, statistics as st
 
 H = {"Content-Type": "application/json"}
-T = os.environ.get("ALPACA_TRADING_URL", "https://api.alpaca.markets")
+T = os.environ.get("ALPACA_TRADING_URL", "")
 D = "https://data.alpaca.markets"
 
 
@@ -128,7 +130,7 @@ def main():
     key = os.environ.get("ALPACA_API_KEY", "")
     secret = os.environ.get("ALPACA_SECRET_KEY", "")
     suffix = os.environ.get("SANDBOX_ACCOUNT_SUFFIX", "")
-    if not (key and secret and suffix):
+    if not (key and secret and suffix and T):
         raise SystemExit("ABORT set ALPACA_API_KEY, ALPACA_SECRET_KEY, SANDBOX_ACCOUNT_SUFFIX")
     H.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
     a = req("GET", T + "/v2/account")
