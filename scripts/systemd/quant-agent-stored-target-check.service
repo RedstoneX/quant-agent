@@ -9,6 +9,8 @@ Description=quant-agent stored take-profit check (no LLM, no trading, read-only)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # READ-ONLY in both directions: the database is opened with mode=ro, and the
 # check writes no trade row, no target and no order. It re-derives each held
 # position's take-profit from that position's OWN pinned entry, horizon and

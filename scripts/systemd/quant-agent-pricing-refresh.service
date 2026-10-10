@@ -9,6 +9,8 @@ Description=quant-agent LLM price-cache refresh (no LLM call, no trading)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Writes two files under data/ and nothing else. `data/` is gitignored, so a
 # refresh can never dirty the checkout and become deploy drift. Both writes
 # are tmp-file + os.replace, so a session reading the cache at the same

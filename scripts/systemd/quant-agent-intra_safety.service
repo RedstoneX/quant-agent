@@ -14,6 +14,8 @@ Description=quant-agent intra_safety — free safety preamble only, no model spe
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 ExecStart=/home/qamc/quant-agent/scripts/run_if_et_window.sh intra_safety
 TimeoutStartSec=1260
 StandardOutput=journal
