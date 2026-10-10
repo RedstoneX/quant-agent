@@ -1362,3 +1362,27 @@ from src.api.schemas_muted import (  # noqa: E402,F401
     MutedKindCount,
     MutedLiveRiskMessage,
 )
+
+
+# ---------------------------------------------------------------------------
+# /analysts/target-scorecard — how often price reached the entry take-profit
+# target. RECORD ONLY (owner ruling 2026-10-09): the target is not a sell rule.
+# "Reached" is a LOWER BOUND (snapshot-based best-move figure).
+# ---------------------------------------------------------------------------
+
+
+class TargetScorecardExcluded(BaseModel):
+    opened_before_clean_record: int = 0
+    no_entry_target: int = 0
+    no_best_move_figure: int = 0
+    trade_rows_without_position: int = 0
+
+
+class TargetScorecardResponse(BaseModel):
+    read_error: str | None = None
+    closed_reached: int = 0
+    closed_not_reached: int = 0
+    still_open: int = 0
+    excluded: TargetScorecardExcluded = TargetScorecardExcluded()
+    positions: list[dict] = []
+    best_move_is_lower_bound: bool = True
