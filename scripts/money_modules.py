@@ -21,6 +21,12 @@ a foreign object -- bound in the same def by ``with <Call> as x`` or
 repo def at all. An untyped ``broker`` parameter is not provable and still
 falls back, so a shim taking the broker as an argument stays money.
 
+Two sources, unioned: the call-graph closure above, and ``config/money_scope_declared.txt``
+-- a FIXED, repo-written list of path prefixes that are money BY DECLARATION
+(sizing, pricing, stops, gates, order build). Those modules shape the order
+whether or not an edge to the function that posts it can be proven; 2026-10-10
+they were found policed only by accident through the thread-pool false edge.
+
 The previous rule was a hand-edited tuple of 23 paths with "lifted from" notes
 (docs/GUARDS_WITHOUT_STORED_STATE.md). Measured 2026-10-04 against this
 derivation it had drifted: it never named ``protected_sell`` (calls the SDK's
@@ -235,6 +241,22 @@ def _reaches(call: Call, mod: _Module, writers: set, seeds: frozenset[str], mods
     return bool(cands) and all(c in writers for c in cands)
 
 
+DECLARED = "config/money_scope_declared.txt"
+
+
+def declared_prefixes(root: Path = ROOT) -> tuple[str, ...]:
+    """Path prefixes that are money BY DECLARATION (sizing, stops, gates, order build).
+
+    A fixed, repo-written list: these modules shape the order whether or not a
+    call edge to an exchange write can be proven, so they are policed regardless.
+    Absent file (synthetic test trees) means no declarations.
+    """
+    path = root / DECLARED
+    if not path.exists():
+        return ()
+    return tuple(ln.strip() for ln in path.read_text().splitlines() if ln.strip() and not ln.startswith("#"))
+
+
 def derive(
     root: Path = ROOT, seeds: frozenset[str] | None = None, source_dir: str | None = SOURCE_DIR
 ) -> tuple[str, ...]:
@@ -263,6 +285,9 @@ def derive(
             for call in calls:
                 for m, _ in _candidates(mod, call, mods, owners, d):
                     money.add(m)
+    # money BY DECLARATION: the module itself, no hop -- a declared prefix polices
+    # what it names, it does not make its bystander callees money.
+    money |= {rel for rel in mods if any(rel.startswith(p) for p in declared_prefixes(root))}
     return tuple(sorted(money))
 
 

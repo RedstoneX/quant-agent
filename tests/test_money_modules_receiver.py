@@ -92,3 +92,15 @@ def test_binding_in_another_def_does_not_leak(tmp_path):
         ),
     }
     assert _tree(tmp_path, files) == ("src/exec/stops.py", "src/mixed.py")
+
+
+def test_declared_prefix_is_money_without_any_call_edge(tmp_path):
+    """A module under a declared prefix is policed even when it reaches no writer."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "money_scope_declared.txt").write_text("# why\nsrc/portfolio_constructor/\n")
+    files = {
+        "src/exec/stops.py": STOP_WRITER,
+        "src/portfolio_constructor/stop_width.py": "def width(px):\n    return px * 0.02\n",
+        "src/news.py": "def headlines():\n    return []\n",
+    }
+    assert _tree(tmp_path, files) == ("src/exec/stops.py", "src/portfolio_constructor/stop_width.py")
