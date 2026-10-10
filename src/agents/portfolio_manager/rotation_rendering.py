@@ -6,6 +6,7 @@ constructor argument, so this builds and runs with no agent behind it.
 """
 
 from src.risk.budget import allocate_risk_budget
+from src.risk.min_risk import MinRiskFloor
 from src.risk.constants import STARTER_POSITION_RISK_PCT
 from src.rotation import (
     RotationOpportunity,
@@ -49,7 +50,7 @@ class RotationSection:
         existing_risk_pct: dict[str, float] | None,
         ceiling_pct: float,
         entry_budget_usd: float | None = None,
-        min_entry_usd: float | None = None,
+        min_risk_floor: MinRiskFloor | None = None,
     ) -> RotationPrecheck:
         """Phase 14 — run the opportunity-cost comparison once and keep its
         inputs. `_render_rotation_section` renders this for the prompt;
@@ -67,10 +68,11 @@ class RotationSection:
         `entry_budget_usd` is `_entry_deployment_budget`'s own figure — the
         dollars EXECUTION will size this session's entries against, already
         carrying the §11.2 gross ladder, settled cash and the min of the two
-        — and `min_entry_usd` the smallest position that can carry the
-        owner's minimum risk per position (owner rule 2026-08-27, 0.5% of
-        equity): risk can never exceed notional, so below that many dollars
-        no stop distance yields a tradeable position. Together they are the
+        — and `min_risk_floor` the owner's minimum risk per position (owner
+        rule 2026-08-27, the `min_position_risk_pct` setting) with each
+        candidate's own entry and stop, so the funding test asks whether
+        those dollars, as a position at the BEST candidate's stop, clear the
+        floor (`src.risk.min_risk.min_risk_shortfall`). Together they are the
         funding half of the precondition (2026-09-23; see
         `src/rotation.py`'s docstring for the measurement that added it).
         Both `None` means the funding view was not resolvable this session,
@@ -90,7 +92,7 @@ class RotationSection:
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 telemetry_available=False,
                 entry_budget_usd=entry_budget_usd,
-                min_entry_usd=min_entry_usd,
+                min_entry_usd=None,
                 held_below_entry_bar=held_below,
                 held_examined=held_examined,
             )
@@ -108,7 +110,7 @@ class RotationSection:
             headroom_pct=headroom_pct,
             floor_pct=STARTER_POSITION_RISK_PCT,
             entry_budget_usd=entry_budget_usd,
-            min_entry_usd=min_entry_usd,
+            min_risk_floor=min_risk_floor,
         )
         opportunity: RotationOpportunity | None = outcome.opportunity
         return RotationPrecheck(
@@ -118,13 +120,12 @@ class RotationSection:
             floor_pct=STARTER_POSITION_RISK_PCT,
             refusal=outcome.refusal,
             entry_budget_usd=entry_budget_usd,
-            min_entry_usd=min_entry_usd,
+            min_entry_usd=outcome.min_entry_usd,
             binding=(() if outcome.refusal is None else outcome.refusal.binding)
             or rotation_binding_constraints(
                 headroom_pct=headroom_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT,
-                entry_budget_usd=entry_budget_usd,
-                min_entry_usd=min_entry_usd,
+                funding=outcome.funding,
             ),
             held_below_entry_bar=held_below,
             held_examined=held_examined,
@@ -162,8 +163,9 @@ class RotationSection:
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                "below the smallest position that can carry the owner's "
-                "0.5% minimum risk — so "
+                f"below the ${floor:,.2f} position that, at the best "
+                "candidate's own stop, carries the owner's minimum risk "
+                "per position — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float)) and isinstance(floor, (int, float))
@@ -244,7 +246,8 @@ class RotationSection:
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
                     "for new entries, at or above the smallest position that can "
-                    "carry the owner's 0.5% minimum risk "
+                    "carry the owner's minimum risk per position at the best "
+                    "candidate's own stop "
                     "— real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )

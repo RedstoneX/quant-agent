@@ -7,8 +7,7 @@ def rotation_binding_constraints(
     *,
     headroom_pct: float,
     floor_pct: float,
-    entry_budget_usd: float | None,
-    min_entry_usd: float | None,
+    funding=None,
 ) -> tuple[str, ...]:
     """Which of the desk's limits currently stop it taking a new position.
 
@@ -27,7 +26,9 @@ def rotation_binding_constraints(
         both the ladder and the cash constraint without this module
         computing either.
 
-    `entry_budget_usd` / `min_entry_usd` of `None` mean the funding view was
+    `funding` is `src.risk.min_risk.min_risk_shortfall`'s check of the
+    deployable dollars as a position at the best candidate's own stop. `None`,
+    or an unreadable check, means the funding view was
     not resolvable this session; the funding test is then simply absent
     rather than guessed at, exactly as `existing_risk_pct=None` already
     disables the risk test. Silence from an unreadable input must not read
@@ -36,13 +37,7 @@ def rotation_binding_constraints(
     binding: list[str] = []
     if headroom_pct < floor_pct:
         binding.append("risk_budget")
-    if (
-        isinstance(entry_budget_usd, (int, float))
-        and not isinstance(entry_budget_usd, bool)
-        and isinstance(min_entry_usd, (int, float))
-        and not isinstance(min_entry_usd, bool)
-        and float(entry_budget_usd) < float(min_entry_usd)
-    ):
+    if funding is not None and funding.below_floor:
         binding.append("funding")
     return tuple(binding)
 

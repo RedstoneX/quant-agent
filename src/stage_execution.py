@@ -31,6 +31,7 @@ from src.stage_execution_parts.sell_loop import (
     sell_qty_and_label,
 )
 from src.stage_execution_parts.state import SKIP, EntryLeg, EntryRun, SellLeg
+from src.risk.min_risk import min_risk_shortfall
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -887,16 +888,23 @@ class ExecutionStage:
 
                     floor_pct = _min_position_risk_pct(pipeline)
                     held_long = max(0.0, _held_signed_qty(positions, decision.symbol))
-                    position_risk_pct = (
-                        (held_long + qty) * abs(sizing_price - float(stop_price)) / total_value * 100.0
-                        if stop_price is not None and total_value > 0
-                        else None
+                    floor_check = min_risk_shortfall(
+                        position_notional=(held_long + qty) * sizing_price,
+                        entry=sizing_price,
+                        stop=stop_price,
+                        equity=total_value,
+                        floor_pct=floor_pct,
                     )
-                    if position_risk_pct is not None and position_risk_pct < floor_pct:
+                    if floor_check.refused:
+                        # A buy with no readable stop has unknown risk:
+                        # refused, the same as the short side below.
                         detail = (
                             f"re-sized to the ${order_ceiling:.2f} still deployable, the position would "
-                            f"risk {position_risk_pct:.2f}% of equity, under the owner's "
+                            f"risk {floor_check.risk_pct:.2f}% of equity, under the owner's "
                             f"{floor_pct:.2f}% minimum risk per position"
+                            if floor_check.readable
+                            else f"no readable stop ({stop_price}), so the position's risk is unknown "
+                            f"and cannot be shown to meet the owner's {floor_pct:.2f}% minimum risk per position"
                         )
                         logger.warning("Skipping BUY %s: %s", decision.symbol, detail)
                         _record_execution_skip(pipeline, ctx, decision.symbol, "below_owner_min_risk", detail)
@@ -963,15 +971,21 @@ class ExecutionStage:
                         # `min_order_usd` notional floor.
                         floor_pct = _min_position_risk_pct(pipeline)
                         held_short = abs(held_signed_qty(positions, decision.symbol))
-                        position_risk_pct = (
-                            (held_short + qty) * abs(float(stop_price) - sizing_price) / total_value * 100.0
-                            if stop_price is not None and total_value > 0
-                            else 0.0
+                        floor_check = min_risk_shortfall(
+                            position_notional=(held_short + qty) * sizing_price,
+                            entry=sizing_price,
+                            stop=stop_price,
+                            equity=total_value,
+                            floor_pct=floor_pct,
                         )
-                        if position_risk_pct < floor_pct:
+                        position_risk_pct = floor_check.risk_pct
+                        if floor_check.refused:
                             detail = (
                                 f"short add would leave a position risking {position_risk_pct:.2f}% of "
                                 f"equity, under the owner's {floor_pct:.2f}% minimum risk per position"
+                                if floor_check.readable
+                                else f"no readable stop ({stop_price}), so the short's risk is unknown "
+                                f"and cannot be shown to meet the owner's {floor_pct:.2f}% minimum risk per position"
                             )
                             logger.warning(
                                 "Skipping SHORT add %s: %s — dropped before any protective buy-stop is cancelled",

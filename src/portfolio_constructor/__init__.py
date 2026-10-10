@@ -755,10 +755,11 @@ class PortfolioConstructor:
         SELL and COVER pass untouched. The position's risk is
         `(held same-side weight + this order's weight) / gross multiplier x
         |entry - stop| / entry` -- the inverse of the §2.1 weight formula in
-        `_plan_risk_targets`, at the order's own entry and stop. An order
-        with no readable entry/stop is left alone: refusing it here would
-        invent a reading.
+        `_plan_risk_targets`, at the order's own entry and stop, judged by
+        `src.risk.min_risk.min_risk_shortfall`. An order with no readable
+        entry or stop has unknown risk and is refused by name, never passed.
         """
+        from src.risk.min_risk import min_risk_shortfall
         from src.risk.rules import _gross_multiplier
 
         floor = float(self.cfg.min_risk_pct)
@@ -774,26 +775,43 @@ class PortfolioConstructor:
             # carries none.
             entry = decision.entry_price or (plan.entry_price if plan else None)
             stop = decision.stop_loss if decision.stop_loss is not None else (plan.stop_price if plan else None)
-            if not entry or stop is None or entry <= 0:
-                kept.append(decision)
-                continue
             held = current_weights.get(decision.symbol, 0.0)
             held_same = max(0.0, -held if decision.action == "SHORT" else held)
-            weight = held_same + float(decision.allocation_pct)
-            risk_pct = weight / _gross_multiplier(decision.symbol) * abs(entry - stop) / entry
+            gross = _gross_multiplier(decision.symbol)
             # Order weights are rounded to 2dp (`_build_buy`/`_build_short`),
             # so a request sized at exactly the floor can land a hair under
             # it. Half of that 0.01pp step is forgiven -- rounding, not a cut.
-            rounding_pct = 0.005 / _gross_multiplier(decision.symbol) * abs(entry - stop) / entry
-            if risk_pct + rounding_pct + 1e-9 >= floor:
+            rounding_pct = 0.0
+            if isinstance(entry, (int, float)) and isinstance(stop, (int, float)) and entry > 0:
+                rounding_pct = 0.005 / gross * abs(entry - stop) / entry
+            # Owner rule 2026-08-27, read as the WHOLE position after the
+            # order (held same-side weight + this order) at least the floor;
+            # weights are percent of book, so equity is 100.
+            check = min_risk_shortfall(
+                position_notional=(held_same + float(decision.allocation_pct)) / gross,
+                entry=entry,
+                stop=stop,
+                equity=100.0,
+                floor_pct=floor,
+                tolerance_pct=rounding_pct,
+            )
+            if not check.refused:
                 kept.append(decision)
                 continue
-            detail = (
-                f"after every sizing cut this position would risk {risk_pct:.2f}% "
-                f"of equity at its stop, under the owner's {floor:.2f}% minimum "
-                f"risk per position (owner rule 2026-08-27): below it the desk "
-                f"does not trade."
-            )
+            if not check.readable:
+                detail = (
+                    f"its entry ({entry}) or stop ({stop}) is unreadable, so the "
+                    f"position's risk at the stop is unknown and cannot be shown "
+                    f"to meet the owner's {floor:.2f}% minimum risk per position "
+                    f"(owner rule 2026-08-27)."
+                )
+            else:
+                detail = (
+                    f"after every sizing cut this position would risk {check.risk_pct:.2f}% "
+                    f"of equity at its stop, under the owner's {floor:.2f}% minimum "
+                    f"risk per position (owner rule 2026-08-27): below it the desk "
+                    f"does not trade."
+                )
             logger.warning("Constructor: %s refused — %s", decision.symbol, detail)
             self._note_refusal(
                 decision.symbol,

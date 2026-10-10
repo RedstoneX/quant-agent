@@ -82,8 +82,10 @@ def _precheck_binding(precheck) -> tuple[str, ...]:
     return rotation_binding_constraints(
         headroom_pct=float(getattr(precheck, "headroom_pct", 0.0) or 0.0),
         floor_pct=float(getattr(precheck, "floor_pct", 0.0) or 0.0),
-        entry_budget_usd=getattr(precheck, "entry_budget_usd", None),
-        min_entry_usd=getattr(precheck, "min_entry_usd", None),
+        # The funding half is judged once, at the best candidate's own stop,
+        # when the precheck is built (`evaluate_rotation`); a precheck that
+        # carries no `binding` cannot be re-judged here without that stop.
+        funding=None,
     )
 
 

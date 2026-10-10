@@ -305,6 +305,9 @@ from __future__ import annotations
 
 from src.verdicts import RankedCandidate, score_verdict, seat_weight
 from src.rotation_unrecorded import empty_pass_lines
+from dataclasses import replace
+
+from src.risk.min_risk import MinRiskFloor
 from src.rotation_parts.constraints import (
     funding_view_measured,
     holdings_below_entry_bar,
@@ -377,7 +380,7 @@ def evaluate_rotation_opportunity(
     floor_pct: float,
     margin_pct: float = ROTATION_MARGIN_PCT,
     entry_budget_usd: float | None = None,
-    min_entry_usd: float | None = None,
+    min_risk_floor: MinRiskFloor | None = None,
 ) -> RotationOpportunity | None:
     """`evaluate_rotation`'s opportunity, for callers that want only that.
 
@@ -394,7 +397,7 @@ def evaluate_rotation_opportunity(
         floor_pct=floor_pct,
         margin_pct=margin_pct,
         entry_budget_usd=entry_budget_usd,
-        min_entry_usd=min_entry_usd,
+        min_risk_floor=min_risk_floor,
     ).opportunity
 
 
@@ -407,7 +410,42 @@ def evaluate_rotation(
     floor_pct: float,
     margin_pct: float = ROTATION_MARGIN_PCT,
     entry_budget_usd: float | None = None,
-    min_entry_usd: float | None = None,
+    min_risk_floor: MinRiskFloor | None = None,
+) -> RotationOutcome:
+    """The one rotation comparison worth surfacing (`_evaluate_rotation_core`).
+
+    The funding half is judged at the BEST new candidate's own stop: the
+    deployable dollars, as a position at that stop, must clear the owner's
+    minimum risk per position (owner rule 2026-08-27) through the one shared
+    `src.risk.min_risk.min_risk_shortfall`. No candidate, or no floor
+    threaded, means the funding view is not measured.
+    """
+    held = {s.upper() for s in held_symbols}
+    best = next((c for c in ranked if c.symbol not in held), None)
+    funding = None if min_risk_floor is None or best is None else min_risk_floor.check(best.symbol, entry_budget_usd)
+    outcome = _evaluate_rotation_core(
+        ranked=ranked,
+        blocked=blocked,
+        held_symbols=held_symbols,
+        headroom_pct=headroom_pct,
+        floor_pct=floor_pct,
+        margin_pct=margin_pct,
+        entry_budget_usd=entry_budget_usd,
+        funding=funding,
+    )
+    return replace(outcome, funding=funding)
+
+
+def _evaluate_rotation_core(
+    *,
+    ranked: list[RankedCandidate],
+    blocked: dict[str, list[str]],
+    held_symbols: set[str],
+    headroom_pct: float,
+    floor_pct: float,
+    margin_pct: float,
+    entry_budget_usd: float | None = None,
+    funding=None,
 ) -> RotationOutcome:
     """The one rotation comparison worth surfacing this session, or `None`.
 
@@ -421,7 +459,8 @@ def evaluate_rotation(
     the desk enforces, not just the risk budget. `rotation_binding_
     constraints` is the test: the risk-budget headroom against the EXISTING
     book is under `floor_pct`, OR the dollars `_entry_deployment_budget`
-    says are still deployable will not fund the smallest position that can carry the owner's 0.5% minimum risk. A book
+    says are still deployable will not fund the smallest position that can
+    carry the owner's minimum risk at the best new candidate's own stop. A book
     with real room on every constraint has nothing to rotate for; refusing
     on "we might want the room later" is not this desk's rule anywhere else
     and is not invented here. See the module docstring for why this is the
@@ -433,11 +472,11 @@ def evaluate_rotation(
     `None`.
     """
     held = {s.upper() for s in held_symbols}
+    min_entry_usd = None if funding is None else funding.min_notional
     binding = rotation_binding_constraints(
         headroom_pct=headroom_pct,
         floor_pct=floor_pct,
-        entry_budget_usd=entry_budget_usd,
-        min_entry_usd=min_entry_usd,
+        funding=funding,
     )
 
     new_candidates = [c for c in ranked if c.symbol not in held]
@@ -516,8 +555,8 @@ def evaluate_rotation(
             f"{floor_pct:.2f}% floor, and "
             + (
                 f"${entry_budget_usd:,.2f} deployable is at or above "
-                "the smallest position that can carry the owner's 0.5% "
-                "minimum risk — real room on every "
+                "the smallest position that can carry the owner's minimum "
+                "risk at the best candidate's stop — real room on every "
                 "constraint"
                 if measured
                 else "the funding view was NOT MEASURED this session, so no funding constraint could be tested"

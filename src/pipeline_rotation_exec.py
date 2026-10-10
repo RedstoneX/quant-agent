@@ -18,6 +18,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _IN_FLIGHT_FILL_STATUSES,
     _entry_deployment_budget,
     _fractional_sizing_allowed,
+    _min_position_risk_pct,
     _live_fill_price,
     _qty_by_risk_budget,
     _record_execution_skip,
@@ -882,6 +883,40 @@ def _rotation_buy_leg_projected_refusal(
         # (`affordable_qty > 0`, already checked above) is cleared, not
         # refused; the real "no shares fit" case is `insufficient_cash`
         # above.
+        qty = affordable_qty
+
+    # Owner rule 2026-08-27, the WHOLE position after the order at least
+    # the floor, at the candidate's real stop and through the one shared
+    # function execution itself uses (`src/risk/min_risk.py`). Without this
+    # gate the held name could be sold and the replacement buy then refused
+    # for `below_owner_min_risk`, stranding the cash.
+    checked.append("below_owner_min_risk")
+    from src.execution.scale_in import held_signed_qty
+    from src.risk.min_risk import min_risk_shortfall
+
+    held_signed = held_signed_qty(projected_positions, symbol)
+    held_same = max(0.0, -held_signed if is_short else held_signed)
+    floor_pct = _min_position_risk_pct(pipeline)
+    buy_stop = getattr(buy_decision, "stop_loss", None)
+    floor_check = min_risk_shortfall(
+        position_notional=(held_same + qty) * sizing_price,
+        entry=sizing_price,
+        stop=buy_stop,
+        equity=float(equity_for_weights),
+        floor_pct=floor_pct,
+    )
+    if floor_check.refused:
+        return (
+            None,
+            "below_owner_min_risk",
+            (
+                f"on the post-sale book the replacement position would risk "
+                f"{floor_check.risk_pct:.2f}% of equity at its ${buy_stop} stop, under the "
+                f"owner's {floor_pct:.2f}% minimum risk per position"
+                if floor_check.readable
+                else f"the replacement buy's stop ({buy_stop}) is unreadable, so its risk is unknown"
+            ),
+        )
 
     missing = [g for g in REQUIRED_BUY_LEG_GATES if g not in checked]
     if missing:

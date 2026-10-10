@@ -451,7 +451,7 @@ def test_the_projection_is_what_the_budget_and_the_sizing_are_measured_on(
 #: `REQUIRED_BUY_LEG_GATES` for coverage bookkeeping (a gate that never
 #: fires is still a gate that was checked) — whether to retire it outright,
 #: the way `daily_loss_recheck` was retired, was left as an open decision.
-_LIVE_BUY_LEG_GATES = tuple(g for g in REQUIRED_BUY_LEG_GATES if g != "below_min_notional")
+_LIVE_BUY_LEG_GATES = tuple(REQUIRED_BUY_LEG_GATES)
 
 
 @pytest.mark.parametrize("gate", _LIVE_BUY_LEG_GATES)
@@ -468,6 +468,10 @@ def test_every_required_gate_withdraws_both_legs(tmp_path, monkeypatch, gate):
     elif gate == "insufficient_cash":
         # 40 shares at $50 is $2,000 of notional; nothing is deployable.
         _stub_sizing(monkeypatch, budget=0.0)
+    elif gate == "below_owner_min_risk":
+        # 40 shares at $50 with a $45 stop risks $200, 0.20% of $100,000,
+        # under the owner's 0.5% minimum risk per position (rule 2026-08-27).
+        _stub_sizing(monkeypatch, min_risk_pct=0.5)
     pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
 

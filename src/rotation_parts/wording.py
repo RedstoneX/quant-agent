@@ -43,8 +43,9 @@ def rotation_constraint_clause(
             else ""
         )
         return (
-            f"{risk}${float(entry_budget_usd):,.0f} deployable, under the smallest "
-            "position that can carry the owner's 0.5% minimum risk."
+            f"{risk}${float(entry_budget_usd):,.0f} deployable, under the "
+            f"${float(min_entry_usd):,.0f} position that carries the owner's "
+            "minimum risk per position at the candidate's own stop."
         )
     return f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk ceiling, under the {floor_pct:.2f}% minimum."
 

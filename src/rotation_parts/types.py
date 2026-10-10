@@ -49,6 +49,10 @@ REQUIRED_BUY_LEG_GATES = (
     # the risk headroom is already under the floor. Leaving it out was the
     # same class of omission as attempt 1's, one layer further down.
     "insufficient_cash",
+    # Owner rule 2026-08-27: below the minimum risk per position the desk
+    # does not trade. Execution refuses a buy under it, so a rotation whose
+    # replacement would land under it must be refused BEFORE the sale.
+    "below_owner_min_risk",
 )
 
 #: Relative margin the best-ranked new candidate must clear over the
@@ -230,6 +234,16 @@ class RotationOutcome:
 
     opportunity: RotationOpportunity | None = None
     refusal: RotationRefusal | None = None
+    #: The funding half of the precondition, judged at the best candidate's
+    #: own stop by `src.risk.min_risk.min_risk_shortfall`; `None` when no
+    #: funding view or no candidate existed.
+    funding: object | None = None
+
+    @property
+    def min_entry_usd(self) -> float | None:
+        """Smallest position at the best candidate's stop that clears the
+        owner's minimum risk; `None` when not measured."""
+        return None if self.funding is None else self.funding.min_notional
 
 
 @dataclass(frozen=True)
