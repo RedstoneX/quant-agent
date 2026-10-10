@@ -987,23 +987,40 @@ class TradingPipeline(
         """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
         return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
-    def _sweep_frozen_resting_orders(self) -> None:
-        """FREEZE step 2 at session start: settle resting exposure-adding orders.
+    def pickup_owner_intents(self) -> None:
+        """Pick up owner intents, then (FREEZE step 2) settle resting exposure-adding orders.
 
-        Owner intents are picked up BEFORE any session body runs (main.py at
-        startup, scheduler._run_safe before each scheduled session), so the
-        freeze this reads is the one in force for the session. A failed sweep
-        is recorded and never stops the session (src/execution/freeze_cancel.py).
+        The ONE pickup point. Called by main.py once at startup (after the
+        pipeline is built, before any session or the scheduler runs) and by
+        scheduler._run_safe before EVERY scheduled job, the 30-minute checks
+        included. The sweep runs at every pickup while Freeze is in force
+        (`sweep_if_frozen` reads the flag), not only when the flag changes, so
+        a sweep that failed is retried at the next pickup. Neither step ever
+        stops a job; both failures are recorded.
+        """
+        try:
+            from src.owner_intents import intake
+
+            intake(getattr(getattr(self.config, "storage", None), "db_path", None))
+        except Exception as exc:  # noqa: BLE001 - recorded below; a failed pickup never stops a job
+            from src.sentinel.guarded import record_guarded_pass
+
+            record_guarded_pass(self.broker, "pipeline.owner_intent_pickup", exc, log=logger)
+        self._sweep_frozen_resting_orders()
+
+    def _sweep_frozen_resting_orders(self) -> None:
+        """FREEZE step 2: settle resting exposure-adding orders (only via `pickup_owner_intents`).
+
+        A failed sweep is recorded and never stops the job (src/execution/freeze_cancel.py).
         """
         try:
             self.broker.sweep_frozen_resting_orders(getattr(getattr(self.config, "storage", None), "db_path", None))
-        except Exception as exc:  # noqa: BLE001 - recorded below; a failed sweep never stops a session
+        except Exception as exc:  # noqa: BLE001 - recorded below; a failed sweep never stops a job
             from src.sentinel.guarded import record_guarded_pass
 
             record_guarded_pass(self.broker, "pipeline.freeze_sweep", exc, log=logger)
 
     def run_morning(self) -> dict:
-        self._sweep_frozen_resting_orders()
         return _morning_helpers.run_morning(self)
 
     def _record_name_coverage(self, ctx, _record) -> None:
@@ -1098,7 +1115,6 @@ class TradingPipeline(
         return _review._persist_review_metrics(self, position_facts, run_id=run_id)
 
     def run_position_review(self, session_type: str = "midday") -> dict:
-        self._sweep_frozen_resting_orders()
         return _review.run_position_review(self, session_type)
 
     def _collab(self, name: str):
@@ -1112,14 +1128,12 @@ class TradingPipeline(
         return _review._run_position_review_body(self, session_type)
 
     def run_earnings_preprocess(self) -> dict:
-        self._sweep_frozen_resting_orders()
         return _review.run_earnings_preprocess(self)
 
     def _run_earnings_preprocess_body(self) -> dict:
         return _review._run_earnings_preprocess_body(self)
 
     def run_evening(self) -> dict:
-        self._sweep_frozen_resting_orders()
         return _evening.run_evening(self)
 
     def _persist_evening_report(self, result: dict) -> None:

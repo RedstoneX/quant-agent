@@ -188,15 +188,10 @@ def main():
             logger.warning("pricing refresh failed at startup: %s", exc)
 
         # Owner command panel (instalment 1): point the broker door at the
-        # intent record and resolve anything raised while the desk was down.
+        # intent record. Intents raised while the desk was down are picked up
+        # (and a Freeze in force swept) by `pickup_owner_intents` once the
+        # pipeline exists, below, before any session or scheduled job runs.
         owner_flags_gate.configure(watchdog_db_path)
-        if watchdog_db_path:
-            from src.owner_intents import intake
-
-            try:
-                intake(watchdog_db_path)
-            except Exception as exc:  # noqa: BLE001 - a failed pickup never stops startup
-                logger.error("owner intent pickup failed at startup: %s", exc)
 
         if args.mode == "live":
             # The blocking scheduler runs forever in the normal case and
@@ -212,6 +207,7 @@ def main():
                 notifier=notifier, kind="scheduler_startup", pnl_header=False,
             )
             scheduler = TradingScheduler(config)
+            scheduler.pipeline.pickup_owner_intents()
             scheduler.setup()
             scheduler.start()
             # Reached only if the blocking scheduler returns gracefully
@@ -222,6 +218,7 @@ def main():
             return
 
         pipeline = TradingPipeline(config)
+        pipeline.pickup_owner_intents()
         if args.mode == "once" or args.mode == "morning":
             result = pipeline.run_morning()
         elif args.mode == "midday":

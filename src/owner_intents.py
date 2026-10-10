@@ -77,8 +77,11 @@ def raise_intent(conn, action, *, symbol=None, params=None, reason=None, expires
 def process_pending(conn, *, now=None) -> list:
     """Resolve every RAISED intent in raised order: acted, refused or expired.
 
-    Runs at desk start and before each session, so an intent raised while the
-    desk was down is acted on (or refused with its reason) when it starts.
+    Runs via `TradingPipeline.pickup_owner_intents`: once at desk start (main.py,
+    before any session or scheduled job) and before EVERY scheduled job
+    (scheduler._run_safe, the 30-minute checks included), so an intent raised
+    while the desk was down is acted on (or refused with its reason) when it
+    starts. That pickup also runs the Freeze sweep while Freeze is in force.
     """
     now = now or _now()
     done = []
