@@ -17,6 +17,7 @@ import sqlite3
 
 from src.storage.schema.owner_intent_tables import apply as _owner_intents
 from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table
+from src.storage.schema.trend_tick_tables import ensure_trend_tick_table
 from src.storage.schema.prune_indexes import ensure_prune_indexes
 from src.storage.schema.sentinel_tables import ensure_sentinel_tables
 from src.storage.schema.soft_exit_restore_occurrences_migration import (
@@ -1071,3 +1072,4 @@ class DatabaseSchema:
         # Sentinel seams + owed stop amends; idempotent
         ensure_sentinel_tables(conn=self.conn)
         ensure_pending_stop_amend_table(conn=self.conn)
+        ensure_trend_tick_table(conn=self.conn)  # trend exit at the tick; idempotent
