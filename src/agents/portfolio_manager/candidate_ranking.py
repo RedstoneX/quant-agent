@@ -461,10 +461,10 @@ class CandidateRanking:
         )
         eligible_verdicts = [v for v in all_verdicts if not eligibility.get(v.symbol.upper(), ["no eligibility row"])]
         # The desk's own real, structure-derived ratio and each candidate's
-        # setup type both reach the ranking (2026-09-11, item 1(d)): a range
-        # trade is ordered on the REAL number rather than the analyst's
-        # guessed one, and a breakout carries no reward:risk key at all.
-        # This is where the removed hard floor's information went.
+        # setup type both reach the ranking (2026-09-11, item 1(d)) so the
+        # ratio is RECORDED on each candidate (a breakout carries none).
+        # Since 2026-10-10 it no longer ORDERS candidates (owner ruling
+        # 9 Oct: the target it uses is not a sell rule and is unscored).
         ranked = rank_verdicts(
             eligible_verdicts,
             real_reward_risk=real_reward_risk_by_symbol,
