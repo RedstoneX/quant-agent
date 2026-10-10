@@ -1,7 +1,8 @@
 # Money-module scope as derived by scripts/money_modules.py on 2026-10-09 (385 modules [measured]),
-# with its name-based fallbacks still in place. FIXED: never regenerated from trunk at test time.
+# minus the 96 that reached scope only through the `ex.submit` thread-pool false edge removed on
+# 2026-10-10 (289 modules [measured]). FIXED: never regenerated from trunk at test time.
 # tests/test_money_scope_superset.py asserts every path here is still inside the derived scope.
-# A line may be removed ONLY when the module itself no longer exists in the repo.
+# A line may be removed ONLY when the module no longer exists, or with a Guard-rule-change: commit line.
 main.py
 ops/commissioning/verify_commissioning.py
 ops/model_policy/build_pm_public_day_fixture.py
