@@ -9,6 +9,8 @@ Description=quant-agent stale session-worktree prune (no LLM, no trading, no Tel
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Board item 139: finished agent sessions leave their scratch worktree
 # registered, so `git worktree list` grows without bound. This sweep clears
 # the ones whose directory is gone (`git worktree prune`) and removes the

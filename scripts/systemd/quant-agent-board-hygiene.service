@@ -9,6 +9,8 @@ Description=quant-agent work-board hygiene check (no LLM, no trading, read-only)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Read-only: reads docs/WORK.md's size and tests/test_status_board.py's own
 # cap assertion, and calls scripts/status_board.py's own finished-item
 # check. No git, no network beyond the Telegram push. Safe to fire

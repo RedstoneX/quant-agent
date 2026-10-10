@@ -40,8 +40,6 @@ src.config.NominationConfig.max_per_seat_per_run
 src.config.NominationConfig.max_total_per_run
 src.config.RiskConfig.absolute_min_stop_atr_multiple
 src.config.RiskConfig.max_cluster_risk_share_pct
-src.config.RiskConfig.max_portfolio_risk_pct
-src.config.RiskConfig.max_position_risk_pct
 src.config.RiskConfig.max_target_horizon_sessions
 src.config.RiskConfig.max_target_reach_atr_multiple
 src.config.RiskConfig.min_level_touches_for_stop_honor

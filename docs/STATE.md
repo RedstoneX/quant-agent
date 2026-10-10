@@ -924,7 +924,7 @@ index, not additional bearish exposure, and is excluded from that budget.
 
 ## Market-data feed finding — resolved, not an active defect
 
-The previously flagged concern that `src/execution/broker.py::get_latest_price` omits an explicit Alpaca feed is **not an established defect**. Alpaca's current latest-trade/latest-quote behavior defaults to the best feed available to the subscription; for this account that is IEX. Independent probes confirmed current IEX latest trade/quote data succeeds while explicitly requesting SIP is rejected as unsubscribed, which is expected.
+The previously flagged concern that `src/execution/broker.py::get_latest_price` omits an explicit Alpaca feed is **not an established defect**. Alpaca's current latest-trade/latest-quote behavior defaults to the best feed available to the subscription; for this account that is IEX. Independent probes confirmed current IEX latest trade/quote data succeeds while explicitly requesting SIP for real-time data is rejected as unsubscribed, which is expected. That rejection is real-time only: Alpaca serves SIP free when a request's `end` is at least 15 minutes old (Alpaca market-data FAQ), so since 2026-10-10 both daily-history reads (`get_bars`, `get_bars_batch`) ask for SIP with `end` clamped to now-16min. Measured 2026-10-10 on this account: feed=sip daily bars return 200; IEX carries ~3% of volume (AAPL median daily $ volume IEX $376M vs SIP $12.6B) and printed flat high==low days on thin names (ACNB 86 of 257) where SIP shows 0-1. Latest trade/quote, snapshots and intraday chart bars stay on IEX.
 
 **DEFECT, observed 2026-08-26 — FIXED 2026-08-30 (news half earlier).** Production
 logs at the time showed the Reuters Business feed returning HTTP 404 and AP Business

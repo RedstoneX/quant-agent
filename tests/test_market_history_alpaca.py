@@ -123,7 +123,7 @@ def test_backtest_script_builds_a_broker_backed_provider():
 # ---------------------------------------------------------------------------
 
 
-def test_broker_daily_bars_request_is_fully_adjusted_on_the_iex_feed():
+def test_broker_daily_bars_request_is_fully_adjusted_on_the_sip_feed():
     from alpaca.data.enums import Adjustment, DataFeed
     from src.execution.broker import AlpacaBroker
 
@@ -138,4 +138,4 @@ def test_broker_daily_bars_request_is_fully_adjusted_on_the_iex_feed():
     assert len(b.get_bars("NVDA", lookback_days=5)) == 1
     request = b._data_client.get_stock_bars.call_args.args[0]
     assert request.adjustment == Adjustment.ALL
-    assert request.feed == DataFeed.IEX
+    assert request.feed == DataFeed.SIP

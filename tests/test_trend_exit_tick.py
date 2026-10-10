@@ -1,6 +1,8 @@
-"""The trend exit at the 30-minute tick, on DAILY closes only (owner ruling 2026-10-09).
+"""The trend exit at the 30-minute tick, on DAILY closes only (owner ruling 2026-10-09 21:02 ET).
 
-Pins: one check per new completed bar; a refused sale is retried next tick;
+Pins: one pass per SESSION at the first in-session tick, on the prior close;
+the 16:00 tick does no trend work; only deferred/error sales are retried
+(a refusal is a decision);
 the trail skips a name being sold; only the completed-bar date and the
 completed-bar feed are read; the sale goes through the review's guarded path.
 """
@@ -8,7 +10,7 @@ completed-bar feed are read; the sale goes through the review's guarded path.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -16,6 +18,7 @@ from src.exits_parts.midday_state import SKIP
 from src.intraday import trend_exit_tick
 from src.intraday.tick_trail import trail_on_tick
 from src.intraday.trend_exit_tick import OUTCOME_REFUSED, OUTCOME_SOLD, trend_exit_on_tick, wire_trend_exit
+from src.trading_calendar import ET
 from tests.pipeline_factory import build_pipeline
 from tests.test_phase3_exit_rework import _position
 
@@ -35,6 +38,11 @@ class _Desk:
         self.sells = sells
         self.verdict_reads: list = []
         self.executed: list = []
+        self.order_listings = 0
+
+    def orders(self):
+        self.order_listings += 1
+        return self.open_orders
 
     def read(self, symbol):
         return self.markers.get(symbol)
@@ -52,22 +60,23 @@ class _Desk:
             raise self.raises
         return [{"symbol": p.symbol} for p in firing] if self.sells else []
 
-    def tick(self, positions, bar_date, run_id="r"):
+    def tick(self, positions, session, run_id="r"):
         return trend_exit_on_tick(
             positions=positions,
             run_id=run_id,
-            completed_bar_date=bar_date,
+            session_date=session,
+            completed_bar_date="prior-close",
             read_marker=self.read,
             write_marker=self.write,
             alignment_exit_cached=self.cached,
             position_facts_for=lambda due: {},
             execute_guarded_exits=self.execute,
-            open_orders_checked=lambda: self.open_orders,
+            open_orders_checked=self.orders,
             final_today=lambda symbols: self.final & symbols,
         )
 
 
-def test_fires_once_per_new_completed_bar_not_again_later_same_day():
+def test_fires_once_per_session_not_again_later_same_day():
     desk = _Desk()
     first = desk.tick([_position("AAA")], "2026-10-09", run_id="t0945")
     assert first["sold"] == ["AAA"]
@@ -78,20 +87,33 @@ def test_fires_once_per_new_completed_bar_not_again_later_same_day():
     assert desk.verdict_reads == ["AAA", "AAA"]
 
 
-def test_hold_is_not_rechecked_on_the_same_bar():
+def test_hold_is_not_rechecked_in_the_same_session():
     desk = _Desk(verdict=HOLD)
     desk.tick([_position("AAA")], "2026-10-09")
     desk.tick([_position("AAA")], "2026-10-09")
     assert desk.verdict_reads == ["AAA"] and desk.executed == []
 
 
-def test_refused_sale_is_retried_next_tick():
+def test_refused_is_not_retried_but_deferred_and_error_are():
+    """(c) A refusal is a decision; only a sale that failed or was put off is retried."""
     desk = _Desk(sells=False)
-    first = desk.tick([_position("AAA")], "2026-10-09", run_id="t0945")
+    first = desk.tick([_position("AAA")], "2026-10-09", run_id="t0930")
     assert first["refused"] == ["AAA"] and desk.markers["AAA"]["outcome"] == OUTCOME_REFUSED
     desk.sells = True
-    second = desk.tick([_position("AAA")], "2026-10-09", run_id="t1015")
-    assert second["sold"] == ["AAA"] and desk.executed == [["AAA"], ["AAA"]]
+    second = desk.tick([_position("AAA")], "2026-10-09", run_id="t1000")
+    assert second["checked"] == [] and desk.executed == [["AAA"]]
+    for outcome in (trend_exit_tick.OUTCOME_DEFERRED, trend_exit_tick.OUTCOME_ERROR):
+        desk.markers["BBB"] = {"bar_date": "2026-10-09", "outcome": outcome}
+        assert desk.tick([_position("BBB")], "2026-10-09")["sold"] == ["BBB"], outcome
+
+
+def test_tick_after_the_pass_with_nothing_retryable_lists_no_orders():
+    """(d) Nothing retryable this session: no verdict read, no open-order listing call."""
+    desk = _Desk()
+    desk.tick([_position("AAA"), _position("BBB")], "2026-10-09", run_id="t0930")
+    listings = desk.order_listings
+    later = desk.tick([_position("AAA"), _position("BBB")], "2026-10-09", run_id="t1000")
+    assert later["checked"] == [] and desk.order_listings == listings == 1
 
 
 @contextmanager
@@ -123,12 +145,47 @@ def test_trend_runs_before_trail_and_sold_name_is_not_trailed():
     assert summary["trend_exit"]["sold"] == ["AAA"]
 
 
-def _wired_pipeline(monkeypatch, completed=date(2026, 10, 9)):
+def _clock(monkeypatch, *args):
+    monkeypatch.setattr("src.trading_calendar.et_now", lambda: datetime(*args, tzinfo=ET))
+
+
+def _wired_pipeline(monkeypatch, completed=date(2026, 10, 9), patch_bar=True):
     p = build_pipeline(broker=MagicMock())
     p.broker.list_open_orders_checked.return_value = (True, [])
     p._record_alignment_reading = MagicMock()
-    monkeypatch.setattr("src.trading_calendar.last_completed_bar_date", lambda *a, **k: completed)
+    _clock(monkeypatch, 2026, 10, 12, 10, 0)  # Monday, in session
+    if patch_bar:
+        monkeypatch.setattr("src.trading_calendar.last_completed_bar_date", lambda *a, **k: completed)
     return p
+
+
+def test_close_tick_does_no_pass_and_sends_nothing(monkeypatch):
+    """(a) The 16:00 ET tick reads no verdict, lists no orders and sells nothing."""
+    p = _wired_pipeline(monkeypatch, patch_bar=False)
+    _clock(monkeypatch, 2026, 10, 8, 16, 0)
+    p._alignment_exit_cached = MagicMock(return_value=EXIT)
+    p._midday_execute_llm_actions = MagicMock(return_value=[{"symbol": "AAA"}])
+    run = wire_trend_exit(lambda name: getattr(p, name, None))
+    result = run([_position("AAA")], run_id="t1600", total_value=10_000.0)
+    assert p._alignment_exit_cached.call_count == 0 and p._midday_execute_llm_actions.call_count == 0
+    assert p.broker.list_open_orders_checked.call_count == 0 and result["sold"] == []
+    from src.storage.trades import trend_tick_store
+
+    assert trend_tick_store.get(p.db._trades(), "AAA") is None
+
+
+def test_close_tick_does_not_use_up_next_mornings_pass(monkeypatch):
+    """(b) After the 16:00 tick, the next session's first tick still runs the pass on the prior close."""
+    p = _wired_pipeline(monkeypatch, patch_bar=False)
+    p._alignment_exit_cached = MagicMock(return_value=HOLD)
+    run = wire_trend_exit(lambda name: getattr(p, name, None))
+    _clock(monkeypatch, 2026, 10, 8, 16, 0)
+    run([_position("AAA")], run_id="t1600", total_value=10_000.0)
+    _clock(monkeypatch, 2026, 10, 9, 9, 30)
+    result = run([_position("AAA")], run_id="t0930", total_value=10_000.0)
+    assert result["checked"] == ["AAA"] and result["bar_date"] == "2026-10-08"
+    _clock(monkeypatch, 2026, 10, 9, 10, 0)
+    assert run([_position("AAA")], run_id="t1000", total_value=10_000.0)["checked"] == []
 
 
 def test_sale_goes_through_the_guarded_review_path(monkeypatch):
@@ -140,7 +197,7 @@ def test_sale_goes_through_the_guarded_review_path(monkeypatch):
     result = run([_position("AAA")], run_id="tick-1", total_value=10_000.0)
     gates.assert_called_once()
     assert gates.call_args.args[2] == "SELL" and gates.call_args.args[3] == "AAA"
-    # The gate refused it: no order, marked for retry, and the chart was read once (memo).
+    # The gate refused it: no order, marked refused (not retried), and the chart was read once (memo).
     assert result["refused"] == ["AAA"] and p._alignment_exit_for_holding.call_count == 1
     assert p.broker.submit_order.call_count == 0
     from src.storage.trades import trend_tick_store
@@ -254,13 +311,19 @@ def test_wired_sell_path_exception_is_recorded_and_not_trailed(monkeypatch):
     assert trend_tick_store.get(p.db._trades(), "AAA")["outcome"] == trend_exit_tick.OUTCOME_ERROR
 
 
-def test_refusal_that_cannot_clear_today_is_final_for_the_bar():
+def test_refusal_that_cannot_clear_today_is_final_for_the_session():
     desk = _Desk(sells=False)
     desk.final = {"AAA"}
     first = desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
     assert first["refused_final"] == ["AAA"] and first["refused"] == ["BBB"]
     desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
-    assert desk.executed == [["AAA", "BBB"], ["BBB"]]
+    assert desk.executed == [["AAA", "BBB"]]
+
+
+def test_outside_session_does_nothing():
+    desk = _Desk()
+    result = desk.tick([_position("AAA")], None)
+    assert result["status"] == "outside_session" and desk.verdict_reads == [] and desk.markers == {}
 
 
 def test_an_order_being_cancelled_is_not_a_sale_in_flight():

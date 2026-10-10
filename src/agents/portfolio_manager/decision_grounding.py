@@ -573,20 +573,11 @@ class DecisionGrounding:
         that silently widens is what counts as a catalyst. It reuses the
         producer's own constant rather than choosing a second number.
         `asof` defaults to the trading calendar's today; if that cannot be
-        read the block resolves to NOTHING, so the exception becomes
-        unavailable rather than unbounded.
+        read the error propagates, so the session fails loudly instead of
+        quietly switching off the news-reason checks.
         """
         if asof is None:
-            try:
-                asof = et_today()
-            except Exception as exc:  # pragma: no cover - clock/tz failure
-                logger.warning(
-                    "%s: cannot read today's date (%s) — no catalyst citation "
-                    "can be aged, so none is honoured this session.",
-                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS,
-                    exc,
-                )
-                return {}
+            asof = et_today()
         by_date: dict[str, dict[str, set[str]]] = {}
         for line in (active_state_changes or "").splitlines():
             match = _STATE_CHANGE_ROW_RE.match(line)
@@ -894,8 +885,16 @@ class DecisionGrounding:
             if not isinstance(t, dict):
                 return None
             try:
-                models.append(TargetPosition(**t))
-            except Exception:  # noqa: BLE001 — any shape failure fails closed
+                with parse_telemetry.suspended():
+                    models.append(TargetPosition(**t))
+            except ValidationError as exc:
+                # Fails closed, and says WHY: the real validation reason is
+                # recorded against this symbol. Anything else is a bug and raises.
+                sym = str(t.get("symbol") or "<unknown>")
+                reason = "; ".join(
+                    f"{'.'.join(str(p) for p in err.get('loc', ()))}: {err.get('msg', '')}" for err in exc.errors()
+                )
+                parse_telemetry.record_dropped_item("TargetPosition", sym, reason=f"malformed target: {reason}")
                 return None
         return sorted(
             (

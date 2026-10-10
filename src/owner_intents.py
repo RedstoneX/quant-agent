@@ -1,4 +1,8 @@
-"""The owner intent record and the one flag-only action, Freeze/Start (panel instalment 1).
+"""The owner intent record and the flag-only actions Freeze, Stop and Start (panel instalment 1).
+
+Stop (owner ruling 2026-10-09) = the desk is OFF: every job's pickup and every
+one-shot entry exits without reads or AI once resting entries are cancelled;
+positions and broker-held stops are kept. Start clears Stop and Freeze.
 
 Stored action strings stay PAUSE / RESUME (aliased FREEZE / UNFREEZE) so old
 rows replay unchanged; owner-facing outcomes say Freeze / Start.
@@ -14,7 +18,7 @@ broker door reads `current_flags` (see src/execution/owner_flags_gate.py).
 Staleness has no time constant. An intent is stale when the owner gave it an
 `expires_at` that has passed by the time the desk picks it up (EXPIRED, with
 that reason). A row naming an action this desk does not know is REFUSED, with
-its reason. Freeze and Start name no position, so replaying them
+its reason. Freeze, Stop and Start name no position, so replaying them
 in raised order is always correct.
 
 There is no per-position "hands off" and no never-touch list: the desk manages
@@ -31,18 +35,21 @@ from src.owner_flags import (  # noqa: F401
     FREEZE,
     PAUSE,
     RESUME,
+    STOP,
     UNFREEZE,
     Flags,
     current_flags,
     read_flags,
+    stop_in_force,
 )
 
 logger = logging.getLogger(__name__)
 
-ACTIONS = {PAUSE, RESUME}
+ACTIONS = {PAUSE, RESUME, STOP}
 _OWNER_WORDS = {
     PAUSE: "Freeze now in force: no new positions or adds; exits and stops keep working",
-    RESUME: "Start now in force: the desk may open new positions again",
+    RESUME: "Start now in force: the desk runs and may open new positions again",
+    STOP: "Stop now in force: the desk is off; positions and broker-held stops are kept",
 }
 
 
@@ -118,3 +125,31 @@ def intake(db_path) -> list:
         return done
     finally:
         conn.close()
+
+
+def honour_stop(db_path, broker_factory) -> bool:
+    """Owner Stop at a one-shot entry: pick up intents; if stopped, cancel resting entries.
+
+    Returns True when Stop is in force, and the caller must then exit without
+    doing any work. `broker_factory` is called ONLY when stopped, so a stopped
+    process constructs nothing but the broker it cancels through; the cancel is
+    the Freeze sweep (protective stops and exits are kept).
+    """
+    from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
+
+    if not db_path:
+        return False
+    try:
+        intake(db_path)
+    except Exception as exc:  # noqa: BLE001 - recorded; a Stop already acted is still read below
+        record_guarded_pass(NO_LEDGER, "owner_intents.stop_pickup", exc, log=logger)
+    if not stop_in_force(db_path):
+        return False
+    broker = None
+    try:
+        broker = broker_factory()
+        result = broker.sweep_frozen_resting_orders(db_path)
+        logger.warning("owner Stop in force: desk off; resting entries swept (%s)", result)
+    except Exception as exc:  # noqa: BLE001 - recorded; Stop still holds and the next pickup retries
+        record_guarded_pass(broker or NO_LEDGER, "owner_intents.stop_sweep", exc, log=logger)
+    return True

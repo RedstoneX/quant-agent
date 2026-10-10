@@ -18,6 +18,8 @@ Description=quant-agent status board (no LLM, no trading, read-only)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Read-only. It reads docs/WORK.md and docs/board_notes/, re-evaluates
 # docs/phases.yaml against the tree, reads the
 # deployed SHA, and opens the ledger through a read-only SQLite URI. It writes

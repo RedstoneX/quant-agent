@@ -9,6 +9,8 @@ Description=quant-agent daily P&L CSV export (no LLM, no trading)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # The runner sources .env and applies its own 300s timeout.
 ExecStart=/home/qamc/quant-agent/scripts/run_daily_export.sh
 # Real broker credentials, delivered the same way the six trading units get

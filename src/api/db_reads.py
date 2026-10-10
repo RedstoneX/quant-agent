@@ -1599,3 +1599,25 @@ def get_muted_backlog() -> dict:
         out["oldest"] = min(stamps)
         out["newest"] = max(stamps)
     return out
+
+
+def get_target_scorecard() -> dict:
+    """Entry take-profit target scorecard (RECORD ONLY; owner ruling 2026-10-09).
+
+    Wraps `target_scorecard` on the same independent `mode=ro` connection every
+    other read here uses. A SQLite failure is an explicit `read_error`, never an
+    empty scorecard.
+    """
+    from src.storage.analytics.target_scorecard import target_scorecard
+
+    conn = None
+    try:
+        conn = _connect()
+        result = target_scorecard(conn)
+    except sqlite3.Error:
+        return {"read_error": "target scorecard unavailable"}
+    finally:
+        if conn is not None:
+            conn.close()
+    result["read_error"] = None
+    return result

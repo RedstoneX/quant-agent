@@ -20,6 +20,8 @@ Description=quant-agent FRED macro prefetch (no LLM call, no trading)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Writes one small JSON file per series under data/macro/series_cache/ and
 # nothing else. `data/` is gitignored, so a refresh can never dirty the
 # checkout and become deploy drift. Every write is tmp-file + os.replace, so a

@@ -4,6 +4,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 
+from src import owner_flags
 from src.config import AppConfig
 from src.notifier import CATEGORY_OPERATIONAL, TelegramNotifier
 from src.notifier.owner_alert_funnel import build_default_notifier
@@ -158,11 +159,17 @@ class TradingScheduler:
         result = None
         error: Exception | None = None
         try:
+            # Owner intents + Freeze sweep before EVERY job; never raises. It
+            # runs first so an owner Stop is honoured before any broker read:
+            # Stop = the desk is off, so the job exits once resting entries
+            # are cancelled (the sweep; Stop implies frozen).
+            self.pipeline.pickup_owner_intents()
+            if owner_flags.stop_in_force(getattr(getattr(self.config, "storage", None), "db_path", None)):
+                logger.warning("[%s] Skipped: owner Stop in force, the desk is off", name)
+                return
             if not self.pipeline.broker.is_trading_day():
                 logger.info("[%s] Skipped: market closed for non-trading day", name)
                 return
-            # Owner intents + Freeze sweep before EVERY job; never raises.
-            self.pipeline.pickup_owner_intents()
             result = func()
             logger.info("[%s] Completed: %s", name, result.get("status", "unknown"))
         except Exception as exc:

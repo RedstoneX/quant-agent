@@ -187,7 +187,11 @@ def cancel_resting_entries(broker) -> SweepResult:
 
 
 def sweep_if_frozen(broker, db_path) -> SweepResult | None:
-    """Session-start seam: run the sweep when the owner flag is frozen or UNKNOWN."""
+    """Session-start seam: run the sweep when the owner flag is frozen, stopped or UNKNOWN.
+
+    Stop implies frozen (`Flags.frozen`), so a Stop cancels the same resting
+    entries and keeps the same exits and protective stops.
+    """
     flags = owner_flags.read_flags(db_path)
     if not (flags.frozen or flags.unknown):
         return None

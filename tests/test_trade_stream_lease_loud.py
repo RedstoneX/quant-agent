@@ -51,3 +51,11 @@ def test_stream_flag_handler_logs_the_traceback(caplog):
     with caplog.at_level(logging.ERROR):
         trade_stream._fell_back_to_deprecated_auth(Frozen(), None)
     assert any(r.exc_info for r in caplog.records)
+
+
+def test_acquire_open_failure_is_recorded_through_a_guard_visible_recorder(rows, tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    lease = lease_mod._TradeUpdatesLease(blocker / "sub" / "lease", owner=_Owner())
+    assert lease.acquire() is False
+    assert rows, "the open failure must leave a recorded row"
