@@ -142,6 +142,16 @@ candidates are equivalent on every signal this module has, and a
 deterministic (not random) final order is still needed for reproducibility;
 that residual is not the systematic bias being fixed here, because nothing
 distinguishes the two by then anyway.
+
+**2026-10-10: reward:risk REMOVED from the ordering (owner ruling 9 Oct).**
+The ratio's reward side is the entry take-profit target, which is not a sell
+rule (the desk never exits on it) and is unscored until 12 Oct; its risk
+side is a model-written stop. An unverifiable number must never rank or size
+a trade, so ties on score now fall straight to `level_touches_tiebreak`,
+then `symbol`. Ranking on the target is to be revisited only once that score
+exists. `components["risk_reward_tiebreak"]` is still computed and recorded
+(the `candidate_ranked` pipeline event carries it) but no longer orders
+anything.
 """
 
 from __future__ import annotations
@@ -321,8 +331,10 @@ def rank_verdicts(
     breakout has no overhead level to measure a reward against, so it has no
     comparable number — and being scored 0 for not having one would
     reintroduce the same penalty at the ranking level that item 1(d) just
-    removed at the gate. See `_reward_risk_sort_values` for how an absent
-    key is placed neutrally instead.
+    removed at the gate. An absent key is simply absent.
+
+    **2026-10-10:** that ratio is now RECORDED ONLY — it no longer orders
+    candidates (owner ruling 9 Oct; see the module docstring).
 
     **THE SCORE IS A WEIGHTED SUM ACROSS SEATS, NOT A WEIGHTED AVERAGE —
     changed 2026-09-13 on adversarial review, before merge. Read this before
@@ -371,7 +383,7 @@ def rank_verdicts(
         ratio, so it is unaffected by the change of scale, but it IS affected
         by coverage decay on a held name. Called out in `docs/WORK.md`.
 
-    The reward:risk tiebreak below stays a weighted MEAN, deliberately. It
+    The recorded reward:risk component below stays a weighted MEAN, deliberately. It
     aggregates several seats' estimates of ONE quantity in a real unit; two
     seats both reading 2.0 do not make 4.0. Evidence adds, measurements
     average.
@@ -439,16 +451,17 @@ def rank_verdicts(
         # indistinguishable.
         if stated:
             components["magnitude"] = round(magnitude, 4)
-        # Ordering signal, never added into `score` itself, so it changes
-        # ORDER among ties without changing the composite any existing
-        # caller/test reads. Weighted the same way as the score's own
-        # inputs.
+        # RECORDED ONLY since 2026-10-10 (owner ruling 9 Oct): never added
+        # into `score` and no longer used to order candidates — the target
+        # it is built on is not a sell rule and is unscored. Kept because
+        # the `candidate_ranked` pipeline event records it. Weighted the
+        # same way as the score's own inputs.
         #
         # Which number: the desk's own REAL, structure-derived ratio when
         # the caller supplies one (item 1(d)), otherwise the figure each
         # seat attached to its verdict. None — a breakout, or a candidate
         # with no measurable geometry — means the key is ABSENT, which is
-        # different from zero. See `_reward_risk_sort_values`.
+        # different from zero.
         if setup_types is not None and not reward_risk_floor_applies(setup_types.get(symbol)):
             risk_reward: float | None = None
         elif real_reward_risk is not None and symbol in real_reward_risk:
@@ -464,7 +477,8 @@ def rank_verdicts(
             )
         if risk_reward is not None:
             components["risk_reward_tiebreak"] = round(risk_reward, 4)
-        # Third-stage tiebreak (item 141, 2026-09-20): summed
+        # Second-stage tiebreak (item 141, 2026-09-20; second since
+        # 2026-10-10): summed
         # `stop_side_level_touches` evidence — UNWEIGHTED, deliberately
         # unlike every summed signal above (see `level_touches_of`'s
         # docstring for why `SEAT_WEIGHT` does not belong on a
@@ -475,9 +489,7 @@ def rank_verdicts(
         # setup type — so there is no "absent means neutral" case to
         # handle: a candidate that attaches nothing here simply sorts
         # behind one that attaches something, on real information either
-        # way. This is what still separates an all-breakout tied tier,
-        # which `_reward_risk_sort_values` places at a shared 0.0 for
-        # every member (see its docstring), before falling to `symbol`.
+        # way.
         level_touches_total = sum(lt or 0.0 for lt in (level_touches_of(v) for v in group))
         components["level_touches_tiebreak"] = round(level_touches_total, 4)
         ranked.append(
@@ -497,58 +509,21 @@ def rank_verdicts(
                 no_strength_seats=sorted(v.seat for v in group if v.magnitude is None),
             )
         )
-    # Highest composite first; on a tie, highest reward:risk next (real
-    # information about the candidate, see module docstring fix #2 and the
-    # 2026-09-11 note above); on a further tie (both equal, including the
-    # all-absent case an all-breakout tier produces), highest summed
-    # `level_touches` next — real, already-measured chart structure, never
-    # scored for a breakout's reward side but always available for its risk
-    # side (item 141, 2026-09-20); `symbol` is the final,
-    # deterministic-but-arbitrary stabiliser only reached once every real
-    # signal is equal.
-    rr_sort = _reward_risk_sort_values(ranked)
+    # Highest composite first; on a tie, highest summed `level_touches`
+    # next — real, already-measured chart structure (item 141,
+    # 2026-09-20); `symbol` is the final, deterministic-but-arbitrary
+    # stabiliser only reached once every real signal is equal.
+    #
+    # reward:risk is deliberately NOT a key (removed 2026-10-10, owner
+    # ruling 9 Oct): its reward side is the entry take-profit target, which
+    # is not a sell rule and is unscored until 12 Oct, over a model-written
+    # stop. An unverifiable number must never rank or size a trade. Ranking
+    # on the target is to be revisited only once that score exists.
     ranked.sort(
         key=lambda c: (
             -c.score,
-            -rr_sort[c.symbol],
             -c.components.get("level_touches_tiebreak", 0.0),
             c.symbol,
         )
     )
     return ranked
-
-
-def _reward_risk_sort_values(
-    ranked: list[RankedCandidate],
-) -> dict[str, float]:
-    """The reward:risk value each candidate sorts on, placing a candidate
-    that HAS no such number neutrally rather than last.
-
-    2026-09-11 (docs/WORK.md item 1(d)). An absent ratio used to be 0.0,
-    which sorted every trend/breakout candidate — which by design has no
-    overhead level and therefore no comparable reward figure — behind every
-    range candidate it tied with on the composite score. That is the exact
-    penalty item 1(d) removed at the entry gate, reappearing one level up in
-    the ordering.
-
-    A candidate with no ratio is placed at the MEAN of the ratios its own
-    score-tier peers do have: neither advantaged nor disadvantaged by the
-    absence, and ordered against them on `symbol` as it was before the
-    tiebreak existed. The value is derived entirely from the candidates
-    present in the run — no constant is introduced. When nobody in the tier
-    has a ratio, everyone in it shares one value and the tier falls through
-    to `symbol` exactly as it did before this key existed.
-    """
-    values: dict[str, float] = {}
-    tiers: dict[float, list[RankedCandidate]] = {}
-    for candidate in ranked:
-        tiers.setdefault(candidate.score, []).append(candidate)
-    for tier in tiers.values():
-        present = [c.components["risk_reward_tiebreak"] for c in tier if "risk_reward_tiebreak" in c.components]
-        neutral = sum(present) / len(present) if present else 0.0
-        for candidate in tier:
-            values[candidate.symbol] = candidate.components.get(
-                "risk_reward_tiebreak",
-                neutral,
-            )
-    return values

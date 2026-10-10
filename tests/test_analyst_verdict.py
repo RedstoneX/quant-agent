@@ -694,8 +694,12 @@ def test_seats_disagreeing_on_direction_are_not_ranked():
     assert rank_verdicts([tech, other]) == []
 
 
-def test_tied_score_breaks_on_risk_reward_not_alphabet():
-    """2026-09-04 audit fix #2. Real production data: ties on the coarse
+def test_tied_score_does_not_break_on_risk_reward():
+    """**Inverted 2026-10-10 (owner ruling 9 Oct).** Originally 2026-09-04
+    audit fix #2, which broke ties on reward:risk; that ratio's reward side
+    is the take-profit target, not a sell rule and unscored, so it no longer
+    orders anything. With no level touches either, the tie falls to symbol.
+    The original rationale, kept for history: Real production data: ties on the coarse
     composite score are the COMMON case (one real day had 9 of 12 eligible
     names tied, another 23 of 33), and breaking on symbol alone gave every
     early-alphabet ticker a permanent, undisclosed edge on tie days. AAA and
@@ -709,16 +713,17 @@ def test_tied_score_breaks_on_risk_reward_not_alphabet():
     zzz = _tech("ZZZ", "buy", "medium", target=130).to_verdict()  # R/R 7.0
     assert score_verdict(aaa) == score_verdict(zzz) == 1.0
     ranked = rank_verdicts([aaa, zzz])
-    assert [c.symbol for c in ranked] == ["ZZZ", "AAA"]
-    assert ranked[0].components["risk_reward_tiebreak"] > ranked[1].components["risk_reward_tiebreak"]
+    assert [c.symbol for c in ranked] == ["AAA", "ZZZ"]
+    # Still recorded, just not used to order.
+    assert ranked[1].components["risk_reward_tiebreak"] > ranked[0].components["risk_reward_tiebreak"]
 
 
 def test_a_verdict_without_risk_reward_evidence_carries_no_tiebreak_key():
     """**Changed 2026-09-11, docs/WORK.md item 1(d).** An absent reward:risk
     used to be recorded as 0.0, which sorted such a candidate behind every
-    peer it tied with. Absent is not zero: the key is simply not there, and
-    `_reward_risk_sort_values` places the candidate neutrally instead. It
-    must still never crash the ranking."""
+    peer it tied with. Absent is not zero: the key is simply not there (and
+    since 2026-10-10 the ratio orders nothing). It must still never crash
+    the ranking."""
     v = AnalystVerdict(
         seat="news",
         symbol="AAA",
@@ -732,12 +737,10 @@ def test_a_verdict_without_risk_reward_evidence_carries_no_tiebreak_key():
     assert "risk_reward_tiebreak" not in c.components
 
 
-def test_a_candidate_with_no_ratio_is_placed_neutrally_among_its_tie_group():
-    """The unfairness item 1(d) had to avoid reintroducing one level up. A
-    trend/breakout candidate has no comparable reward:risk by design. Scored
-    0 for the absence it would lose every tie to a range peer; here it sits
-    at the mean of the ratios its tie-group peers do have, so it beats the
-    weaker one and loses to the stronger one."""
+def test_reward_risk_presence_or_size_does_not_order_a_tie_group():
+    """**Inverted 2026-10-10 (owner ruling 9 Oct).** Neither having a
+    reward:risk nor its size moves a candidate within a tied group: with no
+    level touches, the group is ordered by symbol alone."""
 
     def _v(symbol: str, rr: float | None) -> AnalystVerdict:
         evidence = list(_evidence())
@@ -754,7 +757,7 @@ def test_a_candidate_with_no_ratio_is_placed_neutrally_among_its_tie_group():
         )
 
     order = [c.symbol for c in rank_verdicts([_v("WEAK", 0.5), _v("NONE", None), _v("STRONG", 3.0)])]
-    assert order == ["STRONG", "NONE", "WEAK"]
+    assert order == ["NONE", "STRONG", "WEAK"]
 
 
 def test_a_breakout_candidate_carries_no_reward_risk_key_at_all():
@@ -1359,35 +1362,35 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     # of the twelve tie at 1.00 (all `buy`/`sell` at `medium`) and two more
     # tie at 0.5 — see docs/WORK.md item 18 for why the coarse composite
     # score itself is reported rather than "fixed" with a weight nobody has
-    # measured. 2026-09-04 audit fix #2: ties among those now break on
-    # `risk_reward` (real information already on each verdict) instead of
-    # `symbol` — this is exactly the real production day the audit cited (9
-    # of these 12 names tied on score), and the order below is no longer
-    # alphabetical within either tied group; it is ordered by R/R quality.
+    # measured. 2026-10-10 (owner ruling 9 Oct): ties no longer break on
+    # reward:risk — its reward side is the take-profit target, not a sell
+    # rule and unscored. They fall to measured level touches; this fixture
+    # carries none, so each tied group is alphabetical (the deterministic
+    # stabiliser), with no unverifiable number deciding the order.
     assert [c.symbol for c in ranked] == [
         "SLB",
         "VLO",
         "XLE",
-        "NKE",
-        "FLNC",
-        "NUE",
-        "RSG",
-        "V",
-        "DIS",
+        "AAPL",
+        "CMCSA",
         "COP",
         "CVX",
         "DE",
+        "DIS",
+        "FLNC",
+        "JNJ",
+        "JPM",
         "KO",
+        "MSFT",
         "MU",
+        "NKE",
+        "NUE",
         "NVDA",
         "PATH",
         "PFE",
-        "CMCSA",
-        "AAPL",
-        "MSFT",
+        "RSG",
         "TSM",
-        "JPM",
-        "JNJ",
+        "V",
         "CHPX",
         "CRM",
     ]
@@ -1495,8 +1498,8 @@ def test_the_prompt_says_nothing_is_ranked_when_nothing_is_eligible(monkeypatch)
 # fallback, left behind by item 1(d) (2026-09-11): a tied composite tier
 # where every candidate is a Type B / breakout setup carries NO risk_reward
 # at all (`reward_risk_floor_applies` is False for breakout, on purpose —
-# `src/risk/constants.py`), so `_reward_risk_sort_values` places the whole
-# tier at a shared 0.0 and `rank_verdicts` used to fall straight to
+# `src/risk/constants.py`), so the whole tier shared one reward:risk sort
+# value (that key was removed 2026-10-10) and `rank_verdicts` used to fall straight to
 # `symbol`. That is the same bug the 2026-09-04 fix (item 18/64 audit)
 # closed for the risk_reward-bearing case, reopened for breakout only.
 # ==========================================================================
