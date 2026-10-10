@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -15,6 +16,11 @@ from src.scheduler import TradingScheduler
 from src.trader_feed import format_session_result
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+# Exit status of a one-shot entry that did nothing because the owner's Stop is
+# in force (EX_TEMPFAIL). scripts/run_if_et_window.sh reads it: no last-run
+# marker (a Start later the same day may still run the session), no ping.
+OWNER_STOP_EXIT = os.EX_TEMPFAIL  # 75 on Linux; run_if_et_window.sh matches it
 
 # Result statuses that mean "this session did NOT do its job for a
 # transient/recoverable reason" — a broker-API blip at snapshot time,
@@ -57,6 +63,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _owner_stop_in_force(config_arg) -> bool:
+    """Owner Stop at a one-shot entry, BEFORE the notifier, pricing or pipeline exist.
+
+    Stop (owner ruling 2026-10-09) = the desk is off: pick up owner intents,
+    and if Stop is in force cancel resting UNFILLED entries through a bare
+    broker (protective stops kept) and exit with no session, no AI, no push.
+    Every systemd timer reaches the desk through here (run_if_et_window.sh,
+    run_daily_export.sh). A config that cannot be found returns False so the
+    normal path reports it loudly; `--mode live` checks per job instead
+    (TradingScheduler._run_safe).
+    """
+    config_path = Path(config_arg)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    if not config_path.exists():
+        return False
+    try:
+        config = load_config(config_path)
+    except Exception as exc:  # noqa: BLE001 - recorded; the normal path below reloads and pushes the failure
+        from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
+
+        record_guarded_pass(NO_LEDGER, "main.owner_stop_config", exc, log=logger)
+        return False
+    db_path = getattr(getattr(config, "storage", None), "db_path", None)
+
+    def _broker():
+        from src.execution.broker import AlpacaBroker
+
+        return AlpacaBroker(
+            api_key=config.api_keys.alpaca_key, secret_key=config.api_keys.alpaca_secret, paper=config.alpaca.paper
+        )
+
+    from src.owner_intents import honour_stop
+
+    if not honour_stop(db_path, _broker):
+        return False
+    logger.warning("owner Stop in force: the desk is off; nothing run")
+    return True
+
+
+def _exit_if_owner_stopped(args) -> None:
+    """One-shot modes exit with OWNER_STOP_EXIT while the owner's Stop is in force."""
+    if args.mode != "live" and _owner_stop_in_force(args.config):
+        sys.exit(OWNER_STOP_EXIT)
+
+
 def main():
     parser = argparse.ArgumentParser(description="LLM Agent Quantitative Trading System")
     parser.add_argument("--config", default="config/settings.yaml", help="Path to config file")
@@ -96,6 +148,7 @@ def main():
     # pricing cache, TradingPipeline/scheduler construction); the
     # no-env case is only catchable by an external dead-man's switch
     # (see CLAUDE.md observability section).
+    _exit_if_owner_stopped(args)
     notifier = TelegramNotifier()
     start = time.monotonic()
     result = None
