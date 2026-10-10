@@ -33,7 +33,3 @@
 ["src/storage/db.py","latest_news_analysis_today","except Exception as e:\n    logger.warning('latest_news_analysis_today failed: %s', e)\n    return None"]
 ["src/storage/db.py","record_alignment_exit_reading","except Exception as e:\n    logger.warning('alignment-exit reading for %s was not recorded (%s)', sym, e)\n    return False"]
 ["src/storage/db.py","record_soft_exit_heal_restores","except Exception as e:\n    logger.warning('soft-exit heal restores were not recorded (%s)', e)\n    return 0"]
-["src/agents/portfolio_manager/decision_grounding.py","_canonical_targets","except Exception:\n    return None"]
-["src/agents/portfolio_manager/decision_grounding.py","_state_change_symbols_by_date","except Exception as exc:\n    logger.warning(\"%s: cannot read today's date (%s) \u2014 no catalyst citation can be aged, so none is honoured this session.\", SUBFLOOR_CATALYST_UNVERIFIED_STATUS, exc)\n    return {}"]
-["src/execution/broker_parts/trade_stream_lease.py","acquire","except Exception as exc:\n    _swallowed(self._owner, 'flock', exc, 'no socket opened; REST fills')\n    try:\n        fh.close()\n    except Exception as exc2:\n        _swallowed(self._owner, 'close_after_flock', exc2, 'fd lingers')\n    return False"]
-["src/execution/broker_parts/trade_stream_lease.py","acquire","except Exception as exc:\n    _swallowed(self._owner, 'open', exc, 'no socket opened; REST fills')\n    return False"]

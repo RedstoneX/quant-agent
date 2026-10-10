@@ -109,6 +109,18 @@ numbers:
     ruling_summary: "Owner ruled on 2026-10-09 (\"Yes, $3, and that is that.\") that the low-AI-credit alert fires once when the OpenRouter balance is at or below a fixed $3 left, replacing the old twice-the-worst-day trigger."
     ruling_record: owner message 2026-10-09, "Yes, $3, and that is that."
     site: src/llm_balance_runway.py
+  - id: src.execution.broker_parts.market_data._SIP_DELAY_MINUTES
+    value: 16
+    status: sourced
+    site: src/execution/broker_parts/market_data.py
+    source: >-
+      Alpaca market-data FAQ, "Do I need a subscription to get SIP data?"
+      (https://docs.alpaca.markets/docs/about-market-data-api): free-plan
+      accounts may read the consolidated SIP feed when the request's end is
+      at least 15 minutes in the past. 16 = that 15-minute rule plus one
+      minute so clock skew cannot tip a request inside the window; it only
+      bounds how recent a daily-history read may be and never sizes, prices
+      or times an order.
   - id: src.config.INTRA_CHECK_TICK_MINUTES
     value: 30
     status: sourced

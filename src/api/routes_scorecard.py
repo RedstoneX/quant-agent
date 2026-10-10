@@ -58,6 +58,7 @@ from src.api.schemas import (
     ScorecardIdeaAnalyst,
     ScorecardMonthPoint,
     ScorecardPoint,
+    TargetScorecardResponse,
 )
 
 router = APIRouter()
@@ -358,3 +359,13 @@ def get_analyst_scorecard(
     ordinary 500s via the app's global handler.
     """
     return build_scorecard(db_reads.get_conviction_ledger(), idea_limit)
+
+
+@router.get("/analysts/target-scorecard", response_model=TargetScorecardResponse)
+def get_target_scorecard() -> TargetScorecardResponse:
+    """How often price reached the entry take-profit target. Record only.
+
+    Owner ruling 2026-10-09: the target is not a sell rule; nothing here feeds
+    ranking, sizing or exits. "Reached" is a lower bound.
+    """
+    return TargetScorecardResponse(**db_reads.get_target_scorecard())
