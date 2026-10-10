@@ -124,13 +124,15 @@ def test_http_failure_type_replays_and_missing_calls_fail_closed(monkeypatch):
 
 
 def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
+    """Daily history comes from the broker bars source only (2026-10-09);
+    Yahoo is never downloaded on this path, in record or in replay."""
     import yfinance as yf
     from src.data.market import MarketDataProvider
     from src.models import OHLCV
 
     counts = {"download": 0, "fallback": 0}
 
-    def empty_download(*_args, **_kwargs):
+    def unexpected_download(*_args, **_kwargs):
         counts["download"] += 1
         return pd.DataFrame()
 
@@ -138,8 +140,8 @@ def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
         counts["fallback"] += 1
         return [OHLCV(date=date(2026, 9, 1), open=10, high=11, low=9, close=10, volume=100)]
 
-    monkeypatch.setattr(yf, "download", empty_download)
-    market = MarketDataProvider(fallback_bars=fallback)
+    monkeypatch.setattr(yf, "download", unexpected_download)
+    market = MarketDataProvider(bars_source=fallback)
     pipe = SimpleNamespace(macro=SimpleNamespace(fred=_Fred()))
     with session_inputs(pipe) as recorder:
         live = market.get_ohlcv("SPY", lookback_days=30)
@@ -147,7 +149,7 @@ def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
         offline = market.get_ohlcv("SPY", lookback_days=30)
         replay.assert_consumed()
     assert offline == live
-    assert counts == {"download": 1, "fallback": 2}
+    assert counts == {"download": 0, "fallback": 2}
 
 
 def test_unconsumed_provider_answer_fails_closed():
