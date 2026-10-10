@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _W = "trade_stream.lease"
 
 
-def _swallowed(owner, name: str, exc: BaseException, effect: str) -> None:
+def _record_swallowed(owner, name: str, exc: BaseException, effect: str) -> None:
     record_guarded_pass(owner, f"{_W}.{name}", exc, log=logger, context={"effect": effect})
 
 
@@ -44,7 +44,7 @@ class _TradeUpdatesLease:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(self.path, "a+")
         except Exception as exc:
-            _swallowed(self._owner, "open", exc, "no socket opened; REST fills")
+            _record_swallowed(self._owner, "open", exc, "no socket opened; REST fills")
             return False
         flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
         try:
@@ -53,11 +53,11 @@ class _TradeUpdatesLease:
             fh.close()
             return False
         except Exception as exc:
-            _swallowed(self._owner, "flock", exc, "no socket opened; REST fills")
+            _record_swallowed(self._owner, "flock", exc, "no socket opened; REST fills")
             try:
                 fh.close()
             except Exception as exc2:
-                _swallowed(self._owner, "close_after_flock", exc2, "fd lingers")
+                _record_swallowed(self._owner, "close_after_flock", exc2, "fd lingers")
             return False
         try:
             fh.seek(0)
@@ -65,7 +65,7 @@ class _TradeUpdatesLease:
             fh.write(f"{os.getpid()}\n")
             fh.flush()
         except Exception as exc:
-            _swallowed(self._owner, "write_pid", exc, "pid text missing; lock held")
+            _record_swallowed(self._owner, "write_pid", exc, "pid text missing; lock held")
         else:
             record_guarded_pass(self._owner, f"{_W}.write_pid")
         self._fh = fh
@@ -79,11 +79,11 @@ class _TradeUpdatesLease:
         try:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         except Exception as exc:
-            _swallowed(self._owner, "unlock", exc, "lock freed on close")
+            _record_swallowed(self._owner, "unlock", exc, "lock freed on close")
         try:
             fh.close()
         except Exception as exc:
-            _swallowed(self._owner, "close", exc, "fd lingers until gc")
+            _record_swallowed(self._owner, "close", exc, "fd lingers until gc")
 
     def held(self) -> bool:
         return self._fh is not None

@@ -1203,8 +1203,26 @@ export const api = {
     getJSON<ResearchDailyResponse>(`/research/daily/${encodeURIComponent(date)}`),
   analystScorecard: (ideaLimit = 25) =>
     getJSON<AnalystScorecardResponse>(`/analysts/scorecard?idea_limit=${ideaLimit}`),
+  targetScorecard: () => getJSON<TargetScorecardResponse>(`/analysts/target-scorecard`),
   holdingWhy: (symbol: string) =>
     getJSON<HoldingWhyResponse>(`/holdings/${encodeURIComponent(symbol)}/why`),
   search: (q: string, limit = 50) =>
     getJSON<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 };
+
+// /analysts/target-scorecard — how often price reached the entry profit target.
+// Record only (owner ruling 2026-10-09); "reached" is a lower bound.
+export interface TargetScorecardResponse {
+  read_error: string | null;
+  closed_reached: number;
+  closed_not_reached: number;
+  still_open: number;
+  excluded: {
+    opened_before_clean_record: number;
+    no_entry_target: number;
+    no_best_move_figure: number;
+    trade_rows_without_position: number;
+  };
+  positions: Record<string, unknown>[];
+  best_move_is_lower_bound: boolean;
+}

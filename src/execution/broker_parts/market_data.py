@@ -21,6 +21,22 @@ from src.execution.broker_parts.http_timeout import (  # noqa: F401 (re-export)
 )
 from src.execution.broker_parts.intraday_snapshots import snapshots_from_client
 
+
+# Alpaca serves the consolidated SIP feed WITHOUT a paid subscription as
+# long as the request's `end` is at least 15 minutes in the past (Alpaca
+# market-data FAQ, "Do I need a subscription to get SIP data?"; measured
+# 2026-10-10 on this free-plan account: feed=sip daily bars return 200).
+# One extra minute of margin keeps clock skew from tipping a request over.
+_SIP_DELAY_MINUTES = 16
+
+
+def _sip_safe_end(now=None):
+    """Latest `end` a free-plan SIP history request may carry: now - 16 min (UTC)."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    return (now or _dt.now(_tz.utc)) - _td(minutes=_SIP_DELAY_MINUTES)
+
+
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
@@ -196,14 +212,18 @@ class MarketData:
                     symbol_or_symbols=alpaca_symbol,
                     timeframe=TimeFrame.Day,
                     start=range_start,
-                    end=range_end,
+                    # `range_end` is always today; a date would let the
+                    # request reach "now", which SIP refuses on this plan.
+                    end=_sip_safe_end(),
                     # Split AND dividend adjusted: this read replaced Yahoo's
                     # default (yfinance auto_adjust=True) as the desk's daily
                     # history on 2026-10-09, so indicators see the same
-                    # adjusted series they always did. Feed named explicitly:
-                    # this account is entitled to IEX, not SIP (docs/STATE.md).
+                    # adjusted series they always did. Feed is SIP (the whole
+                    # market): IEX alone is ~3% of volume and printed flat
+                    # high==low days on thin names. SIP history is free when
+                    # `end` is 15+ minutes old (see `_sip_safe_end`).
                     adjustment=Adjustment.ALL,
-                    feed=DataFeed.IEX,
+                    feed=DataFeed.SIP,
                 )
                 raw = self._data_client.get_stock_bars(req)
                 # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
@@ -307,13 +327,13 @@ class MarketData:
                     timeframe=timeframe_value,
                     start=range_start,
                     end=range_end,
-                    # This account's market-data plan is entitled to IEX, not
-                    # SIP. Leaving feed unset resolves to SIP server-side for
+                    # This account's market-data plan has real-time IEX only;
+                    # SIP is free only for data 15+ minutes old (daily
+                    # history uses it, see `get_bars`). Leaving feed unset resolves to SIP server-side for
                     # sub-daily bars and comes back with zero bars for every
                     # symbol/range — silently, since Alpaca doesn't error, it
-                    # just returns nothing. Daily bars (get_bars, above) aren't
-                    # feed-gated the same way, which is why only this intraday
-                    # path needs it.
+                    # just returns nothing. This chart read wants the latest
+                    # minutes, so it stays on IEX.
                     feed=DataFeed.IEX,
                 )
                 raw = self._data_client.get_stock_bars(req)
@@ -565,7 +585,7 @@ class MarketData:
 
             self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
             _install_http_timeout(self._data_client)
-        from alpaca.data.enums import Adjustment
+        from alpaca.data.enums import Adjustment, DataFeed
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
 
@@ -575,14 +595,15 @@ class MarketData:
             symbol_or_symbols=list(wanted),
             timeframe=TimeFrame.Day,
             start=end - _td(days=int(lookback_days)),
-            end=end,
+            end=_sip_safe_end(),
             # Split-adjusted only (NOT dividend-adjusted — this differs from
             # the single-symbol `get_bars`, which asks for Adjustment.ALL).
             # The universe screen only ranks on recent price and volume, so
-            # dividend adjustment does not change its answer. Feed left
-            # unset: this account is entitled to IEX, not SIP
-            # (docs/STATE.md), so SIP would be rejected.
+            # dividend adjustment does not change its answer. Feed is SIP:
+            # the screen ranks on volume, and IEX is ~3% of it. SIP history
+            # is free when `end` is 15+ minutes old (see `_sip_safe_end`).
             adjustment=Adjustment.SPLIT,
+            feed=DataFeed.SIP,
         )
         fields = req.to_request_fields()
         out: dict[str, list] = {s: [] for s in symbols}

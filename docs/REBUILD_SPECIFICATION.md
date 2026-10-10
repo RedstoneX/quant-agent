@@ -223,7 +223,7 @@ rebuild, not a requirement.
 | U3 | Seat weights in the ranking composite. | Published weights, unverified; 70% of technical reads land on one score so ranking fell to alphabetical. | board_notes item-157 (per memory); WORK item 141 |
 | U4 | Only technical, among the four non-technical seats, is barred from being a sole backer; news, earnings or smart-money can still carry a name alone, and news/smart-money synthesise their invalidation. | Open conflict with 1.1 (see 9.3). | board_notes item-109 |
 | U5 | Six scheduled sessions per day (morning, half-hourly intra-check, midday, close, evening, earnings pre-process) at fixed clock ticks. | Schedule is an artefact; 2.1 demands the bar be tested "multiple times a day" but fixes no count. | WORK; board_notes item-219 |
-| U6 | Reward:risk tiebreak within a rank tier. | Rests on a target, which the owner ruled is a made-up number. | INCIDENT_HISTORY 2026-10-01 item 208(a) |
+| U6 | Reward:risk tiebreak within a rank tier. **Removed from the live build 2026-10-10** (owner ruling 9 Oct); ties now fall to level touches, then symbol; the ratio is still recorded. | Rests on a target, which the owner ruled is a made-up number. | INCIDENT_HISTORY 2026-10-01 item 208(a) |
 | U7 | Entry orders cancelled after 90 seconds unfilled. | No source; alert on cancel is conditional. | INCIDENT_HISTORY 2026-09-30 item 183 |
 | U8 | Three-attempt stop-placement retry burst. | Platform convention. | INCIDENT_HISTORY 2026-09-25 item 129 |
 | U9 | Every number in 6.11, 6.16-6.22, 6.24, 6.25. | Recorded arbitrary. | ledger |
