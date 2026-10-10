@@ -69,13 +69,13 @@ def _readable_positions(positions, atr_for_symbol, skipped: list) -> list:
 
 
 def _run_trend_exit(trend_exit, positions, run_id: str, total_value, summary: dict) -> set:
-    """Run the tick trend exit; return the symbols it placed a sell for (the wired callable never raises)."""
+    """Run the tick trend exit; return the symbols the trail must skip (sold, or an order may be out)."""
     if trend_exit is None:
         summary["trend_exit"] = {"status": "unavailable", "reason": "trend exit not wired on this host"}
         return set()
     result = trend_exit(positions, run_id=run_id, total_value=total_value)
     summary["trend_exit"] = result
-    return set(result.get("sold") or [])
+    return set(result.get("no_trail") or [])
 
 
 def trail_on_tick(
@@ -99,9 +99,9 @@ def trail_on_tick(
 
     Owner ruling 2026-10-09: the trend exit (`trend_exit`, see
     src/intraday/trend_exit_tick.py) runs FIRST, under the same lock and owner
-    check, and a holding it placed a sell for is not trailed this tick. Its
-    result is `summary["trend_exit"]`; a failure there is recorded durably by
-    the wired step and the trail still runs (nothing was sold, so none skipped).
+    check, and a holding it sold -- or whose sale errored, so an order may be
+    out -- is not trailed this tick. Its result is `summary["trend_exit"]`; the
+    wired step records its own failures durably and never raises.
     """
     summary: dict = {"status": "ran", "orders": 0, "skipped": []}
     if preamble_deferred:

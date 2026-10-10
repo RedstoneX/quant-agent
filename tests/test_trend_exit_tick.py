@@ -27,6 +27,9 @@ class _Desk:
     """In-memory marker store and recording fakes for `trend_exit_on_tick`."""
 
     def __init__(self, verdict=EXIT, sells=True):
+        self.open_orders: tuple = (True, [])
+        self.final: set = set()
+        self.raises: Exception | None = None
         self.markers: dict = {}
         self.verdict = verdict
         self.sells = sells
@@ -45,6 +48,8 @@ class _Desk:
 
     def execute(self, firing, *, run_id, position_facts):
         self.executed.append([p.symbol for p in firing])
+        if self.raises is not None:
+            raise self.raises
         return [{"symbol": p.symbol} for p in firing] if self.sells else []
 
     def tick(self, positions, bar_date, run_id="r"):
@@ -57,6 +62,8 @@ class _Desk:
             alignment_exit_cached=self.cached,
             position_facts_for=lambda due: {},
             execute_guarded_exits=self.execute,
+            open_orders_checked=lambda: self.open_orders,
+            final_today=lambda symbols: self.final & symbols,
         )
 
 
@@ -97,7 +104,7 @@ def test_trend_runs_before_trail_and_sold_name_is_not_trailed():
 
     def trend(positions, *, run_id, total_value=None):
         calls.append("trend")
-        return {"status": "ran", "sold": ["AAA"], "refused": [], "checked": ["AAA", "BBB"]}
+        return {"status": "ran", "sold": ["AAA"], "refused": [], "checked": ["AAA", "BBB"], "no_trail": ["AAA"]}
 
     def trail(ready, *, run_id):
         calls.append(("trail", [p.symbol for p in ready]))
@@ -118,6 +125,7 @@ def test_trend_runs_before_trail_and_sold_name_is_not_trailed():
 
 def _wired_pipeline(monkeypatch, completed=date(2026, 10, 9)):
     p = build_pipeline(broker=MagicMock())
+    p.broker.list_open_orders_checked.return_value = (True, [])
     p._record_alignment_reading = MagicMock()
     monkeypatch.setattr("src.trading_calendar.last_completed_bar_date", lambda *a, **k: completed)
     return p
@@ -169,3 +177,101 @@ def test_trend_failure_is_recorded_durably_and_trail_still_runs(monkeypatch):
     )
     assert summary["trend_exit"]["status"] == "error" and trailed == ["AAA"]
     recorded.assert_called_once()
+
+
+def _trail_with(desk, positions, bar="2026-10-09"):
+    trailed: list = []
+
+    def trend(positions, *, run_id, total_value=None):
+        try:
+            return desk.tick(positions, bar, run_id=run_id)
+        except trend_exit_tick.SellPathError as exc:
+            return {"status": "error", "no_trail": exc.no_trail}
+
+    summary = trail_on_tick(
+        positions=positions,
+        run_id="r",
+        apply_deterministic_trails=lambda ready, run_id: trailed.extend(p.symbol for p in ready) or [],
+        atr_for_symbol=lambda s: 2.0,
+        process_lock=_lock,
+        blocking_owner_session=lambda: None,
+        trend_exit=trend,
+    )
+    return summary, trailed
+
+
+def test_open_market_sell_means_no_second_sale_and_stop_still_trails():
+    desk = _Desk()
+    review_sale = SimpleNamespace(symbol="AAA", side=SimpleNamespace(value="sell"), order_type="market")
+    resting_stop = SimpleNamespace(symbol="BBB", side="sell", order_type="stop")
+    desk.open_orders = (True, [review_sale, resting_stop])
+    summary, trailed = _trail_with(desk, [_position("AAA"), _position("BBB")])
+    assert desk.executed == [["BBB"]], "a resting STOP does not defer; a working market sell does"
+    assert summary["trend_exit"]["deferred"] == ["AAA"] and trailed == ["AAA"]
+    assert desk.markers["AAA"]["outcome"] == trend_exit_tick.OUTCOME_DEFERRED
+    desk.open_orders = (True, [])
+    assert desk.tick([_position("AAA")], "2026-10-09")["sold"] == ["AAA"]
+
+
+def test_unreadable_order_listing_defers_every_firing_holding():
+    desk = _Desk()
+    desk.open_orders = (False, [])
+    assert desk.tick([_position("AAA")], "2026-10-09")["deferred"] == ["AAA"] and desk.executed == []
+
+
+def test_sell_path_exception_marks_error_and_skips_trail_then_retries_after_order_check():
+    desk = _Desk()
+    desk.raises = RuntimeError("broker timeout after submit")
+    summary, trailed = _trail_with(desk, [_position("AAA"), _position("BBB")])
+    assert summary["trend_exit"]["no_trail"] == ["AAA", "BBB"] and trailed == []
+    assert desk.markers["AAA"]["outcome"] == trend_exit_tick.OUTCOME_ERROR
+    desk.raises = None
+    desk.open_orders = (True, [SimpleNamespace(symbol="AAA", side="sell", order_type="market")])
+    retry = desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
+    assert retry["deferred"] == ["AAA"] and retry["sold"] == ["BBB"]
+
+
+def test_wired_sell_path_exception_is_recorded_and_not_trailed(monkeypatch):
+    p = _wired_pipeline(monkeypatch)
+    p._alignment_exit_for_holding = MagicMock(return_value=EXIT)
+    p._midday_execute_llm_actions = MagicMock(side_effect=RuntimeError("raised after submit"))
+    recorded = MagicMock()
+    monkeypatch.setattr(trend_exit_tick, "record_site", recorded)
+    trailed: list = []
+    summary = trail_on_tick(
+        positions=[_position("AAA")],
+        run_id="r",
+        apply_deterministic_trails=lambda ready, run_id: trailed.extend(p.symbol for p in ready) or [],
+        atr_for_symbol=lambda s: 2.0,
+        process_lock=_lock,
+        blocking_owner_session=lambda: None,
+        trend_exit=wire_trend_exit(lambda name: getattr(p, name, None)),
+    )
+    assert summary["trend_exit"]["status"] == "error" and summary["trend_exit"]["no_trail"] == ["AAA"]
+    assert trailed == [] and recorded.call_count == 1
+    from src.storage.trades import trend_tick_store
+
+    assert trend_tick_store.get(p.db._trades(), "AAA")["outcome"] == trend_exit_tick.OUTCOME_ERROR
+
+
+def test_refusal_that_cannot_clear_today_is_final_for_the_bar():
+    desk = _Desk(sells=False)
+    desk.final = {"AAA"}
+    first = desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
+    assert first["refused_final"] == ["AAA"] and first["refused"] == ["BBB"]
+    desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
+    assert desk.executed == [["AAA", "BBB"], ["BBB"]]
+
+
+def test_an_order_being_cancelled_is_not_a_sale_in_flight():
+    from types import SimpleNamespace as NS
+
+    from src.intraday.trend_exit_tick import working_exit_symbols
+
+    orders = [
+        NS(symbol="AAPL", side="sell", order_type="market", status="pending_cancel"),
+        NS(symbol="MSFT", side="sell", order_type="market", status="canceled"),
+        NS(symbol="NVDA", side="sell", order_type="market", status="new"),
+        NS(symbol="TSLA", side="sell", order_type="stop", status="new"),
+    ]
+    assert working_exit_symbols(orders) == {"NVDA"}
