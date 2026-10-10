@@ -1179,7 +1179,7 @@ def test_the_owner_line_names_the_limit_that_is_actually_binding():
     text = " ".join(owner_precheck_lines(record))
     assert "the book is FULL" in text
     assert "$92 of cash and borrowing room" in text
-    assert "$500 smallest order" in text
+    assert "below the $500 that the owner's 0.5% minimum risk per position needs" in text
     assert "14.50% of risk headroom" not in text
 
 

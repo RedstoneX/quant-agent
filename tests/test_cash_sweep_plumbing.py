@@ -56,7 +56,7 @@ def _rc() -> ReasoningChain:
     )
 
 
-def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False):
+def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_risk_pct=0.0):
     """ExecutionStage harness. Config stays a MagicMock (the stage reads many
     attributes); only the leaves these tests depend on are pinned to real
     values, because a MagicMock leaf silently reads as "not a number"."""
@@ -71,6 +71,10 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False):
         {},
     )
     pipeline.config.execution.fractional_enabled = fractional
+    # The owner's 0.5% minimum-risk floor (owner rule 2026-08-27) is pinned
+    # in tests/test_min_risk_floor.py; the clamp-mechanics tests here switch
+    # it off so each one aims at the clamp alone. Passing 0.5 turns it on.
+    pipeline.config.risk.min_position_risk_pct = min_risk_pct
     pipeline.config.execution.fractional_share_decimals = 4
     pipeline.broker.get_fractionability.return_value = {"fractionable": True} if fractional else {"fractionable": False}
     return pipeline
@@ -135,11 +139,12 @@ def _events(pipeline) -> list[tuple]:
 # ---------------------------------------------------------------------------
 
 
-def test_fractional_clamp_places_a_token_order_not_refuses_it():
-    """$3.11 of raw cash buys 0.0311 shares under fractional sizing. That
-    is now SUBMITTED rather than refused — no commission, and fractional
-    sizing means a tiny order is not actually costly to hold."""
-    pipeline = _pipeline(live_price=100.0, cash=3.11, fractional=True)
+def test_fractional_clamp_to_a_token_order_is_refused_below_min_risk():
+    """$3.11 of raw cash buys 0.0311 shares under fractional sizing, which
+    risks ~0.0002% of a $100k book at its stop. Not refused for being under
+    the deleted $500 notional floor -- refused because it is under the
+    owner's 0.5% minimum risk per position (owner rule 2026-08-27)."""
+    pipeline = _pipeline(live_price=100.0, cash=3.11, fractional=True, min_risk_pct=0.5)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx(
         [
@@ -158,9 +163,9 @@ def test_fractional_clamp_places_a_token_order_not_refuses_it():
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert len(orders) == 1
-    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == pytest.approx(0.0311)
-    assert ctx.execution_skips == []
+    assert orders == []
+    pipeline.broker.submit_order.assert_not_called()
+    assert [s["reason"] for s in ctx.execution_skips] == ["below_owner_min_risk"]
 
 
 def test_clamp_still_places_a_meaningful_partial_order():

@@ -148,7 +148,9 @@ def _scripted_answers() -> dict[str, dict]:
         targets=[
             TargetPosition(
                 symbol=SYMBOL,
-                target_weight_pct=10.0,
+                # Sized to clear the owner's 0.5% minimum risk per position
+                # (owner rule 2026-08-27) at this fixture's stop distance.
+                target_weight_pct=30.0,
                 conviction="high",
                 thesis="synthetic",
                 thesis_invalid_if="closes below support",

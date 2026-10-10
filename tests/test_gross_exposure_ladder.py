@@ -1531,6 +1531,10 @@ def _execution_pipeline(
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = allow_margin
     pipeline.config.risk.max_position_pct = max_position_pct
+    # This file is about the ceiling, not risk sizing (see `_entry`: a $0.10
+    # stop). The owner's 0.5% minimum-risk floor is pinned in
+    # tests/test_min_risk_floor.py, so it is switched off here.
+    pipeline.config.risk.min_position_risk_pct = 0.0
     pipeline.config.execution.fractional_enabled = False  # whole shares
     return pipeline
 
