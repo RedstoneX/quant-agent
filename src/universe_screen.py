@@ -39,6 +39,15 @@ THE CRITERIA, and where each threshold comes from (every number is in
               design required. Estimated from bars, not quotes, because
               this account sees IEX quotes only and those are routinely
               absurd (src/pipeline_stages.py, the CCJ 15%-spread note).
+  traded      the name TRADED on every session of that screening year: no
+              bar with zero volume or high == low, and no session missing
+              from its bars (checked against the dates any name in the same
+              batch has a bar on, so no holiday calendar is needed; a lone
+              name with no batch is checked for the first two only). Why:
+              the spread estimate above floors a no-trade day at zero and
+              averages it in, so a thinly traded name looks cheap. Alpaca
+              omits a day with no trades rather than returning a flat bar,
+              so a skipped session is a missing bar. Needs no new number.
   volatility  ATR(14) / price < 1 / the widest stop multiple the desk's
               own rules can reach (`portfolio_constructor.
               widest_reachable_stop_atr_multiple`, 1/2.5 = 40% at
@@ -232,6 +241,7 @@ PLAIN_REASON = {
     "insufficient_history": "less than a year of price history",
     "price_below_minimum": "a penny stock (under $5)",
     "spread_too_wide": "too costly to trade (wide bid-ask spread)",
+    "not_traded_every_session": "did not trade on every session of the past year",
     "spread_unmeasurable": "its trading cost could not be measured",
     "volatility_above_ceiling": "so volatile the desk's widest stop would sit at or below zero",
     "company_too_small": "company too small (under $30M)",
@@ -421,8 +431,13 @@ def check_asset(symbol: str, asset) -> list[str]:
     return failures
 
 
-def check_bars(bars: list, th: ScreenThresholds) -> tuple[list[str], dict]:
-    """History, price, spread and volatility — everything read off the bars."""
+def check_bars(
+    bars: list, th: ScreenThresholds, reference_dates: Iterable[date] | None = None
+) -> tuple[list[str], dict]:
+    """History, price, traded-every-session, spread and volatility —
+    everything read off the bars. `reference_dates`: sessions known to have
+    happened (dates other names have bars on); a screening-year session
+    absent from `bars` refuses the name."""
     from src.data.technical import atr_series
 
     measured: dict[str, Any] = {}
@@ -451,6 +466,15 @@ def check_bars(bars: list, th: ScreenThresholds) -> tuple[list[str], dict]:
         recent = [b for b in bars if getattr(b, "date") >= year_start]
     except (AttributeError, TypeError):
         recent = list(bars)
+    dead = [b for b in recent if not (getattr(b, "volume", 0) or 0) or getattr(b, "high", 0) == getattr(b, "low", 0)]
+    have = {getattr(b, "date") for b in recent}
+    missing = (
+        [d for d in set(reference_dates) if d >= year_start and d not in have] if reference_dates is not None else []
+    )
+    if dead or missing:
+        measured["no_trade_days"] = len(dead)
+        measured["missing_sessions"] = len(missing)
+        failures.append("not_traded_every_session")
     spread = corwin_schultz_spread(recent)
     if spread is None:
         failures.append("spread_unmeasurable")
@@ -599,6 +623,7 @@ def screen_symbol(
     *,
     asset: Any = ...,
     bars: list | None = None,
+    reference_dates: Iterable[date] | None = None,
 ) -> ScreenResult:
     """Run every criterion on one symbol, cheapest first; stop at the first
     failing stage so a name that fails for free costs no network reads."""
@@ -620,7 +645,7 @@ def screen_symbol(
             logger.warning("universe screen: bars failed for %s: %s", symbol, exc)
             result.failures = ["market_data_unavailable"]
             return result
-    failures, measured = check_bars(bars, th)
+    failures, measured = check_bars(bars, th, reference_dates)
     result.measured.update(measured)
     if failures:
         result.failures = failures
@@ -952,6 +977,8 @@ def run_screen(
             for symbol in chunk:
                 _record(ScreenResult(symbol=symbol, failures=["market_data_unavailable"]))
             continue
+        # Sessions that happened: any date any name in this batch has a bar on.
+        batch_dates = {getattr(b, "date") for rows in bars_by_symbol.values() for b in rows or []}
         for symbol in chunk:
             if time.monotonic() >= deadline:
                 run.deadline_hit = True
@@ -962,6 +989,7 @@ def run_screen(
                 th,
                 asset=by_symbol[symbol],
                 bars=bars_by_symbol.get(symbol) or [],
+                reference_dates=batch_dates,
             )
             _record(result)
         if run.deadline_hit:
