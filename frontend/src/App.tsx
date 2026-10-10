@@ -37,6 +37,7 @@ import { bestPrimaryRunId } from "./components/funnelShared";
 import { todayEtDate } from "./lib/format";
 import { ResearchDesk } from "./components/research/ResearchDesk";
 import { AnalystScorecard } from "./components/scorecard/AnalystScorecard";
+import { TargetScorecard } from "./components/scorecard/TargetScorecard";
 
 type View = "cockpit" | "desk" | "scorecard" | "journal";
 type MobilePane = "positions" | "watchlist" | "chart";
@@ -832,7 +833,12 @@ export default function App() {
        * long explainer, and it would dilute "what is happening right now"
        * if it shared scroll space with the live surface — the same reason
        * Journal and the Research Desk are separate views. */}
-      {view === "scorecard" && <AnalystScorecard />}
+      {view === "scorecard" && (
+        <>
+          <AnalystScorecard />
+          <TargetScorecard />
+        </>
+      )}
 
       {/* Vertical-space reallocation pass (owner-authorized overshoot,
           2026-09-11): this footer's py-4 (32px) plus
