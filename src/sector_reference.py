@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 
 import yfinance as yf
 
+from src.data.sector_names import nasdaq_to_desk
 from src.models import _ALLOWED_SECTORS, _SECTOR_ALIASES
 from src.sentinel.counted import record_swallowed
 
@@ -122,6 +123,10 @@ def _canonicalize_sector(raw: str | None) -> str:
     canon = _SECTOR_ALIASES.get(s.lower())
     if canon in _ALLOWED_SECTORS:
         return canon
+    # Nasdaq listing names (Finance, Health Care, Miscellaneous ...) via the one fixed map.
+    nasdaq = nasdaq_to_desk(s)
+    if nasdaq in _ALLOWED_SECTORS:
+        return nasdaq
     return "Unknown"
 
 
