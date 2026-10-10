@@ -159,7 +159,9 @@ def _run_one(
             f"(lookback={lookback_days}d, source=Alpaca daily bars via MarketDataProvider)...",
             file=sys.stderr,
         )
-        bars_cache[cache_key] = fetch_universe_history(list(symbols), lookback_days=lookback_days)
+        bars_cache[cache_key] = fetch_universe_history(
+            list(symbols), lookback_days=lookback_days, market=_broker_backed_provider()
+        )
     bars_by_symbol, missing = bars_cache[cache_key]
 
     slippage_bps = args.slippage_bps if args.slippage_bps is not None else config.execution.max_entry_slippage_bps
@@ -187,6 +189,19 @@ def _run_one(
     read_counts = params.meter.format_read_counts(label=f"run from {config_path}")
     metrics = compute_metrics(result.trades, params.initial_equity)
     return config, result, metrics, slippage_bps, slippage_source, read_counts
+
+
+def _broker_backed_provider():
+    """Daily bars from the broker (Alpaca, read-only; never asked to trade),
+    wired as the live pipeline wires it. Built here, not in src/: src.backtest
+    must not import the broker seam (config/check_allowlists/import_seam_pairs.txt)."""
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.data.market import MarketDataProvider
+    from src.execution.broker import AlpacaBroker
+
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+    return MarketDataProvider(bars_source=broker.get_bars)
 
 
 def _coerce(raw: str) -> float | int | str:

@@ -101,10 +101,10 @@ def test_backtest_history_reads_through_a_broker_backed_provider():
     assert missing == ["GONE"]
 
 
-def test_backtest_default_provider_is_broker_backed():
-    """`fetch_universe_history` with no provider builds one from the broker
-    (credentials patched); it never falls back to an unwired provider."""
-    import src.backtest.data as bt
+def test_backtest_script_builds_a_broker_backed_provider():
+    """`scripts/backtest.py` wires the broker itself (src.backtest must not
+    import the broker seam); credentials patched, bars from the broker."""
+    from scripts.backtest import _broker_backed_provider
 
     with (
         patch("src.api.deps.get_alpaca_credentials", return_value=("k", "s")),
@@ -112,10 +112,9 @@ def test_backtest_default_provider_is_broker_backed():
         patch("src.execution.broker.TradingClient", return_value=MagicMock()),
         patch("src.execution.broker.AlpacaBroker.get_bars", return_value=[_bar(CUTOFF)]) as get_bars,
     ):
-        bars_by_symbol, missing = bt.fetch_universe_history(["SPY"], lookback_days=5)
+        provider = _broker_backed_provider()
+        assert [b.date for b in provider.get_ohlcv("SPY", 5)] == [CUTOFF]
     assert get_bars.call_count == 1
-    assert [b.date for b in bars_by_symbol["SPY"]] == [CUTOFF]
-    assert missing == []
 
 
 # ---------------------------------------------------------------------------

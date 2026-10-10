@@ -71,9 +71,14 @@ def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 
     from the broker (Alpaca, read-only), so this needs the Alpaca credentials
     every standalone script already uses.
     """
-    from src.backtest.data import broker_backed_provider
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.data.market import MarketDataProvider
+    from src.execution.broker import AlpacaBroker
 
-    provider = broker_backed_provider()  # Alpaca daily bars, read-only (owner 2026-10-09)
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())  # read-only bars
+
+    provider = MarketDataProvider(bars_source=broker.get_bars)  # Alpaca daily bars (owner 2026-10-09)
     bars: dict[str, list] = {}
     empty: list[str] = []
     # Sectors are recorded too (board item 202): `broker._get_sector` reads
