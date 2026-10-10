@@ -1,14 +1,16 @@
-"""src.intraday.trend_exit_tick -- the trend exit, run at the 30-minute intra check on DAILY closes only.
+"""src.intraday.trend_exit_tick -- the trend exit, once per session at the first 30-minute check, on DAILY closes.
 
-Owner ruling 2026-10-09: run the trend exit (sell on a confirmed break of the
-last rising low; `src/exits/alignment_exit.py`) at every 30-minute check, on
-DAILY closes only -- never intraday bars. Before this it ran only in the
-midday and close position reviews.
+Owner ruling 2026-10-09 21:02 ET (final): the trend exit (sell on a confirmed
+break of the last rising low; `src/exits/alignment_exit.py`) acts ONCE a day,
+at the first 30-minute check after the open, on DAILY closes -- never
+intraday bars. Later checks that session only RETRY a holding whose sale
+FAILED (`error`) or was PUT OFF (`deferred`).
 
 This module adds NO exit maths, NO number and NO sell door:
   * the verdict is the review's own memoised one (`_alignment_exit_cached`),
     read on the price feed's COMPLETED daily bars (`MarketData.get_ohlcv`
-    drops today's unfinished bar in market hours; nothing intraday is read);
+    drops today's unfinished bar in market hours; nothing intraday is read),
+    so in session the newest bar read is the PRIOR session's close;
   * a cleared verdict is executed by the review's OWN guarded executor
     (`_midday_execute_llm_actions`, with no model review) -- its alignment
     scan re-raises the sale from the same memoised verdict and every gate it
@@ -18,14 +20,22 @@ This module adds NO exit maths, NO number and NO sell door:
     called: the review's AI Risk call happens before that executor and only
     sees the model's own exits, so a scan-raised sale never reaches it.
 
-What this adds is WHEN it runs. A new completed bar appears once a day, so a
-holding is checked once per new completed bar (in practice at the first tick,
-09:45 ET); the bar date checked is persisted per holding
-(`trend_exit_tick_checks`). Later ticks that day skip it, EXCEPT a holding
-whose sale was refused for a reason that can clear today, deferred behind a
-working exit order, or interrupted by an error -- those are retried next tick.
-A refusal that cannot clear today (bought today, already cut today) is final
-for that bar (`refused_final`).
+What this adds is WHEN it runs. The pass is keyed on the SESSION date (the ET
+trading date of the tick), persisted per holding (`trend_exit_tick_checks`;
+its `bar_date` column holds that session key):
+  * a tick OUTSIDE regular hours (the 16:00 ET tick, any off-hours run) does
+    no trend work at all -- it would read a just-closed, possibly not final
+    bar, could sell at/after the close, and would use up the next morning's
+    pass;
+  * the first in-session tick with no marker for this session runs the pass
+    (normally 09:30 ET; if that tick is missed, the next in-session tick runs
+    it instead);
+  * later ticks that session retry ONLY `deferred` (a working order was in
+    the way, or the order listing was unreadable) and `error` (the sell path
+    raised). A plain refusal (`refused`: a gate, veto or objection said no)
+    is a decision, not a failure, and is not retried; `refused_final`
+    (bought today, already cut today) is not retried either. There is no
+    retry cap: retries are bounded by the session's remaining ticks.
 
 Overlap with a running review (the tick is exempt from the session lock, and
 that lock lapses): a holding with ANY working non-stop order at the broker is
@@ -64,14 +74,16 @@ __all__ = [
 
 OUTCOME_HOLD = "hold"
 OUTCOME_SOLD = "sold"
+#: A gate, veto or objection refused the sale: a decision, not retried this session.
 OUTCOME_REFUSED = "refused"
-#: Refused for a reason that cannot clear today (bought today, already cut today): not retried this bar.
+#: Refused for a reason that cannot clear today (bought today, already cut today): not retried this session.
 OUTCOME_REFUSED_FINAL = "refused_final"
 #: A working non-stop order already exists (e.g. a review's sale): retried next tick.
 OUTCOME_DEFERRED = "deferred"
 #: The sell path raised; an order may have gone out. Retried next tick, after the open-order check.
 OUTCOME_ERROR = "error"
-_RETRY = frozenset({OUTCOME_REFUSED, OUTCOME_DEFERRED, OUTCOME_ERROR})
+#: Only a sale that FAILED or was PUT OFF is retried at a later tick (owner ruling 2026-10-09 21:02 ET).
+_RETRY = frozenset({OUTCOME_DEFERRED, OUTCOME_ERROR})
 
 
 class SellPathError(RuntimeError):
@@ -111,9 +123,9 @@ def working_exit_symbols(orders) -> set:
     return out
 
 
-def _due(marker: dict | None, bar_date: str) -> bool:
-    """Run on a new completed bar, or retry a retryable outcome on this one."""
-    if marker is None or marker.get("bar_date") != bar_date:
+def _due(marker: dict | None, session_date: str) -> bool:
+    """Run this session's first pass, or retry a failed/deferred outcome from it."""
+    if marker is None or marker.get("bar_date") != session_date:
         return True
     return marker.get("outcome") in _RETRY
 
@@ -122,6 +134,7 @@ def trend_exit_on_tick(
     *,
     positions,
     run_id: str,
+    session_date: str | None,
     completed_bar_date: str,
     read_marker,
     write_marker,
@@ -131,15 +144,20 @@ def trend_exit_on_tick(
     open_orders_checked,
     final_today,
 ) -> dict:
-    """Check each due holding's trend exit on completed daily bars; sell the cleared ones via the guarded path.
+    """Run this session's trend pass (or its retries) on completed daily bars; sell cleared ones via the guarded path.
 
-    Returns `{status, bar_date, checked, sold, refused, refused_final, deferred, no_trail}`;
+    `session_date` is the ET trading date of an IN-SESSION tick, or None for a
+    tick outside regular hours, which does nothing (`status: outside_session`).
+    `completed_bar_date` is the newest completed daily bar (the prior close).
+
+    Returns `{status, session_date, bar_date, checked, sold, refused, refused_final, deferred, no_trail}`;
     `no_trail` names every holding the trail must leave alone this tick. If the
     sell path raises, the firing holdings are marked `error` and `SellPathError`
     carries them to the caller.
     """
     summary: dict = {
-        "status": "ran",
+        "status": "ran" if session_date else "outside_session",
+        "session_date": session_date,
         "bar_date": completed_bar_date,
         "checked": [],
         "sold": [],
@@ -149,10 +167,13 @@ def trend_exit_on_tick(
         "no_trail": [],
     }
 
-    def mark(symbol: str, outcome: str) -> None:
-        write_marker(symbol, bar_date=completed_bar_date, outcome=outcome, run_id=run_id)
+    if not session_date:
+        return summary
 
-    due = [p for p in positions or [] if _holding(p) and _due(read_marker(_symbol(p)), completed_bar_date)]
+    def mark(symbol: str, outcome: str) -> None:
+        write_marker(symbol, bar_date=session_date, outcome=outcome, run_id=run_id)
+
+    due = [p for p in positions or [] if _holding(p) and _due(read_marker(_symbol(p)), session_date)]
     if not due:
         return summary
     facts = position_facts_for(due) or {}
@@ -223,7 +244,7 @@ def _not_busy(cleared: list, open_orders_checked, mark, summary: dict, bar_date:
 
 
 def _settle(symbols: list, orders: list, final: set, mark, summary: dict, bar_date: str) -> None:
-    """Mark each routed holding sold, refused (retried next tick) or refused_final (not retried this bar)."""
+    """Mark each routed holding sold, refused or refused_final; none of these is retried this session."""
     ordered = {_order_symbol(order) for order in orders}
     for symbol in symbols:
         if symbol in ordered:
@@ -237,7 +258,7 @@ def _settle(symbols: list, orders: list, final: set, mark, summary: dict, bar_da
         if outcome == OUTCOME_REFUSED:
             logger.warning(
                 "tick trend exit: %s cleared the trend exit on the %s close but the guarded sell path "
-                "placed no order; retried at the next tick",
+                "placed no order (refused); not retried this session",
                 symbol,
                 bar_date,
             )
@@ -251,7 +272,7 @@ def wire_trend_exit(host):
     step unavailable).
     """
     from src.storage.trades import trend_tick_store as store
-    from src.trading_calendar import last_completed_bar_date
+    from src import trading_calendar as cal
 
     db = host("db")
     broker = host("broker")
@@ -280,12 +301,29 @@ def wire_trend_exit(host):
         return {s for s in symbols if opened_today(s)} | (set(trimmed_today() or set()) & symbols)
 
     def _run_once(positions, *, run_id: str, total_value) -> dict:
+        now = cal.et_now()
+        if not cal.in_regular_session(now):
+            # The 16:00 ET tick (and any off-hours run) does no trend work: see the module docstring.
+            return trend_exit_on_tick(
+                positions=positions,
+                run_id=run_id,
+                session_date=None,
+                completed_bar_date=cal.last_completed_bar_date(now).isoformat(),
+                read_marker=None,
+                write_marker=None,
+                alignment_exit_cached=None,
+                position_facts_for=None,
+                execute_guarded_exits=None,
+                open_orders_checked=None,
+                final_today=None,
+            )
         ledger = db._trades()
         morning_trades = db.get_trades(today_only=True, executed_only=True)
         return trend_exit_on_tick(
             positions=positions,
             run_id=run_id,
-            completed_bar_date=last_completed_bar_date().isoformat(),
+            session_date=cal.session_date_key(now),
+            completed_bar_date=cal.last_completed_bar_date(now).isoformat(),
             read_marker=lambda symbol: store.get(ledger, symbol),
             write_marker=lambda symbol, **kw: store.record(ledger, symbol, **kw),
             alignment_exit_cached=cached,
