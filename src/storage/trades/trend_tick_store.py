@@ -1,0 +1,31 @@
+"""Storage for the per-holding trend-exit tick marker (see src/intraday/trend_exit_tick.py).
+
+Functions take the `TradeLedger` (`db._trades()`), so the big ledger file does not grow.
+"""
+
+from __future__ import annotations
+
+
+def get(ledger, symbol: str) -> dict | None:
+    """The last completed-bar date the trend check ran on for `symbol`, and its outcome; None if never."""
+    with ledger._lock:
+        row = ledger.conn.execute(
+            "SELECT symbol, bar_date, outcome, run_id, updated_at FROM trend_exit_tick_checks WHERE symbol = ?",
+            (symbol,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def record(ledger, symbol: str, *, bar_date: str, outcome: str, run_id: str | None = None) -> int:
+    """Replace `symbol`'s marker: only the latest completed bar checked matters."""
+
+    def _do():
+        cur = ledger.conn.execute(
+            "INSERT OR REPLACE INTO trend_exit_tick_checks (symbol, bar_date, outcome, run_id, updated_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (symbol, bar_date, outcome, run_id),
+        )
+        ledger.conn.commit()
+        return cur.rowcount or 0
+
+    return ledger._locked_write(_do, label="record_trend_exit_tick_check")
