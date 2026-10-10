@@ -895,7 +895,10 @@ numbers:
     value: 25
     engine_ab_2026_10_05: >-
       ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, and the reason is structural rather than a null result. This ceiling can only change an outcome on a day the risk budget binds, and src/backtest/engine.py declares any run with a contested budget day a NON-RESULT because equal-size requests are then served by alphabetical ticker spelling rather than by a ranking. Measured 2026-10-05 with scripts/backtest.py over 2025-01-01..2025-12-31 on public daily bars: an eight-name run had 166 binding-budget days and 128 contested days out of 212 entry days, so it fails the engine's own settleability test; the three-name run that reports zero contested days cannot bind a 25 percent ceiling at all, because at most three concurrent positions at the five percent per-name risk cap commit fifteen percent [measured run output; arithmetic]. The engine cannot settle any portfolio-level risk ceiling until it ranks candidates the way production does, and recording a settlement from it would be wrong. The built realised-risk-budget recording below stays the only route. No value changed.
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-08-27'
+    ruling_summary: "Owner ruled on 2026-08-27 (re-ratified 2026-09-25) that total risk at stake across all positions is capped at 25% of equity, correlation-adjusted."
+    ruling_record: docs/OUTCOME.md, section 'Risk envelope (owner-ratified 2026-08-27)'
     site: src/config/__init__.py
     note: >-
       Total portfolio risk ceiling, owner-ratified appetite 2026-09-25
@@ -940,7 +943,7 @@ numbers:
     cost_while_unanswered: >-
       The whole-book ceiling is unanchored, and the per-name and cluster caps
       are rationed against it.
-    settles_by:
+    route_parked_by_ruling_2026_08_27_settles_by:
       kind: recording
       state: built
       writes:
@@ -960,7 +963,10 @@ numbers:
         of picked
   - id: src.config.RiskConfig.max_position_risk_pct
     value: 5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-08-27'
+    ruling_summary: "Owner ruled on 2026-08-27 that risk per trade is 5% of equity at most, a ceiling not a target, scaled by AI confidence; the 0.5% minimum is the floor below which the desk does not trade."
+    ruling_record: docs/OUTCOME.md, section 'Risk envelope (owner-ratified 2026-08-27)'
     engine_ab_2026_10_05: >-
       NARROWED 2026-10-05 by a six-point engine sweep, NOT SETTLED, and this row
       stays arbitrary. Method: src/backtest/engine.py run_backtest called directly
@@ -1037,7 +1043,7 @@ numbers:
     cost_while_unanswered: >-
       Ratified is not sourced: the desk's largest routine exposure rests on a
       round number.
-    settles_by:
+    route_parked_by_ruling_2026_08_27_settles_by:
       kind: measurement
       state: specified
       where: >-
