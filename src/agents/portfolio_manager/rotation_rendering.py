@@ -49,7 +49,7 @@ class RotationSection:
         existing_risk_pct: dict[str, float] | None,
         ceiling_pct: float,
         entry_budget_usd: float | None = None,
-        min_order_usd: float | None = None,
+        min_entry_usd: float | None = None,
     ) -> RotationPrecheck:
         """Phase 14 — run the opportunity-cost comparison once and keep its
         inputs. `_render_rotation_section` renders this for the prompt;
@@ -67,8 +67,10 @@ class RotationSection:
         `entry_budget_usd` is `_entry_deployment_budget`'s own figure — the
         dollars EXECUTION will size this session's entries against, already
         carrying the §11.2 gross ladder, settled cash and the min of the two
-        — and `min_order_usd` the §10.3 `cash_sweep.min_order_usd` floor
-        under the smallest order the desk will place. Together they are the
+        — and `min_entry_usd` the smallest position that can carry the
+        owner's minimum risk per position (owner rule 2026-08-27, 0.5% of
+        equity): risk can never exceed notional, so below that many dollars
+        no stop distance yields a tradeable position. Together they are the
         funding half of the precondition (2026-09-23; see
         `src/rotation.py`'s docstring for the measurement that added it).
         Both `None` means the funding view was not resolvable this session,
@@ -88,7 +90,7 @@ class RotationSection:
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 telemetry_available=False,
                 entry_budget_usd=entry_budget_usd,
-                min_order_usd=min_order_usd,
+                min_entry_usd=min_entry_usd,
                 held_below_entry_bar=held_below,
                 held_examined=held_examined,
             )
@@ -106,7 +108,7 @@ class RotationSection:
             headroom_pct=headroom_pct,
             floor_pct=STARTER_POSITION_RISK_PCT,
             entry_budget_usd=entry_budget_usd,
-            min_order_usd=min_order_usd,
+            min_entry_usd=min_entry_usd,
         )
         opportunity: RotationOpportunity | None = outcome.opportunity
         return RotationPrecheck(
@@ -116,13 +118,13 @@ class RotationSection:
             floor_pct=STARTER_POSITION_RISK_PCT,
             refusal=outcome.refusal,
             entry_budget_usd=entry_budget_usd,
-            min_order_usd=min_order_usd,
+            min_entry_usd=min_entry_usd,
             binding=(() if outcome.refusal is None else outcome.refusal.binding)
             or rotation_binding_constraints(
                 headroom_pct=headroom_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd,
-                min_order_usd=min_order_usd,
+                min_entry_usd=min_entry_usd,
             ),
             held_below_entry_bar=held_below,
             held_examined=held_examined,
@@ -156,11 +158,12 @@ class RotationSection:
             )
         if "funding" in precheck.binding:
             budget = precheck.entry_budget_usd
-            floor = precheck.min_order_usd
+            floor = precheck.min_entry_usd
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                "below the smallest order the desk will place — so "
+                "below the smallest position that can carry the owner's "
+                "0.5% minimum risk — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float)) and isinstance(floor, (int, float))
@@ -233,15 +236,16 @@ class RotationSection:
                 )
             if funding_view_measured(
                 precheck.entry_budget_usd,
-                precheck.min_order_usd,
+                precheck.min_entry_usd,
             ):
                 return (
                     f"{header}\n"
                     f"{headroom_pct:.2f}% risk headroom left against the "
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
-                    "for new entries, above the smallest order the desk will "
-                    "place — real room exists on every constraint, "
+                    "for new entries, at or above the smallest position that can "
+                    "carry the owner's 0.5% minimum risk "
+                    "— real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )
             # Adversary review 2026-09-23: do NOT tell a seat that can sell

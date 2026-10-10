@@ -32,7 +32,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _live_stops_from_heat,
     _macro_analysis_as_dict,
     _macro_regime,
-    _min_order_usd,
+    _min_position_risk_pct,
     _persist_evidence,
     _record_constructor_drops,
     _record_constructor_side_flips,
@@ -294,12 +294,16 @@ class DecisionStage:
                 "margin_interest_rate_pct",
                 None,
             ),
-            # 2026-09-23: the §10.3 notional floor, read by exactly the
-            # helper the execution-time re-size and the rotation buy-leg
-            # projection already read it with, so the rotation pre-check
-            # tests "can this book fund the smallest order the desk will
-            # place" against the DEPLOYED floor rather than a second copy.
-            min_order_usd=_min_order_usd(pipeline),
+            # The smallest position that can carry the owner's minimum risk
+            # per position (owner rule 2026-08-27): risk can never exceed
+            # notional, so below `min_position_risk_pct` of equity no stop
+            # distance yields a tradeable position. Replaced the deleted
+            # flat $500 `cash_sweep.min_order_usd` floor.
+            min_entry_usd=(
+                _min_position_risk_pct(pipeline) / 100.0 * float(ctx.total_value)
+                if isinstance(ctx.total_value, (int, float)) and not isinstance(ctx.total_value, bool)
+                else None
+            ),
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=dict(ctx.symbol_sectors or {}),

@@ -184,7 +184,6 @@ def test_new_exposure_is_refused_and_nothing_is_sold_to_make_room():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     assert outcome.decisions[0].allocation_pct == 0.0, "the BUY must be refused"
@@ -216,7 +215,6 @@ def test_a_drawdown_blocks_first_and_only_then_trims_the_excess():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
     assert with_buy.decisions[0].allocation_pct == 0.0
     assert with_buy.blocked == ["TSLA"]
@@ -227,7 +225,6 @@ def test_a_drawdown_blocks_first_and_only_then_trims_the_excess():
         list(positions),
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
     assert [(t.symbol, t.action, t.allocation_pct) for t in without_buy.trims] == [
         (t.symbol, t.action, t.allocation_pct) for t in with_buy.trims
@@ -252,7 +249,6 @@ def test_an_entry_that_still_fits_is_shrunk_rather_than_dropped():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     assert outcome.blocked == []
@@ -285,7 +281,6 @@ def test_a_planned_exit_frees_headroom_before_entries_are_judged():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     assert buy.allocation_pct == 50.0, "the freed $10k must fund the rotation"
@@ -306,7 +301,6 @@ def test_a_remnant_below_the_old_minimum_order_is_granted_not_refused():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     # $100 of headroom left (well under the old $500 floor) — granted, not
@@ -348,7 +342,6 @@ def test_gross_headroom_still_converts_to_notional_via_the_multiplier():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     # $600 of gross headroom / 3x = a $200 order, granted despite being well
@@ -378,7 +371,6 @@ def test_the_ceiling_is_a_level_so_applying_it_twice_changes_nothing():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
     after_first = decision.allocation_pct
     trims_first = [(t.symbol, t.allocation_pct) for t in first.trims]
@@ -388,7 +380,6 @@ def test_the_ceiling_is_a_level_so_applying_it_twice_changes_nothing():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
     )
 
     assert decision.allocation_pct == after_first, "a second pass must not shrink the order again"
@@ -912,7 +903,6 @@ def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
         emit_trims=False,
     )
     after_sizing = decision.allocation_pct
@@ -939,7 +929,6 @@ def test_the_sizing_gate_and_the_execution_gate_do_not_compound():
         positions,
         EQUITY,
         ceiling,
-        min_order_usd=500.0,
         emit_trims=False,
     )
     assert decision.allocation_pct == after_sizing
@@ -1542,7 +1531,6 @@ def _execution_pipeline(
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = allow_margin
     pipeline.config.risk.max_position_pct = max_position_pct
-    pipeline.config.cash_sweep.min_order_usd = 500.0
     pipeline.config.execution.fractional_enabled = False  # whole shares
     return pipeline
 

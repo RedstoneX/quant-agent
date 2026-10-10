@@ -87,6 +87,7 @@ from src.portfolio_constructor.config import (
     STOP_REFUSAL_AGREEMENT_NET,
     STOP_REFUSAL_SIZED_TO_ZERO,
     STOP_REFUSAL_GROSS_EXPOSURE_CEILING,
+    STOP_REFUSAL_BELOW_OWNER_MIN_RISK,
     CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA,
     CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD,
     CONSTRUCTOR_SHORT_ALREADY_AT_TARGET,
@@ -735,7 +736,72 @@ class PortfolioConstructor:
         # execution stage, and leaving it in the list would show the operator
         # a trade that was never going to happen.
         orders = [d for d in orders if d.action not in ("BUY", "SHORT") or d.allocation_pct > 0]
-        return orders
+        # Owner rule 2026-08-27: below `min_risk_pct` the desk does not
+        # trade. Re-checked HERE, on the finished list, because every shrink
+        # above (single-name ceiling, gross ceiling) runs after the allocator
+        # applied the same floor to the grant.
+        return self._refuse_below_min_risk(orders, risk_plan, current_weights)
+
+    def _refuse_below_min_risk(
+        self,
+        orders: list[TradeDecision],
+        risk_plan: dict[str, RiskPlan],
+        current_weights: dict[str, float],
+    ) -> list[TradeDecision]:
+        """Drop every risk-adding order whose resulting position risks less
+        than `cfg.min_risk_pct` of equity at its own entry and stop.
+
+        Only BUY (a long open/add) and SHORT (a short open/add) add risk;
+        SELL and COVER pass untouched. The position's risk is
+        `(held same-side weight + this order's weight) / gross multiplier x
+        |entry - stop| / entry` -- the inverse of the §2.1 weight formula in
+        `_plan_risk_targets`, at the order's own entry and stop. An order
+        with no readable entry/stop is left alone: refusing it here would
+        invent a reading.
+        """
+        from src.risk.rules import _gross_multiplier
+
+        floor = float(self.cfg.min_risk_pct)
+        if not floor > 0:
+            return orders
+        kept: list[TradeDecision] = []
+        for decision in orders:
+            plan = risk_plan.get(decision.symbol)
+            if decision.action not in ("BUY", "SHORT") or (plan is not None and plan.sized_from_live_stop):
+                kept.append(decision)
+                continue
+            # The order's own entry and stop; the plan's only when the order
+            # carries none.
+            entry = decision.entry_price or (plan.entry_price if plan else None)
+            stop = decision.stop_loss if decision.stop_loss is not None else (plan.stop_price if plan else None)
+            if not entry or stop is None or entry <= 0:
+                kept.append(decision)
+                continue
+            held = current_weights.get(decision.symbol, 0.0)
+            held_same = max(0.0, -held if decision.action == "SHORT" else held)
+            weight = held_same + float(decision.allocation_pct)
+            risk_pct = weight / _gross_multiplier(decision.symbol) * abs(entry - stop) / entry
+            # Order weights are rounded to 2dp (`_build_buy`/`_build_short`),
+            # so a request sized at exactly the floor can land a hair under
+            # it. Half of that 0.01pp step is forgiven -- rounding, not a cut.
+            rounding_pct = 0.005 / _gross_multiplier(decision.symbol) * abs(entry - stop) / entry
+            if risk_pct + rounding_pct + 1e-9 >= floor:
+                kept.append(decision)
+                continue
+            detail = (
+                f"after every sizing cut this position would risk {risk_pct:.2f}% "
+                f"of equity at its stop, under the owner's {floor:.2f}% minimum "
+                f"risk per position (owner rule 2026-08-27): below it the desk "
+                f"does not trade."
+            )
+            logger.warning("Constructor: %s refused — %s", decision.symbol, detail)
+            self._note_refusal(
+                decision.symbol,
+                "short" if decision.action == "SHORT" else "long",
+                STOP_REFUSAL_BELOW_OWNER_MIN_RISK,
+                detail,
+            )
+        return kept
 
     def _plan_risk_targets(
         self,

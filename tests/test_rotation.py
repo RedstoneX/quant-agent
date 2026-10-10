@@ -573,10 +573,10 @@ def test_render_states_the_like_for_like_comparison_for_the_ranked_tier():
 #: The real 2026-09-23 book, from the run log of that date.
 TODAY_RISK_HEADROOM_PCT = 14.50
 TODAY_DEPLOYABLE_USD = 92.20
-#: `cash_sweep.min_order_usd`, the deployed §10.3 floor. A literal here for
+#: `cash_sweep.min_entry_usd`, the deployed §10.3 floor. A literal here for
 #: the same reason `FLOOR_PCT` is one: a change to the deployed number must
 #: fail this test loudly, not quietly re-point it at a different threshold.
-MIN_ORDER_USD = 500.0
+MIN_ENTRY_USD = 500.0
 
 
 def _today_ladder_full_kwargs(**over):
@@ -585,7 +585,7 @@ def _today_ladder_full_kwargs(**over):
         headroom_pct=TODAY_RISK_HEADROOM_PCT,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=TODAY_DEPLOYABLE_USD,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     )
     kwargs.update(over)
     return kwargs
@@ -624,7 +624,7 @@ def test_the_risk_budget_test_still_binds_on_its_own():
         headroom_pct=0.1,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=25_000.0,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     )
     assert outcome.opportunity is not None
     assert outcome.refusal is None
@@ -644,7 +644,7 @@ def test_a_below_bar_holding_is_culled_even_with_room_on_every_constraint():
         headroom_pct=TODAY_RISK_HEADROOM_PCT,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=9_000.0,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     )
     assert outcome.refusal is None
     assert outcome.opportunity is not None
@@ -664,7 +664,7 @@ def test_a_below_bar_holding_is_culled_with_no_replacement_candidate():
         headroom_pct=0.2,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=10.0,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     )
     assert outcome.opportunity is not None
     assert outcome.opportunity.new_symbol is None
@@ -683,7 +683,7 @@ def test_room_everywhere_and_nothing_below_the_bar_is_still_silence():
         headroom_pct=TODAY_RISK_HEADROOM_PCT,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=9_000.0,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     )
     assert outcome.opportunity is None
     assert outcome.refusal is not None
@@ -701,7 +701,7 @@ def test_an_unresolvable_funding_view_does_not_read_as_room_or_as_full():
             headroom_pct=14.5,
             floor_pct=FLOOR_PCT,
             entry_budget_usd=None,
-            min_order_usd=MIN_ORDER_USD,
+            min_entry_usd=MIN_ENTRY_USD,
         )
         == ()
     )
@@ -709,24 +709,24 @@ def test_an_unresolvable_funding_view_does_not_read_as_room_or_as_full():
         headroom_pct=0.1,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=None,
-        min_order_usd=None,
+        min_entry_usd=None,
     ) == ("risk_budget",)
     assert rotation_binding_constraints(
         headroom_pct=14.5,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=TODAY_DEPLOYABLE_USD,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     ) == ("funding",)
     assert rotation_binding_constraints(
         headroom_pct=0.1,
         floor_pct=FLOOR_PCT,
         entry_budget_usd=TODAY_DEPLOYABLE_USD,
-        min_order_usd=MIN_ORDER_USD,
+        min_entry_usd=MIN_ENTRY_USD,
     ) == ("risk_budget", "funding")
 
 
 def test_exactly_the_minimum_order_is_not_constrained():
-    """The boundary. `min_order_usd` dollars deployable funds the minimum
+    """The boundary. `min_entry_usd` dollars deployable funds the minimum
     order, so the book is not full — strictly less than, not at-or-below."""
     from src.rotation import rotation_binding_constraints
 
@@ -734,16 +734,16 @@ def test_exactly_the_minimum_order_is_not_constrained():
         rotation_binding_constraints(
             headroom_pct=14.5,
             floor_pct=FLOOR_PCT,
-            entry_budget_usd=MIN_ORDER_USD,
-            min_order_usd=MIN_ORDER_USD,
+            entry_budget_usd=MIN_ENTRY_USD,
+            min_entry_usd=MIN_ENTRY_USD,
         )
         == ()
     )
     assert rotation_binding_constraints(
         headroom_pct=14.5,
         floor_pct=FLOOR_PCT,
-        entry_budget_usd=MIN_ORDER_USD - 0.01,
-        min_order_usd=MIN_ORDER_USD,
+        entry_budget_usd=MIN_ENTRY_USD - 0.01,
+        min_entry_usd=MIN_ENTRY_USD,
     ) == ("funding",)
 
 
@@ -929,7 +929,7 @@ def test_the_prompt_names_the_constraint_that_is_actually_binding():
             existing_risk_pct={"OLD": 10.5},
             ceiling_pct=25.0,
             entry_budget_usd=TODAY_DEPLOYABLE_USD,
-            min_order_usd=MIN_ORDER_USD,
+            min_entry_usd=MIN_ENTRY_USD,
         ),
     )
     assert "Capital is constrained" in result

@@ -8,7 +8,7 @@ def rotation_binding_constraints(
     headroom_pct: float,
     floor_pct: float,
     entry_budget_usd: float | None,
-    min_order_usd: float | None,
+    min_entry_usd: float | None,
 ) -> tuple[str, ...]:
     """Which of the desk's limits currently stop it taking a new position.
 
@@ -20,13 +20,14 @@ def rotation_binding_constraints(
         new idea at. This is the original test, unchanged and still in
         force; it has simply stopped being the only one.
       * `funding` — the dollars `_entry_deployment_budget` says may still
-        be deployed will not fund even the §10.3 minimum order. That one
+        be deployed will not fund even the smallest position that can
+        carry the owner's minimum risk per position. That one
         figure already carries the §11.2 gross ladder, settled cash, and
         the min of the two when margin is disabled, so a single test covers
         both the ladder and the cash constraint without this module
         computing either.
 
-    `entry_budget_usd` / `min_order_usd` of `None` mean the funding view was
+    `entry_budget_usd` / `min_entry_usd` of `None` mean the funding view was
     not resolvable this session; the funding test is then simply absent
     rather than guessed at, exactly as `existing_risk_pct=None` already
     disables the risk test. Silence from an unreadable input must not read
@@ -38,9 +39,9 @@ def rotation_binding_constraints(
     if (
         isinstance(entry_budget_usd, (int, float))
         and not isinstance(entry_budget_usd, bool)
-        and isinstance(min_order_usd, (int, float))
-        and not isinstance(min_order_usd, bool)
-        and float(entry_budget_usd) < float(min_order_usd)
+        and isinstance(min_entry_usd, (int, float))
+        and not isinstance(min_entry_usd, bool)
+        and float(entry_budget_usd) < float(min_entry_usd)
     ):
         binding.append("funding")
     return tuple(binding)
@@ -48,7 +49,7 @@ def rotation_binding_constraints(
 
 def funding_view_measured(
     entry_budget_usd: float | None,
-    min_order_usd: float | None,
+    min_entry_usd: float | None,
 ) -> bool:
     """Was the funding constraint actually READ this session?
 
@@ -69,8 +70,8 @@ def funding_view_measured(
     return (
         isinstance(entry_budget_usd, (int, float))
         and not isinstance(entry_budget_usd, bool)
-        and isinstance(min_order_usd, (int, float))
-        and not isinstance(min_order_usd, bool)
+        and isinstance(min_entry_usd, (int, float))
+        and not isinstance(min_entry_usd, bool)
     )
 
 

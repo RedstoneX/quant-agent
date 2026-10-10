@@ -203,7 +203,7 @@ handed that exact figure (`margin_headroom_usd` / `margin_ladder_backed`,
 threaded so the Margin Capacity section "never derives its own number"),
 so the rotation pre-check is handed the same object rather than a second
 opinion about it. "Cannot fund a starter position" was, until 2026-09-24,
-the §10.3 notional floor `cash_sweep.min_order_usd` — an arbitrary $500 with
+the §10.3 notional floor `cash_sweep.min_order_usd` (deleted) — an arbitrary $500 with
 no broker minimum behind it, and Alpaca charges no stock commission, so a
 real rotation was being refused on a false "too small to matter" basis. The
 `below_min_notional` gate this used to name is retired outright (see
@@ -377,7 +377,7 @@ def evaluate_rotation_opportunity(
     floor_pct: float,
     margin_pct: float = ROTATION_MARGIN_PCT,
     entry_budget_usd: float | None = None,
-    min_order_usd: float | None = None,
+    min_entry_usd: float | None = None,
 ) -> RotationOpportunity | None:
     """`evaluate_rotation`'s opportunity, for callers that want only that.
 
@@ -394,7 +394,7 @@ def evaluate_rotation_opportunity(
         floor_pct=floor_pct,
         margin_pct=margin_pct,
         entry_budget_usd=entry_budget_usd,
-        min_order_usd=min_order_usd,
+        min_entry_usd=min_entry_usd,
     ).opportunity
 
 
@@ -407,7 +407,7 @@ def evaluate_rotation(
     floor_pct: float,
     margin_pct: float = ROTATION_MARGIN_PCT,
     entry_budget_usd: float | None = None,
-    min_order_usd: float | None = None,
+    min_entry_usd: float | None = None,
 ) -> RotationOutcome:
     """The one rotation comparison worth surfacing this session, or `None`.
 
@@ -421,7 +421,7 @@ def evaluate_rotation(
     the desk enforces, not just the risk budget. `rotation_binding_
     constraints` is the test: the risk-budget headroom against the EXISTING
     book is under `floor_pct`, OR the dollars `_entry_deployment_budget`
-    says are still deployable will not fund the §10.3 minimum order. A book
+    says are still deployable will not fund the smallest position that can carry the owner's 0.5% minimum risk. A book
     with real room on every constraint has nothing to rotate for; refusing
     on "we might want the room later" is not this desk's rule anywhere else
     and is not invented here. See the module docstring for why this is the
@@ -437,7 +437,7 @@ def evaluate_rotation(
         headroom_pct=headroom_pct,
         floor_pct=floor_pct,
         entry_budget_usd=entry_budget_usd,
-        min_order_usd=min_order_usd,
+        min_entry_usd=min_entry_usd,
     )
 
     new_candidates = [c for c in ranked if c.symbol not in held]
@@ -509,14 +509,15 @@ def evaluate_rotation(
         )
 
     if not binding:
-        measured = funding_view_measured(entry_budget_usd, min_order_usd)
+        measured = funding_view_measured(entry_budget_usd, min_entry_usd)
         return _refuse(
             "book_not_constrained",
             f"risk headroom {headroom_pct:.2f}% is at or above the "
             f"{floor_pct:.2f}% floor, and "
             + (
                 f"${entry_budget_usd:,.2f} deployable is at or above "
-                "the smallest order the desk will place — real room on every "
+                "the smallest position that can carry the owner's 0.5% "
+                "minimum risk — real room on every "
                 "constraint"
                 if measured
                 else "the funding view was NOT MEASURED this session, so no funding constraint could be tested"

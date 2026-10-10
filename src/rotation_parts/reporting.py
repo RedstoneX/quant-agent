@@ -83,7 +83,7 @@ def _precheck_binding(precheck) -> tuple[str, ...]:
         headroom_pct=float(getattr(precheck, "headroom_pct", 0.0) or 0.0),
         floor_pct=float(getattr(precheck, "floor_pct", 0.0) or 0.0),
         entry_budget_usd=getattr(precheck, "entry_budget_usd", None),
-        min_order_usd=getattr(precheck, "min_order_usd", None),
+        min_entry_usd=getattr(precheck, "min_entry_usd", None),
     )
 
 
@@ -114,7 +114,7 @@ def precheck_record(
         # cannot be read back: "the book was full" and "the book had room"
         # are the same sentence under two different definitions of full.
         "entry_budget_usd": _opt_float(getattr(precheck, "entry_budget_usd", None)),
-        "min_order_usd": _opt_float(getattr(precheck, "min_order_usd", None)),
+        "min_entry_usd": _opt_float(getattr(precheck, "min_entry_usd", None)),
         "binding": ",".join(_precheck_binding(precheck)),
         # Owner mandate 2026-09-23. How many current holdings would not be
         # bought today, and which — the "has every stock kept earning its

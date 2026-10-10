@@ -449,12 +449,12 @@ class PortfolioManagerAgent(
             or isinstance(_entry_budget_usd, bool)
         ):
             _entry_budget_usd = None
-        _min_order_usd = kwargs.get("min_order_usd")
-        if not isinstance(_min_order_usd, (int, float)) or isinstance(
-            _min_order_usd,
+        _min_entry_usd = kwargs.get("min_entry_usd")
+        if not isinstance(_min_entry_usd, (int, float)) or isinstance(
+            _min_entry_usd,
             bool,
         ):
-            _min_order_usd = None
+            _min_entry_usd = None
         rotation_precheck = self.rotation_precheck(
             ranked=ranked,
             blocked=blocked,
@@ -462,7 +462,7 @@ class PortfolioManagerAgent(
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
             entry_budget_usd=(None if _entry_budget_usd is None else float(_entry_budget_usd)),
-            min_order_usd=(None if _min_order_usd is None else float(_min_order_usd)),
+            min_entry_usd=(None if _min_entry_usd is None else float(_min_entry_usd)),
         )
         self.last_rotation_precheck = rotation_precheck
         rotation_section = self._render_rotation_section(
@@ -1308,12 +1308,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         # the caller's already-loaded `config.risk`. `None` means the
         # cost of carry is simply not stated — never guessed.
         margin_interest_rate_pct: float | None = None,
-        # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
-        # smallest order this desk will place. Threaded rather than
-        # defaulted to a literal so the rotation pre-check tests the
-        # DEPLOYED floor, not a second copy of it. `None` switches
+        # The smallest position that can carry the owner's minimum risk
+        # per position (owner rule 2026-08-27): `min_position_risk_pct`
+        # of equity, since risk can never exceed notional. Replaced the
+        # deleted $500 `cash_sweep.min_order_usd` floor. Threaded so the
+        # rotation pre-check tests the DEPLOYED floor. `None` switches
         # the funding half of the rotation precondition off.
-        min_order_usd: float | None = None,
+        min_entry_usd: float | None = None,
         symbol_sectors: dict[str, str] | None = None,
         session_type: str = "morning",
         allowed_buy_symbols: set[str] | None = None,
@@ -1406,7 +1407,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
             margin_interest_rate_pct=margin_interest_rate_pct,
-            min_order_usd=min_order_usd,
+            min_entry_usd=min_entry_usd,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
             allowed_buy_symbols=allowed_buy_symbols or set(),

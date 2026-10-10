@@ -56,7 +56,7 @@ def _rc() -> ReasoningChain:
     )
 
 
-def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_order_usd=500.0):
+def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False):
     """ExecutionStage harness. Config stays a MagicMock (the stage reads many
     attributes); only the leaves these tests depend on are pinned to real
     values, because a MagicMock leaf silently reads as "not a number"."""
@@ -70,7 +70,6 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_order_us
         [],
         {},
     )
-    pipeline.config.cash_sweep.min_order_usd = min_order_usd
     pipeline.config.execution.fractional_enabled = fractional
     pipeline.config.execution.fractional_share_decimals = 4
     pipeline.broker.get_fractionability.return_value = {"fractionable": True} if fractional else {"fractionable": False}
@@ -219,18 +218,20 @@ def test_whole_share_clamp_also_places_the_small_order():
     assert ctx.execution_skips == []
 
 
-def test_min_notional_floor_falls_back_to_500_not_zero():
-    """An unreadable `cash_sweep.min_order_usd` must not silently become
-    "no floor" — that is the defect, not the fallback."""
-    from src.pipeline_stages import _min_order_usd
+def test_min_risk_floor_falls_back_to_the_ratified_value_not_zero():
+    """An unreadable `risk.min_position_risk_pct` must not silently become
+    "no floor" -- that is the defect, not the fallback. Replaced the deleted
+    $500 `min_order_usd` fallback test (owner rule 2026-08-27)."""
+    from src.pipeline_stages import _min_position_risk_pct
+    from src.risk.constants import STARTER_POSITION_RISK_PCT
 
-    broken = MagicMock()  # config.cash_sweep.min_order_usd is a Mock
-    assert _min_order_usd(broken) == 500.0
-    assert _min_order_usd(None) == 500.0
+    broken = MagicMock()  # config.risk.min_position_risk_pct is a Mock
+    assert _min_position_risk_pct(broken) == STARTER_POSITION_RISK_PCT
+    assert _min_position_risk_pct(None) == STARTER_POSITION_RISK_PCT
 
     configured = MagicMock()
-    configured.config.cash_sweep.min_order_usd = 250.0
-    assert _min_order_usd(configured) == 250.0
+    configured.config.risk.min_position_risk_pct = 0.75
+    assert _min_position_risk_pct(configured) == 0.75
 
 
 # ---------------------------------------------------------------------------

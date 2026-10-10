@@ -49,6 +49,7 @@ from unittest.mock import DEFAULT, MagicMock
 import pytest
 
 from src import pipeline_stages as ps
+from src import stage_execution as se
 from src.config import ExecutionConfig, RiskConfig
 from src.models import Position
 from src.pipeline_context import RunContext
@@ -252,7 +253,7 @@ def _stub_sizing(
     budget=1_000_000.0,
     budget_by_book=None,
     single_name_cap=1_000_000.0,
-    min_order_usd=100.0,
+    min_risk_pct=0.0,
 ):
     """Hold the price, size and funding helpers still so a test can aim at
     ONE gate at a time.
@@ -278,7 +279,8 @@ def _stub_sizing(
         "_single_name_execution_cap",
         lambda pipeline, equity: single_name_cap,
     )
-    monkeypatch.setattr(ps, "_min_order_usd", lambda pipeline: min_order_usd)
+    monkeypatch.setattr(ps, "_min_position_risk_pct", lambda pipeline: min_risk_pct)
+    monkeypatch.setattr(se, "_min_position_risk_pct", lambda pipeline: min_risk_pct)
     monkeypatch.setattr(
         ps,
         "_live_fill_price",
@@ -490,7 +492,7 @@ def test_below_min_notional_no_longer_withdraws_a_small_buy(tmp_path, monkeypatc
     floor no longer gates the rotation buy leg, so the same fixture that
     used to trigger `below_min_notional` now clears normally."""
     positions = [_pos("OLD", intraday=0.0), _pos("KEEP", intraday=0.0)]
-    _stub_sizing(monkeypatch, budget=60.0, min_order_usd=500.0)
+    _stub_sizing(monkeypatch, budget=60.0)
     pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)
 
@@ -1100,7 +1102,7 @@ def test_earlier_entries_drain_the_projected_budget_first(tmp_path, monkeypatch)
     order under the flat $500 minimum and withdraw the whole rotation. That
     floor no longer gates the buy leg, so the rotation now clears with the
     replacement re-sized down to what the drained pool leaves."""
-    _stub_sizing(monkeypatch, budget=2_100.0, min_order_usd=500.0)
+    _stub_sizing(monkeypatch, budget=2_100.0)
     positions = [_pos("OLD"), _pos("KEEP")]
     pipeline, db = _pipeline(tmp_path, positions=positions)
     ctx = _ctx(positions)

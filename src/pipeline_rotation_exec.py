@@ -511,7 +511,7 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions, posi
         # rotation — false, on the record the Risk Manager reads.
         binding=tuple(precheck.binding or ()),
         entry_budget_usd=precheck.entry_budget_usd,
-        min_order_usd=precheck.min_order_usd,
+        min_entry_usd=precheck.min_entry_usd,
     )
     # A zero-size target IS this desk's "close it" instruction
     # (`TargetPosition.is_close`; `_build_sell` turns it into a full SELL).
@@ -554,7 +554,7 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions, posi
         # disagree about why the room was gone.
         "binding": tuple(precheck.binding or ()),
         "entry_budget_usd": precheck.entry_budget_usd,
-        "min_order_usd": precheck.min_order_usd,
+        "min_entry_usd": precheck.min_entry_usd,
         "new_score": new_score,
         "held_reasons": list(opportunity.reasons),
         "protection_basis": protection.basis,
@@ -616,7 +616,7 @@ def _rotation_buy_leg_projected_refusal(
     2026-09-23, when the owner's removal of the account-level loss halt
     (PR #584) deleted the `daily_loss_recheck` refusal (retired-ok) the
     first gate anticipated, and five until 2026-09-24, when `below_min_notional`
-    (retired-ok) was deleted the same way: the flat $500 `min_order_usd`
+    (retired-ok) was deleted the same way: the flat $500 `min_order_usd` (deleted)
     notional floor it named was arbitrary, not a broker minimum, and Alpaca
     charges no stock commission, so `_prevent_rotation_naked_sale` no
     longer refuses a rotation's replacement buy for re-sizing small but
@@ -876,7 +876,7 @@ def _rotation_buy_leg_projected_refusal(
         # Fixed 2026-09-24 (retired the `below_min_notional` gate outright,
         # see `REQUIRED_BUY_LEG_GATES`): this used to refuse the rotation
         # whenever re-sizing to the post-sale budget landed under the flat
-        # `min_order_usd` floor — an arbitrary $500 with no broker minimum
+        # `min_order_usd` floor (deleted) — an arbitrary $500 with no broker minimum
         # behind it, and Alpaca charges no stock commission. A rotation
         # whose replacement buy re-sizes small but nonzero
         # (`affordable_qty > 0`, already checked above) is cleared, not
@@ -1239,7 +1239,7 @@ def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
             clearance=rotation.get("clearance"),
             binding=tuple(rotation.get("binding") or ()),
             entry_budget_usd=rotation.get("entry_budget_usd"),
-            min_order_usd=rotation.get("min_order_usd"),
+            min_entry_usd=rotation.get("min_entry_usd"),
         )
     except ValueError as exc:
         logger.error(
