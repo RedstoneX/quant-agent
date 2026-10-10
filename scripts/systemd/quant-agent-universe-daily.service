@@ -16,6 +16,8 @@ EnvironmentFile=-/home/qamc/quant-agent/.env
 # keys, delivered the same way as quant-agent-daily.service (never in .env).
 LoadCredential=alpaca_api_key:/home/qamc/credentials/alpaca_api_key
 LoadCredential=alpaca_secret_key:/home/qamc/credentials/alpaca_secret_key
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 ExecStart=/bin/bash -c 'ALPACA_API_KEY="$(<"$CREDENTIALS_DIRECTORY/alpaca_api_key")" ALPACA_SECRET_KEY="$(<"$CREDENTIALS_DIRECTORY/alpaca_secret_key")" exec /home/qamc/quant-agent/.venv/bin/python -m src.universe_daily'
 # The screen carries its own deadline (universe_screen.screen_deadline_s);
 # this is the systemd safety net above it.

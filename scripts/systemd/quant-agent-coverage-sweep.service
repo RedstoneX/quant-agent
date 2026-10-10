@@ -9,6 +9,8 @@ Description=quant-agent stop-coverage sweep (no LLM, no trading decisions)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Reads held positions and open protective stops from the broker. While the
 # exchange calendar says the session is OPEN, it re-places the protective
 # stop over any shares the broker is not watching — the same

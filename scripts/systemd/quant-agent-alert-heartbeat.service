@@ -9,6 +9,8 @@ Description=quant-agent alerting-channel self-test (no LLM, no trading)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Sends one real Telegram message with disable_notification and deletes it
 # again, so the channel is proved without spending the operator's attention.
 # The verdict goes to the `alert_channel_checks` table — the same durable

@@ -9,6 +9,8 @@ Description=quant-agent log-health report (no LLM, no trading, read-only)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Read-only apart from its own watermark file: it parses the app log and its
 # rotations, reads docs/WORK.md to find out what is already tracked, and pushes
 # one plain-English verdict to Telegram. No broker call, no model call, no git.

@@ -9,6 +9,8 @@ Description=quant-agent desk-wide silence watchdog (no LLM, no trading)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
+# Owner Stop (ruling 2026-10-09): skipped cleanly, not failed, while the desk is Stopped.
+ExecCondition=/home/qamc/quant-agent/scripts/owner_stop_gate.sh %n
 # Reads alert_channel_checks (read-only), advances an on-box marker, and
 # sends ONE Telegram alert through the proven owner-alert path only when the
 # desk-wide silence has crossed the threshold and no alert has already gone
