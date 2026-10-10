@@ -431,6 +431,12 @@ def check_asset(symbol: str, asset) -> list[str]:
     return failures
 
 
+def session_dates(bars_by_symbol: dict) -> set[date]:
+    """Sessions known to have happened: every date any name in the batch has a
+    bar on. The one definition both screens pass to `check_bars`."""
+    return {getattr(b, "date") for rows in bars_by_symbol.values() for b in rows or []}
+
+
 def check_bars(
     bars: list, th: ScreenThresholds, reference_dates: Iterable[date] | None = None
 ) -> tuple[list[str], dict]:
@@ -978,7 +984,7 @@ def run_screen(
                 _record(ScreenResult(symbol=symbol, failures=["market_data_unavailable"]))
             continue
         # Sessions that happened: any date any name in this batch has a bar on.
-        batch_dates = {getattr(b, "date") for rows in bars_by_symbol.values() for b in rows or []}
+        batch_dates = session_dates(bars_by_symbol)
         for symbol in chunk:
             if time.monotonic() >= deadline:
                 run.deadline_hit = True

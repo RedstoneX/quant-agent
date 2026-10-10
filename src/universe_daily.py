@@ -63,6 +63,7 @@ from src.universe_screen import (
     check_bars,
     iso_week,
     screen_symbol,
+    session_dates,
 )
 
 logger = logging.getLogger(__name__)
@@ -253,8 +254,9 @@ class _DailyScreen:
                 for symbol in chunk:
                     self.run.record(symbol, "inconclusive", ["market_data_unavailable"])
                 continue
+            batch_dates = session_dates(got)
             for symbol in chunk:
-                failures, measured = check_bars(got.get(symbol) or [], self.th)
+                failures, measured = check_bars(got.get(symbol) or [], self.th, batch_dates)
                 if failures:
                     self.run.record(symbol, _status(failures), failures, measured)
                 else:
