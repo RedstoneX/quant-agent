@@ -159,13 +159,10 @@ def test_sweep_runs_only_when_frozen_or_unknown(monkeypatch):
     assert fc.sweep_if_frozen(broker, "db").cancelled == ["e1"]
 
 
-@pytest.mark.parametrize("session", ["run_morning", "run_position_review", "run_evening", "run_earnings_preprocess"])
-def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monkeypatch, session):
-    """The seam: every pipeline session start with Freeze on cancels a resting buy entry first."""
+def _frozen_pipeline(tmp_path, monkeypatch):
     import sqlite3
     from src.execution.broker import AlpacaBroker
     from src.owner_flags import PAUSE
-    from src import pipeline as pl
     from src.storage.schema.owner_intent_tables import apply
     from tests.pipeline_factory import build_pipeline
 
@@ -182,21 +179,36 @@ def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monk
         [_pos("MSFT", "5")], [_order("entry", "AAPL", "buy", "10"), _order("stop", "MSFT", "sell", "5", "stop")]
     )
     broker.is_trading_day = lambda: True
-    broker.get_bars = lambda *a, **k: None  # never called: every session body is stubbed below
+    broker.get_bars = lambda *a, **k: None  # wired at construction, never called here
     broker.sweep_frozen_resting_orders = lambda db_path: AlpacaBroker.sweep_frozen_resting_orders(broker, db_path)
+    pipe = build_pipeline(broker=broker)
+    monkeypatch.setattr(pipe.config.storage, "db_path", db)
+    return pipe, broker
+
+
+def test_pipeline_pickup_cancels_resting_entry_when_frozen(tmp_path, monkeypatch):
+    """The seam moved: the owner-intent pickup (not a session body) sweeps with Freeze on."""
+    pipe, broker = _frozen_pipeline(tmp_path, monkeypatch)
+
+    pipe.pickup_owner_intents()
+
+    assert broker.cancelled == ["entry"]  # the protective stop is kept
+
+
+@pytest.mark.parametrize("session", ["run_morning", "run_position_review", "run_evening", "run_earnings_preprocess"])
+def test_session_bodies_no_longer_sweep(tmp_path, monkeypatch, session):
+    """One sweep site: a session body run directly does not sweep (its launcher's pickup does)."""
+    from src import pipeline as pl
+
+    pipe, broker = _frozen_pipeline(tmp_path, monkeypatch)
     for helper, fn in (
         (pl._morning_helpers, "run_morning"),
         (pl._review, "run_position_review"),
         (pl._review, "run_earnings_preprocess"),
         (pl._evening, "run_evening"),
     ):
-        monkeypatch.setattr(
-            helper, fn, lambda *a, **k: {"status": "executed", "cancelled_at_start": list(broker.cancelled)}
-        )
-    pipe = build_pipeline(broker=broker)
-    monkeypatch.setattr(pipe.config.storage, "db_path", db)
+        monkeypatch.setattr(helper, fn, lambda *a, **k: {"status": "executed"})
 
-    result = getattr(pipe, session)()
+    getattr(pipe, session)()
 
-    assert broker.cancelled == ["entry"]
-    assert result["cancelled_at_start"] == ["entry"]  # swept BEFORE the session body ran
+    assert broker.cancelled == []
