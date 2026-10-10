@@ -14,7 +14,12 @@ is a writer. Calls are resolved MODULE-AWARE, never by bare name, so a generic
 whole tree: ``name(...)`` resolves to a def of that name in the same module or
 one it imports by name; ``obj.name(...)`` resolves to a def of that name in the
 same module, in a module it imports, or -- when exactly one module anywhere
-defines that name -- to that module.
+defines that name -- to that module. One refusal: when the receiver is PROVABLY
+a foreign object -- bound in the same def by ``with <Call> as x`` or
+``x = <Call>`` where the Call is an import from outside the repo
+(``with ThreadPoolExecutor() as ex: ex.submit(f)``) -- the call resolves to no
+repo def at all. An untyped ``broker`` parameter is not provable and still
+falls back, so a shim taking the broker as an argument stays money.
 
 The previous rule was a hand-edited tuple of 23 paths with "lifted from" notes
 (docs/GUARDS_WITHOUT_STORED_STATE.md). Measured 2026-10-04 against this
@@ -79,6 +84,9 @@ class _Module:
         self.bodies: dict[str, list[ast.AST]] = {}
         self.imported_names: dict[str, str] = {}  # local name -> module path it came from
         self.imported_modules: set[str] = set()
+        self.import_roots: dict[str, str] = {}  # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c``
+        #: def name -> {(callee, receiver): module path the receiver was constructed from}
+        self.bound_receivers: dict[str, dict[Call, str]] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 mod = _module_rel(node.module or "", rel if node.level else None, node.level)
@@ -89,14 +97,54 @@ class _Module:
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     self.imported_modules.add(_module_rel(alias.name))
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.import_roots[alias.asname or alias.name.split(".")[0]] = _module_rel(
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 calls = self.defs.setdefault(node.name, set())
                 self.bodies.setdefault(node.name, []).append(node)
+                bound = _constructed_names(node, {**self.import_roots, **self.imported_names})
+                receivers = self.bound_receivers.setdefault(node.name, {})
                 for c in ast.walk(node):
                     if isinstance(c, ast.Call):
                         call = _call_ref(c)
                         if call:
                             calls.add(call)
+                            if call[1] in bound:
+                                receivers[call] = bound[call[1]]
+
+
+def _import_root(expr: ast.AST, imported: dict[str, str]) -> str | None:
+    """Module path the callee of a constructor call was imported from, else None.
+
+    ``ThreadPoolExecutor(...)`` -> its from-import; ``concurrent.futures.X(...)``
+    -> the ``import concurrent.futures`` root. Anything else is not provable.
+    """
+    while isinstance(expr, ast.Attribute):
+        expr = expr.value
+    return imported.get(expr.id) if isinstance(expr, ast.Name) else None
+
+
+def _constructed_names(fn: ast.AST, imported: dict[str, str]) -> dict[str, str]:
+    """Local names this def binds to the result of calling an imported callable.
+
+    Only ``with <Call> as x`` and ``x = <Call>`` count; a parameter or anything
+    bound another way is unknown, so it keeps the fail-safe bare-name fallback.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(fn):
+        pairs: list[tuple[ast.AST, ast.AST]] = []
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            pairs = [(it.context_expr, it.optional_vars) for it in node.items if it.optional_vars is not None]
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            pairs = [(node.value, node.targets[0])]
+        for value, target in pairs:
+            if isinstance(value, ast.Call) and isinstance(target, ast.Name):
+                src = _import_root(value.func, imported)
+                if src is not None:
+                    out[target.id] = src
+    return out
 
 
 def _module_rel(dotted: str, from_rel: str | None = None, level: int = 0) -> str:
@@ -139,8 +187,14 @@ def _load(root: Path, source_dir: str | None) -> dict[str, _Module]:
     return mods
 
 
+def _foreign(src: str, mods: dict[str, _Module]) -> bool:
+    """True when an import path's top-level package is not one the repo's sources define."""
+    tops = {m.split("/", 1)[0].removesuffix(".py") for m in mods}
+    return src.split("/", 1)[0].removesuffix(".py") not in tops
+
+
 def _candidates(
-    mod: _Module, call: Call, mods: dict[str, _Module], owners: dict[str, list[str]]
+    mod: _Module, call: Call, mods: dict[str, _Module], owners: dict[str, list[str]], within: str = ""
 ) -> list[tuple[str, str]]:
     """Every def one call site may land on, resolved module-aware.
 
@@ -149,9 +203,14 @@ def _candidates(
     and in the modules this one imports; only when none of those define it does
     it fall back to every def of that name in the tree. The caller treats a
     call as write-reaching only when ALL its candidates are writers, so a
-    generic name shared by writers and non-writers never carries status.
+    generic name shared by writers and non-writers never carries status. A
+    receiver ``within`` provably constructed from an import outside the repo
+    (a stdlib executor, a third-party client) lands on no repo def.
     """
     name, recv = call
+    src = mod.bound_receivers.get(within, {}).get(call)
+    if src is not None and _foreign(src, mods):
+        return []
     same = [(mod.rel, name)] if name in mod.defs else []
     if recv is None:
         src = mod.imported_names.get(name)
@@ -172,7 +231,7 @@ def _reaches(call: Call, mod: _Module, writers: set, seeds: frozenset[str], mods
     """
     if call[0] in seeds:
         return True
-    cands = [c for c in _candidates(mod, call, mods, owners) if c != (mod.rel, within)]
+    cands = [c for c in _candidates(mod, call, mods, owners, within) if c != (mod.rel, within)]
     return bool(cands) and all(c in writers for c in cands)
 
 
@@ -200,9 +259,9 @@ def derive(
     money = {m for m, _ in writers}
     for rel in list(money):  # one hop: everything a writer module acts on
         mod = mods[rel]
-        for calls in mod.defs.values():
+        for d, calls in mod.defs.items():
             for call in calls:
-                for m, _ in _candidates(mod, call, mods, owners):
+                for m, _ in _candidates(mod, call, mods, owners, d):
                     money.add(m)
     return tuple(sorted(money))
 
