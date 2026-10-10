@@ -1,0 +1,33 @@
+# Money by DECLARATION: every tracked module whose repo-relative path starts with one of
+# these prefixes is in the money scope regardless of call edges. FIXED, repo-written,
+# never derived from trunk. Read by scripts/money_modules.py; tests/test_money_scope_superset.py
+# and the silent-swallow guard police everything here.
+#
+# Why: on 2026-10-10 the derivation stopped resolving `ex.submit(...)` on a
+# ThreadPoolExecutor to the stop-invariant `def submit` (a false edge). 96 modules had
+# been in scope only through that edge. The ones below size, price, stop, gate or build
+# orders -- money by meaning -- and were policed only by accident. They must stay policed
+# whether or not a call edge to an exchange write can be proven, because the money leaves
+# through the ORDER they shape, not through the function that posts it.
+# A line may be added freely (scope only widens); removed only with a Guard-rule-change: commit line.
+src/agents/portfolio_manager/
+src/data/levels.py
+src/execution/
+src/exits/
+src/models/risk_verdicts.py
+src/pipeline_admission.py
+src/pipeline_risk
+src/portfolio_constructor/
+src/protection/
+src/quantities.py
+src/risk/
+src/rotation_dispositions.py
+src/rotation_margins.py
+src/rotation_projection.py
+src/sessions/evening_stop_proximity_session.py
+src/sizing_narrative_audit.py
+src/soft_exit_never_blank.py
+src/stage_decision.py
+src/stage_execution
+src/stage_risk
+src/storage/target_revisions.py
