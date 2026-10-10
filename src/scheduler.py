@@ -161,12 +161,8 @@ class TradingScheduler:
             if not self.pipeline.broker.is_trading_day():
                 logger.info("[%s] Skipped: market closed for non-trading day", name)
                 return
-            try:
-                from src.owner_intents import intake
-
-                intake(getattr(getattr(self.config, "storage", None), "db_path", None))
-            except Exception as exc:  # noqa: BLE001 - a failed pickup never stops a session
-                logger.error("[%s] owner intent pickup failed: %s", name, exc)
+            # Owner intents + Freeze sweep before EVERY job; never raises.
+            self.pipeline.pickup_owner_intents()
             result = func()
             logger.info("[%s] Completed: %s", name, result.get("status", "unknown"))
         except Exception as exc:

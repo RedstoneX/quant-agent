@@ -42,6 +42,7 @@ import pytest
 
 from src.models import Position
 from src.pipeline import TradingPipeline
+from tests.fakes.held_book import hold
 from tests.pipeline_factory import build_pipeline
 
 
@@ -50,7 +51,7 @@ from tests.pipeline_factory import build_pipeline
 # ==========================================================================
 
 
-def _protected_close_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
+def _protected_close_pipe(*, accepted=True, submit_raises=False, clear_ok=True, held=73.0):
     """A __new__'d pipeline wired just enough to exercise
     _submit_protected_sell directly, independent of any caller. Mirrors
     tests/test_pipeline.py's _protected_sell_pipe (same seam), kept local
@@ -71,6 +72,7 @@ def _protected_close_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
             "status": "accepted",
             "symbol": "NVDA",
         }
+    hold(pipe.broker, {"NVDA": held})  # what the broker holds when the exit is re-sized
     return pipe
 
 
@@ -201,7 +203,7 @@ def test_submit_protected_close_long_partial_unchanged():
 def test_submit_protected_close_short_full_sends_buy_for_absolute_qty():
     """Full short close: BUY-to-cover for the absolute quantity. Hard
     literal — this is the headline behaviour this PR adds."""
-    pipe = _protected_close_pipe()
+    pipe = _protected_close_pipe(held=-73.0)
     out = pipe._submit_protected_sell(
         symbol="NVDA",
         qty=73.0,
@@ -231,7 +233,7 @@ def test_submit_protected_close_short_full_sends_buy_for_absolute_qty():
 
 
 def test_submit_protected_close_short_partial_sends_buy_for_partial_qty():
-    pipe = _protected_close_pipe()
+    pipe = _protected_close_pipe(held=-73.0)
     out = pipe._submit_protected_sell(
         symbol="NVDA",
         qty=25.0,
@@ -264,7 +266,7 @@ def test_submit_protected_close_short_is_the_exact_mirror_of_long(qty):
         position_qty_before_sell=73.0,
         label="EMERGENCY_SELL",
     )
-    short_pipe = _protected_close_pipe()
+    short_pipe = _protected_close_pipe(held=-73.0)
     short_pipe._submit_protected_sell(
         symbol="NVDA",
         qty=qty,
@@ -289,7 +291,7 @@ def test_submit_protected_close_short_is_the_exact_mirror_of_long(qty):
 def test_submit_protected_close_short_restores_buy_stops_on_reject():
     """Never assume a fill: a rejected BUY-to-cover must restore the BUY
     stop it cancelled, exactly as a rejected SELL restores a SELL stop."""
-    pipe = _protected_close_pipe(accepted=False)
+    pipe = _protected_close_pipe(accepted=False, held=-73.0)
     out = pipe._submit_protected_sell(
         symbol="NVDA",
         qty=73.0,
@@ -312,7 +314,7 @@ def test_submit_protected_close_short_restores_buy_stops_on_submit_throw():
     """Never assume a fill: a submit that raises leaves the short intact
     with its BUY stop cancelled — restore it in-session, same discipline
     the long path already has."""
-    pipe = _protected_close_pipe(submit_raises=True)
+    pipe = _protected_close_pipe(submit_raises=True, held=-73.0)
     out = pipe._submit_protected_sell(
         symbol="NVDA",
         qty=73.0,

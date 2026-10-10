@@ -987,6 +987,39 @@ class TradingPipeline(
         """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
         return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
+    def pickup_owner_intents(self) -> None:
+        """Pick up owner intents, then (FREEZE step 2) settle resting exposure-adding orders.
+
+        The ONE pickup point. Called by main.py once at startup (after the
+        pipeline is built, before any session or the scheduler runs) and by
+        scheduler._run_safe before EVERY scheduled job, the 30-minute checks
+        included. The sweep runs at every pickup while Freeze is in force
+        (`sweep_if_frozen` reads the flag), not only when the flag changes, so
+        a sweep that failed is retried at the next pickup. Neither step ever
+        stops a job; both failures are recorded.
+        """
+        try:
+            from src.owner_intents import intake
+
+            intake(getattr(getattr(self.config, "storage", None), "db_path", None))
+        except Exception as exc:  # noqa: BLE001 - recorded below; a failed pickup never stops a job
+            from src.sentinel.guarded import record_guarded_pass
+
+            record_guarded_pass(self.broker, "pipeline.owner_intent_pickup", exc, log=logger)
+        self._sweep_frozen_resting_orders()
+
+    def _sweep_frozen_resting_orders(self) -> None:
+        """FREEZE step 2: settle resting exposure-adding orders (only via `pickup_owner_intents`).
+
+        A failed sweep is recorded and never stops the job (src/execution/freeze_cancel.py).
+        """
+        try:
+            self.broker.sweep_frozen_resting_orders(getattr(getattr(self.config, "storage", None), "db_path", None))
+        except Exception as exc:  # noqa: BLE001 - recorded below; a failed sweep never stops a job
+            from src.sentinel.guarded import record_guarded_pass
+
+            record_guarded_pass(self.broker, "pipeline.freeze_sweep", exc, log=logger)
+
     def run_morning(self) -> dict:
         return _morning_helpers.run_morning(self)
 

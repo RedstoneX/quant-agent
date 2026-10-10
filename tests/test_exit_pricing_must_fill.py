@@ -14,12 +14,14 @@ from src.exit_quote import read_exit_quote
 from src.models import PortfolioDecision, Position, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage
+from tests.fakes.held_book import hold
 from tests.test_pipeline_stages import _mock_stage_seam, _mock_stop_seam, _pm_rc, _sell
 
 
 def _pipeline(position, order_id):
     pipeline = MagicMock()
     _mock_stop_seam(pipeline.broker)
+    hold(pipeline.broker, {position.symbol: position.qty})  # the broker holds what the exit sells or covers
     _mock_stage_seam(pipeline)
     pipeline.broker.submit_order.return_value = {"id": order_id, "status": "accepted", "symbol": position.symbol}
     pipeline.broker.wait_for_order_terminal.return_value = "filled"

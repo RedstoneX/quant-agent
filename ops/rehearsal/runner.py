@@ -592,8 +592,8 @@ def _pricing_grace_hours(sandbox) -> float:
     Raises when the sandbox has no settings.yaml at all. That is not a
     policy question with a safe default — it is the caller running before
     `build_rehearsal_config` wrote the file, which is exactly the bug this
-    guard exists to stop coming back: the old code caught it in the `except`
-    below and reported "0h grace" on every rehearsal, indistinguishable from
+    guard exists to stop coming back: the old code caught it in an `except`
+    and reported "0h grace" on every rehearsal, indistinguishable from
     a genuinely configured zero. A rehearsal harness that quietly misstates
     the policy it ran under is worse than one that stops.
     """
@@ -606,16 +606,9 @@ def _pricing_grace_hours(sandbox) -> float:
             "Reporting a fallback here would silently misdescribe the policy "
             "this rehearsal ran under."
         )
-    try:
-        import yaml
-        cfg = yaml.safe_load(settings.read_text())
-        return float(
-            (cfg.get("llm_cost_circuit") or {}).get(
-                "openrouter_pricing_grace_period_hours", 0.0
-            )
-        )
-    except Exception:
-        # The file exists but carries no readable value: describe the strict
-        # policy — never claim more tolerance than we can prove is
-        # configured.
-        return 0.0
+    import yaml
+
+    # A malformed file or a missing key raises, exactly as a missing file does:
+    # a fallback would misdescribe the policy this rehearsal ran under.
+    cfg = yaml.safe_load(settings.read_text())
+    return float(cfg["llm_cost_circuit"]["openrouter_pricing_grace_period_hours"])

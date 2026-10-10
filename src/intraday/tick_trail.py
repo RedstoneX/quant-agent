@@ -68,6 +68,16 @@ def _readable_positions(positions, atr_for_symbol, skipped: list) -> list:
     return ready
 
 
+def _run_trend_exit(trend_exit, positions, run_id: str, total_value, summary: dict) -> set:
+    """Run the tick trend exit; return the symbols the trail must skip (sold, or an order may be out)."""
+    if trend_exit is None:
+        summary["trend_exit"] = {"status": "unavailable", "reason": "trend exit not wired on this host"}
+        return set()
+    result = trend_exit(positions, run_id=run_id, total_value=total_value)
+    summary["trend_exit"] = result
+    return set(result.get("no_trail") or [])
+
+
 def trail_on_tick(
     *,
     positions,
@@ -78,12 +88,20 @@ def trail_on_tick(
     process_lock=None,
     blocking_owner_session=None,
     split_positions=None,
+    trend_exit=None,
+    total_value=None,
 ) -> dict:
     """Run the existing deterministic trail over this tick's broker positions.
 
     Returns a summary for the tick's report: `status` is one of `ran`,
     `deferred`, `unavailable` or `error`; `orders` counts broker replacements;
     `skipped` names every position left alone and why. Never raises.
+
+    Owner ruling 2026-10-09: the trend exit (`trend_exit`, see
+    src/intraday/trend_exit_tick.py) runs FIRST, under the same lock and owner
+    check, and a holding it sold -- or whose sale errored, so an order may be
+    out -- is not trailed this tick. Its result is `summary["trend_exit"]`; the
+    wired step records its own failures durably and never raises.
     """
     summary: dict = {"status": "ran", "orders": 0, "skipped": []}
     if preamble_deferred:
@@ -98,7 +116,7 @@ def trail_on_tick(
         if split_positions is not None:
             investable, _parked = split_positions(positions)
         ready = _readable_positions(investable or [], atr_for_symbol, summary["skipped"])
-        if not ready:
+        if not ready and (trend_exit is None or not investable):
             return summary
         with process_lock() as held:
             if not held:
@@ -108,7 +126,9 @@ def trail_on_tick(
             if blocking is not None:
                 summary.update(status="deferred", reason=f"desk owner session unreadable or live: {blocking}")
                 return summary
-            orders = apply_deterministic_trails(ready, run_id=run_id) or []
+            selling = _run_trend_exit(trend_exit, investable, run_id, total_value, summary)
+            ready = [p for p in ready if (getattr(p, "symbol", "") or "").strip().upper() not in selling]
+            orders = (apply_deterministic_trails(ready, run_id=run_id) or []) if ready else []
         summary["orders"] = len(orders)
     except Exception as exc:  # noqa: BLE001 — never turn a routine tick into a failed run
         logger.exception("tick trail: failed; every stop is left as it was")

@@ -23,6 +23,18 @@ repair and cancels go through. An order whose side, size or position cannot
 be read is treated as an ENTRY (refused): when the door cannot tell, it opens
 nothing.
 
+OVERSELL (always, frozen or not, whenever the door is aimed): a plain `sell`
+whose quantity exceeds the long freshly read from the broker is refused with a
+per-symbol `oversell_refused` reason. A short is only ever opened with
+`sell_short`, so a plain sell bigger than the long is never legitimate -- it is
+an exit sized from a stale read (e.g. the resting stop filled in between) and
+would open a short. Both door rules (freeze and oversell) compare quantities as
+Decimal quantized to 9 dp (the broker's quantity precision, one shared helper),
+so float noise such as 0.1+0.2 against 0.3 held is neither an oversell nor a flip.
+Each refusal is recorded per symbol as a guarded pass
+(`owner_flags_gate.oversell_refused` / `.positions_unreadable`); a failed
+position read refuses the sell as `positions_unreadable`, the freeze's rule.
+
 If the flag cannot be read the state is UNKNOWN: "cannot tell whether the owner
 froze". UNKNOWN behaves exactly like frozen -- entries blocked, exits allowed --
 and the owner is alerted once when the flag becomes unreadable and once when it
@@ -45,7 +57,7 @@ names (PAUSE / RESUME, `paused`) so existing intent rows replay unchanged.
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
 from src import owner_flags
 
@@ -82,6 +94,7 @@ _REFUSALS = {
     "place_entry_protection": lambda why: None,
     "shift_stops_down": lambda why: None,
     "replace_stop_loss": lambda why: None,
+    "replace_order_qty": lambda why: (False, why),
 }
 
 
@@ -139,11 +152,20 @@ def _note_state(unknown: bool, name: str) -> None:
         record_guarded_pass(NO_LEDGER, "owner_flags_gate.unknown_state_recorder", exc)
 
 
+#: The broker's quantity precision (Alpaca: 9 decimal places).
+QTY_QUANTUM = Decimal("1e-9")
+
+
+def _at_broker_precision(q: Decimal) -> Decimal:
+    """The ONE precision both door rules (freeze and oversell) compare at."""
+    return q.quantize(QTY_QUANTUM, rounding=ROUND_HALF_EVEN)
+
+
 def _order_terms(args, kwargs):
     """(symbol, qty, side) of a `submit_order` call, or None if unreadable."""
     try:
         symbol = kwargs["symbol"] if "symbol" in kwargs else args[0]
-        qty = Decimal(str(kwargs["qty"] if "qty" in kwargs else args[1]))
+        qty = _at_broker_precision(Decimal(str(kwargs["qty"] if "qty" in kwargs else args[1])))
         side = str(kwargs["side"] if "side" in kwargs else args[2]).lower()
     except (IndexError, KeyError, TypeError, ValueError, InvalidOperation):
         return None
@@ -157,7 +179,7 @@ class PositionsUnreadable(RuntimeError):
 
 
 def _held_qty(broker, symbol) -> Decimal:
-    """Signed quantity held in `symbol` (0 if none), compared exactly as Decimal.
+    """Signed quantity held in `symbol` (0 if none), as Decimal at the broker's 9 dp precision.
 
     Raises PositionsUnreadable when the broker read fails; `_verdict` turns
     that into a refusal ("positions_unreadable").
@@ -171,7 +193,7 @@ def _held_qty(broker, symbol) -> Decimal:
     for p in positions:
         if str(p.symbol).strip().upper().replace("/", "") == want:
             total += Decimal(str(p.qty))
-    return total
+    return _at_broker_precision(total)
 
 
 def is_entry(broker, name, args, kwargs) -> bool:
@@ -192,6 +214,39 @@ def is_entry(broker, name, args, kwargs) -> bool:
     return not (held < 0 and qty <= -held)
 
 
+class DoorRefusal(RuntimeError):
+    """A broker-door refusal, recorded durably per symbol (never raised)."""
+
+
+def _record_refusal(broker, args, kwargs, why: str) -> None:
+    """Durable, machine-readable, per-symbol record of an oversell or unreadable-position refusal."""
+    kind = why.split(":", 1)[0]
+    if kind not in ("oversell_refused", "positions_unreadable"):
+        return
+    terms = _order_terms(args, kwargs or {})
+    context = {"symbol": terms[0] if terms else None, "qty": str(terms[1]) if terms else None, "reason": why}
+    record_guarded_pass(broker, f"owner_flags_gate.{kind}", DoorRefusal(why), context=context)
+
+
+def oversell_reason(broker, name, args, kwargs):
+    """Named refusal when a plain `sell` exceeds the long held, else None.
+
+    Raises PositionsUnreadable when the fresh position read fails.
+    """
+    if name not in FREEZE_JUDGES:
+        return None
+    terms = _order_terms(args, kwargs or {})
+    if terms is None or terms[2] != "sell":
+        return None
+    symbol, qty, _side = terms
+    held = _held_qty(broker, symbol)
+    if qty <= held:
+        return None
+    return (
+        f"oversell_refused: {symbol} sell of {qty} exceeds the {max(held, Decimal(0))} long held; it would open a short"
+    )
+
+
 def _verdict(name, broker=None, args=(), kwargs=None):
     """Return a refusal reason, or None to let the call through."""
     global unknown_flag_state_calls
@@ -199,6 +254,14 @@ def _verdict(name, broker=None, args=(), kwargs=None):
         return None
     flags = owner_flags.read_flags(_db_path)
     _note_state(flags.unknown, name)
+    try:
+        over = oversell_reason(broker, name, args, kwargs)
+    except PositionsUnreadable as exc:
+        logger.error("oversell gate refused %s: positions_unreadable (%s)", name, exc)
+        return "positions_unreadable: a plain sell cannot be checked against the long held"
+    if over is not None:
+        logger.error("broker door refused %s: %s", name, over)
+        return over
     if flags.unknown:
         unknown_flag_state_calls += 1
         logger.error("desk running on an UNKNOWN owner-flag state (%s)", name)
@@ -220,6 +283,7 @@ def _wrap(name, orig):
         why = _verdict(name, self, args, kwargs)
         if why is not None:
             logger.warning("owner flag refused %s: %s", name, why)
+            _record_refusal(self, args, kwargs, why)
             return _REFUSALS[name](why)
         return orig(self, *args, **kwargs)
 

@@ -16,6 +16,7 @@ from src.pipeline_context import RunContext
 from src.sessions.termination import SessionTerminated
 from src.intraday.session_gate import session_has_ended
 from src.intraday.tick_trail import trail_on_tick
+from src.intraday.trend_exit_tick import wire_trend_exit
 from src.sentinel.guarded_site import record_site as _site
 from src.trading_calendar import session_date_key
 
@@ -255,6 +256,7 @@ class IntradaySession:
             positions=positions,
             run_id=run_id,
             preamble_deferred=preamble_deferred,
+            total_value=total_value,
             **self._tick_trail_collaborators(),
         )
         # 2026-08-19 intraday opportunity-discovery fix: bounded new-
@@ -324,4 +326,6 @@ class IntradaySession:
             "process_lock": _host("_intraday_scan_process_lock"),
             "blocking_owner_session": _host("_blocking_owner_session"),
             "split_positions": _split,
+            # Owner ruling 2026-10-09: trend exit at the tick, daily closes only.
+            "trend_exit": wire_trend_exit(_host),
         }

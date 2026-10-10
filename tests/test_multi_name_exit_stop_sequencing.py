@@ -20,6 +20,7 @@ coverage on its actual fill ("covered"). The defect is purely the ORDER of
 those events.
 """
 
+from tests.fakes.held_book import hold
 from unittest.mock import MagicMock
 
 from src.models import (
@@ -134,6 +135,7 @@ def test_midday_reviewer_restores_each_stop_before_touching_the_next_name():
         ]
     )
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._midday_execute_llm_actions(positions, review, run_id="r1")
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
@@ -157,6 +159,7 @@ def test_midday_reviewer_still_rebuilds_coverage_when_the_trade_row_fails():
         ]
     )
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in positions})  # what the broker holds when the exit is re-sized
     pipeline._midday_execute_llm_actions(positions, review, run_id="r1")
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
@@ -248,6 +251,7 @@ def test_execution_stage_sell_loop_restores_each_stop_before_the_next_name():
         positions,
     )
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in positions})  # what the broker holds when the exit is re-sized
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
@@ -272,6 +276,7 @@ def test_execution_stage_cover_loop_restores_each_stop_before_the_next_name():
         positions,
     )
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in positions})  # what the broker holds when the exit is re-sized
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)

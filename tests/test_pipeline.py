@@ -2,6 +2,7 @@ import pytest
 import json
 from unittest.mock import patch, MagicMock, AsyncMock
 from tests.session_clock import todays_session_stamp
+from tests.fakes.held_book import hold
 from src.pipeline import TradingPipeline
 from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
@@ -1434,6 +1435,7 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     )
     ctx.symbols_bars = {}
 
+    hold(pipeline.broker, {"JPM": 10.0})  # still held when the SELL is re-sized
     ExecutionStage(pipeline=pipeline).run(ctx)
 
     # Full SELL fired
@@ -1487,6 +1489,7 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
         sector="Technology",
     )
 
+    hold(pipeline.broker, {"NVDA": 100.0})
     orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert len(orders) == 1
@@ -2946,6 +2949,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
         [spy_position],
         [spy_position],
         [spy_position],
+        [spy_position],  # the protected sell re-reads what is held after clearing the stops
         [],
     ]
     mock_broker.wait_for_order_terminal.return_value = "filled"
@@ -3030,6 +3034,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
 
 def _mk_midday_pipeline(position: Position) -> TradingPipeline:
     pipeline = build_pipeline(broker=MagicMock())
+    hold(pipeline.broker, {position.symbol: position.qty})
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
         "id": "ord-1",
@@ -3459,6 +3464,7 @@ def test_force_delever_persists_exact_action_string_to_trades_table():
     ctx.cash = -500.0  # deficit, triggers de-lever
     ctx.positions = [losing_position]
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # the broker holds what is de-levered
     pipeline._force_delever(ctx)
 
     assert pipeline.db.insert_trade.called, "force_delever must persist a trade row"
@@ -3523,6 +3529,7 @@ def test_force_delever_sells_long_before_inverse_etf_hedge():
     ctx.cash = -300.0  # deficit small enough that ONE position clears it
     ctx.positions = [sh_hedge, nvda_long]
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # the broker holds what is de-levered
     pipeline._force_delever(ctx)
 
     # First (and only) SELL must be on the LONG (NVDA), not the HEDGE (SH).
@@ -3816,6 +3823,7 @@ def test_midday_emergency_writes_wal_before_submit_survives_submit_crash(tmp_pat
         unrealized_pnl=-510.0,
         sector="Consumer Cyclical",
     )
+    hold(pipe.broker, {pos.symbol: pos.qty})
     # The daily-loss liquidator that used to drive this is deleted
     # (docs/WORK.md item 32). The write-ahead discipline it exercised is
     # not: `_submit_protected_sell` is the shared seam every surviving
@@ -4001,6 +4009,7 @@ def _protected_sell_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
         pipe.broker.submit_order.side_effect = RuntimeError("broker down")
     else:
         pipe.broker.submit_order.return_value = {"id": "ord-1", "status": "accepted", "symbol": "NVDA"}
+    hold(pipe.broker, {"NVDA": 10.0})  # what the broker holds when the exit is re-sized
     return pipe
 
 

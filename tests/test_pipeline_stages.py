@@ -7,6 +7,7 @@ MorningResearchStage's parallel fan-out is covered indirectly by the
 existing pipeline integration tests in test_pipeline.py.
 """
 
+from tests.fakes.held_book import hold
 import json
 from unittest.mock import MagicMock, patch
 
@@ -513,6 +514,9 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     # The warning is emitted by _finalize_pending_protections, which lives on
     # TradingPipeline (src.pipeline) now that the loop is extracted.
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
+        hold(
+            pipeline.broker, {p.symbol: p.qty for p in ctx.positions}
+        )  # what the broker holds when the exit is re-sized
         stage.run(ctx)
 
     # The SELL submitted through the real protected-sell helper...
@@ -589,6 +593,9 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     ctx.symbols_bars = {}
 
     stage = ExecutionStage(pipeline=pipeline)
+    hold(
+        pipeline.broker, {fresh_position.symbol: fresh_position.qty}
+    )  # what the broker holds when the exit is re-sized
     stage.run(ctx)
 
     pipeline._refresh_account_state.assert_called()
@@ -678,6 +685,9 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     ctx.symbols_bars = {}
 
     stage = ExecutionStage(pipeline=pipeline)
+    hold(
+        pipeline.broker, {fresh_position.symbol: fresh_position.qty}
+    )  # what the broker holds when the exit is re-sized
     stage.run(ctx)
 
     pipeline._refresh_account_state.assert_called()

@@ -132,6 +132,80 @@ def snapshot_protective_stops(
     return True, specs
 
 
+#: `StopCancelOutcome.detail` prefix: a cancel failed and the fresh position
+#: read shows nothing held, so the stop filled and nothing was rolled back.
+POSITION_GONE = "position_gone"
+
+
+def _held_now(broker, symbol: str) -> float | None:
+    """Signed qty held in `symbol` from a fresh broker read; None if unreadable."""
+    want = symbol.strip().upper().replace("/", "")
+    try:
+        positions = list(broker.get_positions())
+        held = sum(float(p.qty) for p in positions if str(p.symbol).strip().upper().replace("/", "") == want)
+        record_guarded_pass(broker, "cancel_snapshotted_stops.position_read", context={"symbol": symbol})
+    except Exception as exc:  # noqa: BLE001 - unreadable keeps the existing rollback
+        record_guarded_pass(
+            broker,
+            "cancel_snapshotted_stops.position_read",
+            exc,
+            log=logger,
+            context={"symbol": symbol, "effect": "position unknown; the rollback runs as before"},
+        )
+        return None
+    return 0 if abs(held) < 1e-9 else held
+
+
+def _stop_side(spec: dict) -> str:
+    """The side a restored leg is placed on: the spec's own side, else 'sell'
+    (what `_restore_stop_orders` places when no side is passed)."""
+    return "buy" if str(spec.get("side") or "sell").lower().endswith("buy") else "sell"
+
+
+def _restore_at_held(broker, held: float):
+    """A rollback that restores the cancelled legs only onto the side HELD now,
+    and never for more shares than are held.
+
+    A failed cancel can be a stop that filled in part: restoring the old full
+    size would rest more stop than shares. A SELL stop protects a long and a
+    BUY stop a short, so a leg whose side does not match the signed position
+    (e.g. the book flipped short) is NOT restored -- it would add to the
+    position instead of protecting it. Legs are kept in order and the last one
+    kept is cut to fit; a dropped leg is not reported as lost coverage (no held
+    share needs it). Failures map back to the original specs.
+    """
+
+    def restore(symbol, cancelled):
+        room = {"sell": max(held, 0.0), "buy": max(-held, 0.0)}
+        sized, origin = [], []
+        for spec in cancelled:
+            side = _stop_side(spec)
+            q = abs(float(spec.get("qty", 0) or 0))
+            take = min(q, room[side])
+            if take <= 1e-9:
+                continue
+            sized.append(spec if take == q else {**spec, "qty": take})
+            origin.append(spec)
+            room[side] -= take
+        if len(sized) < len(cancelled) or any(x is not y for x, y in zip(sized, origin, strict=True)):
+            logger.warning(
+                "cancel_snapshotted_stops: %s rollback sized to the %s share(s) held now (signed), not the snapshot",
+                symbol,
+                held,
+            )
+        restored, lost = 0, set()
+        for side in ("sell", "buy"):
+            group = [x for x in sized if _stop_side(x) == side]
+            if not group:
+                continue
+            n, failed = broker._restore_stop_orders(symbol, group, **({} if side == "sell" else {"side": side}))
+            restored += n
+            lost |= {id(x) for x in failed}
+        return restored, [o for x, o in zip(sized, origin, strict=True) if id(x) in lost]
+
+    return restore
+
+
 def cancel_snapshotted_stops(
     broker,
     symbol: str,
@@ -173,13 +247,31 @@ def cancel_snapshotted_stops(
                 context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"},
             )
             cancel_failed.append(spec)
+    held = _held_now(broker, symbol) if cancel_failed else None
+    if cancel_failed and held == 0:
+        # A cancel failed AND the fresh read shows nothing held: the stop
+        # FILLED (a filled order cannot be cancelled). Rolling the cancelled
+        # legs back would rest closing stops on a position that no longer
+        # exists — on the opposite side of an empty book that is an opening
+        # order. Nothing is restored; the outcome says why, by name.
+        logger.error(
+            "cancel_snapshotted_stops: %s cancel failed and the position is gone (stop filled) — "
+            "nothing is rolled back onto an empty position",
+            symbol,
+        )
+        return StopCancelOutcome(
+            symbol=symbol,
+            requested=tuple(specs),
+            still_resting=tuple(cancel_failed) + tuple(untouched),
+            detail=f"{POSITION_GONE}: {len(cancel_failed)}/{len(specs)} cancel(s) failed and nothing is held",
+        )
     return settle_cancel(
         symbol,
         specs,
         cancelled,
         untouched,
         cancel_failed,
-        broker._restore_stop_orders,
+        broker._restore_stop_orders if held is None else _restore_at_held(broker, held),
         logger,
     )
 
