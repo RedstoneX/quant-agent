@@ -56,7 +56,7 @@ def _rc() -> ReasoningChain:
     )
 
 
-def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_risk_pct=0.0):
+def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_risk_pct=0.5, equity=100_000.0):
     """ExecutionStage harness. Config stays a MagicMock (the stage reads many
     attributes); only the leaves these tests depend on are pinned to real
     values, because a MagicMock leaf silently reads as "not a number"."""
@@ -66,25 +66,25 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_risk_pct
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": cash, "portfolio_value": 100_000.0},
+        {"cash": cash, "portfolio_value": equity},
         [],
         {},
     )
     pipeline.config.execution.fractional_enabled = fractional
-    # The owner's 0.5% minimum-risk floor (owner rule 2026-08-27) is pinned
-    # in tests/test_min_risk_floor.py; the clamp-mechanics tests here switch
-    # it off so each one aims at the clamp alone. Passing 0.5 turns it on.
+    # The owner's minimum risk per position (owner rule 2026-08-27) is ON,
+    # at its ratified 0.5%: the clamp tests below size their fixtures (a
+    # $10,000 book, a $50 stop) so every clamped order still clears it.
     pipeline.config.risk.min_position_risk_pct = min_risk_pct
     pipeline.config.execution.fractional_share_decimals = 4
     pipeline.broker.get_fractionability.return_value = {"fractionable": True} if fractional else {"fractionable": False}
     return pipeline
 
 
-def _ctx(decisions, cash=50_000.0) -> RunContext:
+def _ctx(decisions, cash=50_000.0, equity=100_000.0) -> RunContext:
     ctx = RunContext.start("morning")
     ctx.cash = cash
-    ctx.total_value = 100_000.0
-    ctx.last_equity = 100_000.0
+    ctx.total_value = equity
+    ctx.last_equity = equity
     ctx.positions = []
     ctx.decision_id = "run-x-dec-abc123"
     ctx.portfolio_decision = PortfolioDecision(
@@ -171,7 +171,11 @@ def test_fractional_clamp_to_a_token_order_is_refused_below_min_risk():
 def test_clamp_still_places_a_meaningful_partial_order():
     """A partial funding fill preserving a smaller real position is the
     behaviour the resize exists for — unaffected by the floor's removal."""
-    pipeline = _pipeline(live_price=100.0, cash=750.0, fractional=True)
+    # A $10,000 book and a $50 stop: the clamped order still risks at
+    # least the owner's 0.5% minimum per position (rule 2026-08-27), and a
+    # 5% risk budget ($500 / $50 = 10 shares) never binds before the cash.
+    pipeline = _pipeline(live_price=100.0, cash=750.0, fractional=True, equity=10_000.0)
+    pipeline.config.risk.max_position_risk_pct = 5.0
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx(
         [
@@ -180,12 +184,13 @@ def test_clamp_still_places_a_meaningful_partial_order():
                 symbol="XLE",
                 allocation_pct=10,
                 entry_price=100.0,
-                stop_loss=95.0,
+                stop_loss=50.0,
                 take_profit=115.0,
                 reasoning="approved, partially funded",
             )
         ],
         cash=750.0,
+        equity=10_000.0,
     )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
@@ -199,7 +204,11 @@ def test_whole_share_clamp_also_places_the_small_order():
     """The removal is not fractional-only. Four whole shares at $100 is
     $400 — well under the old $500 floor — and is now placed rather than
     refused."""
-    pipeline = _pipeline(live_price=100.0, cash=499.0, fractional=False)
+    # A $10,000 book and a $50 stop: the clamped order still risks at
+    # least the owner's 0.5% minimum per position (rule 2026-08-27), and a
+    # 5% risk budget ($500 / $50 = 10 shares) never binds before the cash.
+    pipeline = _pipeline(live_price=100.0, cash=499.0, fractional=False, equity=10_000.0)
+    pipeline.config.risk.max_position_risk_pct = 5.0
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx(
         [
@@ -208,12 +217,13 @@ def test_whole_share_clamp_also_places_the_small_order():
                 symbol="XLE",
                 allocation_pct=10,
                 entry_price=100.0,
-                stop_loss=95.0,
+                stop_loss=50.0,
                 take_profit=115.0,
                 reasoning="approved, starved",
             )
         ],
         cash=499.0,
+        equity=10_000.0,
     )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
@@ -252,7 +262,11 @@ def test_unconfirmed_funding_is_governed_by_raw_cash_not_refused():
     as under the flat $500 floor; it is now placed at the raw-cash size
     instead, since the resize itself (not the floor) is what keeps this
     from becoming a $10,000 unfunded position."""
-    pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True)
+    # A $10,000 book and a $50 stop: the clamped order still risks at
+    # least the owner's 0.5% minimum per position (rule 2026-08-27), and a
+    # 5% risk budget ($500 / $50 = 10 shares) never binds before the cash.
+    pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True, equity=10_000.0)
+    pipeline.config.risk.max_position_risk_pct = 5.0
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     _install_sweeper(pipeline, freed=0.0)
     ctx = _ctx(
@@ -262,12 +276,13 @@ def test_unconfirmed_funding_is_governed_by_raw_cash_not_refused():
                 symbol="XLE",
                 allocation_pct=10,
                 entry_price=100.0,
-                stop_loss=95.0,
+                stop_loss=50.0,
                 take_profit=115.0,
                 reasoning="approved, funding unconfirmed",
             )
         ],
         cash=174.96,
+        equity=10_000.0,
     )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)

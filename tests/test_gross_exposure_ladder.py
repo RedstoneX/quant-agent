@@ -1531,24 +1531,29 @@ def _execution_pipeline(
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = allow_margin
     pipeline.config.risk.max_position_pct = max_position_pct
-    # This file is about the ceiling, not risk sizing (see `_entry`: a $0.10
-    # stop). The owner's 0.5% minimum-risk floor is pinned in
-    # tests/test_min_risk_floor.py, so it is switched off here.
-    pipeline.config.risk.min_position_risk_pct = 0.0
+    # This file is about the ceiling, not risk sizing. The owner's minimum
+    # risk per position (owner rule 2026-08-27) is ON at 0.5%: `_entry`'s
+    # $6 stop (6%) makes the smallest remnant below ($1,000) risk 0.60% of
+    # $10,000, and a 10% risk budget never binds before the ceiling (the
+    # largest order, $10,000, risks 6%).
+    pipeline.config.risk.min_position_risk_pct = 0.5
+    pipeline.config.risk.max_position_risk_pct = 10.0
     pipeline.config.execution.fractional_enabled = False  # whole shares
     return pipeline
 
 
 def _entry(symbol="NVDA", alloc=100.0) -> TradeDecision:
     """An entry that asks for the whole book, so the BUDGET is what decides
-    the size. The stop sits $0.10 away so the §11.1 risk budget cannot be
-    what binds — this file is about the ceiling, not about risk sizing."""
+    the size. The stop sits $6 away: wide enough that every clamped order in
+    this file still clears the owner's 0.5% minimum risk per position, and
+    the 10% risk budget set in `_execution_pipeline` cannot be what binds —
+    this file is about the ceiling, not about risk sizing."""
     return TradeDecision(
         action="BUY",
         symbol=symbol,
         allocation_pct=alloc,
         entry_price=EXEC_PRICE,
-        stop_loss=EXEC_PRICE - 0.10,
+        stop_loss=EXEC_PRICE - 6.0,
         take_profit=EXEC_PRICE + 10.0,
         reasoning="ladder execution test",
     )
@@ -1725,6 +1730,24 @@ def test_a_short_consumes_the_budget_for_the_long_behind_it():
     # $5,000 of headroom at 1.0x, minus the $2,000 the short just took.
     assert len(buys) == 1
     assert buys[0]["qty"] * EXEC_PRICE == 3_000.0
+
+
+def test_a_ladder_remnant_under_the_owner_min_risk_is_refused_end_to_end():
+    """Ladder plus floor, through the real execution stage. The 0.5x floor
+    rung leaves $200 of headroom over a $4,800 book on $10,000 of equity;
+    clamped to it, the entry would risk $200 x 6% = $12, 0.12% of equity --
+    under the owner's 0.5% minimum risk per position (owner rule
+    2026-08-27), judged on the WHOLE position after the order. Nothing is
+    placed and the skip names the floor, not the cash."""
+    equity = 10_000.0
+    held = [_position(symbol="MSFT", qty=48, current_price=100.0)]  # $4,800
+    pipeline = _execution_pipeline(cash=6_000.0, equity=equity, ceiling_x=0.5, positions=held)
+    ctx = _exec_ctx([_entry()], cash=6_000.0, equity=equity, positions=held)
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    pipeline.broker.submit_order.assert_not_called()
+    assert [s["reason"] for s in ctx.execution_skips] == ["below_owner_min_risk"]
 
 
 # --- the budget itself, unit-tested at its degraded edges -----------------
