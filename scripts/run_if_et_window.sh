@@ -357,6 +357,15 @@ else
     STATUS=$?
 fi
 
+# 75 = main.py's OWNER_STOP_EXIT: the owner's Stop is in force, the desk is
+# off and main.py did nothing (resting entries cancelled, stops kept). Not a
+# failure, not a run: no last-run marker (a Start later today may still run
+# this session), no healthcheck ping, no push.
+if [[ "$STATUS" -eq 75 ]]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] ${MODE} not run: owner Stop in force" >&2
+    exit 0
+fi
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] ${MODE} failed with status ${STATUS}; not updating last-run guard" >&2
 # Bash-side push ONLY for violent deaths (124=timeout, 137=SIGKILL,
 # 143=SIGTERM) — those skip python's finally-block notifier entirely. For

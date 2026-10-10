@@ -1,4 +1,4 @@
-"""READ-ONLY owner flags (panel instalment 1): the owner's Freeze. SELECT only, safe for the broker door.
+"""READ-ONLY owner flags (panel instalment 1): the owner's Freeze and Stop. SELECT only, safe for the broker door.
 
 Flags are a replay of the intents that were ACTED on, in order; nothing is
 stored twice. The writer lives in src/owner_intents.py (desk-side only).
@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # the owner-facing names are Freeze / Start (owner ruling 2026-10-09).
 PAUSE, RESUME = "PAUSE", "RESUME"
 FREEZE, UNFREEZE = PAUSE, RESUME
+# Stop (owner ruling 2026-10-09): the desk is OFF -- no job reads anything, no
+# AI, nothing; positions and the protective stops at the broker are kept. Start
+# (RESUME) clears Stop and Freeze alike. Stop takes precedence over Freeze.
+STOP = "STOP"
 
 
 @dataclass(frozen=True)
@@ -24,21 +28,27 @@ class Flags:
     paused: bool = False
     unknown: bool = False  # cannot tell whether the owner paused: treated as paused
     stale: bool = False  # read failed; `paused` is the last saved copy (still UNKNOWN)
+    stopped: bool = False  # owner Stop in force: no job does any work
 
     @property
     def frozen(self) -> bool:
-        """Owner-facing name: frozen = open nothing new; exits and stops keep working."""
-        return self.paused
+        """Owner-facing name: frozen = open nothing new; exits and stops keep working.
+
+        Stop implies frozen at the broker door: a stopped desk opens nothing.
+        """
+        return self.paused or self.stopped
 
 
 def current_flags(conn) -> Flags:
-    paused = False
+    paused = stopped = False
     for action, sym in conn.execute("SELECT action, symbol FROM owner_intents WHERE state='acted' ORDER BY id"):
         if action == PAUSE:
             paused = True
+        elif action == STOP:
+            stopped = True
         elif action == RESUME:
-            paused = False
-    return Flags(paused)
+            paused = stopped = False
+    return Flags(paused, stopped=stopped)
 
 
 _CACHE: dict = {}
@@ -56,7 +66,7 @@ def _remember(db_path, flags: Flags) -> None:
     try:
         tmp = _cache_file(db_path) + ".tmp"
         with open(tmp, "w") as fh:
-            json.dump({"paused": flags.paused}, fh)
+            json.dump({"paused": flags.paused, "stopped": flags.stopped}, fh)
         os.replace(tmp, _cache_file(db_path))
     except OSError as exc:
         logger.warning("owner flag cache not written: %s", exc)
@@ -68,7 +78,7 @@ def _recall(db_path):
     try:
         with open(_cache_file(db_path)) as fh:
             d = json.load(fh)
-        return Flags(bool(d["paused"]))
+        return Flags(bool(d["paused"]), stopped=bool(d.get("stopped", False)))
     except (OSError, ValueError, KeyError):
         return None
 
@@ -114,3 +124,13 @@ def read_flags(db_path, attempts=3, retry_pause_s=0.2) -> Flags:
         return replace(cached, stale=True, unknown=True)
     logger.error("owner flags unreadable (%s) and no last known set: UNKNOWN", last)
     return Flags(unknown=True)
+
+
+def stop_in_force(db_path) -> bool:
+    """True when the owner's Stop is in force (a stale last-saved Stop counts).
+
+    An UNKNOWN read with no saved Stop is NOT a Stop: it behaves as Freeze at
+    the broker door (entries refused, exits and stops keep working), so a
+    database blip never switches the desk's exit management off.
+    """
+    return bool(db_path) and read_flags(db_path).stopped
