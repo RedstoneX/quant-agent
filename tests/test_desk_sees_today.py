@@ -83,39 +83,32 @@ def test_live_price_is_today_rejects_prior_session_and_naive_timestamps():
 # --- get_ohlcv window -------------------------------------------------------
 
 
-def _frame(days: list[date]) -> pd.DataFrame:
-    n = len(days)
-    return pd.DataFrame(
-        {"Open": [1.0] * n, "High": [2.0] * n, "Low": [0.5] * n, "Close": [1.5] * n, "Volume": [100] * n},
-        index=pd.DatetimeIndex([pd.Timestamp(d) for d in days]),
-    )
+def _bar(d: date) -> OHLCV:
+    return OHLCV(date=d, open=1.0, high=2.0, low=0.5, close=1.5, volume=100)
 
 
 @pytest.mark.parametrize(
-    "now, expected_end, expected_last",
+    "now, expected_last",
     [
-        (ORCL_OPEN, "2026-09-10", date(2026, 9, 9)),  # in session: through yesterday
-        (ORCL_EVENING, "2026-09-11", date(2026, 9, 10)),  # after close: today included
+        (ORCL_OPEN, date(2026, 9, 9)),  # in session: through yesterday
+        (ORCL_EVENING, date(2026, 9, 10)),  # after close: today included
     ],
 )
-def test_get_ohlcv_end_follows_completed_bar_date(monkeypatch, now, expected_end, expected_last):
+def test_get_ohlcv_end_follows_completed_bar_date(monkeypatch, now, expected_last):
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
     monkeypatch.setattr("src.data.market.et_today", lambda: now.date())
-    with patch("src.data.market.yf.download") as dl:
-        # Source hands back an in-progress 09-10 row even in session.
-        dl.return_value = _frame([date(2026, 9, 8), date(2026, 9, 9), date(2026, 9, 10)])
-        bars = MarketDataProvider().get_ohlcv("ORCL", lookback_days=10)
-    assert dl.call_args.kwargs["end"] == expected_end
+    # The broker hands back an in-progress 09-10 bar even in session.
+    source = lambda s, n: [_bar(date(2026, 9, 8)), _bar(date(2026, 9, 9)), _bar(date(2026, 9, 10))]  # noqa: E731
+    bars = MarketDataProvider(bars_source=source).get_ohlcv("ORCL", lookback_days=10)
     assert bars[-1].date == expected_last
 
 
-def test_get_ohlcv_drops_in_progress_bar_from_alpaca_fallback(monkeypatch):
+def test_get_ohlcv_drops_in_progress_bar_from_alpaca(monkeypatch):
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: ORCL_OPEN)
     partial = OHLCV(date=date(2026, 9, 10), open=160, high=160, low=158.38, close=158.38, volume=10)
     done = OHLCV(date=date(2026, 9, 9), open=161, high=162, low=160, close=161.79, volume=10)
-    provider = MarketDataProvider(fallback_bars=lambda s, n: [done, partial])
-    with patch("src.data.market.yf.download", return_value=pd.DataFrame()):
-        bars = provider.get_ohlcv("ORCL", lookback_days=10)
+    provider = MarketDataProvider(bars_source=lambda s, n: [done, partial])
+    bars = provider.get_ohlcv("ORCL", lookback_days=10)
     assert [b.date for b in bars] == [date(2026, 9, 9)]
 
 

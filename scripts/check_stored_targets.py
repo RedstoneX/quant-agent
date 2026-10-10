@@ -253,13 +253,13 @@ def assess_position(*, symbol, is_short, entry_price, row, bars):
 def run(*, db_path: str, symbols: set[str] | None, lookback_days: int) -> list[dict]:
     import sqlite3
 
-    from src.data.market import MarketDataProvider
+    from src.backtest.data import broker_backed_provider
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         positions = _open_positions(conn, symbols)
-        market = MarketDataProvider()
+        market = broker_backed_provider()  # Alpaca daily bars, read-only (owner 2026-10-09)
         results: list[dict] = []
         for pos in positions:
             symbol = str(pos["symbol"]).upper()
