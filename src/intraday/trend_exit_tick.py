@@ -22,7 +22,21 @@ What this adds is WHEN it runs. A new completed bar appears once a day, so a
 holding is checked once per new completed bar (in practice at the first tick,
 09:45 ET); the bar date checked is persisted per holding
 (`trend_exit_tick_checks`). Later ticks that day skip it, EXCEPT a holding
-whose sale the guarded path refused, which is retried at the next tick.
+whose sale was refused for a reason that can clear today, deferred behind a
+working exit order, or interrupted by an error -- those are retried next tick.
+A refusal that cannot clear today (bought today, already cut today) is final
+for that bar (`refused_final`).
+
+Overlap with a running review (the tick is exempt from the session lock, and
+that lock lapses): a holding with ANY working non-stop order at the broker is
+not routed to the sell path; it is marked `deferred`, still trailed, and
+retried next tick. An unreadable order listing defers every firing holding
+(fail closed).
+
+An exception from the sell path may come AFTER an order went out, so every
+firing holding is marked `error`, kept out of this tick's trail, and the
+failure is recorded durably; the retry next tick passes the open-order check
+first.
 """
 
 from __future__ import annotations
@@ -35,11 +49,37 @@ from src.sentinel.guarded_site import record_site
 #: Same logger the intra check itself writes under (see src/intraday/session.py).
 logger = logging.getLogger("src.pipeline")
 
-__all__ = ["OUTCOME_HOLD", "OUTCOME_REFUSED", "OUTCOME_SOLD", "trend_exit_on_tick", "wire_trend_exit"]
+__all__ = [
+    "OUTCOME_DEFERRED",
+    "OUTCOME_ERROR",
+    "OUTCOME_HOLD",
+    "OUTCOME_REFUSED",
+    "OUTCOME_REFUSED_FINAL",
+    "OUTCOME_SOLD",
+    "SellPathError",
+    "trend_exit_on_tick",
+    "wire_trend_exit",
+    "working_exit_symbols",
+]
 
 OUTCOME_HOLD = "hold"
 OUTCOME_SOLD = "sold"
 OUTCOME_REFUSED = "refused"
+#: Refused for a reason that cannot clear today (bought today, already cut today): not retried this bar.
+OUTCOME_REFUSED_FINAL = "refused_final"
+#: A working non-stop order already exists (e.g. a review's sale): retried next tick.
+OUTCOME_DEFERRED = "deferred"
+#: The sell path raised; an order may have gone out. Retried next tick, after the open-order check.
+OUTCOME_ERROR = "error"
+_RETRY = frozenset({OUTCOME_REFUSED, OUTCOME_DEFERRED, OUTCOME_ERROR})
+
+
+class SellPathError(RuntimeError):
+    """The guarded sell path raised; `no_trail` names every holding that may have an order out."""
+
+    def __init__(self, message: str, no_trail: list):
+        super().__init__(message)
+        self.no_trail = list(no_trail)
 
 
 def _symbol(position) -> str:
@@ -51,11 +91,27 @@ def _order_symbol(order) -> str:
     return (raw or "").strip().upper()
 
 
+def _enum_text(value) -> str:
+    return str(getattr(value, "value", value) or "").strip().lower()
+
+
+def working_exit_symbols(orders) -> set:
+    """Symbols with a working NON-stop buy or sell order (a sale or cover may be in flight)."""
+    out = set()
+    for order in orders or []:
+        kind = _enum_text(getattr(order, "order_type", None) or getattr(order, "type", None))
+        if "stop" in kind:
+            continue
+        if _enum_text(getattr(order, "side", None)) in ("sell", "buy"):
+            out.add(_order_symbol(order))
+    return out
+
+
 def _due(marker: dict | None, bar_date: str) -> bool:
-    """Run on a new completed bar, or retry a sale refused on this one."""
+    """Run on a new completed bar, or retry a retryable outcome on this one."""
     if marker is None or marker.get("bar_date") != bar_date:
         return True
-    return marker.get("outcome") == OUTCOME_REFUSED
+    return marker.get("outcome") in _RETRY
 
 
 def trend_exit_on_tick(
@@ -68,80 +124,140 @@ def trend_exit_on_tick(
     alignment_exit_cached,
     position_facts_for,
     execute_guarded_exits,
+    open_orders_checked,
+    final_today,
 ) -> dict:
     """Check each due holding's trend exit on completed daily bars; sell the cleared ones via the guarded path.
 
-    Returns `{status, bar_date, checked, sold, refused}`; `sold` names every
-    holding a sell order was placed for this tick (the trail must leave them
-    alone). Raises on a broken collaborator; the caller logs and records it.
+    Returns `{status, bar_date, checked, sold, refused, refused_final, deferred, no_trail}`;
+    `no_trail` names every holding the trail must leave alone this tick. If the
+    sell path raises, the firing holdings are marked `error` and `SellPathError`
+    carries them to the caller.
     """
-    summary: dict = {"status": "ran", "bar_date": completed_bar_date, "checked": [], "sold": [], "refused": []}
-    due = []
-    for position in positions or []:
-        symbol = _symbol(position)
-        try:
-            qty = float(getattr(position, "qty", 0) or 0)
-        except (TypeError, ValueError):
-            qty = 0.0
-        if symbol and qty != 0 and _due(read_marker(symbol), completed_bar_date):
-            due.append(position)
+    summary: dict = {
+        "status": "ran",
+        "bar_date": completed_bar_date,
+        "checked": [],
+        "sold": [],
+        "refused": [],
+        "refused_final": [],
+        "deferred": [],
+        "no_trail": [],
+    }
+
+    def mark(symbol: str, outcome: str) -> None:
+        write_marker(symbol, bar_date=completed_bar_date, outcome=outcome, run_id=run_id)
+
+    due = [p for p in positions or [] if _holding(p) and _due(read_marker(_symbol(p)), completed_bar_date)]
     if not due:
         return summary
     facts = position_facts_for(due) or {}
-    firing = []
+    cleared = []
     for position in due:
-        symbol = _symbol(position)
-        own = facts.get(symbol, {}) or {}
-        # Same arguments the review's alignment scan passes, so the executor's
-        # scan below reads this verdict back from the memo (one chart read).
-        verdict = alignment_exit_cached(
-            symbol=symbol,
-            thesis_invalid_if=getattr(position, "thesis_invalid_if", None) or own.get("thesis_invalid_if"),
-            is_short=float(position.qty) < 0,
-            entry_price=getattr(position, "avg_entry", None),
-            stop_loss=getattr(position, "stop_loss", None) or own.get("stop_loss"),
-            run_id=run_id,
-        )
-        summary["checked"].append(symbol)
+        verdict = _verdict(alignment_exit_cached, position, facts, run_id)
+        summary["checked"].append(_symbol(position))
         if getattr(verdict, "exit_cleared", False):
-            firing.append(position)
+            cleared.append(position)
         else:
-            write_marker(symbol, bar_date=completed_bar_date, outcome=OUTCOME_HOLD, run_id=run_id)
+            mark(_symbol(position), OUTCOME_HOLD)
+    firing = _not_busy(cleared, open_orders_checked, mark, summary, completed_bar_date) if cleared else []
     if not firing:
         return summary
-    orders = execute_guarded_exits(firing, run_id=run_id, position_facts=facts) or []
-    ordered = {_order_symbol(order) for order in orders}
-    for position in firing:
+    symbols = [_symbol(p) for p in firing]
+    try:
+        orders = execute_guarded_exits(firing, run_id=run_id, position_facts=facts) or []
+    except Exception as exc:
+        for symbol in symbols:
+            mark(symbol, OUTCOME_ERROR)
+        raise SellPathError(f"sell path raised for {symbols}: {exc}", symbols) from exc
+    _settle(symbols, orders, set(final_today(set(symbols)) or set()), mark, summary, completed_bar_date)
+    summary["no_trail"] = list(summary["sold"])
+    return summary
+
+
+def _holding(position) -> bool:
+    try:
+        qty = float(getattr(position, "qty", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(_symbol(position)) and qty != 0
+
+
+def _verdict(alignment_exit_cached, position, facts: dict, run_id: str):
+    """Same arguments the review's alignment scan passes, so the executor's
+    scan reads this verdict back from the memo (one chart read)."""
+    own = facts.get(_symbol(position), {}) or {}
+    return alignment_exit_cached(
+        symbol=_symbol(position),
+        thesis_invalid_if=getattr(position, "thesis_invalid_if", None) or own.get("thesis_invalid_if"),
+        is_short=float(position.qty) < 0,
+        entry_price=getattr(position, "avg_entry", None),
+        stop_loss=getattr(position, "stop_loss", None) or own.get("stop_loss"),
+        run_id=run_id,
+    )
+
+
+def _not_busy(cleared: list, open_orders_checked, mark, summary: dict, bar_date: str) -> list:
+    """Drop (and mark `deferred`) every cleared holding with a working non-stop order; fail closed."""
+    listed, open_orders = open_orders_checked()
+    busy = working_exit_symbols(open_orders) if listed else {_symbol(p) for p in cleared}
+    firing = []
+    for position in cleared:
         symbol = _symbol(position)
-        outcome = OUTCOME_SOLD if symbol in ordered else OUTCOME_REFUSED
-        summary["sold" if outcome == OUTCOME_SOLD else "refused"].append(symbol)
-        write_marker(symbol, bar_date=completed_bar_date, outcome=outcome, run_id=run_id)
+        if symbol not in busy:
+            firing.append(position)
+            continue
+        summary["deferred"].append(symbol)
+        mark(symbol, OUTCOME_DEFERRED)
+        logger.warning(
+            "tick trend exit: %s cleared on the %s close but %s; deferred to the next tick",
+            symbol,
+            bar_date,
+            "a working order exists for it" if listed else "the open-order listing failed",
+        )
+    return firing
+
+
+def _settle(symbols: list, orders: list, final: set, mark, summary: dict, bar_date: str) -> None:
+    """Mark each routed holding sold, refused (retried next tick) or refused_final (not retried this bar)."""
+    ordered = {_order_symbol(order) for order in orders}
+    for symbol in symbols:
+        if symbol in ordered:
+            outcome = OUTCOME_SOLD
+        elif symbol in final:
+            outcome = OUTCOME_REFUSED_FINAL
+        else:
+            outcome = OUTCOME_REFUSED
+        summary[outcome].append(symbol)
+        mark(symbol, outcome)
         if outcome == OUTCOME_REFUSED:
             logger.warning(
                 "tick trend exit: %s cleared the trend exit on the %s close but the guarded sell path "
                 "placed no order; retried at the next tick",
                 symbol,
-                completed_bar_date,
+                bar_date,
             )
-    return summary
 
 
 def wire_trend_exit(host):
     """Bind `trend_exit_on_tick` to the pipeline's own collaborators, read through `host(name)`.
 
-    Returns `callable(positions, *, run_id, total_value) -> dict`, or None when
-    the host lacks any piece (the tick then reports the step unavailable).
+    Returns `callable(positions, *, run_id, total_value) -> dict` that never
+    raises, or None when the host lacks any piece (the tick then reports the
+    step unavailable).
     """
     from src.storage.trades import trend_tick_store as store
     from src.trading_calendar import last_completed_bar_date
 
     db = host("db")
+    broker = host("broker")
     cached = host("_alignment_exit_cached")
     execute = host("_midday_execute_llm_actions")
     build_facts = host("_build_position_facts")
     trimmed_today = host("_symbols_already_trimmed_today")
+    opened_today = host("_position_opened_today")
     metric_deltas_for = host("_build_review_metric_deltas")
-    if None in (db, cached, execute, build_facts, trimmed_today, metric_deltas_for):
+    if None in (db, broker, cached, execute, build_facts, trimmed_today, opened_today, metric_deltas_for):
         return None
 
     def execute_guarded_exits(firing, *, run_id: str, position_facts: dict) -> list:
@@ -155,13 +271,9 @@ def wire_trend_exit(host):
             position_facts=position_facts,
         )
 
-    def run(positions, *, run_id: str, total_value=None) -> dict:
-        try:
-            return _run_once(positions, run_id=run_id, total_value=total_value)
-        except Exception as exc:  # noqa: BLE001 — a broken trend read must not stop the stops trailing
-            # Recorded durably (guarded-outcome journal), then the trail runs; nothing was sold.
-            record_site(SimpleNamespace(db=db), "intraday.trend_exit_tick", exc, log=logger)
-            return {"status": "error", "reason": str(exc), "sold": [], "refused": [], "checked": []}
+    def final_today(symbols: set) -> set:
+        """Refusals that cannot clear today: bought in today's session, or already cut today."""
+        return {s for s in symbols if opened_today(s)} | (set(trimmed_today() or set()) & symbols)
 
     def _run_once(positions, *, run_id: str, total_value) -> dict:
         ledger = db._trades()
@@ -175,6 +287,24 @@ def wire_trend_exit(host):
             alignment_exit_cached=cached,
             position_facts_for=lambda due: build_facts(due, morning_trades, total_value),
             execute_guarded_exits=execute_guarded_exits,
+            open_orders_checked=broker.list_open_orders_checked,
+            final_today=final_today,
         )
+
+    def run(positions, *, run_id: str, total_value=None) -> dict:
+        try:
+            return _run_once(positions, run_id=run_id, total_value=total_value)
+        except Exception as exc:  # noqa: BLE001 — a broken trend step must not stop the other stops trailing
+            # Recorded durably (guarded-outcome journal). If the SELL PATH raised, an order may
+            # already be out: those holdings were marked `error` and are kept out of this tick's trail.
+            record_site(SimpleNamespace(db=db), "intraday.trend_exit_tick", exc, log=logger)
+            return {
+                "status": "error",
+                "reason": str(exc),
+                "sold": [],
+                "refused": [],
+                "checked": [],
+                "no_trail": list(getattr(exc, "no_trail", []) or []),
+            }
 
     return run
