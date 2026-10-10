@@ -156,10 +156,12 @@ def _run_one(
     if cache_key not in bars_cache:
         print(
             f"Fetching history for {len(symbols)} symbol(s) "
-            f"(lookback={lookback_days}d, source=yfinance via MarketDataProvider)...",
+            f"(lookback={lookback_days}d, source=Alpaca daily bars via MarketDataProvider)...",
             file=sys.stderr,
         )
-        bars_cache[cache_key] = fetch_universe_history(list(symbols), lookback_days=lookback_days)
+        bars_cache[cache_key] = fetch_universe_history(
+            list(symbols), lookback_days=lookback_days, market=_broker_backed_provider()
+        )
     bars_by_symbol, missing = bars_cache[cache_key]
 
     slippage_bps = args.slippage_bps if args.slippage_bps is not None else config.execution.max_entry_slippage_bps
@@ -189,6 +191,19 @@ def _run_one(
     return config, result, metrics, slippage_bps, slippage_source, read_counts
 
 
+def _broker_backed_provider():
+    """Daily bars from the broker (Alpaca, read-only; never asked to trade),
+    wired as the live pipeline wires it. Built here, not in src/: src.backtest
+    must not import the broker seam (config/check_allowlists/import_seam_pairs.txt)."""
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.data.market import MarketDataProvider
+    from src.execution.broker import AlpacaBroker
+
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+    return MarketDataProvider(bars_source=broker.get_bars)
+
+
 def _coerce(raw: str) -> float | int | str:
     """Parse a `--sweep NAME=VALUE` value. An unparseable value is passed
     through as text: this tool reports, it does not refuse."""
@@ -215,8 +230,8 @@ def _report(
         start=args.start,
         end=args.end,
         n_symbols=len(result.symbols_used),
-        data_source="yfinance (live network fetch via MarketDataProvider; no Alpaca "
-        "fallback wired, no local snapshot used)",
+        data_source="Alpaca daily bars (live network fetch via MarketDataProvider wired to "
+        "the broker's get_bars; no Yahoo, no local snapshot used)",
         initial_equity=args.initial_equity,
     )
     print(

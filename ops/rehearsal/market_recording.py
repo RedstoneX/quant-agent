@@ -67,12 +67,18 @@ def load(path: Path | str = DEFAULT_RECORDING) -> dict | None:
 def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 400) -> dict:
     """Download bars ONCE and write them to disk. Online by design.
 
-    Never called from a rehearsal — `run_rehearsal` only ever reads. yfinance
-    is unauthenticated, so this needs no credential of any kind.
+    Never called from a rehearsal — `run_rehearsal` only ever reads. Bars come
+    from the broker (Alpaca, read-only), so this needs the Alpaca credentials
+    every standalone script already uses.
     """
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
     from src.data.market import MarketDataProvider
+    from src.execution.broker import AlpacaBroker
 
-    provider = MarketDataProvider()
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())  # read-only bars
+
+    provider = MarketDataProvider(bars_source=broker.get_bars)  # Alpaca daily bars (owner 2026-10-09)
     bars: dict[str, list] = {}
     empty: list[str] = []
     # Sectors are recorded too (board item 202): `broker._get_sector` reads
@@ -96,7 +102,7 @@ def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 
     recording = {
         "captured_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "lookback_days": lookback_days,
-        "source": "yfinance via src.data.market.MarketDataProvider.get_ohlcv",
+        "source": "Alpaca daily bars via src.data.market.MarketDataProvider.get_ohlcv",
         "symbols_with_no_data": empty,
         "bars": bars,
         "sectors": sectors,

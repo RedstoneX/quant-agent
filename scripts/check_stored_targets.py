@@ -253,13 +253,18 @@ def assess_position(*, symbol, is_short, entry_price, row, bars):
 def run(*, db_path: str, symbols: set[str] | None, lookback_days: int) -> list[dict]:
     import sqlite3
 
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
     from src.data.market import MarketDataProvider
+    from src.execution.broker import AlpacaBroker
+
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())  # read-only bars
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         positions = _open_positions(conn, symbols)
-        market = MarketDataProvider()
+        market = MarketDataProvider(bars_source=broker.get_bars)  # Alpaca daily bars (owner 2026-10-09)
         results: list[dict] = []
         for pos in positions:
             symbol = str(pos["symbol"]).upper()
