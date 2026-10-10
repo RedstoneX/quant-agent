@@ -102,6 +102,10 @@ def working_exit_symbols(orders) -> set:
         kind = _enum_text(getattr(order, "order_type", None) or getattr(order, "type", None))
         if "stop" in kind:
             continue
+        # A cancel is asynchronous at the broker: an order already being cancelled
+        # (e.g. by the freeze sweep in the same tick) is not a sale in flight.
+        if _enum_text(getattr(order, "status", None)) in ("pending_cancel", "canceled", "cancelled"):
+            continue
         if _enum_text(getattr(order, "side", None)) in ("sell", "buy"):
             out.add(_order_symbol(order))
     return out

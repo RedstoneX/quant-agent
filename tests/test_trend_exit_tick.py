@@ -261,3 +261,17 @@ def test_refusal_that_cannot_clear_today_is_final_for_the_bar():
     assert first["refused_final"] == ["AAA"] and first["refused"] == ["BBB"]
     desk.tick([_position("AAA"), _position("BBB")], "2026-10-09")
     assert desk.executed == [["AAA", "BBB"], ["BBB"]]
+
+
+def test_an_order_being_cancelled_is_not_a_sale_in_flight():
+    from types import SimpleNamespace as NS
+
+    from src.intraday.trend_exit_tick import working_exit_symbols
+
+    orders = [
+        NS(symbol="AAPL", side="sell", order_type="market", status="pending_cancel"),
+        NS(symbol="MSFT", side="sell", order_type="market", status="canceled"),
+        NS(symbol="NVDA", side="sell", order_type="market", status="new"),
+        NS(symbol="TSLA", side="sell", order_type="stop", status="new"),
+    ]
+    assert working_exit_symbols(orders) == {"NVDA"}
