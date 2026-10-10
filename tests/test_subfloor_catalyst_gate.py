@@ -1066,20 +1066,17 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
     assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_an_unreadable_clock_makes_the_exception_unavailable(monkeypatch):
-    """Fail closed. A missing value must never be the thing that grants
-    permission — the recent buying-power near-miss was exactly this shape."""
+def test_an_unreadable_clock_stops_the_session(monkeypatch):
+    """Fail closed and loud. An unreadable clock used to return an empty map,
+    which quietly switched off the news-reason checks; it now raises so the
+    session stops instead (money-path swallow removed 10 Oct)."""
 
     def _boom():
         raise RuntimeError("tz database unavailable")
 
     monkeypatch.setattr(pm_module, "et_today", _boom)
-    assert (
-        PortfolioManagerAgent._state_change_symbols_by_date(
-            ACTIVE_STATE_CHANGES,
-        )
-        == {}
-    )
+    with pytest.raises(RuntimeError, match="tz database unavailable"):
+        PortfolioManagerAgent._state_change_symbols_by_date(ACTIVE_STATE_CHANGES)
 
 
 def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
